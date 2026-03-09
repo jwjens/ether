@@ -141,10 +141,19 @@ export class AudioEngine {
 
   private queue: { filePath: string; title: string; artist: string }[] = [];
   autoAdvance = false;
+  continuous = false;
+  private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   shuffle = false;
 
   private handleDeckEnd = (deckId: DeckId) => {
     if (!this.autoAdvance) return;
+    if (this.queue.length === 0 && this.continuous && this.refillCallback) {
+      this.refillCallback().then(songs => {
+        this.queue.push(...songs);
+        this.handleDeckEnd(deckId);
+      });
+      return;
+    }
     if (this.queue.length === 0) return;
     let idx = 0;
     if (this.shuffle) idx = Math.floor(Math.random() * this.queue.length);
@@ -174,6 +183,7 @@ export class AudioEngine {
 
   addToQueue(songs: { filePath: string; title: string; artist: string }[]) { this.queue.push(...songs); }
   clearQueue() { this.queue = []; }
+  setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
   getQueue() { return [...this.queue]; }
 
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {

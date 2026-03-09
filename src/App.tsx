@@ -29,7 +29,33 @@ export default function App() {
   const [deckB, setDeckB] = useState<DeckState | null>(null);
   const [autoAdv, setAutoAdv] = useState(false);
   const [shuffle, setShuffle] = useState(false);
+  const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
+
+  // Refill callback: loads all songs from DB when queue empties
+  useEffect(() => {
+    engine.setRefillCallback(async () => {
+      const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500");
+      return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
+    });
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement) return;
+      const dA = engine.getDeck("A");
+      const dB = engine.getDeck("B");
+      switch(e.code) {
+        case "Space": e.preventDefault(); if (dA) { if (dA.getState().status === "playing") dA.pause(); else if (dA.getState().status === "paused") dA.resume(); else dA.play(); } break;
+        case "KeyB": if (dB) { if (dB.getState().status === "playing") dB.pause(); else if (dB.getState().status === "paused") dB.resume(); else dB.play(); } break;
+        case "KeyX": if (deckA?.status === "playing" && deckB?.filePath) engine.crossfade("A", "B", 2000); else if (deckB?.status === "playing" && deckA?.filePath) engine.crossfade("B", "A", 2000); break;
+        case "Escape": dA?.stop(); dB?.stop(); break;
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [deckA, deckB]);
 
   useEffect(() => {
     engine.init();
@@ -42,6 +68,7 @@ export default function App() {
 
   const toggleAuto = () => { const n = !autoAdv; setAutoAdv(n); engine.autoAdvance = n; };
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
+  const toggleContinuous = () => { const n = !continuous; setContinuous(n); engine.continuous = n; };
 
   const loadA = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("A", s.file_path, s.title, s.artist_name || ""); }, []);
   const loadB = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("B", s.file_path, s.title, s.artist_name || ""); }, []);
@@ -64,7 +91,7 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <Nav active={panel} set={setPanel} />
         <main className="flex-1 overflow-auto p-4">
-          {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} queueLen={queueLen} />}
+          {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} />}
           {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
           {panel === "clocks" && <PH title="Clock Builder" />}
           {panel === "logs" && <PH title="Log Builder" />}
@@ -74,7 +101,7 @@ export default function App() {
       </div>
       <footer className="h-7 flex items-center justify-between px-4 bg-zinc-900 border-t border-zinc-800 text-[11px] text-zinc-500 shrink-0">
         <span>{deckA?.status === "playing" ? "Playing: " + deckA.title : "Ready"}</span>
-        <span>{autoAdv ? "AUTO" : "MANUAL"}{shuffle ? " | SHUFFLE" : ""} | Queue: {queueLen}</span>
+        <span>{autoAdv ? "AUTO" : "MANUAL"}{shuffle ? " | SHUFFLE" : ""}{continuous ? " | 24/7" : ""} | Queue: {queueLen} | Space=Play/Pause X=Crossfade</span>
       </footer>
     </div>
   );
@@ -98,7 +125,7 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
 // LIVE PANEL — polished
 // ============================================================
 
-function LivePanel({ deckA, deckB, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; toggleAuto: () => void; toggleShuffle: () => void; queueLen: number }) {
+function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, toggleShuffle, toggleContinuous, queueLen }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; continuous: boolean; toggleAuto: () => void; toggleShuffle: () => void; toggleContinuous: () => void; queueLen: number }) {
   const handleXfade = () => {
     if (deckA?.status === "playing" && deckB?.filePath) engine.crossfade("A", "B", 2000);
     else if (deckB?.status === "playing" && deckA?.filePath) engine.crossfade("B", "A", 2000);
@@ -109,6 +136,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, toggleAuto, toggleShuffle, 
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">Live Assist</h1>
         <div className="flex items-center gap-1.5">
+          <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
           <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
           <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
           <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
@@ -124,7 +152,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, toggleAuto, toggleShuffle, 
           {queue.length > 0 && <button onClick={() => engine.clearQueue()} className="text-[11px] text-zinc-600 hover:text-zinc-400">Clear</button>}
         </div>
         {queue.length === 0 ? (
-          <div className="text-xs text-zinc-600 italic">Empty. Add songs from Library with the Q button.</div>
+          <div className="text-xs text-zinc-600 italic">{continuous ? "Continuous mode: will auto-refill from library when empty." : "Empty. Add songs from Library with the Q button."}</div>
         ) : (
           <div className="space-y-0.5 max-h-40 overflow-y-auto">
             {queue.slice(0, 15).map((item, i) => (
