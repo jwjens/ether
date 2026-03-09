@@ -1,37 +1,52 @@
 const fs = require('fs');
-const path = require('path');
 
-// 1. Fix src/audio/id3.ts
-const id3Path = path.join('src', 'audio', 'id3.ts');
-if (fs.existsSync(id3Path)) {
-  let content = fs.readFileSync(id3Path, 'utf8');
-  // Add || null to the end of the assignment lines to satisfy TS
-  content = content.replace(/result\.title = v2\.title \|\| v1\.title;/g, 'result.title = v2.title || v1.title || null;');
-  content = content.replace(/result\.artist = v2\.artist \|\| v1\.artist;/g, 'result.artist = v2.artist || v1.artist || null;');
-  content = content.replace(/result\.album = v2\.album \|\| v1\.album;/g, 'result.album = v2.album || v1.album || null;');
-  content = content.replace(/result\.year = v2\.year \|\| v1\.year;/g, 'result.year = v2.year || v1.year || null;');
-  content = content.replace(/result\.genre = v2\.genre \|\| v1\.genre;/g, 'result.genre = v2.genre || v1.genre || null;');
-  fs.writeFileSync(id3Path, content);
-  console.log('✅ Fixed src/audio/id3.ts');
-}
-
-// 2. Fix src/db/client.ts
-const dbPath = path.join('src', 'db', 'client.ts');
-if (fs.existsSync(dbPath)) {
-  // We'll replace the problematic execute function with a safer version
-  const newExecute = `export async function execute(sql: string, params: unknown[] = []): Promise<{ rowsAffected: number; lastInsertId: number }> {
+// Fix 1: Clean client.ts
+fs.writeFileSync('src/db/client.ts', `import Database from "@tauri-apps/plugin-sql";
+let db: Database | null = null;
+export async function getDb(): Promise<Database> { if (!db) { db = await Database.load("sqlite:openair.db"); } return db; }
+export async function query<T>(sql: string, params: unknown[] = []): Promise<T[]> { const d = await getDb(); return (await d.select(sql, params)) as T[]; }
+export async function queryOne<T>(sql: string, params: unknown[] = []): Promise<T | null> { const rows = await query<T>(sql, params); return rows.length > 0 ? rows[0] : null; }
+export async function execute(sql: string, params: unknown[] = []): Promise<{ rowsAffected: number; lastInsertId: number }> { const d = await getDb(); const r = await d.execute(sql, params); return { rowsAffected: r.rowsAffected, lastInsertId: r.lastInsertId ?? 0 }; }
+export async function runMigrations(): Promise<void> {
   const d = await getDb();
-  const r: any = await d.execute(sql, params);
-  return {
-    rowsAffected: r.rowsAffected ?? 0,
-    lastInsertId: r.lastInsertId ?? 0
-  };
-}`;
-
-  // This regex looks for the existing export async function execute... and replaces it
-  let content = fs.readFileSync(dbPath, 'utf8');
-  content = content.replace(/export async function execute[\s\S]*?return \{[\s\S]*?\}; \}/, newExecute);
-
-  fs.writeFileSync(dbPath, content);
-  console.log('✅ Fixed src/db/client.ts');
+  await d.execute("CREATE TABLE IF NOT EXISTS artists (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, sort_name TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS albums (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, artist_id INTEGER, year INTEGER, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, color TEXT, description TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS songs (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, artist_id INTEGER, album_id INTEGER, file_path TEXT, file_format TEXT, file_size_bytes INTEGER, duration_ms INTEGER NOT NULL DEFAULT 0, genre TEXT, era TEXT, category_id INTEGER, rotation_status TEXT NOT NULL DEFAULT 'active', daypart_mask INTEGER NOT NULL DEFAULT 16777215, gender TEXT NOT NULL DEFAULT 'unknown', tags TEXT NOT NULL DEFAULT '[]', notes TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()), updated_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS shows (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, start_hour INTEGER NOT NULL, end_hour INTEGER NOT NULL, days TEXT NOT NULL DEFAULT '0123456', color TEXT, description TEXT, is_active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS clocks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, show_id INTEGER REFERENCES shows(id), description TEXT, color TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS clock_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, clock_id INTEGER NOT NULL REFERENCES clocks(id) ON DELETE CASCADE, position INTEGER NOT NULL, slot_type TEXT NOT NULL DEFAULT 'music', category_id INTEGER REFERENCES categories(id), label TEXT, duration_min INTEGER NOT NULL DEFAULT 4)");
+  await d.execute("CREATE TABLE IF NOT EXISTS schedule_grid (id INTEGER PRIMARY KEY AUTOINCREMENT, day_of_week INTEGER NOT NULL, hour INTEGER NOT NULL, clock_id INTEGER REFERENCES clocks(id), UNIQUE(day_of_week, hour))");
+  try { await d.execute("ALTER TABLE categories ADD COLUMN spins_per_hour INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { await d.execute("ALTER TABLE categories ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"); } catch {}
+  const r = await d.select("SELECT COUNT(*) as c FROM categories");
+  if ((r as any)[0].c === 0) {
+    await d.execute("INSERT INTO categories (code,name,color) VALUES ('A','Power Current','#ef4444')");
+    await d.execute("INSERT INTO categories (code,name,color) VALUES ('B','Secondary','#f59e0b')");
+    await d.execute("INSERT INTO categories (code,name,color) VALUES ('C','Recurrent','#22c55e')");
+    await d.execute("INSERT INTO categories (code,name,color) VALUES ('D','Gold','#3b82f6')");
+  }
+  const sc = await d.select("SELECT COUNT(*) as c FROM shows");
+  if ((sc as any)[0].c === 0) {
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Morning Drive', 6, 10, '#f59e0b', 'High energy, uptempo')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Midday', 10, 14, '#22c55e', 'Mix of currents and recurrents')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Afternoon Drive', 14, 19, '#3b82f6', 'Peak listening, power currents')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Evening', 19, 0, '#8b5cf6', 'Wind down, deeper cuts')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Overnight', 0, 6, '#6366f1', 'Gold and recurrents')");
+  }
+  console.log("DB ready");
 }
+`, 'utf8');
+console.log('FIXED  src/db/client.ts');
+
+// Fix 2: Patch id3.ts lines 131-135
+let id3 = fs.readFileSync('src/audio/id3.ts', 'utf8');
+id3 = id3.replace('result.title = v2.title || v1.title;', 'result.title = v2.title || v1.title || null;');
+id3 = id3.replace('result.artist = v2.artist || v1.artist;', 'result.artist = v2.artist || v1.artist || null;');
+id3 = id3.replace('result.album = v2.album || v1.album;', 'result.album = v2.album || v1.album || null;');
+id3 = id3.replace('result.year = v2.year || v1.year;', 'result.year = v2.year || v1.year || null;');
+id3 = id3.replace('result.genre = v2.genre || v1.genre;', 'result.genre = v2.genre || v1.genre || null;');
+fs.writeFileSync('src/audio/id3.ts', id3, 'utf8');
+console.log('FIXED  src/audio/id3.ts');
+
+console.log('\nDone! Run: npm run tauri:build');

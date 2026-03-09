@@ -25,9 +25,13 @@
     }
   },
   "bundle": {
-    "active": true,
-    "targets": "all"
-  },
+      "active": true,
+      "targets": "all",
+      "icon": [
+        "icons/icon.ico",
+        "icons/icon.png"
+      ]
+    },
   "plugins": {
     "sql": {
       "preload": ["sqlite:openair.db"]
