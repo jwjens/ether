@@ -13,10 +13,29 @@ interface SongCandidate {
 }
 
 // Get the clock assigned to the current day + hour
+// Check if a show covers the current hour and has a clock assigned
+async function getClockFromShow(): Promise<number | null> {
+  const now = new Date();
+  const hour = now.getHours();
+  const shows = await query<{ id: number; start_hour: number; end_hour: number; clock_id: number | null }>("SELECT * FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL");
+  for (const s of shows) {
+    if (s.end_hour > s.start_hour) {
+      if (hour >= s.start_hour && hour < s.end_hour) return s.clock_id;
+    } else {
+      // Wraps midnight (e.g. 19-6)
+      if (hour >= s.start_hour || hour < s.end_hour) return s.clock_id;
+    }
+  }
+  return null;
+}
+
 async function getClockForNow(): Promise<number | null> {
   const now = new Date();
   const day = now.getDay(); // 0=Sun
   const hour = now.getHours();
+  // Check shows first, then fall back to grid
+  const fromShow = await getClockFromShow();
+  if (fromShow) return fromShow;
   const row = await queryOne<{ clock_id: number }>("SELECT clock_id FROM schedule_grid WHERE day_of_week = ? AND hour = ?", [day, hour]);
   return row ? row.clock_id : null;
 }

@@ -14,6 +14,7 @@ export async function runMigrations(): Promise<void> {
   await d.execute("CREATE TABLE IF NOT EXISTS clocks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, show_id INTEGER REFERENCES shows(id), description TEXT, color TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
   await d.execute("CREATE TABLE IF NOT EXISTS clock_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, clock_id INTEGER NOT NULL REFERENCES clocks(id) ON DELETE CASCADE, position INTEGER NOT NULL, slot_type TEXT NOT NULL DEFAULT 'music', category_id INTEGER REFERENCES categories(id), label TEXT, duration_min INTEGER NOT NULL DEFAULT 4)");
   await d.execute("CREATE TABLE IF NOT EXISTS schedule_grid (id INTEGER PRIMARY KEY AUTOINCREMENT, day_of_week INTEGER NOT NULL, hour INTEGER NOT NULL, clock_id INTEGER REFERENCES clocks(id), UNIQUE(day_of_week, hour))");
+  try { await d.execute("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)"); } catch {}
   try { await d.execute("ALTER TABLE categories ADD COLUMN spins_per_hour INTEGER NOT NULL DEFAULT 0"); } catch {}
   try { await d.execute("ALTER TABLE categories ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"); } catch {}
   const r = await d.select("SELECT COUNT(*) as c FROM categories");
