@@ -70,7 +70,33 @@ export default function App() {
 
   const toggleAuto = () => { const n = !autoAdv; setAutoAdv(n); engine.autoAdvance = n; };
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
-  const toggleContinuous = () => { const n = !continuous; setContinuous(n); engine.continuous = n; };
+  const toggleContinuous = async () => {
+    const n = !continuous;
+    setContinuous(n);
+    engine.continuous = n;
+    if (n) {
+      // Auto-start: fill queue from schedule and play
+      engine.autoAdvance = true;
+      setAutoAdv(true);
+      engine.shuffle = true;
+      setShuffle(true);
+      if (engine.getQueue().length === 0) {
+        const count = await fillQueueFromSchedule();
+        if (count > 0) {
+          const q = engine.getQueue();
+          if (q.length > 0) {
+            const first = q.shift();
+            if (first) {
+              engine.clearQueue();
+              engine.addToQueue(q);
+              await engine.loadToDeck('A', first.filePath, first.title, first.artist);
+              engine.getDeck('A')?.play();
+            }
+          }
+        }
+      }
+    }
+  };
 
   const loadA = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("A", s.file_path, s.title, s.artist_name || ""); }, []);
   const loadB = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("B", s.file_path, s.title, s.artist_name || ""); }, []);
