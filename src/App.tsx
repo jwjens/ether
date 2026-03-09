@@ -240,6 +240,7 @@ function DeckCard({ deck, deckId, accentColor, waveColor, playedColor }: { deck:
 // ============================================================
 
 function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void }) {
+  const [catList, setCatList] = useState<{ id: number; code: string; color: string | null }[]>([]);
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -253,6 +254,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
       setSongs(rows);
       const r = await queryOne<{ c: number }>("SELECT COUNT(*) as c FROM songs");
       setCount(r ? r.c : 0);
+      setCatList(await query<{ id: number; code: string; color: string | null }>("SELECT id, code, color FROM categories ORDER BY code"));
     } catch (e) { console.error(e); setStatus("Error: " + e); }
     setLoading(false);
   };
@@ -319,6 +321,17 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
       </div>
       <div className="flex items-center gap-2">
         <input type="text" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500" />
+        <select onChange={async (e) => {
+          if (!e.target.value) return;
+          const catId = catList.find(c => c.code === e.target.value)?.id || null;
+          const ids = filtered.map(s => s.id);
+          for (const id of ids) { await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, id]); }
+          e.target.value = "";
+          load();
+        }} className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-300">
+          <option value="">Assign All...</option>
+          {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}
+        </select>
         <button onClick={queueAll} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-xs font-bold text-white">Queue All</button>
         <button onClick={handleImport} disabled={importing} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-bold text-white">Import</button>
       </div>
@@ -335,6 +348,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
               <th className="px-2 py-1.5 w-7">#</th>
               <th className="px-2 py-1.5">Title</th>
               <th className="px-2 py-1.5">Artist</th>
+              <th className="px-2 py-1.5">Cat</th>
               <th className="px-2 py-1.5">Fmt</th>
               <th className="px-2 py-1.5 text-right w-28">Load</th>
             </tr></thead>
@@ -343,6 +357,16 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
                 <td className="px-2 py-1.5 text-zinc-600">{i+1}</td>
                 <td className="px-2 py-1.5 text-zinc-100">{s.title}</td>
                 <td className="px-2 py-1.5 text-zinc-400">{s.artist_name || "Unknown"}</td>
+                <td className="px-2 py-1.5">
+                  <select value={s.category_code || ""} onChange={async (e) => {
+                    const catId = catList.find(c => c.code === e.target.value)?.id || null;
+                    await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]);
+                    load();
+                  }} className="bg-zinc-800 border border-zinc-700 rounded text-[10px] text-zinc-200 px-1 py-0.5">
+                    <option value="">—</option>
+                    {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
+                  </select>
+                </td>
                 <td className="px-2 py-1.5 text-zinc-500 uppercase">{s.file_path ? fmtExt(s.file_path) : "--"}</td>
                 <td className="px-2 py-1.5 text-right">
                   <button onClick={() => onLoadA(s)} className="px-1.5 py-0.5 bg-blue-700 hover:bg-blue-600 rounded text-[9px] font-bold text-white mr-0.5">A</button>
