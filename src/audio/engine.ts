@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { readFile } from "@tauri-apps/plugin-fs";
 
 export type DeckId = "A" | "B";
 export type DeckStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
@@ -71,10 +71,8 @@ class Deck {
     this.peaks = [];
     this.emit();
     try {
-      const url = convertFileSrc(filePath);
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error("fetch failed: " + resp.status);
-      const ab = await resp.arrayBuffer();
+      const bytes = await readFile(filePath);
+      const ab = bytes.buffer;
       this.buf = await this.ctx.decodeAudioData(ab);
       this.durationSec = this.buf.duration;
       this.peaks = extractPeaks(this.buf, 200);

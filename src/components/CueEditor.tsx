@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { readFile } from "@tauri-apps/plugin-fs";
 import { queryOne, execute } from "../db/client";
 
 interface Props {
@@ -46,9 +46,8 @@ export default function CueEditor({ songId, filePath, onSaved }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        const url = convertFileSrc(filePath);
-        const resp = await fetch(url);
-        const ab = await resp.arrayBuffer();
+        const bytes = await readFile(filePath);
+        const ab = bytes.buffer;
         const actx = new AudioContext({ sampleRate: 44100 });
         ctxRef.current = actx;
         const buf = await actx.decodeAudioData(ab);

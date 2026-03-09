@@ -1,4 +1,4 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { readFile } from "@tauri-apps/plugin-fs";
 
 export interface ID3Tags {
   title: string | null;
@@ -94,10 +94,8 @@ function parseID3v2(data: ArrayBuffer): Partial<ID3Tags> {
 export async function readID3(filePath: string): Promise<ID3Tags> {
   const result: ID3Tags = { title: null, artist: null, album: null, year: null, genre: null, durationSec: null };
   try {
-    const url = convertFileSrc(filePath);
-    const resp = await fetch(url);
-    if (!resp.ok) return result;
-    const ab = await resp.arrayBuffer();
+    const bytes = await readFile(filePath);
+    const ab = bytes.buffer;
     const v2 = parseID3v2(ab);
     const v1 = parseID3v1(ab);
     result.title = v2.title || v1.title || null;

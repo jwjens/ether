@@ -1,7 +1,7 @@
 {
   "productName": "Ether",
   "version": "0.1.0",
-  "identifier": "com.openair.app",
+  "identifier": "com.ether.radio",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -13,28 +13,35 @@
       {
         "title": "Ether",
         "width": 1280,
-        "height": 800
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 600,
+        "resizable": true
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' asset: https://asset.localhost; img-src 'self' asset: https://asset.localhost",
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' asset: https://asset.localhost; img-src 'self' asset: https://asset.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**/*"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
   "bundle": {
-      "active": true,
-      "targets": "all",
-      "icon": [
-        "icons/icon.ico",
-        "icons/icon.png"
-      ]
-    },
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ]
+  },
   "plugins": {
     "sql": {
-      "preload": ["sqlite:openair.db"]
+      "preload": [
+        "sqlite:openair.db"
+      ]
     }
   }
 }
