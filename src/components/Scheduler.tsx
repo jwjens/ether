@@ -3,7 +3,8 @@ import { query, execute, queryOne } from "../db/client";
 
 interface Show {
   id: number; name: string; start_hour: number; end_hour: number;
-  days: string; color: string | null; description: string | null; is_active: number;
+  days: string; color: string | null; description: string | null;
+  is_active: number; clock_id: number | null; clock_name: string | null;
 }
 
 interface Category {
@@ -34,37 +35,37 @@ function fmtHour(h: number): string {
 }
 
 export default function Scheduler() {
-  const [tab, setTab] = useState<"shows" | "categories" | "clocks" | "grid">("shows");
-
+  const [tab, setTab] = useState<"shows" | "categories" | "clocks">("shows");
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold">Show Scheduler</h1>
-      </div>
+      <h1 className="text-lg font-bold">Show Scheduler</h1>
       <div className="flex gap-1">
-        {(["shows", "categories", "clocks", "grid"] as const).map(t => (
+        {(["shows", "categories", "clocks"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={tab === t ? "px-3 py-1.5 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1.5 rounded text-xs font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}
-          >{t === "shows" ? "Shows / Dayparts" : t === "categories" ? "Categories" : t === "clocks" ? "Format Clocks" : "Schedule Grid"}</button>
+          >{t === "shows" ? "Shows / Dayparts" : t === "categories" ? "Categories" : "Format Clocks"}</button>
         ))}
       </div>
       {tab === "shows" && <ShowsTab />}
       {tab === "categories" && <CategoriesTab />}
       {tab === "clocks" && <ClocksTab />}
-      {tab === "grid" && <GridTab />}
     </div>
   );
 }
 
 // ============================================================
-// SHOWS / DAYPARTS TAB
+// SHOWS TAB — with clock dropdown
 // ============================================================
 
 function ShowsTab() {
   const [shows, setShows] = useState<Show[]>([]);
+  const [clocks, setClocks] = useState<Clock[]>([]);
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
 
-  const load = async () => { setShows(await query<Show>("SELECT * FROM shows ORDER BY start_hour")); };
+  const load = async () => {
+    setShows(await query<Show>("SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour"));
+    setClocks(await query<Clock>("SELECT * FROM clocks ORDER BY name"));
+  };
   useEffect(() => { load(); }, []);
 
   const save = async () => {
@@ -79,6 +80,11 @@ function ShowsTab() {
     setEditing(null); load();
   };
 
+  const assignClock = async (showId: number, clockId: number | null) => {
+    await execute("UPDATE shows SET clock_id = ? WHERE id = ?", [clockId, showId]);
+    load();
+  };
+
   const remove = async (id: number) => { await execute("DELETE FROM shows WHERE id=?", [id]); load(); };
 
   return (
@@ -88,7 +94,7 @@ function ShowsTab() {
         <button onClick={() => setEditing({ name: "", start_hour: 0, end_hour: 6, color: "#3b82f6" })} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">+ New Show</button>
       </div>
 
-      {/* 24-hour timeline visualization */}
+      {/* Timeline */}
       <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
         <div className="text-[10px] text-zinc-500 uppercase mb-1">24-Hour Timeline</div>
         <div className="relative h-10 bg-zinc-800 rounded overflow-hidden flex">
@@ -107,6 +113,7 @@ function ShowsTab() {
         </div>
       </div>
 
+      {/* Edit form */}
       {editing && (
         <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
           <div className="grid grid-cols-4 gap-2">
@@ -129,27 +136,42 @@ function ShowsTab() {
         </div>
       )}
 
-      <div className="space-y-1">
+      {/* Show list with clock dropdowns */}
+      <div className="space-y-1.5">
         {shows.map(s => (
-          <div key={s.id} className="flex items-center justify-between px-3 py-2 bg-zinc-900 rounded border border-zinc-800 hover:bg-zinc-800">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: s.color || "#444" }}></div>
-              <span className="text-sm text-zinc-100 font-medium">{s.name}</span>
-              <span className="text-xs text-zinc-500">{fmtHour(s.start_hour)} - {fmtHour(s.end_hour)}</span>
+          <div key={s.id} className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: s.color || "#444" }}></div>
+                <div>
+                  <div className="text-sm text-zinc-100 font-medium">{s.name}</div>
+                  <div className="text-[11px] text-zinc-500">{fmtHour(s.start_hour)} - {fmtHour(s.end_hour)}{s.description ? " — " + s.description : ""}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setEditing(s)} className="px-2 py-1 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button>
+                <button onClick={() => remove(s.id)} className="px-2 py-1 bg-zinc-800 hover:bg-red-900 rounded text-[10px] text-zinc-500 hover:text-red-400">Del</button>
+              </div>
             </div>
-            <div className="flex gap-1">
-              <button onClick={() => setEditing(s)} className="px-2 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button>
-              <button onClick={() => remove(s.id)} className="px-2 py-0.5 bg-zinc-800 hover:bg-red-900 rounded text-[10px] text-zinc-500 hover:text-red-400">Delete</button>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-[11px] text-zinc-500">Format Clock:</span>
+              <select value={s.clock_id || ""} onChange={e => assignClock(s.id, e.target.value ? parseInt(e.target.value) : null)}
+                className="flex-1 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200">
+                <option value="">-- No clock assigned --</option>
+                {clocks.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              {s.clock_name && <span className="text-[11px] text-emerald-400 font-bold">Active</span>}
             </div>
           </div>
         ))}
+        {shows.length === 0 && <div className="text-xs text-zinc-600 italic text-center py-4">No shows yet. Click + New Show to create dayparts.</div>}
       </div>
     </div>
   );
 }
 
 // ============================================================
-// CATEGORIES TAB — A/B/C/D rotation setup
+// CATEGORIES TAB
 // ============================================================
 
 function CategoriesTab() {
@@ -180,11 +202,9 @@ function CategoriesTab() {
         <h2 className="text-sm font-bold text-zinc-300">Rotation Categories</h2>
         <button onClick={() => setEditing({ code: "", name: "", color: "#3b82f6", spins_per_hour: 0, priority: 0 })} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">+ New Category</button>
       </div>
-
       <div className="text-xs text-zinc-500 bg-zinc-900 rounded p-2 border border-zinc-800">
-        <strong>How rotation works:</strong> A = Power Current (heavy rotation, newest hits). B = Secondary (medium rotation). C = Recurrent (familiar favorites). D = Gold (classic library). Higher priority + more spins per hour = plays more often.
+        <strong>How rotation works:</strong> A = Power Current (heavy rotation, newest hits). B = Secondary (medium rotation). C = Recurrent (familiar favorites). D = Gold (classic library).
       </div>
-
       {editing && (
         <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
           <div className="grid grid-cols-5 gap-2">
@@ -199,7 +219,6 @@ function CategoriesTab() {
           </div>
         </div>
       )}
-
       <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
         <table className="w-full text-xs">
           <thead><tr className="text-left text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
@@ -216,10 +235,8 @@ function CategoriesTab() {
               <td className="px-3 py-2 font-bold text-zinc-100">{c.code}</td>
               <td className="px-3 py-2 text-zinc-300">{c.name}</td>
               <td className="px-3 py-2 text-right text-zinc-400">{c.song_count || 0}</td>
-              <td className="px-3 py-2 text-right text-zinc-400">{c.spins_per_hour || "—"}</td>
-              <td className="px-3 py-2 text-right">
-                <button onClick={() => setEditing(c)} className="px-2 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button>
-              </td>
+              <td className="px-3 py-2 text-right text-zinc-400">{c.spins_per_hour || "--"}</td>
+              <td className="px-3 py-2 text-right"><button onClick={() => setEditing(c)} className="px-2 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button></td>
             </tr>
           ))}</tbody>
         </table>
@@ -229,7 +246,7 @@ function CategoriesTab() {
 }
 
 // ============================================================
-// CLOCKS TAB — format clock builder
+// CLOCKS TAB
 // ============================================================
 
 function ClocksTab() {
@@ -244,8 +261,7 @@ function ClocksTab() {
     setCats(await query<Category>("SELECT * FROM categories ORDER BY code"));
   };
   const loadSlots = async (clockId: number) => {
-    const s = await query<ClockSlot>("SELECT cs.*, c.code as category_code, c.color as category_color FROM clock_slots cs LEFT JOIN categories c ON c.id = cs.category_id WHERE cs.clock_id = ? ORDER BY cs.position", [clockId]);
-    setSlots(s);
+    setSlots(await query<ClockSlot>("SELECT cs.*, c.code as category_code, c.color as category_color FROM clock_slots cs LEFT JOIN categories c ON c.id = cs.category_id WHERE cs.clock_id = ? ORDER BY cs.position", [clockId]));
   };
 
   useEffect(() => { loadClocks(); }, []);
@@ -269,6 +285,16 @@ function ClocksTab() {
     if (selected) loadSlots(selected);
   };
 
+  const moveSlot = async (idx: number, dir: -1 | 1) => {
+    const target = idx + dir;
+    if (target < 0 || target >= slots.length) return;
+    const a = slots[idx];
+    const b = slots[target];
+    await execute("UPDATE clock_slots SET position = ? WHERE id = ?", [target, a.id]);
+    await execute("UPDATE clock_slots SET position = ? WHERE id = ?", [idx, b.id]);
+    if (selected) loadSlots(selected);
+  };
+
   const totalMin = slots.reduce((sum, s) => sum + s.duration_min, 0);
 
   return (
@@ -280,19 +306,13 @@ function ClocksTab() {
           <button onClick={createClock} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">Create</button>
         </div>
       </div>
-
       <div className="grid grid-cols-4 gap-3">
-        {/* Clock list */}
         <div className="space-y-1">
           {clocks.map(c => (
-            <button key={c.id} onClick={() => setSelected(c.id)}
-              className={selected === c.id ? "w-full px-3 py-2 text-left bg-blue-900 border border-blue-700 rounded text-xs text-white font-medium" : "w-full px-3 py-2 text-left bg-zinc-900 border border-zinc-800 rounded text-xs text-zinc-300 hover:bg-zinc-800"}
-            >{c.name}</button>
+            <button key={c.id} onClick={() => setSelected(c.id)} className={selected === c.id ? "w-full px-3 py-2 text-left bg-blue-900 border border-blue-700 rounded text-xs text-white font-medium" : "w-full px-3 py-2 text-left bg-zinc-900 border border-zinc-800 rounded text-xs text-zinc-300 hover:bg-zinc-800"}>{c.name}</button>
           ))}
-          {clocks.length === 0 && <div className="text-xs text-zinc-600 italic p-2">No clocks yet. Create one above.</div>}
+          {clocks.length === 0 && <div className="text-xs text-zinc-600 italic p-2">No clocks yet.</div>}
         </div>
-
-        {/* Clock editor */}
         <div className="col-span-3">
           {selected ? (
             <div className="space-y-2">
@@ -307,32 +327,29 @@ function ClocksTab() {
                   <button onClick={() => addSlot("sweeper", null)} className="px-2 py-0.5 bg-zinc-700 rounded text-[9px] font-bold text-zinc-300">+ Sweep</button>
                 </div>
               </div>
-
-              {/* Visual clock wheel */}
               <div className="flex gap-3">
                 <div className="flex-1">
                   <div className="flex flex-wrap gap-1">
                     {slots.map((s, i) => (
-                      <div key={s.id} className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold text-white cursor-pointer hover:opacity-80"
-                        style={{ backgroundColor: s.category_color || (s.slot_type === "spot_break" ? "#991b1b" : s.slot_type === "liner" ? "#854d0e" : "#374151") }}
-                        onClick={() => removeSlot(s.id)}>
-                        <span>{i + 1}</span>
-                        <span>{s.category_code || s.slot_type}</span>
-                        <span className="text-[8px] opacity-70">{s.duration_min}m</span>
+                      <div key={s.id} className="flex items-center gap-0.5 px-1.5 py-1 rounded text-[10px] font-bold text-white group"
+                        style={{ backgroundColor: s.category_color || (s.slot_type === "spot_break" ? "#991b1b" : s.slot_type === "liner" ? "#854d0e" : "#374151") }}>
+                        <span className="opacity-60 w-4">{i + 1}</span>
+                        <span className="flex-1">{s.category_code || s.slot_type}</span>
+                        <button onClick={() => moveSlot(i, -1)} className="opacity-0 group-hover:opacity-80 text-[9px] px-0.5">&#9650;</button>
+                        <button onClick={() => moveSlot(i, 1)} className="opacity-0 group-hover:opacity-80 text-[9px] px-0.5">&#9660;</button>
+                        <button onClick={() => removeSlot(s.id)} className="opacity-0 group-hover:opacity-80 text-[9px] px-0.5 text-red-300">&#10005;</button>
                       </div>
                     ))}
                   </div>
-                  {slots.length > 0 && <div className="text-[9px] text-zinc-600 mt-1">Click a slot to remove it</div>}
+                  {slots.length > 0 && <div className="text-[9px] text-zinc-600 mt-1">Hover: arrows to move, X to delete</div>}
                 </div>
-
-                {/* Mini pie chart */}
                 <div className="w-32 h-32 shrink-0">
                   <ClockWheel slots={slots} />
                 </div>
               </div>
             </div>
           ) : (
-            <div className="text-xs text-zinc-600 italic p-4 text-center">Select a clock from the left or create a new one.</div>
+            <div className="text-xs text-zinc-600 italic p-4 text-center">Select a clock or create a new one.</div>
           )}
         </div>
       </div>
@@ -343,24 +360,19 @@ function ClocksTab() {
 function ClockWheel({ slots }: { slots: ClockSlot[] }) {
   const total = slots.reduce((s, sl) => s + sl.duration_min, 0) || 60;
   let angle = -90;
-
   const arcs = slots.map(s => {
     const sweep = (s.duration_min / total) * 360;
     const startAngle = angle;
     angle += sweep;
     const rad1 = (startAngle * Math.PI) / 180;
     const rad2 = ((startAngle + sweep) * Math.PI) / 180;
-    const r = 55;
-    const cx = 64, cy = 64;
-    const x1 = cx + r * Math.cos(rad1);
-    const y1 = cy + r * Math.sin(rad1);
-    const x2 = cx + r * Math.cos(rad2);
-    const y2 = cy + r * Math.sin(rad2);
+    const r = 55; const cx = 64; const cy = 64;
+    const x1 = cx + r * Math.cos(rad1); const y1 = cy + r * Math.sin(rad1);
+    const x2 = cx + r * Math.cos(rad2); const y2 = cy + r * Math.sin(rad2);
     const large = sweep > 180 ? 1 : 0;
     const color = s.category_color || (s.slot_type === "spot_break" ? "#991b1b" : "#374151");
     return { d: "M " + cx + " " + cy + " L " + x1 + " " + y1 + " A " + r + " " + r + " 0 " + large + " 1 " + x2 + " " + y2 + " Z", color, id: s.id };
   });
-
   return (
     <svg viewBox="0 0 128 128" className="w-full h-full">
       <circle cx="64" cy="64" r="58" fill="none" stroke="#27272a" strokeWidth="1" />
@@ -368,92 +380,5 @@ function ClockWheel({ slots }: { slots: ClockSlot[] }) {
       <circle cx="64" cy="64" r="12" fill="#18181b" />
       <text x="64" y="67" textAnchor="middle" fill="#71717a" fontSize="8">{total}m</text>
     </svg>
-  );
-}
-
-// ============================================================
-// SCHEDULE GRID — 7x24 assignment
-// ============================================================
-
-function GridTab() {
-  const [clocks, setClocks] = useState<Clock[]>([]);
-  const [grid, setGrid] = useState<Record<string, number | null>>({});
-
-  const load = async () => {
-    setClocks(await query<Clock>("SELECT * FROM clocks ORDER BY name"));
-    const rows = await query<{ day_of_week: number; hour: number; clock_id: number }>("SELECT * FROM schedule_grid");
-    const g: Record<string, number | null> = {};
-    rows.forEach(r => { g[r.day_of_week + "-" + r.hour] = r.clock_id; });
-    setGrid(g);
-  };
-  useEffect(() => { load(); }, []);
-
-  const assign = async (day: number, hour: number, clockId: number | null) => {
-    const key = day + "-" + hour;
-    if (clockId) {
-      await execute("INSERT OR REPLACE INTO schedule_grid (day_of_week, hour, clock_id) VALUES (?,?,?)", [day, hour, clockId]);
-    } else {
-      await execute("DELETE FROM schedule_grid WHERE day_of_week=? AND hour=?", [day, hour]);
-    }
-    setGrid(prev => ({ ...prev, [key]: clockId }));
-  };
-
-  const [paintClock, setPaintClock] = useState<number | null>(null);
-  const [painting, setPainting] = useState(false);
-
-  const clockMap = new Map(clocks.map(c => [c.id, c]));
-
-  return (
-    <div className="space-y-3">
-      <h2 className="text-sm font-bold text-zinc-300">Schedule Grid</h2>
-      <div className="text-xs text-zinc-500 mb-2">Select a clock below, then click or drag across the grid to paint it.</div>
-
-      <div className="flex gap-2 flex-wrap mb-3">
-        <button onClick={() => setPaintClock(null)} className={paintClock === null ? "px-3 py-1.5 rounded text-xs font-bold border-2 border-white bg-zinc-800 text-white" : "px-3 py-1.5 rounded text-xs font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700 border-2 border-transparent"}>Eraser</button>
-        {clocks.map(c => (
-          <button key={c.id} onClick={() => setPaintClock(c.id)} className={"px-3 py-1.5 rounded text-xs font-bold text-white border-2 " + (paintClock === c.id ? "border-white" : "border-transparent")} style={{ backgroundColor: c.color || "#444" }}>{c.name}</button>
-        ))}
-      </div>
-
-      <div className="overflow-auto bg-zinc-900 rounded-lg border border-zinc-800 p-2"
-        onMouseUp={() => setPainting(false)}
-        onMouseLeave={() => setPainting(false)}>
-        <table className="text-[10px] border-collapse w-full" style={{ userSelect: "none" }}>
-          <thead>
-            <tr>
-              <th className="px-2 py-1 text-zinc-500 text-left w-12"></th>
-              {HOURS.map(h => <th key={h} className="py-1 text-zinc-500 text-center" style={{ minWidth: "42px" }}>{fmtHour(h)}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {DAYS.map((day, di) => (
-              <tr key={di}>
-                <td className="px-2 py-1 text-zinc-300 font-bold">{day}</td>
-                {HOURS.map(h => {
-                  const key = di + "-" + h;
-                  const clockId = grid[key] || null;
-                  const clock = clockId ? clockMap.get(clockId) : null;
-                  return (
-                    <td key={h}
-                      className="border border-zinc-700 cursor-pointer text-center"
-                      style={{ backgroundColor: clock?.color || "#1c1c1e", height: "32px", minWidth: "42px" }}
-                      onMouseDown={() => { setPainting(true); assign(di, h, paintClock); }}
-                      onMouseEnter={() => { if (painting) assign(di, h, paintClock); }}>
-                      <span className="text-white font-bold text-[9px]">{clock?.name?.substring(0, 4) || ""}</span>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {clocks.length > 0 && (
-        <div className="flex gap-3 text-xs">
-          {clocks.map(c => <span key={c.id} className="flex items-center gap-1.5"><span className="w-4 h-4 rounded" style={{ backgroundColor: c.color || "#444" }}></span><span className="text-zinc-300">{c.name}</span></span>)}
-        </div>
-      )}
-    </div>
   );
 }
