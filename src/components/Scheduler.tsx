@@ -398,38 +398,48 @@ function GridTab() {
     setGrid(prev => ({ ...prev, [key]: clockId }));
   };
 
+  const [paintClock, setPaintClock] = useState<number | null>(null);
+  const [painting, setPainting] = useState(false);
+
   const clockMap = new Map(clocks.map(c => [c.id, c]));
 
   return (
-    <div className="space-y-2">
-      <h2 className="text-sm font-bold text-zinc-300">Schedule Grid — 7 x 24</h2>
-      <div className="text-xs text-zinc-500">Click a cell to cycle through clocks. The schedule determines which format clock plays at each hour.</div>
-      <div className="overflow-auto">
-        <table className="text-[9px] border-collapse">
+    <div className="space-y-3">
+      <h2 className="text-sm font-bold text-zinc-300">Schedule Grid</h2>
+      <div className="text-xs text-zinc-500 mb-2">Select a clock below, then click or drag across the grid to paint it.</div>
+
+      <div className="flex gap-2 flex-wrap mb-3">
+        <button onClick={() => setPaintClock(null)} className={paintClock === null ? "px-3 py-1.5 rounded text-xs font-bold border-2 border-white bg-zinc-800 text-white" : "px-3 py-1.5 rounded text-xs font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700 border-2 border-transparent"}>Eraser</button>
+        {clocks.map(c => (
+          <button key={c.id} onClick={() => setPaintClock(c.id)} className={"px-3 py-1.5 rounded text-xs font-bold text-white border-2 " + (paintClock === c.id ? "border-white" : "border-transparent")} style={{ backgroundColor: c.color || "#444" }}>{c.name}</button>
+        ))}
+      </div>
+
+      <div className="overflow-auto bg-zinc-900 rounded-lg border border-zinc-800 p-2"
+        onMouseUp={() => setPainting(false)}
+        onMouseLeave={() => setPainting(false)}>
+        <table className="text-[10px] border-collapse w-full" style={{ userSelect: "none" }}>
           <thead>
             <tr>
-              <th className="px-1 py-1 text-zinc-500"></th>
-              {HOURS.map(h => <th key={h} className="px-1 py-1 text-zinc-500 w-8 text-center">{h}</th>)}
+              <th className="px-2 py-1 text-zinc-500 text-left w-12"></th>
+              {HOURS.map(h => <th key={h} className="py-1 text-zinc-500 text-center" style={{ minWidth: "42px" }}>{fmtHour(h)}</th>)}
             </tr>
           </thead>
           <tbody>
             {DAYS.map((day, di) => (
               <tr key={di}>
-                <td className="px-2 py-1 text-zinc-400 font-bold">{day}</td>
+                <td className="px-2 py-1 text-zinc-300 font-bold">{day}</td>
                 {HOURS.map(h => {
                   const key = di + "-" + h;
                   const clockId = grid[key] || null;
                   const clock = clockId ? clockMap.get(clockId) : null;
                   return (
-                    <td key={h} className="border border-zinc-800 cursor-pointer hover:bg-zinc-700 text-center"
-                      style={{ backgroundColor: clock?.color || "#18181b" }}
-                      onClick={() => {
-                        const ids = [null, ...clocks.map(c => c.id)];
-                        const curr = ids.indexOf(clockId);
-                        const next = ids[(curr + 1) % ids.length];
-                        assign(di, h, next);
-                      }}>
-                      <span className="text-white font-bold">{clock?.name?.charAt(0) || ""}</span>
+                    <td key={h}
+                      className="border border-zinc-700 cursor-pointer text-center"
+                      style={{ backgroundColor: clock?.color || "#1c1c1e", height: "32px", minWidth: "42px" }}
+                      onMouseDown={() => { setPainting(true); assign(di, h, paintClock); }}
+                      onMouseEnter={() => { if (painting) assign(di, h, paintClock); }}>
+                      <span className="text-white font-bold text-[9px]">{clock?.name?.substring(0, 4) || ""}</span>
                     </td>
                   );
                 })}
@@ -438,9 +448,10 @@ function GridTab() {
           </tbody>
         </table>
       </div>
+
       {clocks.length > 0 && (
-        <div className="flex gap-2 text-[10px]">
-          {clocks.map(c => <span key={c.id} className="flex items-center gap-1"><span className="w-3 h-3 rounded" style={{ backgroundColor: c.color || "#444" }}></span>{c.name}</span>)}
+        <div className="flex gap-3 text-xs">
+          {clocks.map(c => <span key={c.id} className="flex items-center gap-1.5"><span className="w-4 h-4 rounded" style={{ backgroundColor: c.color || "#444" }}></span><span className="text-zinc-300">{c.name}</span></span>)}
         </div>
       )}
     </div>
