@@ -7,10 +7,28 @@ export interface DeckState {
   id: DeckId; status: DeckStatus; title: string; artist: string;
   filePath: string; durationSec: number; positionSec: number;
   volume: number; error: string | null;
+  peaks: number[];
 }
 
 type Listener = (deck: DeckId, state: DeckState) => void;
 type EndCallback = (deck: DeckId) => void;
+
+function extractPeaks(buffer: AudioBuffer, numPeaks: number): number[] {
+  const chan = buffer.getChannelData(0);
+  const step = Math.floor(chan.length / numPeaks);
+  const peaks: number[] = [];
+  for (let i = 0; i < numPeaks; i++) {
+    let max = 0;
+    const start = i * step;
+    const end = Math.min(start + step, chan.length);
+    for (let j = start; j < end; j++) {
+      const abs = Math.abs(chan[j]);
+      if (abs > max) max = abs;
+    }
+    peaks.push(max);
+  }
+  return peaks;
+}
 
 class Deck {
   id: DeckId;
@@ -26,6 +44,7 @@ class Deck {
   status: DeckStatus = "idle";
   title = ""; artist = ""; filePath = "";
   durationSec = 0; volume = 1; error: string | null = null;
+  peaks: number[] = [];
 
   constructor(id: DeckId, ctx: AudioContext, notify: Listener, onEnd: EndCallback) {
     this.id = id; this.ctx = ctx; this.notify = notify; this.onEnd = onEnd;
@@ -40,7 +59,7 @@ class Deck {
   getState(): DeckState {
     return { id: this.id, status: this.status, title: this.title, artist: this.artist,
       filePath: this.filePath, durationSec: this.durationSec, positionSec: this.positionSec,
-      volume: this.volume, error: this.error };
+      volume: this.volume, error: this.error, peaks: this.peaks };
   }
 
   private emit() { this.notify(this.id, this.getState()); }
@@ -49,6 +68,7 @@ class Deck {
     this.stop();
     this.status = "loading"; this.filePath = filePath;
     this.title = title; this.artist = artist; this.error = null;
+    this.peaks = [];
     this.emit();
     try {
       const url = convertFileSrc(filePath);
@@ -57,6 +77,7 @@ class Deck {
       const ab = await resp.arrayBuffer();
       this.buf = await this.ctx.decodeAudioData(ab);
       this.durationSec = this.buf.duration;
+      this.peaks = extractPeaks(this.buf, 200);
       this.status = "idle"; this.emit();
     } catch (e) {
       this.status = "error"; this.error = String(e); this.emit();
@@ -93,8 +114,7 @@ class Deck {
     this.killSource(); this.clearTimer();
     this.status = "idle"; this.offset = 0;
     this.gainNode.gain.setValueAtTime(1, this.ctx.currentTime);
-    this.volume = 1;
-    this.emit();
+    this.volume = 1; this.emit();
   }
 
   setVolume(v: number) {
@@ -108,7 +128,7 @@ class Deck {
   }
 
   private killSource() { try { this.source?.stop(); } catch {} this.source = null; }
-  private startTimer() { this.clearTimer(); this.timer = setInterval(() => this.emit(), 200); }
+  private startTimer() { this.clearTimer(); this.timer = setInterval(() => this.emit(), 100); }
   private clearTimer() { if (this.timer) { clearInterval(this.timer); this.timer = null; } }
 }
 
@@ -119,20 +139,20 @@ export class AudioEngine {
   private listeners = new Set<Listener>();
   private onEvt: Listener = (id, st) => { this.listeners.forEach(l => l(id, st)); };
 
-  // Auto-advance: queue of songs to play
   private queue: { filePath: string; title: string; artist: string }[] = [];
   autoAdvance = false;
+  shuffle = false;
 
   private handleDeckEnd = (deckId: DeckId) => {
     if (!this.autoAdvance) return;
     if (this.queue.length === 0) return;
-    const next = this.queue.shift()!;
-    // Load to the same deck and play
+    let idx = 0;
+    if (this.shuffle) idx = Math.floor(Math.random() * this.queue.length);
+    const next = this.queue.splice(idx, 1)[0];
     const deck = this.getDeck(deckId);
     if (deck) {
       deck.load(next.filePath, next.title, next.artist).then(() => {
         deck.play();
-        // Notify listeners so UI updates the queue
         this.listeners.forEach(l => l(deckId, deck.getState()));
       });
     }
@@ -152,27 +172,18 @@ export class AudioEngine {
     this.init(); const d = this.getDeck(id); if (d) await d.load(filePath, title, artist);
   }
 
-  // Add songs to the auto-advance queue
-  addToQueue(songs: { filePath: string; title: string; artist: string }[]) {
-    this.queue.push(...songs);
-  }
-
+  addToQueue(songs: { filePath: string; title: string; artist: string }[]) { this.queue.push(...songs); }
   clearQueue() { this.queue = []; }
   getQueue() { return [...this.queue]; }
-  removeFromQueue(index: number) { this.queue.splice(index, 1); }
 
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {
     const from = this.getDeck(fromId);
     const to = this.getDeck(toId);
     if (!from || !to) return;
-    // Reset the incoming deck volume to full before playing
     to.setVolume(1);
     to.play();
     from.fadeTo(0, ms / 1000);
-    setTimeout(() => {
-      from.stop();
-      from.setVolume(1);
-    }, ms + 100);
+    setTimeout(() => { from.stop(); from.setVolume(1); }, ms + 100);
   }
 }
 
