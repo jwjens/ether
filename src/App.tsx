@@ -7,6 +7,7 @@ import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
 import Scheduler from "./components/Scheduler";
+import Logs from "./components/Logs";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
 
@@ -33,6 +34,19 @@ export default function App() {
   const [shuffle, setShuffle] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
+
+  // Log plays to database
+  useEffect(() => {
+    (globalThis as any).__etherEngine = engine;
+    return engine.onPlayStart(async (deckId, title, artist, filePath) => {
+      try {
+        await execute(
+          "INSERT INTO play_log (title, artist, deck, played_at) VALUES (?, ?, ?, unixepoch())",
+          [title, artist, deckId]
+        );
+      } catch (e) { console.error('Log write error:', e); }
+    });
+  }, []);
 
   // Refill callback: loads all songs from DB when queue empties
   useEffect(() => {
@@ -122,7 +136,7 @@ export default function App() {
           {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} />}
           {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
           {panel === "clocks" && <Scheduler />}
-          {panel === "logs" && <PH title="Log Builder" />}
+          {panel === "logs" && <Logs />}
           {panel === "spots" && <PH title="Spot Inventory" />}
           {panel === "settings" && <PH title="Settings" />}
         </main>

@@ -32,5 +32,6 @@ export async function runMigrations(): Promise<void> {
     await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Evening', 19, 0, '#8b5cf6', 'Wind down, deeper cuts')");
     await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Overnight', 0, 6, '#6366f1', 'Gold and recurrents')");
   }
+  await d.execute("CREATE TABLE IF NOT EXISTS play_log (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id INTEGER, title TEXT NOT NULL, artist TEXT, file_path TEXT, category_code TEXT, show_name TEXT, clock_name TEXT, deck TEXT, played_at INTEGER NOT NULL DEFAULT (unixepoch()))");
   console.log("DB ready");
 }

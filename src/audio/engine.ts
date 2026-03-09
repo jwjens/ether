@@ -92,6 +92,7 @@ class Deck {
     src.start(0, fromSec);
     this.source = src; this.startedAt = this.ctx.currentTime;
     this.offset = fromSec; this.status = "playing"; this.emit();
+    if (fromSec === 0) { (globalThis as any).__etherEngine?.notifyPlayStart(this.id, this.title, this.artist, this.filePath); }
     src.onended = () => {
       if (this.status === "playing") {
         this.status = "ended"; this.offset = this.durationSec;
@@ -137,6 +138,7 @@ export class AudioEngine {
   private deckA: Deck | null = null;
   private deckB: Deck | null = null;
   private listeners = new Set<Listener>();
+  private playStartCallbacks = new Set<(deckId: DeckId, title: string, artist: string, filePath: string) => void>();
   private onEvt: Listener = (id, st) => { this.listeners.forEach(l => l(id, st)); };
 
   private queue: { filePath: string; title: string; artist: string }[] = [];
@@ -175,10 +177,15 @@ export class AudioEngine {
   }
 
   on(fn: Listener): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  onPlayStart(fn: (deckId: DeckId, title: string, artist: string, filePath: string) => void): () => void { this.playStartCallbacks.add(fn); return () => this.playStartCallbacks.delete(fn); }
   getDeck(id: DeckId): Deck | null { return id === "A" ? this.deckA : this.deckB; }
 
   async loadToDeck(id: DeckId, filePath: string, title: string, artist: string) {
     this.init(); const d = this.getDeck(id); if (d) await d.load(filePath, title, artist);
+  }
+
+  notifyPlayStart(deckId: DeckId, title: string, artist: string, filePath: string) {
+    this.playStartCallbacks.forEach(fn => fn(deckId, title, artist, filePath));
   }
 
   addToQueue(songs: { filePath: string; title: string; artist: string }[]) { this.queue.push(...songs); }
