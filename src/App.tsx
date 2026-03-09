@@ -3,6 +3,7 @@ import { query, execute, queryOne } from "./db/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readDir } from "@tauri-apps/plugin-fs";
 import { engine, DeckState } from "./audio/engine";
+import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
@@ -245,7 +246,24 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
       for (const fp of files) {
         const ex = await queryOne<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [fp]);
         if (!ex) {
-          await execute("INSERT INTO songs (title, file_path, file_format, daypart_mask) VALUES (?, ?, ?, ?)", [titleFromFile(fp), fp, fmtExt(fp), 16777215]);
+          const tags = await readID3(fp);
+          const title = tags.title || titleFromFile(fp);
+          const artist = tags.artist || null;
+          const album = tags.album || null;
+          const genre = tags.genre || null;
+          let artistId: number | null = null;
+          if (artist) {
+            const exArt = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artist]);
+            if (exArt) { artistId = exArt.id; }
+            else { const r = await execute("INSERT INTO artists (name) VALUES (?)", [artist]); artistId = r.lastInsertId; }
+          }
+          let albumId: number | null = null;
+          if (album) {
+            const exAlb = await queryOne<{ id: number }>("SELECT id FROM albums WHERE title = ? AND (artist_id = ? OR artist_id IS NULL)", [album, artistId]);
+            if (exAlb) { albumId = exAlb.id; }
+            else { const r = await execute("INSERT INTO albums (title, artist_id) VALUES (?, ?)", [album, artistId]); albumId = r.lastInsertId; }
+          }
+          await execute("INSERT INTO songs (title, artist_id, album_id, file_path, file_format, genre, daypart_mask) VALUES (?, ?, ?, ?, ?, ?, ?)", [title, artistId, albumId, fp, fmtExt(fp), genre, 16777215]);
           n++;
         }
         setStatus("Importing... " + n);
