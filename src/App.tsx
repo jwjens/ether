@@ -9,6 +9,7 @@ import Waveform from "./components/Waveform";
 import Scheduler from "./components/Scheduler";
 import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
+import Spots from "./components/Spots";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
 
@@ -141,7 +142,7 @@ export default function App() {
           {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
-          {panel === "spots" && <PH title="Spot Inventory" />}
+          {panel === "spots" && <Spots />}
           {panel === "settings" && <PH title="Settings" />}
         </main>
       </div>
