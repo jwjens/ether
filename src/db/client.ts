@@ -17,5 +17,31 @@ export async function runMigrations(): Promise<void> {
     await d.execute("INSERT INTO categories (code,name,color) VALUES ('C','Recurrent','#22c55e')");
     await d.execute("INSERT INTO categories (code,name,color) VALUES ('D','Gold','#3b82f6')");
   }
+  // Dayparts / Shows
+  await d.execute("CREATE TABLE IF NOT EXISTS shows (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, start_hour INTEGER NOT NULL, end_hour INTEGER NOT NULL, days TEXT NOT NULL DEFAULT '0123456', color TEXT, description TEXT, is_active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+
+  // Clock templates
+  await d.execute("CREATE TABLE IF NOT EXISTS clocks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, show_id INTEGER REFERENCES shows(id), description TEXT, color TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+
+  // Clock slots - what plays in each position
+  await d.execute("CREATE TABLE IF NOT EXISTS clock_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, clock_id INTEGER NOT NULL REFERENCES clocks(id) ON DELETE CASCADE, position INTEGER NOT NULL, slot_type TEXT NOT NULL DEFAULT 'music', category_id INTEGER REFERENCES categories(id), label TEXT, duration_min INTEGER NOT NULL DEFAULT 4)");
+
+  // Schedule grid - which clock plays at which hour
+  await d.execute("CREATE TABLE IF NOT EXISTS schedule_grid (id INTEGER PRIMARY KEY AUTOINCREMENT, day_of_week INTEGER NOT NULL, hour INTEGER NOT NULL, clock_id INTEGER REFERENCES clocks(id), UNIQUE(day_of_week, hour))");
+
+  // Add rotation fields to categories if not present
+  try { await d.execute("ALTER TABLE categories ADD COLUMN spins_per_hour INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { await d.execute("ALTER TABLE categories ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"); } catch {}
+
+  // Seed some shows if empty
+  const showCount = await d.select("SELECT COUNT(*) as c FROM shows");
+  if ((showCount as any)[0].c === 0) {
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Morning Drive', 6, 10, '#f59e0b', 'High energy, uptempo')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Midday', 10, 14, '#22c55e', 'Mix of currents and recurrents')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Afternoon Drive', 14, 19, '#3b82f6', 'Peak listening, power currents')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Evening', 19, 0, '#8b5cf6', 'Wind down, deeper cuts')");
+    await d.execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES ('Overnight', 0, 6, '#6366f1', 'Gold and recurrents')");
+  }
+
   console.log("DB ready");
 }

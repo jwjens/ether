@@ -5,6 +5,7 @@ import { readDir } from "@tauri-apps/plugin-fs";
 import { engine, DeckState } from "./audio/engine";
 import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
+import Scheduler from "./components/Scheduler";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
 
@@ -93,7 +94,7 @@ export default function App() {
         <main className="flex-1 overflow-auto p-4">
           {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} />}
           {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
-          {panel === "clocks" && <PH title="Clock Builder" />}
+          {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <PH title="Log Builder" />}
           {panel === "spots" && <PH title="Spot Inventory" />}
           {panel === "settings" && <PH title="Settings" />}
@@ -110,7 +111,7 @@ export default function App() {
 function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
   const items: { id: Panel; label: string }[] = [
     { id: "live", label: "Live Assist" }, { id: "library", label: "Library" },
-    { id: "clocks", label: "Clocks" }, { id: "logs", label: "Logs" },
+    { id: "clocks", label: "Schedule" }, { id: "logs", label: "Logs" },
     { id: "spots", label: "Spots" }, { id: "settings", label: "Settings" },
   ];
   return (
