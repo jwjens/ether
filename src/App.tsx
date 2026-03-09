@@ -8,6 +8,7 @@ import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
 import Scheduler from "./components/Scheduler";
 import Logs from "./components/Logs";
+import NowPlaying from "./components/NowPlaying";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
 
@@ -34,6 +35,7 @@ export default function App() {
   const [shuffle, setShuffle] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
+  const [showNowPlaying, setShowNowPlaying] = useState(false);
 
   // Log plays to database
   useEffect(() => {
@@ -120,12 +122,14 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100">
+      {showNowPlaying && <NowPlaying onExit={() => setShowNowPlaying(false)} />}
       <header className="h-12 flex items-center justify-between px-4 bg-zinc-900 border-b border-zinc-800 shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-lg font-bold tracking-tight"><span className="text-blue-400">Eth</span>er</span>
           <span className="text-xs text-zinc-500">v0.2.0</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
+          <button onClick={() => setShowNowPlaying(true)} className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px] font-bold text-zinc-400">NOW PLAYING</button>
           <ClockDisplay />
           <button onClick={() => { engine.init(); setOnAir(!onAir); }} className={onAir ? "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-red-600 text-white animate-pulse" : "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-zinc-700 text-zinc-400 hover:bg-zinc-600"}>{onAir ? "ON AIR" : "OFF AIR"}</button>
         </div>
