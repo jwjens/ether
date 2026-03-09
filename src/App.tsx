@@ -3,6 +3,7 @@ import { query, execute, queryOne } from "./db/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readDir } from "@tauri-apps/plugin-fs";
 import { engine, DeckState } from "./audio/engine";
+import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
 import Scheduler from "./components/Scheduler";
@@ -137,6 +138,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">Live Assist</h1>
         <div className="flex items-center gap-1.5">
+          <button onClick={async () => { const n = await fillQueueFromSchedule(); alert("Generated " + n + " tracks from current clock"); }} className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white">GEN LOG</button>
           <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
           <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
           <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
