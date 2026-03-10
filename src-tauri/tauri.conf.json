@@ -23,7 +23,9 @@
       "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; media-src 'self' asset: https://asset.localhost; img-src 'self' asset: https://asset.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
@@ -37,8 +39,9 @@
   },
   "plugins": {
     "sql": {
-      "preload": ["sqlite:openair.db"]
+      "preload": [
+        "sqlite:openair.db"
+      ]
     }
   }
 }
-```
