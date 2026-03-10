@@ -123,7 +123,7 @@ export default function OnAirDeck({ deck, label }: Props) {
               <div style={{ fontSize: 9, fontWeight: 400, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 2 }}>
                 {isInIntro ? "Intro Left" : "Remaining"}
               </div>
-              <div style={{ fontSize: 48, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", lineHeight: 1, color: accentColor, letterSpacing: "-0.02em" }}>
+              <div style={{ fontSize: 48, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", lineHeight: 1, color: accentColor }}>
                 {isInIntro ? fmtCountdown(introEnd - pos) : fmtCountdown(remaining)}
               </div>
             </div>
