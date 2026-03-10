@@ -46,6 +46,7 @@ class Deck {
   title = ""; artist = ""; filePath = "";
   durationSec = 0; volume = 1; error: string | null = null;
   peaks: number[] = [];
+  outroStartSec = 0;
 
   constructor(id: DeckId, ctx: AudioContext, notify: Listener, onEnd: EndCallback) {
     this.id = id; this.ctx = ctx; this.notify = notify; this.onEnd = onEnd;

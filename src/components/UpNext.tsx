@@ -128,8 +128,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       </div>
 
       {contextMenu && (
-        <div style={{ position: "fixed" as any, zIndex: 50, background: "var(--bg-elevated)", border: "1px solid var(--border-secondary)", borderRadius: "var(--radius-sm)", boxShadow: "var(--shadow-lg)", padding: "4px 0", minWidth: 180 }}
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+        <div style={{ position: "fixed" as any, zIndex: 50, background: "var(--bg-elevated)", border: "1px solid var(--border-secondary)", borderRadius: "var(--radius-sm)", boxShadow: "var(--shadow-lg)", padding: "4px 0", minWidth: 180, left: contextMenu.x, top: contextMenu.y }}
           onClick={e => e.stopPropagation()}>
           <div style={{ padding: "4px 12px", fontSize: 10, color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{queue[contextMenu.idx]?.title}</div>
           <button onClick={() => playNext(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer" }}>Play Next</button>
