@@ -46,5 +46,6 @@ export async function runMigrations(): Promise<void> {
     await d.execute("INSERT INTO separation_rules (rule_type, scope, value, is_hard, description) VALUES ('max_same_category', 'global', 3, 0, 'Max consecutive songs from same category (soft rule)')");
   }
 
+  await d.execute("CREATE TABLE IF NOT EXISTS voice_tracks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, file_path TEXT NOT NULL, show_id INTEGER, position_after_song TEXT, duration_ms INTEGER NOT NULL DEFAULT 0, recorded_by TEXT, recorded_at INTEGER NOT NULL DEFAULT (unixepoch()))");
   console.log("DB ready");
 }

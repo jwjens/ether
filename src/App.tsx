@@ -11,8 +11,9 @@ import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import Spots from "./components/Spots";
 import RulesEditor from "./components/RulesEditor";
+import VoiceTracker from "./components/VoiceTracker";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "settings";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -144,6 +145,7 @@ export default function App() {
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
           {panel === "spots" && <Spots />}
+          {panel === "voicetrack" && <VoiceTracker />}
           {panel === "settings" && <RulesEditor />}
         </main>
       </div>
@@ -159,7 +161,8 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
   const items: { id: Panel; label: string }[] = [
     { id: "live", label: "Live Assist" }, { id: "library", label: "Library" },
     { id: "clocks", label: "Schedule" }, { id: "logs", label: "Logs" },
-    { id: "spots", label: "Spots" }, { id: "settings", label: "Settings" },
+    { id: "spots", label: "Spots" }, { id: "voicetrack" as Panel, label: "Voice Track" },
+    { id: "settings", label: "Settings" },
   ];
   return (
     <nav className="w-44 bg-zinc-900 border-r border-zinc-800 flex flex-col py-2 shrink-0">
