@@ -123,13 +123,13 @@ export default function OnAirDeck({ deck, label }: Props) {
               <div style={{ fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--text-tertiary)", marginBottom: 2 }}>
                 {isInIntro ? "Intro Left" : "Remaining"}
               </div>
-              <div style={{ fontSize: 40, fontWeight: 500, fontFamily: "'DM Mono', monospace", fontVariantNumeric: "tabular-nums", lineHeight: 1, color: accentColor, letterSpacing: "-0.02em" }}>
+              <div style={{ fontSize: 48, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", lineHeight: 1, color: accentColor, letterSpacing: "-0.02em" }}>
                 {isInIntro ? fmtCountdown(introEnd - pos) : fmtCountdown(remaining)}
               </div>
             </div>
             <div style={{ textAlign: "right" as const }}>
               <div style={{ fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--text-tertiary)", marginBottom: 2 }}>Elapsed</div>
-              <div style={{ fontSize: 18, fontWeight: 400, fontFamily: "'DM Mono', monospace", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{fmtElapsed(pos)}</div>
+              <div style={{ fontSize: 18, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)", letterSpacing: "0.02em" }}>{fmtElapsed(pos)}</div>
             </div>
           </div>
         )}

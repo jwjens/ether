@@ -116,7 +116,7 @@ export default function JockStrip({ deckA, deckB }: Props) {
         {/* Teleprompter */}
         <div className="flex items-center gap-4 shrink-0">
           <div className="text-right">
-            <div style={{ fontSize: 20, fontFamily: "'DM Mono', monospace", fontWeight: 500, fontVariantNumeric: "tabular-nums", color: "var(--text-primary)", lineHeight: 1 }}>{timeStr}</div>
+            <div style={{ fontSize: 20, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", letterSpacing: "0.01em", color: "var(--text-primary)", lineHeight: 1 }}>{timeStr}</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{dateStr}</div>
           </div>
           {nextUp && (
