@@ -138,11 +138,11 @@ export class AudioEngine {
   private deckB: Deck | null = null;
   private listeners = new Set<Listener>();
   private playStartCallbacks = new Set<(deckId: DeckId, title: string, artist: string, filePath: string) => void>();
-  private onEvt: Listener = (id, st) => { this.listeners.forEach(l => l(id, st)); this.checkOutroCrossfade(); };
+  private onEvt: Listener = (id, st) => { this.listeners.forEach(l => l(id, st)); };
 
   private queue: { filePath: string; title: string; artist: string }[] = [];
   autoAdvance = false;
-  outroCrossfade = true;
+  outroCrossfade = false;
   crossfadeDuration = 3; // seconds
   private outroPending = false;
   continuous = false;
