@@ -15,6 +15,8 @@ import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import Spots from "./components/Spots";
 import RulesEditor from "./components/RulesEditor";
+import ProcessingPanel from "./components/ProcessingPanel";
+import NowPlayingSettings from "./components/NowPlayingSettings";
 import StreamManager from "./components/StreamManager";
 import AudioDevices from "./components/AudioDevices";
 import VoiceTracker from "./components/VoiceTracker";
@@ -45,8 +47,7 @@ export default function App() {
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
-  const [xfadeSec, setXfadeSec] = useState(3);
-  const [autoXfade, setAutoXfade] = useState(true);
+  const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
@@ -140,14 +141,15 @@ export default function App() {
   }, []);
 
   return (
-    <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100">
+    <div className={"h-screen flex flex-col " + (darkMode ? "dark-theme bg-zinc-950 text-zinc-100" : "")} style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
       {showNowPlaying && <NowPlaying onExit={() => setShowNowPlaying(false)} />}
-      <header className="h-12 flex items-center justify-between px-4 bg-zinc-900 border-b border-zinc-800 shrink-0">
+      <header style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", flexShrink: 0 }}>
         <div className="flex items-center gap-3">
-          <span className="text-lg font-bold tracking-tight"><span className="text-blue-400">Eth</span>er</span>
-          <span className="text-xs text-zinc-500">v0.2.0</span>
+          <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em" }}><span style={{ color: "var(--accent-blue)" }}>Eth</span><span style={{ color: "var(--text-primary)" }}>er</span></span>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>v1.5</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
+          <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: darkMode ? "var(--accent-purple)" : "var(--bg-tertiary)", color: darkMode ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>{darkMode ? "DARK" : "LIGHT"}</button>
           <button onClick={() => setShowNowPlaying(true)} className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px] font-bold text-zinc-400">NOW PLAYING</button>
           <ClockDisplay />
           <button onClick={() => { engine.init(); setOnAir(!onAir); }} className={onAir ? "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-red-600 text-white animate-pulse" : "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-zinc-700 text-zinc-400 hover:bg-zinc-600"}>{onAir ? "ON AIR" : "OFF AIR"}</button>
@@ -155,7 +157,7 @@ export default function App() {
       </header>
       <div className="flex flex-1 overflow-hidden">
         <Nav active={panel} set={setPanel} />
-        <main className="flex-1 overflow-auto p-4">
+        <main style={{ flex: 1, overflow: "auto", padding: 20, background: "var(--bg-primary)" }}>
           {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} showCarts={showCarts} toggleCarts={() => setShowCarts(!showCarts)} />}
           {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
           {panel === "clocks" && <Scheduler />}
@@ -163,10 +165,10 @@ export default function App() {
           {panel === "spots" && <Spots />}
           {panel === "streaming" && <StreamManager />}
           {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
-          {panel === "settings" && <div className="space-y-6"><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
+          {panel === "settings" && <div className="space-y-6"><ProcessingPanel /><NowPlayingSettings /><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
         </main>
       </div>
-      <footer className="h-7 flex items-center justify-between px-4 bg-zinc-900 border-t border-zinc-800 text-[11px] text-zinc-500 shrink-0">
+      <footer style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>
         <span>{deckA?.status === "playing" ? "Playing: " + deckA.title : "Ready"}</span>
         <span>{autoAdv ? "AUTO" : "MANUAL"}{shuffle ? " | SHUFFLE" : ""}{continuous ? " | 24/7" : ""} | Queue: {queueLen} | Space=Play/Pause X=Crossfade</span>
       </footer>
@@ -183,9 +185,9 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
     { id: "settings", label: "Settings" },
   ];
   return (
-    <nav className="w-44 bg-zinc-900 border-r border-zinc-800 flex flex-col py-2 shrink-0">
-      {items.map(i => <button key={i.id} onClick={() => set(i.id)} className={active === i.id ? "px-4 py-2.5 text-sm text-left bg-zinc-800 text-white border-l-2 border-blue-400" : "px-4 py-2.5 text-sm text-left text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border-l-2 border-transparent"}>{i.label}</button>)}
-      <div className="mt-auto px-4 py-3 text-[10px] text-zinc-600">Ether v0.2.0<br/>Free forever</div>
+    <nav style={{ width: 200, background: "var(--bg-secondary)", borderRight: "1px solid var(--border-primary)", display: "flex", flexDirection: "column" as const, padding: "8px 0", flexShrink: 0 }}>
+      {items.map(i => <button key={i.id} onClick={() => set(i.id)} style={{ display: "block", width: "100%", padding: "10px 20px", textAlign: "left" as const, fontSize: 14, fontWeight: active === i.id ? 600 : 400, color: active === i.id ? "var(--accent-blue)" : "var(--text-secondary)", background: active === i.id ? "var(--bg-tertiary)" : "transparent", border: "none", borderLeft: active === i.id ? "3px solid var(--accent-blue)" : "3px solid transparent", cursor: "pointer", letterSpacing: "-0.01em" }}>{i.label}</button>)}
+      <div style={{ marginTop: "auto", padding: "12px 20px", fontSize: 10, color: "var(--text-tertiary)" }}>Ether v1.5<br/>Free forever</div>
     </nav>
   );
 }
@@ -195,6 +197,8 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
 // ============================================================
 
 function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, toggleShuffle, toggleContinuous, queueLen, showCarts, toggleCarts }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; continuous: boolean; toggleAuto: () => void; toggleShuffle: () => void; toggleContinuous: () => void; queueLen: number; showCarts: boolean; toggleCarts: () => void }) {
+  const [autoXfade, setAutoXfade] = useState(true);
+
   const handleXfade = () => {
     if (deckA?.status === "playing" && deckB?.filePath) engine.crossfade("A", "B", 2000);
     else if (deckB?.status === "playing" && deckA?.filePath) engine.crossfade("B", "A", 2000);
@@ -206,13 +210,13 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
       <div className="flex items-center justify-between mb-3 shrink-0">
         <h1 className="text-lg font-bold">Live Assist</h1>
         <div className="flex items-center gap-1.5">
-          <button onClick={async () => { await fillQueueFromSchedule(); }} className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white">GEN LOG</button>
-          <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
-          <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
-          <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
-          <button onClick={toggleCarts} className={showCarts ? "px-2.5 py-1 rounded text-[11px] font-bold bg-orange-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>CARTS</button>
-          <button onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} className={autoXfade ? "px-2.5 py-1 rounded text-[11px] font-bold bg-indigo-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO-X</button>
-            <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
+          <button onClick={async () => { await fillQueueFromSchedule(); }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: "var(--accent-green)", color: "#fff", border: "none", cursor: "pointer" }}>GEN LOG</button>
+          <button onClick={toggleContinuous} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: continuous ? "var(--accent-red)" : "var(--bg-tertiary)", color: continuous ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>24/7</button>
+          <button onClick={toggleShuffle} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: shuffle ? "var(--accent-amber)" : "var(--bg-tertiary)", color: shuffle ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>SHUFFLE</button>
+          <button onClick={toggleAuto} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: autoAdv ? "var(--accent-blue)" : "var(--bg-tertiary)", color: autoAdv ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO</button>
+          <button onClick={toggleCarts} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: showCarts ? "var(--accent-orange)" : "var(--bg-tertiary)", color: showCarts ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>CARTS</button>
+          <button onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: autoXfade ? "var(--accent-purple)" : "var(--bg-tertiary)", color: autoXfade ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO-X</button>
+            <button onClick={handleXfade} style={{ padding: "5px 14px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: "var(--accent-purple)", color: "#fff", border: "none", cursor: "pointer" }}>CROSSFADE</button>
         </div>
       </div>
 
@@ -229,7 +233,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
           <OnAirDeck deck={deckA} label="Deck A \u2014 On Air" />
           <div className="flex items-center gap-2 mt-1 mb-2">
             <button onClick={() => engine.getDeck("A")?.stop()} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
-            <button onClick={() => { const d = engine.getDeck("A"); if (!d) return; const st = deckA?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckA?.status === "playing" ? "#ca8a04" : "#2563eb" }}>{deckA?.status === "playing" ? "PAUSE" : deckA?.status === "paused" ? "RESUME" : "PLAY"}</button>
+            <button onClick={() => { const d = engine.getDeck("A"); if (!d) return; const st = deckA?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckA?.status === "playing" ? "var(--accent-amber)" : "var(--accent-blue)", borderRadius: "var(--radius-xs)" }}>{deckA?.status === "playing" ? "PAUSE" : deckA?.status === "paused" ? "RESUME" : "PLAY"}</button>
             <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-28"><span>VOL</span><input type="range" min="0" max="100" value={Math.round((deckA?.volume || 1) * 100)} onChange={e => engine.getDeck("A")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-blue-500" /><span>{Math.round((deckA?.volume || 1) * 100)}%</span></div>
           </div>
 
@@ -237,7 +241,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
           <OnAirDeck deck={deckB} label="Deck B \u2014 Standby" />
           <div className="flex items-center gap-2 mt-1 mb-2">
             <button onClick={() => engine.getDeck("B")?.stop()} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
-            <button onClick={() => { const d = engine.getDeck("B"); if (!d) return; const st = deckB?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckB?.status === "playing" ? "#ca8a04" : "#059669" }}>{deckB?.status === "playing" ? "PAUSE" : deckB?.status === "paused" ? "RESUME" : "PLAY"}</button>
+            <button onClick={() => { const d = engine.getDeck("B"); if (!d) return; const st = deckB?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckB?.status === "playing" ? "var(--accent-amber)" : "var(--accent-green)", borderRadius: "var(--radius-xs)" }}>{deckB?.status === "playing" ? "PAUSE" : deckB?.status === "paused" ? "RESUME" : "PLAY"}</button>
             <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-28"><span>VOL</span><input type="range" min="0" max="100" value={Math.round((deckB?.volume || 1) * 100)} onChange={e => engine.getDeck("B")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-emerald-500" /><span>{Math.round((deckB?.volume || 1) * 100)}%</span></div>
           </div>
 

@@ -84,7 +84,7 @@ export default function CartWall() {
           </div>
         </div>
       )}
-      <div className="grid grid-cols-8 gap-2 ">
+      <div className="grid grid-cols-8 gap-3 ">
         {slots.map((slot, i) => {
           if (slot && slot.file_path) {
             return (
@@ -99,7 +99,7 @@ export default function CartWall() {
             );
           }
           return (
-            <button key={i} onClick={() => assignSlot(i)} className="w-full rounded-lg flex flex-col items-center justify-center bg-zinc-800 hover:bg-zinc-700" style={{ aspectRatio: "1", minHeight: "0" }}>
+            <button key={i} onClick={() => assignSlot(i)} className="w-full rounded-lg flex flex-col items-center justify-center" style={{ background: "var(--bg-tertiary)", border: "2px dashed var(--border-secondary)", cursor: "pointer" }} style={{ aspectRatio: "1", minHeight: "0" }}>
               <span className="text-2xl text-zinc-600">+</span>
               {i < 12 && <span className="text-xs text-zinc-600 mt-1">{"F" + (i + 1)}</span>}
             </button>

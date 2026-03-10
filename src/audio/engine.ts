@@ -162,6 +162,7 @@ export class AudioEngine {
     let idx = 0;
     if (this.shuffle) idx = Math.floor(Math.random() * this.queue.length);
     const next = this.queue.splice(idx, 1)[0];
+    // Load to the SAME deck (it just finished) - simpler and avoids overlap
     const deck = this.getDeck(deckId);
     if (deck) {
       deck.load(next.filePath, next.title, next.artist).then(() => {
@@ -216,39 +217,38 @@ export class AudioEngine {
     const deckB = this.getDeck("B");
     if (!deckA || !deckB) return;
 
-    const checkDeck = (deck: any, otherId: DeckId) => {
-      if (deck.status !== "playing") return;
-      const pos = deck.positionSec;
-      const dur = deck.durationSec;
-      if (dur <= 0) return;
+    // Only check the deck that is currently playing
+    const activeDeck = deckA.status === "playing" ? deckA : deckB.status === "playing" ? deckB : null;
+    if (!activeDeck) return;
+    const otherId: DeckId = activeDeck.id === "A" ? "B" : "A";
+    const other = this.getDeck(otherId);
+    if (!other) return;
 
-      // Use outro start point if set, otherwise use last N seconds
-      let outroAt = deck.outroStartSec;
-      if (!outroAt || outroAt <= 0) outroAt = dur - this.crossfadeDuration - 1;
+    // Don't crossfade if other deck is already playing
+    if (other.status === "playing") return;
 
-      if (pos >= outroAt && pos < dur - 0.5) {
-        // Time to crossfade! Load next song to other deck
-        this.outroPending = true;
-        const queue = this.getQueue();
-        if (queue.length > 0) {
-          let idx = 0;
-          if (this.shuffle) idx = Math.floor(Math.random() * queue.length);
-          const next = queue.splice(idx, 1)[0];
-          this.clearQueue();
-          this.addToQueue(queue);
-          const other = this.getDeck(otherId);
-          if (other) {
-            other.load(next.filePath, next.title, next.artist).then(() => {
-              this.crossfade(deck.id, otherId, this.crossfadeDuration * 1000);
-              setTimeout(() => { this.outroPending = false; }, this.crossfadeDuration * 1000 + 500);
-            });
-          }
-        }
+    const pos = activeDeck.positionSec;
+    const dur = activeDeck.durationSec;
+    if (dur <= 0) return;
+
+    let outroAt = (activeDeck as any).outroStartSec;
+    if (!outroAt || outroAt <= 0) outroAt = dur - this.crossfadeDuration - 1;
+
+    if (pos >= outroAt && pos < dur - 0.5) {
+      this.outroPending = true;
+      const queue = this.getQueue();
+      if (queue.length > 0) {
+        let idx = 0;
+        if (this.shuffle) idx = Math.floor(Math.random() * queue.length);
+        const next = queue.splice(idx, 1)[0];
+        this.clearQueue();
+        this.addToQueue(queue);
+        other.load(next.filePath, next.title, next.artist).then(() => {
+          this.crossfade(activeDeck.id, otherId, this.crossfadeDuration * 1000);
+          setTimeout(() => { this.outroPending = false; }, this.crossfadeDuration * 1000 + 500);
+        });
       }
-    };
-
-    checkDeck(deckA, "B");
-    checkDeck(deckB, "A");
+    }
   }
 
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {

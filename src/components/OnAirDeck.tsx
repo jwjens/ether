@@ -31,15 +31,13 @@ export default function OnAirDeck({ deck, label }: Props) {
   const remaining = dur - pos;
   const pct = dur > 0 ? (pos / dur) * 100 : 0;
 
-  // Cue point zones (approximated - would use real cue points if saved)
-  const introEnd = dur * 0.08; // first 8% is intro
-  const outroStart = dur * 0.92; // last 8% is outro
+  const introEnd = dur * 0.08;
+  const outroStart = dur * 0.92;
   const isInIntro = pos < introEnd && status === "playing";
   const isInOutro = pos > outroStart && status === "playing";
   const isEnding = remaining < 15 && remaining > 0 && status === "playing";
   const isCritical = remaining < 5 && remaining > 0 && status === "playing";
 
-  // Blink effect when ending
   useEffect(() => {
     if (isCritical) {
       const id = setInterval(() => setBlink(b => !b), 300);
@@ -48,101 +46,98 @@ export default function OnAirDeck({ deck, label }: Props) {
     setBlink(false);
   }, [isCritical]);
 
-  // Background color logic
-  let bgColor = "#18181b"; // idle - dark
-  let textColor = "#71717a"; // idle - gray
-  let timerColor = "#71717a";
-  let barColor = "#3f3f46";
+  // Theme-aware color system
+  let accentColor = "var(--accent-blue)";
+  let bgTint = "var(--bg-secondary)";
+  let statusLabel = "IDLE";
+  let statusColor = "var(--text-tertiary)";
 
   if (status === "playing") {
     if (isInIntro) {
-      // INTRO - bright blue (talk time!)
-      bgColor = "#1e3a5f";
-      textColor = "#60a5fa";
-      timerColor = "#93c5fd";
-      barColor = "#3b82f6";
+      accentColor = "var(--accent-blue)";
+      bgTint = "rgba(37, 99, 235, 0.06)";
+      statusLabel = "INTRO — TALK";
+      statusColor = "var(--accent-blue)";
     } else if (isCritical) {
-      // CRITICAL - flashing red
-      bgColor = blink ? "#7f1d1d" : "#450a0a";
-      textColor = "#fca5a5";
-      timerColor = blink ? "#ffffff" : "#fca5a5";
-      barColor = "#ef4444";
+      accentColor = "var(--accent-red)";
+      bgTint = blink ? "rgba(220, 38, 38, 0.12)" : "rgba(220, 38, 38, 0.06)";
+      statusLabel = "ENDING";
+      statusColor = "var(--accent-red)";
     } else if (isEnding) {
-      // ENDING - solid red
-      bgColor = "#450a0a";
-      textColor = "#fca5a5";
-      timerColor = "#f87171";
-      barColor = "#ef4444";
+      accentColor = "var(--accent-red)";
+      bgTint = "rgba(220, 38, 38, 0.04)";
+      statusLabel = "ENDING";
+      statusColor = "var(--accent-red)";
     } else if (isInOutro) {
-      // OUTRO - amber/yellow
-      bgColor = "#451a03";
-      textColor = "#fcd34d";
-      timerColor = "#fbbf24";
-      barColor = "#f59e0b";
+      accentColor = "var(--accent-amber)";
+      bgTint = "rgba(217, 119, 6, 0.04)";
+      statusLabel = "OUTRO";
+      statusColor = "var(--accent-amber)";
     } else {
-      // PLAYING - green
-      bgColor = "#052e16";
-      textColor = "#86efac";
-      timerColor = "#4ade80";
-      barColor = "#22c55e";
+      accentColor = "var(--accent-green)";
+      bgTint = "rgba(22, 163, 74, 0.04)";
+      statusLabel = "PLAYING";
+      statusColor = "var(--accent-green)";
     }
   } else if (status === "paused") {
-    bgColor = "#1c1917";
-    textColor = "#fbbf24";
-    timerColor = "#fbbf24";
+    statusLabel = "PAUSED";
+    statusColor = "var(--accent-amber)";
+  } else if (status === "loading") {
+    statusLabel = "LOADING";
+    statusColor = "var(--accent-blue)";
   }
 
   return (
-    <div className="rounded-lg overflow-hidden transition-colors duration-300" style={{ backgroundColor: bgColor }}>
-      {/* Header bar */}
-      <div className="flex items-center justify-between px-3 py-1.5" style={{ backgroundColor: "rgba(0,0,0,0.3)" }}>
-        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: textColor }}>{label}</span>
-        <span className="text-[10px] uppercase font-bold" style={{ color: textColor }}>
-          {status === "playing" ? (isInIntro ? "INTRO - TALK!" : isInOutro ? "OUTRO" : isEnding ? "ENDING" : "PLAYING") : status === "paused" ? "PAUSED" : status === "loading" ? "LOADING" : "IDLE"}
-        </span>
+    <div style={{
+      background: bgTint,
+      borderRadius: "var(--radius)",
+      border: "1px solid var(--border-primary)",
+      boxShadow: "var(--shadow-sm)",
+      overflow: "hidden",
+      transition: "background 0.3s ease",
+    }}>
+      {/* Header */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "8px 16px",
+        borderBottom: "1px solid var(--border-primary)",
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: accentColor }}>{label}</span>
+        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.04em", color: statusColor }}>{statusLabel}</span>
       </div>
 
-      {/* Main content */}
-      <div className="px-3 py-2">
-        {/* Title + Artist */}
-        <div className="text-base font-bold truncate" style={{ color: status === "playing" ? "#ffffff" : "#a1a1aa" }}>{title || "No track loaded"}</div>
-        {artist && <div className="text-xs truncate mb-2" style={{ color: textColor }}>{artist}</div>}
+      {/* Content */}
+      <div style={{ padding: "12px 16px" }}>
+        {/* Title */}
+        <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, letterSpacing: "-0.02em" }}>
+          {title || "No track loaded"}
+        </div>
+        {artist && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{artist}</div>}
 
-        {/* Big countdown timer */}
+        {/* Timer */}
         {dur > 0 && (
-          <div className="flex items-end justify-between mb-2">
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", margin: "12px 0 8px" }}>
             <div>
-              <div className="text-[10px] uppercase" style={{ color: textColor }}>{isInIntro ? "Intro Left" : "Remaining"}</div>
-              <div className="text-3xl font-mono font-black leading-none" style={{ color: timerColor }}>
+              <div style={{ fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--text-tertiary)", marginBottom: 2 }}>
+                {isInIntro ? "Intro Left" : "Remaining"}
+              </div>
+              <div style={{ fontSize: 36, fontWeight: 800, fontFamily: "monospace", lineHeight: 1, color: accentColor, letterSpacing: "-0.02em" }}>
                 {isInIntro ? fmtCountdown(introEnd - pos) : fmtCountdown(remaining)}
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-[10px] uppercase" style={{ color: textColor }}>Elapsed</div>
-              <div className="text-lg font-mono" style={{ color: textColor }}>{fmtElapsed(pos)}</div>
+            <div style={{ textAlign: "right" as const }}>
+              <div style={{ fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--text-tertiary)", marginBottom: 2 }}>Elapsed</div>
+              <div style={{ fontSize: 18, fontFamily: "monospace", color: "var(--text-secondary)" }}>{fmtElapsed(pos)}</div>
             </div>
           </div>
         )}
 
-        {/* Progress bar with zones */}
+        {/* Progress bar */}
         {dur > 0 && (
-          <div className="relative h-3 rounded-full overflow-hidden mb-1" style={{ backgroundColor: "rgba(0,0,0,0.3)" }}>
-            {/* Intro zone marker */}
-            <div className="absolute top-0 h-full opacity-30" style={{ left: 0, width: (introEnd / dur * 100) + "%", backgroundColor: "#3b82f6" }}></div>
-            {/* Outro zone marker */}
-            <div className="absolute top-0 h-full opacity-30" style={{ left: (outroStart / dur * 100) + "%", width: ((dur - outroStart) / dur * 100) + "%", backgroundColor: "#f59e0b" }}></div>
-            {/* Playhead */}
-            <div className="absolute top-0 h-full rounded-full transition-all" style={{ width: pct + "%", backgroundColor: barColor }}></div>
-          </div>
-        )}
-
-        {/* Time markers */}
-        {dur > 0 && (
-          <div className="flex justify-between text-[9px] font-mono" style={{ color: textColor }}>
-            <span>{fmtCountdown(0)}</span>
-            <span>Intro {fmtCountdown(introEnd)}</span>
-            <span>Outro {fmtCountdown(dur - outroStart)}</span>
-            <span>{fmtCountdown(dur)}</span>
+          <div style={{ position: "relative", height: 6, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: pct + "%", background: accentColor, borderRadius: 3, transition: "width 0.2s linear" }}></div>
           </div>
         )}
       </div>

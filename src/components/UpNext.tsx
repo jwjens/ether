@@ -93,9 +93,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   };
 
   return (
-    <div className={"bg-zinc-900 rounded-lg border border-zinc-800 flex flex-col h-full overflow-hidden"} onClick={closeContext}>
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 shrink-0">
-        <span className="text-[10px] font-bold text-zinc-400 uppercase">Up Next ({queueLen})</span>
+    <div style={{ background: "var(--bg-secondary)", borderRadius: "var(--radius)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }} onClick={closeContext}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.04em" }}>Up Next ({queueLen})</span>
         {queue.length > 0 && <button onClick={() => { engine.clearQueue(); onQueueChange(); }} className="text-[10px] text-zinc-600 hover:text-zinc-400">Clear All</button>}
       </div>
       <div className={"flex-1 overflow-y-auto " + (dropTarget ? "ring-2 ring-blue-500 ring-inset" : "")}
