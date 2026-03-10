@@ -1,4 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+const fs = require('fs');
+
+console.log('\n  Ether — Clean Cart Wall\n');
+
+fs.writeFileSync('src/components/CartWall.tsx', `import { useState, useEffect, useCallback } from "react";
 import { query, execute, queryOne } from "../db/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
@@ -11,7 +15,7 @@ interface CartSlot {
 const COLORS = ["#ef4444","#f97316","#f59e0b","#22c55e","#3b82f6","#8b5cf6","#ec4899","#14b8a6","#6366f1","#d946ef","#0ea5e9","#84cc16"];
 
 function titleFromFile(p: string) {
-  return (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+  return (p.split(/[\\\\/]/).pop() || p).replace(/\\.[^.]+$/, "").replace(/[_-]/g, " ");
 }
 
 export default function CartWall() {
@@ -84,7 +88,7 @@ export default function CartWall() {
           </div>
         </div>
       )}
-      <div className="grid grid-cols-8 gap-2 overflow-y-auto" style={{ maxHeight: "220px" }}>
+      <div className="grid grid-cols-8 gap-2">
         {slots.map((slot, i) => {
           if (slot && slot.file_path) {
             return (
@@ -109,3 +113,6 @@ export default function CartWall() {
     </div>
   );
 }
+`, 'utf8');
+console.log('  REWROTE CartWall.tsx — clean square buttons');
+console.log('  App should hot-reload.\n');
