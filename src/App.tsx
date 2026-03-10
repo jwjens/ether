@@ -11,6 +11,7 @@ import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import Spots from "./components/Spots";
 import RulesEditor from "./components/RulesEditor";
+import AudioDevices from "./components/AudioDevices";
 import VoiceTracker from "./components/VoiceTracker";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "settings";
@@ -39,6 +40,8 @@ export default function App() {
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [outputDevice, setOutputDevice] = useState("");
+  const [inputDevice, setInputDevice] = useState("");
 
   // Log plays to database
   useEffect(() => {
@@ -86,6 +89,9 @@ export default function App() {
       setQueueLen(engine.getQueue().length);
     });
   }, []);
+
+  const handleOutputChange = (deviceId: string) => { setOutputDevice(deviceId); engine.setOutputDevice(deviceId); };
+  const handleInputChange = (deviceId: string) => { setInputDevice(deviceId); };
 
   const toggleAuto = () => { const n = !autoAdv; setAutoAdv(n); engine.autoAdvance = n; };
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
@@ -145,8 +151,8 @@ export default function App() {
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
           {panel === "spots" && <Spots />}
-          {panel === "voicetrack" && <VoiceTracker />}
-          {panel === "settings" && <RulesEditor />}
+          {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
+          {panel === "settings" && <div className="space-y-6"><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
         </main>
       </div>
       <footer className="h-7 flex items-center justify-between px-4 bg-zinc-900 border-t border-zinc-800 text-[11px] text-zinc-500 shrink-0">

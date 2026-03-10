@@ -23,7 +23,7 @@ function fmtDate(epoch: number): string {
   return new Date(epoch * 1000).toLocaleString();
 }
 
-export default function VoiceTracker() {
+export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string }) {
   const [tracks, setTracks] = useState<VoiceTrack[]>([]);
   const [shows, setShows] = useState<Show[]>([]);
   const [recording, setRecording] = useState(false);
@@ -44,7 +44,8 @@ export default function VoiceTracker() {
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const constraints = inputDeviceId ? { audio: { deviceId: { exact: inputDeviceId } } } : { audio: true };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       const mr = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
       chunksRef.current = [];
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };

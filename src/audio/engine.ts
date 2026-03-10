@@ -178,6 +178,19 @@ export class AudioEngine {
   onPlayStart(fn: (deckId: DeckId, title: string, artist: string, filePath: string) => void): () => void { this.playStartCallbacks.add(fn); return () => this.playStartCallbacks.delete(fn); }
   getDeck(id: DeckId): Deck | null { return id === "A" ? this.deckA : this.deckB; }
 
+  async setOutputDevice(deviceId: string) {
+    if (!this.ctx) return;
+    try {
+      // setSinkId is available on AudioContext in Chromium-based browsers
+      if ("setSinkId" in this.ctx) {
+        await (this.ctx as any).setSinkId(deviceId);
+        console.log("Output device set to:", deviceId);
+      }
+    } catch (e) {
+      console.error("Failed to set output device:", e);
+    }
+  }
+
   async loadToDeck(id: DeckId, filePath: string, title: string, artist: string) {
     this.init(); const d = this.getDeck(id); if (d) await d.load(filePath, title, artist);
   }
