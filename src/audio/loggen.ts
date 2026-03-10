@@ -10,7 +10,7 @@ interface SongCandidate {
   id: number; title: string; file_path: string;
   artist_id: number | null; artist_name: string | null;
   category_id: number | null; gender: string;
-  last_played_at: number | null; spins_total: number;
+  last_played_at: number | null; spins_total: number; gain_db: number;
 }
 
 interface SepRule {
@@ -128,7 +128,7 @@ function scoreSong(song: SongCandidate, recent: RecentPlay[], rules: SepRule[], 
 
 async function pickBestSong(categoryId: number, recent: RecentPlay[], rules: SepRule[], usedInHour: number[]): Promise<SongCandidate | null> {
   const candidates = await query<SongCandidate>(
-    "SELECT s.id, s.title, s.file_path, s.artist_id, a.name as artist_name, s.category_id, s.gender, s.last_played_at, s.spins_total " +
+    "SELECT s.id, s.title, s.file_path, s.artist_id, a.name as artist_name, s.category_id, s.gender, s.last_played_at, s.spins_total, s.gain_db " +
     "FROM songs s LEFT JOIN artists a ON a.id = s.artist_id " +
     "WHERE s.category_id = ? AND s.file_path IS NOT NULL AND s.rotation_status = 'active' " +
     "ORDER BY s.last_played_at ASC NULLS FIRST, RANDOM() LIMIT 50",
