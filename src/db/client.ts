@@ -47,5 +47,6 @@ export async function runMigrations(): Promise<void> {
   }
 
   await d.execute("CREATE TABLE IF NOT EXISTS voice_tracks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, file_path TEXT NOT NULL, show_id INTEGER, position_after_song TEXT, duration_ms INTEGER NOT NULL DEFAULT 0, recorded_by TEXT, recorded_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS cart_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, slot_number INTEGER NOT NULL UNIQUE, title TEXT, file_path TEXT, color TEXT NOT NULL DEFAULT '#3f3f46', hotkey TEXT)");
   console.log("DB ready");
 }

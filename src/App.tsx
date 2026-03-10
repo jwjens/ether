@@ -6,6 +6,9 @@ import { engine, DeckState } from "./audio/engine";
 import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
+import OnAirDeck from "./components/OnAirDeck";
+import CartWall from "./components/CartWall";
+import UpNext from "./components/UpNext";
 import Scheduler from "./components/Scheduler";
 import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
@@ -187,50 +190,64 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
     if (deckA?.status === "playing" && deckB?.filePath) engine.crossfade("A", "B", 2000);
     else if (deckB?.status === "playing" && deckA?.filePath) engine.crossfade("B", "A", 2000);
   };
-  const queue = engine.getQueue();
+
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold">Live Assist</h1>
-        <div className="flex items-center gap-1.5">
-          <button onClick={async () => { const n = await fillQueueFromSchedule(); alert("Generated " + n + " tracks from current clock"); }} className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white">GEN LOG</button>
-          <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
-          <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
-          <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
-          <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
-        </div>
+    <div className="flex gap-3 h-full">
+      {/* Left column - Up Next */}
+      <div className="w-64 shrink-0">
+        <UpNext queueLen={queueLen} />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <DeckCard deck={deckA} deckId="A" accentColor="#3b82f6" waveColor="#1e3a5f" playedColor="#3b82f6" />
-        <DeckCard deck={deckB} deckId="B" accentColor="#10b981" waveColor="#1a3a2a" playedColor="#10b981" />
-      </div>
-      <div className="bg-zinc-900 rounded-lg p-3 border border-zinc-800">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-[11px] font-bold text-zinc-400 uppercase">Queue ({queueLen})</h2>
-          {queue.length > 0 && <button onClick={() => engine.clearQueue()} className="text-[11px] text-zinc-600 hover:text-zinc-400">Clear</button>}
-        </div>
-        {queue.length === 0 ? (
-          <div className="text-xs text-zinc-600 italic">{continuous ? "Continuous mode: will auto-refill from library when empty." : "Empty. Add songs from Library with the Q button."}</div>
-        ) : (
-          <div className="space-y-0.5 max-h-40 overflow-y-auto">
-            {queue.slice(0, 15).map((item, i) => (
-              <div key={i} className="flex items-center justify-between px-2 py-1 bg-zinc-800 rounded text-xs">
-                <span className="text-zinc-400 w-5">{i + 1}</span>
-                <span className="text-zinc-200 flex-1 truncate">{item.title}</span>
-                <span className="text-zinc-500 text-[10px] ml-2">{item.artist}</span>
-              </div>
-            ))}
-            {queue.length > 15 && <div className="text-[10px] text-zinc-600 text-center py-1">+ {queue.length - 15} more</div>}
+
+      {/* Right column - Decks + Controls */}
+      <div className="flex-1 space-y-3">
+        {/* Control buttons */}
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold">Live Assist</h1>
+          <div className="flex items-center gap-1.5">
+            <button onClick={async () => { const n = await fillQueueFromSchedule(); }} className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white">GEN LOG</button>
+            <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
+            <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
+            <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
+            <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
           </div>
-        )}
+        </div>
+
+        {/* Deck A - On Air style */}
+        <OnAirDeck deck={deckA} label="Deck A — On Air" />
+
+        {/* Deck A Controls */}
+        <div className="flex items-center gap-2">
+          <button onClick={() => engine.getDeck("A")?.stop()} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
+          <button onClick={() => { const d = engine.getDeck("A"); if (!d) return; const st = deckA?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-2 rounded text-xs font-bold text-white" style={{ backgroundColor: deckA?.status === "playing" ? "#ca8a04" : "#2563eb" }}>{deckA?.status === "playing" ? "PAUSE" : deckA?.status === "paused" ? "RESUME" : "PLAY"}</button>
+          <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-32">
+            <span>VOL</span>
+            <input type="range" min="0" max="100" value={Math.round((deckA?.volume || 1) * 100)} onChange={e => engine.getDeck("A")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-blue-500" />
+            <span>{Math.round((deckA?.volume || 1) * 100)}%</span>
+          </div>
+        </div>
+
+        {/* Deck B - On Air style */}
+        <OnAirDeck deck={deckB} label="Deck B — Standby" />
+
+        {/* Deck B Controls */}
+        <div className="flex items-center gap-2">
+          <button onClick={() => engine.getDeck("B")?.stop()} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
+          <button onClick={() => { const d = engine.getDeck("B"); if (!d) return; const st = deckB?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-2 rounded text-xs font-bold text-white" style={{ backgroundColor: deckB?.status === "playing" ? "#ca8a04" : "#059669" }}>{deckB?.status === "playing" ? "PAUSE" : deckB?.status === "paused" ? "RESUME" : "PLAY"}</button>
+          <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-32">
+            <span>VOL</span>
+            <input type="range" min="0" max="100" value={Math.round((deckB?.volume || 1) * 100)} onChange={e => engine.getDeck("B")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-emerald-500" />
+            <span>{Math.round((deckB?.volume || 1) * 100)}%</span>
+          </div>
+          {/* Cart Wall */}
+          <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
+            <div className="text-[10px] font-bold text-zinc-400 uppercase mb-2">Cart Wall</div>
+            <CartWall />
+          </div>
+        </div>
       </div>
     </div>
   );
 }
-
-// ============================================================
-// DECK CARD — with waveform
-// ============================================================
 
 function DeckCard({ deck, deckId, accentColor, waveColor, playedColor }: { deck: DeckState | null; deckId: "A" | "B"; accentColor: string; waveColor: string; playedColor: string }) {
   const d = engine.getDeck(deckId);
