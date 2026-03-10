@@ -45,6 +45,8 @@ export default function App() {
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [xfadeSec, setXfadeSec] = useState(3);
+  const [autoXfade, setAutoXfade] = useState(true);
   const [showCarts, setShowCarts] = useState(false);
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
@@ -89,6 +91,8 @@ export default function App() {
 
   useEffect(() => {
     engine.init();
+    engine.outroCrossfade = true;
+    engine.crossfadeDuration = 3;
     return engine.on((id, st) => {
       if (id === "A") setDeckA({...st});
       else setDeckB({...st});
@@ -207,7 +211,8 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
           <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
           <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
           <button onClick={toggleCarts} className={showCarts ? "px-2.5 py-1 rounded text-[11px] font-bold bg-orange-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>CARTS</button>
-          <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
+          <button onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} className={autoXfade ? "px-2.5 py-1 rounded text-[11px] font-bold bg-indigo-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO-X</button>
+            <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
         </div>
       </div>
 

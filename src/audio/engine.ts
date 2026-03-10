@@ -8,6 +8,7 @@ export interface DeckState {
   filePath: string; durationSec: number; positionSec: number;
   volume: number; error: string | null;
   peaks: number[];
+  outroStartSec: number;
 }
 
 type Listener = (deck: DeckId, state: DeckState) => void;
@@ -59,7 +60,7 @@ class Deck {
   getState(): DeckState {
     return { id: this.id, status: this.status, title: this.title, artist: this.artist,
       filePath: this.filePath, durationSec: this.durationSec, positionSec: this.positionSec,
-      volume: this.volume, error: this.error, peaks: this.peaks };
+      volume: this.volume, error: this.error, peaks: this.peaks, outroStartSec: this.outroStartSec };
   }
 
   private emit() { this.notify(this.id, this.getState()); }
@@ -137,10 +138,13 @@ export class AudioEngine {
   private deckB: Deck | null = null;
   private listeners = new Set<Listener>();
   private playStartCallbacks = new Set<(deckId: DeckId, title: string, artist: string, filePath: string) => void>();
-  private onEvt: Listener = (id, st) => { this.listeners.forEach(l => l(id, st)); };
+  private onEvt: Listener = (id, st) => { this.listeners.forEach(l => l(id, st)); this.checkOutroCrossfade(); };
 
   private queue: { filePath: string; title: string; artist: string }[] = [];
   autoAdvance = false;
+  outroCrossfade = true;
+  crossfadeDuration = 3; // seconds
+  private outroPending = false;
   continuous = false;
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   shuffle = false;
@@ -204,6 +208,48 @@ export class AudioEngine {
   clearQueue() { this.queue = []; }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
   getQueue() { return [...this.queue]; }
+
+  // Check if active deck has hit its outro point
+  checkOutroCrossfade() {
+    if (!this.outroCrossfade || !this.autoAdvance || this.outroPending) return;
+    const deckA = this.getDeck("A");
+    const deckB = this.getDeck("B");
+    if (!deckA || !deckB) return;
+
+    const checkDeck = (deck: any, otherId: DeckId) => {
+      if (deck.status !== "playing") return;
+      const pos = deck.positionSec;
+      const dur = deck.durationSec;
+      if (dur <= 0) return;
+
+      // Use outro start point if set, otherwise use last N seconds
+      let outroAt = deck.outroStartSec;
+      if (!outroAt || outroAt <= 0) outroAt = dur - this.crossfadeDuration - 1;
+
+      if (pos >= outroAt && pos < dur - 0.5) {
+        // Time to crossfade! Load next song to other deck
+        this.outroPending = true;
+        const queue = this.getQueue();
+        if (queue.length > 0) {
+          let idx = 0;
+          if (this.shuffle) idx = Math.floor(Math.random() * queue.length);
+          const next = queue.splice(idx, 1)[0];
+          this.clearQueue();
+          this.addToQueue(queue);
+          const other = this.getDeck(otherId);
+          if (other) {
+            other.load(next.filePath, next.title, next.artist).then(() => {
+              this.crossfade(deck.id, otherId, this.crossfadeDuration * 1000);
+              setTimeout(() => { this.outroPending = false; }, this.crossfadeDuration * 1000 + 500);
+            });
+          }
+        }
+      }
+    };
+
+    checkDeck(deckA, "B");
+    checkDeck(deckB, "A");
+  }
 
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {
     const from = this.getDeck(fromId);
