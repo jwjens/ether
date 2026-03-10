@@ -90,7 +90,7 @@ export default function CartWall() {
             return (
               <div key={i} className="relative group">
                 <button onClick={() => fireCart(i)} draggable onDragStart={(e) => { e.dataTransfer.setData("application/cart", JSON.stringify({ filePath: slot.file_path, title: slot.title || "Cart " + (i+1), artist: "" })); e.dataTransfer.effectAllowed = "copy"; }} onContextMenu={(e) => { e.preventDefault(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }} className={"w-full rounded-lg flex flex-col items-center justify-center text-center transition-all " + (playing === i ? "ring-2 ring-white scale-95" : "hover:brightness-125")} style={{ backgroundColor: slot.color, aspectRatio: "1", minHeight: "0" }}>
-                  <span className="text-sm font-bold text-white leading-tight px-1 truncate w-full">{slot.title}</span>
+                  <span className="text-sm font-medium text-white leading-tight px-1 truncate w-full">{slot.title}</span>
                   <span className="text-[10px] text-white opacity-50 mt-1">{slot.hotkey ? slot.hotkey.replace("Key","").replace("Digit","") : ""}</span>
                   {playing === i && <span className="text-[10px] text-white font-bold animate-pulse">PLAYING</span>}
                 </button>

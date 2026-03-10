@@ -145,8 +145,8 @@ export default function App() {
       {showNowPlaying && <NowPlaying onExit={() => setShowNowPlaying(false)} />}
       <header style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", flexShrink: 0 }}>
         <div className="flex items-center gap-3">
-          <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.03em" }}><span style={{ color: "var(--accent-blue)" }}>Eth</span><span style={{ color: "var(--text-primary)" }}>er</span></span>
-          <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 500 }}>v1.5</span>
+          <span style={{ fontSize: 22, fontWeight: 300, letterSpacing: "-0.04em" }}><span style={{ color: "var(--accent-blue)" }}>Eth</span><span style={{ color: "var(--text-primary)" }}>er</span></span>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 300, letterSpacing: "0.02em" }}>v1.5</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
           <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: darkMode ? "var(--accent-purple)" : "var(--bg-tertiary)", color: darkMode ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>{darkMode ? "DARK" : "LIGHT"}</button>
@@ -186,8 +186,8 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
   ];
   return (
     <nav style={{ width: 200, background: "var(--bg-secondary)", borderRight: "1px solid var(--border-primary)", display: "flex", flexDirection: "column" as const, padding: "8px 0", flexShrink: 0 }}>
-      {items.map(i => <button key={i.id} onClick={() => set(i.id)} style={{ display: "block", width: "100%", padding: "10px 20px", textAlign: "left" as const, fontSize: 14, fontWeight: active === i.id ? 600 : 400, color: active === i.id ? "var(--accent-blue)" : "var(--text-secondary)", background: active === i.id ? "var(--bg-tertiary)" : "transparent", border: "none", borderLeft: active === i.id ? "3px solid var(--accent-blue)" : "3px solid transparent", cursor: "pointer", letterSpacing: "-0.01em" }}>{i.label}</button>)}
-      <div style={{ marginTop: "auto", padding: "12px 20px", fontSize: 10, color: "var(--text-tertiary)" }}>Ether v1.5<br/>Free forever</div>
+      {items.map(i => <button key={i.id} onClick={() => set(i.id)} style={{ display: "block", width: "100%", padding: "10px 20px", textAlign: "left" as const, fontSize: 14, fontWeight: active === i.id ? 500 : 300, color: active === i.id ? "var(--accent-blue)" : "var(--text-secondary)", background: active === i.id ? "var(--bg-tertiary)" : "transparent", border: "none", borderLeft: active === i.id ? "3px solid var(--accent-blue)" : "3px solid transparent", cursor: "pointer", letterSpacing: "-0.01em" }}>{i.label}</button>)}
+      <div style={{ marginTop: "auto", padding: "12px 20px", fontSize: 10, fontWeight: 300, color: "var(--text-tertiary)" }}>Ether v1.5<br/>Free forever</div>
     </nav>
   );
 }
@@ -208,15 +208,15 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
     <div className="flex flex-col h-full">
       {/* Control buttons */}
       <div className="flex items-center justify-between mb-3 shrink-0">
-        <h1 className="text-lg font-bold">Live Assist</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 300, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Live Assist</h1>
         <div className="flex items-center gap-1.5">
-          <button onClick={async () => { await fillQueueFromSchedule(); }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: "var(--accent-green)", color: "#fff", border: "none", cursor: "pointer" }}>GEN LOG</button>
-          <button onClick={toggleContinuous} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: continuous ? "var(--accent-red)" : "var(--bg-tertiary)", color: continuous ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>24/7</button>
-          <button onClick={toggleShuffle} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: shuffle ? "var(--accent-amber)" : "var(--bg-tertiary)", color: shuffle ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>SHUFFLE</button>
-          <button onClick={toggleAuto} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: autoAdv ? "var(--accent-blue)" : "var(--bg-tertiary)", color: autoAdv ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO</button>
-          <button onClick={toggleCarts} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: showCarts ? "var(--accent-orange)" : "var(--bg-tertiary)", color: showCarts ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>CARTS</button>
-          <button onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: autoXfade ? "var(--accent-purple)" : "var(--bg-tertiary)", color: autoXfade ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO-X</button>
-            <button onClick={handleXfade} style={{ padding: "5px 14px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 700, background: "var(--accent-purple)", color: "#fff", border: "none", cursor: "pointer" }}>CROSSFADE</button>
+          <button onClick={async () => { await fillQueueFromSchedule(); }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, background: "var(--accent-green)", letterSpacing: "0.04em", color: "#fff", border: "none", cursor: "pointer" }}>GEN LOG</button>
+          <button onClick={toggleContinuous} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: continuous ? "var(--accent-red)" : "var(--bg-tertiary)", color: continuous ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>24/7</button>
+          <button onClick={toggleShuffle} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: shuffle ? "var(--accent-amber)" : "var(--bg-tertiary)", color: shuffle ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>SHUFFLE</button>
+          <button onClick={toggleAuto} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: autoAdv ? "var(--accent-blue)" : "var(--bg-tertiary)", color: autoAdv ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO</button>
+          <button onClick={toggleCarts} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: showCarts ? "var(--accent-orange)" : "var(--bg-tertiary)", color: showCarts ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>CARTS</button>
+          <button onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: autoXfade ? "var(--accent-purple)" : "var(--bg-tertiary)", color: autoXfade ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO-X</button>
+            <button onClick={handleXfade} style={{ padding: "5px 14px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: "var(--accent-purple)", color: "#fff", border: "none", cursor: "pointer" }}>CROSSFADE</button>
         </div>
       </div>
 

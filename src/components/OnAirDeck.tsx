@@ -104,14 +104,14 @@ export default function OnAirDeck({ deck, label }: Props) {
         padding: "8px 16px",
         borderBottom: "1px solid var(--border-primary)",
       }}>
-        <span style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: accentColor }}>{label}</span>
-        <span style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const, letterSpacing: "0.04em", color: statusColor }}>{statusLabel}</span>
+        <span style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase" as const, letterSpacing: "0.08em", color: accentColor }}>{label}</span>
+        <span style={{ fontSize: 10, fontWeight: 500, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: statusColor }}>{statusLabel}</span>
       </div>
 
       {/* Content */}
       <div style={{ padding: "12px 16px" }}>
         {/* Title */}
-        <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, letterSpacing: "-0.02em" }}>
+        <div style={{ fontSize: 17, fontWeight: 500, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, letterSpacing: "-0.02em" }}>
           {title || "No track loaded"}
         </div>
         {artist && <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>{artist}</div>}
@@ -120,7 +120,7 @@ export default function OnAirDeck({ deck, label }: Props) {
         {dur > 0 && (
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", margin: "12px 0 8px" }}>
             <div>
-              <div style={{ fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--text-tertiary)", marginBottom: 2 }}>
+              <div style={{ fontSize: 9, fontWeight: 400, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 2 }}>
                 {isInIntro ? "Intro Left" : "Remaining"}
               </div>
               <div style={{ fontSize: 48, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", lineHeight: 1, color: accentColor, letterSpacing: "-0.02em" }}>
@@ -128,7 +128,7 @@ export default function OnAirDeck({ deck, label }: Props) {
               </div>
             </div>
             <div style={{ textAlign: "right" as const }}>
-              <div style={{ fontSize: 9, textTransform: "uppercase" as const, letterSpacing: "0.06em", color: "var(--text-tertiary)", marginBottom: 2 }}>Elapsed</div>
+              <div style={{ fontSize: 9, fontWeight: 400, textTransform: "uppercase" as const, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 2 }}>Elapsed</div>
               <div style={{ fontSize: 18, fontWeight: 300, fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)", letterSpacing: "0.02em" }}>{fmtElapsed(pos)}</div>
             </div>
           </div>

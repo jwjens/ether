@@ -63,7 +63,9 @@
 body {
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif;
+  font-weight: 400;
+  letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
