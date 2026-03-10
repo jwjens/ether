@@ -15,10 +15,11 @@ import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import Spots from "./components/Spots";
 import RulesEditor from "./components/RulesEditor";
+import StreamManager from "./components/StreamManager";
 import AudioDevices from "./components/AudioDevices";
 import VoiceTracker from "./components/VoiceTracker";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "settings";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "streaming" | "settings";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -156,6 +157,7 @@ export default function App() {
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
           {panel === "spots" && <Spots />}
+          {panel === "streaming" && <StreamManager />}
           {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
           {panel === "settings" && <div className="space-y-6"><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
         </main>
@@ -173,6 +175,7 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
     { id: "live", label: "Live Assist" }, { id: "library", label: "Library" },
     { id: "clocks", label: "Schedule" }, { id: "logs", label: "Logs" },
     { id: "spots", label: "Spots" }, { id: "voicetrack" as Panel, label: "Voice Track" },
+    { id: "streaming" as Panel, label: "Stream" },
     { id: "settings", label: "Settings" },
   ];
   return (

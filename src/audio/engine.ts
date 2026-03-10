@@ -175,6 +175,7 @@ export class AudioEngine {
   }
 
   on(fn: Listener): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+  getAudioContext(): AudioContext | null { return this.ctx; }
   onPlayStart(fn: (deckId: DeckId, title: string, artist: string, filePath: string) => void): () => void { this.playStartCallbacks.add(fn); return () => this.playStartCallbacks.delete(fn); }
   getDeck(id: DeckId): Deck | null { return id === "A" ? this.deckA : this.deckB; }
 

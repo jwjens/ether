@@ -48,5 +48,10 @@ export async function runMigrations(): Promise<void> {
 
   await d.execute("CREATE TABLE IF NOT EXISTS voice_tracks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, file_path TEXT NOT NULL, show_id INTEGER, position_after_song TEXT, duration_ms INTEGER NOT NULL DEFAULT 0, recorded_by TEXT, recorded_at INTEGER NOT NULL DEFAULT (unixepoch()))");
   await d.execute("CREATE TABLE IF NOT EXISTS cart_slots (id INTEGER PRIMARY KEY AUTOINCREMENT, slot_number INTEGER NOT NULL UNIQUE, title TEXT, file_path TEXT, color TEXT NOT NULL DEFAULT '#3f3f46', hotkey TEXT)");
+  await d.execute("CREATE TABLE IF NOT EXISTS stream_settings (id INTEGER PRIMARY KEY, server TEXT NOT NULL DEFAULT 'localhost', port INTEGER NOT NULL DEFAULT 8000, mount TEXT NOT NULL DEFAULT '/stream', password TEXT NOT NULL DEFAULT 'hackme', bitrate INTEGER NOT NULL DEFAULT 128, station_name TEXT, station_genre TEXT, station_url TEXT, is_active INTEGER NOT NULL DEFAULT 0)");
+  const stCount = await d.select("SELECT COUNT(*) as c FROM stream_settings");
+  if ((stCount as any)[0].c === 0) {
+    await d.execute("INSERT INTO stream_settings (id, server, port, mount, password, station_name) VALUES (1, 'localhost', 8000, '/stream', 'hackme', 'Ether Radio')");
+  }
   console.log("DB ready");
 }
