@@ -34,5 +34,17 @@ export async function runMigrations(): Promise<void> {
   }
   await d.execute("CREATE TABLE IF NOT EXISTS play_log (id INTEGER PRIMARY KEY AUTOINCREMENT, song_id INTEGER, title TEXT NOT NULL, artist TEXT, file_path TEXT, category_code TEXT, show_name TEXT, clock_name TEXT, deck TEXT, played_at INTEGER NOT NULL DEFAULT (unixepoch()))");
   await d.execute("CREATE TABLE IF NOT EXISTS spots (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, file_path TEXT, spot_type TEXT NOT NULL DEFAULT 'promo', advertiser TEXT, start_date TEXT, end_date TEXT, max_plays_day INTEGER NOT NULL DEFAULT 999, plays_today INTEGER NOT NULL DEFAULT 0, plays_total INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, notes TEXT, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS separation_rules (id INTEGER PRIMARY KEY AUTOINCREMENT, rule_type TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', value INTEGER NOT NULL, is_hard INTEGER NOT NULL DEFAULT 1, is_active INTEGER NOT NULL DEFAULT 1, description TEXT)");
+
+  // Seed default rules
+  const ruleCount = await d.select("SELECT COUNT(*) as c FROM separation_rules");
+  if ((ruleCount as any)[0].c === 0) {
+    await d.execute("INSERT INTO separation_rules (rule_type, scope, value, is_hard, description) VALUES ('artist_separation_min', 'global', 60, 1, 'Minimum minutes before same artist can play again')");
+    await d.execute("INSERT INTO separation_rules (rule_type, scope, value, is_hard, description) VALUES ('song_separation_min', 'global', 240, 1, 'Minimum minutes before same song can play again')");
+    await d.execute("INSERT INTO separation_rules (rule_type, scope, value, is_hard, description) VALUES ('title_separation_min', 'global', 120, 1, 'Minimum minutes before same title (diff artist) can play again')");
+    await d.execute("INSERT INTO separation_rules (rule_type, scope, value, is_hard, description) VALUES ('max_same_gender', 'global', 3, 0, 'Max consecutive songs of same gender (soft rule)')");
+    await d.execute("INSERT INTO separation_rules (rule_type, scope, value, is_hard, description) VALUES ('max_same_category', 'global', 3, 0, 'Max consecutive songs from same category (soft rule)')");
+  }
+
   console.log("DB ready");
 }

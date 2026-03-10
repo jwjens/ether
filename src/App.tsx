@@ -10,6 +10,7 @@ import Scheduler from "./components/Scheduler";
 import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import Spots from "./components/Spots";
+import RulesEditor from "./components/RulesEditor";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";
 
@@ -143,7 +144,7 @@ export default function App() {
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
           {panel === "spots" && <Spots />}
-          {panel === "settings" && <PH title="Settings" />}
+          {panel === "settings" && <RulesEditor />}
         </main>
       </div>
       <footer className="h-7 flex items-center justify-between px-4 bg-zinc-900 border-t border-zinc-800 text-[11px] text-zinc-500 shrink-0">
