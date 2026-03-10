@@ -199,7 +199,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
       <div className="flex items-center justify-between mb-3 shrink-0">
         <h1 className="text-lg font-bold">Live Assist</h1>
         <div className="flex items-center gap-1.5">
-          <button onClick={async () => { const n = await fillQueueFromSchedule(); }} className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white">GEN LOG</button>
+          <button onClick={async () => { await fillQueueFromSchedule(); }} className="px-2.5 py-1 rounded text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white">GEN LOG</button>
           <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
           <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
           <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
@@ -215,33 +215,34 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
           <UpNext queueLen={queueLen} onQueueChange={() => {}} />
         </div>
 
-        {/* Right - Decks */}
-        <div className="flex-1 space-y-3 overflow-y-auto">
+        {/* Right - Decks + search/carts below */}
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Deck A */}
           <OnAirDeck deck={deckA} label="Deck A \u2014 On Air" />
-          <div className="flex items-center gap-2">
-            <button onClick={() => engine.getDeck("A")?.stop()} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
-            <button onClick={() => { const d = engine.getDeck("A"); if (!d) return; const st = deckA?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-2 rounded text-xs font-bold text-white" style={{ backgroundColor: deckA?.status === "playing" ? "#ca8a04" : "#2563eb" }}>{deckA?.status === "playing" ? "PAUSE" : deckA?.status === "paused" ? "RESUME" : "PLAY"}</button>
-            <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-32"><span>VOL</span><input type="range" min="0" max="100" value={Math.round((deckA?.volume || 1) * 100)} onChange={e => engine.getDeck("A")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-blue-500" /><span>{Math.round((deckA?.volume || 1) * 100)}%</span></div>
+          <div className="flex items-center gap-2 mt-1 mb-2">
+            <button onClick={() => engine.getDeck("A")?.stop()} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
+            <button onClick={() => { const d = engine.getDeck("A"); if (!d) return; const st = deckA?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckA?.status === "playing" ? "#ca8a04" : "#2563eb" }}>{deckA?.status === "playing" ? "PAUSE" : deckA?.status === "paused" ? "RESUME" : "PLAY"}</button>
+            <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-28"><span>VOL</span><input type="range" min="0" max="100" value={Math.round((deckA?.volume || 1) * 100)} onChange={e => engine.getDeck("A")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-blue-500" /><span>{Math.round((deckA?.volume || 1) * 100)}%</span></div>
           </div>
+
+          {/* Deck B */}
           <OnAirDeck deck={deckB} label="Deck B \u2014 Standby" />
-          <div className="flex items-center gap-2">
-            <button onClick={() => engine.getDeck("B")?.stop()} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
-            <button onClick={() => { const d = engine.getDeck("B"); if (!d) return; const st = deckB?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-2 rounded text-xs font-bold text-white" style={{ backgroundColor: deckB?.status === "playing" ? "#ca8a04" : "#059669" }}>{deckB?.status === "playing" ? "PAUSE" : deckB?.status === "paused" ? "RESUME" : "PLAY"}</button>
-            <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-32"><span>VOL</span><input type="range" min="0" max="100" value={Math.round((deckB?.volume || 1) * 100)} onChange={e => engine.getDeck("B")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-emerald-500" /><span>{Math.round((deckB?.volume || 1) * 100)}%</span></div>
+          <div className="flex items-center gap-2 mt-1 mb-2">
+            <button onClick={() => engine.getDeck("B")?.stop()} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
+            <button onClick={() => { const d = engine.getDeck("B"); if (!d) return; const st = deckB?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckB?.status === "playing" ? "#ca8a04" : "#059669" }}>{deckB?.status === "playing" ? "PAUSE" : deckB?.status === "paused" ? "RESUME" : "PLAY"}</button>
+            <div className="flex items-center gap-1 text-[10px] text-zinc-500 w-28"><span>VOL</span><input type="range" min="0" max="100" value={Math.round((deckB?.volume || 1) * 100)} onChange={e => engine.getDeck("B")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-emerald-500" /><span>{Math.round((deckB?.volume || 1) * 100)}%</span></div>
           </div>
+
+          {/* Below decks: search OR carts */}
+          {showCarts ? (
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <CartWall />
+            </div>
+          ) : (
+            <JockStrip deckA={deckA} deckB={deckB} />
+          )}
         </div>
       </div>
-
-      {/* Jock Strip - search + history + teleprompter */}
-      <JockStrip deckA={deckA} deckB={deckB} />
-
-      {/* Cart Wall - FULL WIDTH below everything */}
-      {showCarts && (
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-4 mt-3 shrink-0">
-          <div className="text-[10px] font-bold text-zinc-400 uppercase mb-3">Cart Wall</div>
-          <CartWall />
-        </div>
-      )}
     </div>
   );
 }

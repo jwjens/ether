@@ -22,7 +22,7 @@ export default function CartWall() {
   const [editTitle, setEditTitle] = useState("");
   const [editHotkey, setEditHotkey] = useState("");
   const audioMap = new Map<number, HTMLAudioElement>();
-  const TOTAL = 32;
+  const TOTAL = 16;
 
   const load = async () => {
     const rows = await query<CartSlot>("SELECT * FROM cart_slots ORDER BY slot_number");
@@ -84,7 +84,7 @@ export default function CartWall() {
           </div>
         </div>
       )}
-      <div className="grid grid-cols-8 gap-2 overflow-y-auto" style={{ maxHeight: "220px" }}>
+      <div className="grid grid-cols-8 gap-2 ">
         {slots.map((slot, i) => {
           if (slot && slot.file_path) {
             return (
