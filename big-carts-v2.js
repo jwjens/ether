@@ -1,4 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+const fs = require('fs');
+
+console.log('\n  Ether — Big Cart Squares\n');
+
+fs.writeFileSync('src/components/CartWall.tsx', `import { useState, useEffect, useCallback } from "react";
 import { query, execute, queryOne } from "../db/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readFile } from "@tauri-apps/plugin-fs";
@@ -19,7 +23,7 @@ const COLORS = [
 ];
 
 function titleFromFile(p: string) {
-  return (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+  return (p.split(/[\\\\/]/).pop() || p).replace(/\\.[^.]+$/, "").replace(/[_-]/g, " ");
 }
 
 export default function CartWall() {
@@ -187,3 +191,6 @@ export default function CartWall() {
     </div>
   );
 }
+`, 'utf8');
+console.log('  REWROTE CartWall.tsx (big 100px squares)');
+console.log('  App should hot-reload.\n');

@@ -1,4 +1,12 @@
-import { useState, useRef } from "react";
+const fs = require('fs');
+
+console.log('\n  Ether — Drag & Drop Queue v2\n');
+
+// ============================================================
+// Rewrite UpNext
+// ============================================================
+
+fs.writeFileSync('src/components/UpNext.tsx', `import { useState, useRef } from "react";
 import { engine } from "../audio/engine";
 
 interface Props {
@@ -144,3 +152,30 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     </div>
   );
 }
+`, 'utf8');
+console.log('  REWROTE src/components/UpNext.tsx');
+
+// Update CartWall for drag support
+let cart = fs.readFileSync('src/components/CartWall.tsx', 'utf8');
+if (!cart.includes('application/cart')) {
+  cart = cart.replace(
+    "                onClick={() => fireCart(i)}",
+    "                onClick={() => fireCart(i)}\n                draggable\n                onDragStart={(e) => { e.dataTransfer.setData('application/cart', JSON.stringify({ filePath: slot.file_path, title: slot.title || 'Cart ' + (i+1), artist: '' })); e.dataTransfer.effectAllowed = 'copy'; }}"
+  );
+  fs.writeFileSync('src/components/CartWall.tsx', cart, 'utf8');
+  console.log('  UPDATED CartWall.tsx (drag to queue)');
+}
+
+// Update App.tsx
+let app = fs.readFileSync('src/App.tsx', 'utf8');
+if (!app.includes('onQueueChange')) {
+  app = app.replace(
+    '<UpNext queueLen={queueLen} />',
+    '<UpNext queueLen={queueLen} onQueueChange={() => setQueueLen(engine.getQueue().length)} />'
+  );
+  fs.writeFileSync('src/App.tsx', app, 'utf8');
+  console.log('  UPDATED App.tsx');
+}
+
+console.log('\n  Done! npm run tauri:dev');
+console.log('  Drag songs to reorder. Right-click for menu. Drag carts into queue.\n');

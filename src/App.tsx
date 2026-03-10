@@ -43,6 +43,7 @@ export default function App() {
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [showCarts, setShowCarts] = useState(false);
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
 
@@ -149,7 +150,7 @@ export default function App() {
       <div className="flex flex-1 overflow-hidden">
         <Nav active={panel} set={setPanel} />
         <main className="flex-1 overflow-auto p-4">
-          {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} />}
+          {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} showCarts={showCarts} toggleCarts={() => setShowCarts(!showCarts)} />}
           {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
@@ -185,7 +186,7 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
 // LIVE PANEL — polished
 // ============================================================
 
-function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, toggleShuffle, toggleContinuous, queueLen }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; continuous: boolean; toggleAuto: () => void; toggleShuffle: () => void; toggleContinuous: () => void; queueLen: number }) {
+function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, toggleShuffle, toggleContinuous, queueLen, showCarts, toggleCarts }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; continuous: boolean; toggleAuto: () => void; toggleShuffle: () => void; toggleContinuous: () => void; queueLen: number; showCarts: boolean; toggleCarts: () => void }) {
   const handleXfade = () => {
     if (deckA?.status === "playing" && deckB?.filePath) engine.crossfade("A", "B", 2000);
     else if (deckB?.status === "playing" && deckA?.filePath) engine.crossfade("B", "A", 2000);
@@ -195,7 +196,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
     <div className="flex gap-3 h-full">
       {/* Left column - Up Next */}
       <div className="w-64 shrink-0">
-        <UpNext queueLen={queueLen} />
+        <UpNext queueLen={queueLen} onQueueChange={() => setQueueLen(engine.getQueue().length)} />
       </div>
 
       {/* Right column - Decks + Controls */}
@@ -208,6 +209,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
             <button onClick={toggleContinuous} className={continuous ? "px-2.5 py-1 rounded text-[11px] font-bold bg-rose-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>24/7</button>
             <button onClick={toggleShuffle} className={shuffle ? "px-2.5 py-1 rounded text-[11px] font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>SHUFFLE</button>
             <button onClick={toggleAuto} className={autoAdv ? "px-2.5 py-1 rounded text-[11px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>AUTO</button>
+            <button onClick={toggleCarts} className={showCarts ? "px-2.5 py-1 rounded text-[11px] font-bold bg-orange-600 text-white" : "px-2.5 py-1 rounded text-[11px] font-bold bg-zinc-800 text-zinc-500 hover:bg-zinc-700"}>CARTS</button>
             <button onClick={handleXfade} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-[11px] font-bold text-white">CROSSFADE</button>
           </div>
         </div>
@@ -238,11 +240,13 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
             <input type="range" min="0" max="100" value={Math.round((deckB?.volume || 1) * 100)} onChange={e => engine.getDeck("B")?.setVolume(parseInt(e.target.value) / 100)} className="flex-1 h-1 accent-emerald-500" />
             <span>{Math.round((deckB?.volume || 1) * 100)}%</span>
           </div>
-          {/* Cart Wall */}
-          <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
-            <div className="text-[10px] font-bold text-zinc-400 uppercase mb-2">Cart Wall</div>
-            <CartWall />
-          </div>
+          {/* Cart Wall - collapsible */}
+          {showCarts && (
+            <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
+              <div className="text-[10px] font-bold text-zinc-400 uppercase mb-2">Cart Wall — press CARTS to hide</div>
+              <CartWall />
+            </div>
+          )}
         </div>
       </div>
     </div>
