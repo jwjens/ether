@@ -93,10 +93,10 @@ export default function JockStrip({ deckA, deckB }: Props) {
             onChange={e => setSearch(e.target.value)}
             onFocus={() => { if (results.length > 0) setShowResults(true); }}
             onBlur={() => setTimeout(() => setShowResults(false), 200)}
-            className="w-full px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500"
+            style={{ width: "100%", padding: "8px 12px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: "var(--radius-xs)", fontSize: 13, color: "var(--text-primary)", outline: "none" }}
           />
           {showResults && results.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto">
+            <div style={{ position: "absolute" as any, top: "100%", left: 0, right: 0, marginTop: 4, background: "var(--bg-elevated)", border: "1px solid var(--border-secondary)", borderRadius: "var(--radius-sm)", boxShadow: "var(--shadow-lg)", zIndex: 50, maxHeight: 240, overflowY: "auto" as any }}>
               {results.map(r => (
                 <div key={r.id} className="flex items-center justify-between px-3 py-2 hover:bg-zinc-700 border-b border-zinc-700 last:border-0">
                   <div className="flex-1 min-w-0">
@@ -116,8 +116,8 @@ export default function JockStrip({ deckA, deckB }: Props) {
         {/* Teleprompter */}
         <div className="flex items-center gap-4 shrink-0">
           <div className="text-right">
-            <div className="text-lg font-mono font-bold text-zinc-100 leading-none">{timeStr}</div>
-            <div className="text-[10px] text-zinc-500">{dateStr}</div>
+            <div style={{ fontSize: 18, fontFamily: "monospace", fontWeight: 700, color: "var(--text-primary)", lineHeight: 1 }}>{timeStr}</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{dateStr}</div>
           </div>
           {nextUp && (
             <div className="border-l border-zinc-700 pl-3">
@@ -132,9 +132,9 @@ export default function JockStrip({ deckA, deckB }: Props) {
       {/* Row 2: Recent history */}
       {recent.length > 0 && (
         <div className="flex items-center gap-1 overflow-hidden">
-          <span className="text-[9px] text-zinc-600 uppercase shrink-0 mr-1">History:</span>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase" as any, flexShrink: 0, marginRight: 4 }}>History:</span>
           {recent.map((r, i) => (
-            <span key={i} className="text-[10px] text-zinc-500 truncate shrink-0">
+            <span key={i} style={{ fontSize: 11, color: "var(--text-secondary)", flexShrink: 0 }}>
               {i > 0 && <span className="text-zinc-700 mx-1">|</span>}
               <span className="text-zinc-400">{r.artist || ""}</span>
               {r.artist ? " — " : ""}

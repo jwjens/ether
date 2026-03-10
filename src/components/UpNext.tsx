@@ -96,14 +96,14 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     <div style={{ background: "var(--bg-secondary)", borderRadius: "var(--radius)", border: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }} onClick={closeContext}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.04em" }}>Up Next ({queueLen})</span>
-        {queue.length > 0 && <button onClick={() => { engine.clearQueue(); onQueueChange(); }} className="text-[10px] text-zinc-600 hover:text-zinc-400">Clear All</button>}
+        {queue.length > 0 && <button onClick={() => { engine.clearQueue(); onQueueChange(); }} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>Clear All</button>}
       </div>
       <div className={"flex-1 overflow-y-auto " + (dropTarget ? "ring-2 ring-blue-500 ring-inset" : "")}
         onDragOver={handleListDragOver}
         onDragLeave={() => setDropTarget(false)}
         onDrop={handleListDrop}>
         {queue.length === 0 ? (
-          <div className="px-3 py-8 text-[11px] text-zinc-600 italic text-center">
+          <div style={{ padding: "32px 12px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic", textAlign: "center" as any }}>
             <div className="mb-2">Queue empty</div>
             <div className="text-[9px]">Drag carts here or use GEN LOG</div>
           </div>
@@ -115,30 +115,30 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
             onDrop={e => handleDrop(e, i)}
             onDragEnd={handleDragEnd}
             onContextMenu={e => handleContext(e, i)}
-            className={getCls(i)}>
-            <span className="text-[9px] text-zinc-600 w-4 shrink-0 text-right">{i + 1}</span>
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: "1px solid var(--border-primary)", cursor: "grab", opacity: dragIdx === i ? 0.3 : 1, borderTop: dragOverIdx === i ? "2px solid var(--accent-blue)" : "none", background: i === 0 ? "var(--bg-tertiary)" : "transparent" }}>
+            <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 20, flexShrink: 0, textAlign: "right" as any }}>{i + 1}</span>
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] text-zinc-200 truncate">{item.title}</div>
-              <div className="text-[9px] text-zinc-500 truncate">{item.artist}</div>
+              <div style={{ fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.title}</div>
+              <div style={{ fontSize: 10, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
             </div>
-            <button onClick={(e) => { e.stopPropagation(); removeItem(i); }} className="text-[9px] text-zinc-700 hover:text-red-400 px-1">x</button>
+            <button onClick={(e) => { e.stopPropagation(); removeItem(i); }} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>x</button>
           </div>
         ))}
         {queue.length > 50 && <div className="px-3 py-2 text-[10px] text-zinc-600 text-center">+ {queue.length - 50} more</div>}
       </div>
 
       {contextMenu && (
-        <div className="fixed z-50 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl py-1 min-w-[160px]"
+        <div style={{ position: "fixed" as any, zIndex: 50, background: "var(--bg-elevated)", border: "1px solid var(--border-secondary)", borderRadius: "var(--radius-sm)", boxShadow: "var(--shadow-lg)", padding: "4px 0", minWidth: 180 }}
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={e => e.stopPropagation()}>
-          <div className="px-3 py-1 text-[10px] text-zinc-500 truncate border-b border-zinc-700">{queue[contextMenu.idx]?.title}</div>
-          <button onClick={() => playNext(contextMenu.idx)} className="w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-700">Play Next</button>
-          <button onClick={() => moveUp(contextMenu.idx)} className="w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-700">Move Up</button>
-          <button onClick={() => moveDown(contextMenu.idx)} className="w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-700">Move Down</button>
-          <button onClick={() => moveToTop(contextMenu.idx)} className="w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-700">Move to Top</button>
-          <button onClick={() => moveToBottom(contextMenu.idx)} className="w-full px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-zinc-700">Move to Bottom</button>
+          <div style={{ padding: "4px 12px", fontSize: 10, color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{queue[contextMenu.idx]?.title}</div>
+          <button onClick={() => playNext(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer" }}>Play Next</button>
+          <button onClick={() => moveUp(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer" }}>Move Up</button>
+          <button onClick={() => moveDown(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer" }}>Move Down</button>
+          <button onClick={() => moveToTop(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer" }}>Move to Top</button>
+          <button onClick={() => moveToBottom(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--text-primary)", background: "none", border: "none", cursor: "pointer" }}>Move to Bottom</button>
           <div className="border-t border-zinc-700"></div>
-          <button onClick={() => removeItem(contextMenu.idx)} className="w-full px-3 py-1.5 text-left text-xs text-red-400 hover:bg-zinc-700">Remove</button>
+          <button onClick={() => removeItem(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 12, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer" }}>Remove</button>
         </div>
       )}
     </div>

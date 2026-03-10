@@ -230,7 +230,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
         {/* Right - Decks + search/carts below */}
         <div className="flex-1 flex flex-col min-h-0">
           {/* Deck A */}
-          <OnAirDeck deck={deckA} label="Deck A \u2014 On Air" />
+          <OnAirDeck deck={deckA} label="Deck A  — On Air" />
           <div className="flex items-center gap-2 mt-1 mb-2">
             <button onClick={() => engine.getDeck("A")?.stop()} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
             <button onClick={() => { const d = engine.getDeck("A"); if (!d) return; const st = deckA?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckA?.status === "playing" ? "var(--accent-amber)" : "var(--accent-blue)", borderRadius: "var(--radius-xs)" }}>{deckA?.status === "playing" ? "PAUSE" : deckA?.status === "paused" ? "RESUME" : "PLAY"}</button>
@@ -238,7 +238,7 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
           </div>
 
           {/* Deck B */}
-          <OnAirDeck deck={deckB} label="Deck B \u2014 Standby" />
+          <OnAirDeck deck={deckB} label="Deck B  — Standby" />
           <div className="flex items-center gap-2 mt-1 mb-2">
             <button onClick={() => engine.getDeck("B")?.stop()} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs font-bold text-zinc-400">STOP</button>
             <button onClick={() => { const d = engine.getDeck("B"); if (!d) return; const st = deckB?.status; if (st === "playing") d.pause(); else if (st === "paused") d.resume(); else d.play(); }} className="flex-1 py-1.5 rounded text-xs font-bold text-white" style={{ backgroundColor: deckB?.status === "playing" ? "var(--accent-amber)" : "var(--accent-green)", borderRadius: "var(--radius-xs)" }}>{deckB?.status === "playing" ? "PAUSE" : deckB?.status === "paused" ? "RESUME" : "PLAY"}</button>
