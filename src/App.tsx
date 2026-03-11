@@ -457,7 +457,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
                 <td className="px-2 py-1.5 text-right">
                   <button onClick={() => onLoadA(s)} className="px-1.5 py-0.5 bg-blue-700 hover:bg-blue-600 rounded text-[9px] font-bold text-white mr-0.5">A</button>
                   <button onClick={() => onLoadB(s)} className="px-1.5 py-0.5 bg-emerald-700 hover:bg-emerald-600 rounded text-[9px] font-bold text-white mr-0.5">B</button>
-                  <button onClick={() => onQueue(s)} className="px-1.5 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[9px] font-bold text-white">Q</button>
+                  <button onClick={() => onQueue(s)} className="px-1.5 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[9px] font-bold text-white">Q</button><button onClick={async () => { if (confirm("Delete " + s.title + "?")) { await execute("DELETE FROM songs WHERE id=?", [s.id]); load(); } }} className="px-1.5 py-0.5 bg-zinc-800 hover:bg-red-900 rounded text-[9px] font-bold text-zinc-500 hover:text-red-400">X</button>
                 </td>
               </tr>
             ))}</tbody>
