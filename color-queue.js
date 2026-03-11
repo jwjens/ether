@@ -1,4 +1,50 @@
-import { useState, useRef, useEffect } from "react";
+const fs = require('fs');
+
+console.log('\n  Ether — Active Daypart + Color-Coded Queue\n');
+
+// ============================================================
+// 1. Update UpNext to show category colors on queue items
+// ============================================================
+
+// First, update the engine to store category info with queue items
+let eng = fs.readFileSync('src/audio/engine.ts', 'utf8');
+
+// Add category and color to QueueItem if not already there
+if (!eng.includes('category?:')) {
+  eng = eng.replace(
+    'interface QueueItem { filePath: string; title: string; artist: string; }',
+    'interface QueueItem { filePath: string; title: string; artist: string; category?: string; categoryColor?: string; itemType?: string; }'
+  );
+  // Also try alternate format
+  eng = eng.replace(
+    'interface QueueItem {\n  filePath: string;\n  title: string;\n  artist: string;\n}',
+    'interface QueueItem {\n  filePath: string;\n  title: string;\n  artist: string;\n  category?: string;\n  categoryColor?: string;\n  itemType?: string;\n}'
+  );
+  fs.writeFileSync('src/audio/engine.ts', eng, 'utf8');
+  console.log('  UPDATED engine.ts (category fields on QueueItem)');
+}
+
+// ============================================================
+// 2. Update loggen to include category info when building queue
+// ============================================================
+
+let loggen = fs.readFileSync('src/audio/loggen.ts', 'utf8');
+
+if (!loggen.includes('categoryColor')) {
+  // Add category color to the queue items built by fillQueueFromSchedule
+  loggen = loggen.replace(
+    'filePath: song.file_path!, title: song.title, artist: song.artist_name || ""',
+    'filePath: song.file_path!, title: song.title, artist: song.artist_name || "", category: song.category_id ? String(song.category_id) : undefined'
+  );
+  fs.writeFileSync('src/audio/loggen.ts', loggen, 'utf8');
+  console.log('  UPDATED loggen.ts (category in queue items)');
+}
+
+// ============================================================
+// 3. Rewrite UpNext with color-coded items + active daypart
+// ============================================================
+
+fs.writeFileSync('src/components/UpNext.tsx', `import { useState, useRef, useEffect } from "react";
 import { engine } from "../audio/engine";
 import { query } from "../db/client";
 
@@ -254,3 +300,32 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     </div>
   );
 }
+`, 'utf8');
+console.log('  REWROTE UpNext.tsx (color-coded + active daypart)');
+
+console.log('\n  Done! npm run tauri:dev');
+console.log('');
+console.log('  UP NEXT queue now shows:');
+console.log('');
+console.log('  ACTIVE DAYPART:');
+console.log('    Green dot + show name + clock name at the top');
+console.log('    "Morning Drive — Hot AC Clock"');
+console.log('    Updates every 30 seconds');
+console.log('');
+console.log('  COLOR-CODED SONGS:');
+console.log('    Left border = category color');
+console.log('    A = red     (power current)');
+console.log('    B = amber   (secondary)');
+console.log('    C = green   (tertiary)');
+console.log('    D = blue    (gold/recurrent)');
+console.log('    VT = pink   (voice tracks)');
+console.log('    Spots = purple');
+console.log('    Jingles = teal');
+console.log('');
+console.log('  Category badge (A, B, C, D) on each item');
+console.log('  Jock sees at a glance what type each song is.');
+console.log('');
+console.log('  Push:');
+console.log('    git add -A');
+console.log('    git commit -m "v1.5.5 color-coded queue + active daypart"');
+console.log('    git push\n');
