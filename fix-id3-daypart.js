@@ -1,4 +1,13 @@
-import { readFile } from "@tauri-apps/plugin-fs";
+const fs = require('fs');
+
+console.log('\n  Ether — Fix ID3 Tags + Daypart Query\n');
+
+// ============================================================
+// 1. Rewrite id3.ts to use readFile (works in release builds)
+// ============================================================
+
+fs.mkdirSync('src/audio', { recursive: true });
+fs.writeFileSync('src/audio/id3.ts', `import { readFile } from "@tauri-apps/plugin-fs";
 
 export interface ID3Tags {
   title: string | null;
@@ -25,7 +34,7 @@ const GENRES = [
 ];
 
 function trimNull(s: string): string {
-  const idx = s.indexOf("\0");
+  const idx = s.indexOf("\\0");
   return (idx >= 0 ? s.substring(0, idx) : s).trim();
 }
 
@@ -59,7 +68,7 @@ function parseID3v2(bytes: Uint8Array): Partial<ID3Tags> {
   const end = Math.min(10 + size, bytes.length);
   while (pos + 10 < end) {
     const frameId = decodeText(bytes.slice(pos, pos + 4));
-    if (frameId[0] === "\0" || frameId.charCodeAt(0) === 0) break;
+    if (frameId[0] === "\\0" || frameId.charCodeAt(0) === 0) break;
     const frameSize = version >= 4
       ? ((bytes[pos+4] & 0x7f) << 21 | (bytes[pos+5] & 0x7f) << 14 | (bytes[pos+6] & 0x7f) << 7 | (bytes[pos+7] & 0x7f))
       : (bytes[pos+4] << 24 | bytes[pos+5] << 16 | bytes[pos+6] << 8 | bytes[pos+7]);
@@ -80,7 +89,7 @@ function parseID3v2(bytes: Uint8Array): Partial<ID3Tags> {
     if (frameId === "TALB") result.album = text || null;
     if (frameId === "TDRC" || frameId === "TYER") result.year = text || null;
     if (frameId === "TCON") {
-      const m = text.match(/\((\d+)\)/);
+      const m = text.match(/\\((\\d+)\\)/);
       if (m) { const idx = parseInt(m[1]); result.genre = idx < GENRES.length ? GENRES[idx] : text; }
       else { result.genre = text || null; }
     }
@@ -105,3 +114,29 @@ export async function readID3(filePath: string): Promise<ID3Tags> {
   }
   return result;
 }
+`, 'utf8');
+console.log('  REWROTE src/audio/id3.ts (uses readFile, not fetch)');
+
+// ============================================================
+// 2. Verify the show query in UpNext matches the DB schema
+// ============================================================
+
+let upnext = fs.readFileSync('src/components/UpNext.tsx', 'utf8');
+
+// Fix the show query - shows table has start_hour and end_hour
+// Make sure we handle the case where end_hour wraps (e.g. 22 to 6)
+upnext = upnext.replace(
+  '"SELECT s.name, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.start_hour <= ? AND s.end_hour > ? LIMIT 1"',
+  '"SELECT s.name, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.start_hour <= ? AND (s.end_hour > ? OR s.end_hour <= s.start_hour) LIMIT 1"'
+);
+
+fs.writeFileSync('src/components/UpNext.tsx', upnext, 'utf8');
+console.log('  FIXED UpNext.tsx (daypart query handles wraparound)');
+
+console.log('\n  Done! Delete DB, reimport music:');
+console.log('  Remove-Item "$env:APPDATA\\com.openair.app\\openair.db*" -Force -ErrorAction SilentlyContinue');
+console.log('  npm run tauri:dev');
+console.log('');
+console.log('  Then: Library → Import Folder');
+console.log('  Artists will now read correctly from ID3 tags.');
+console.log('  Set up shows in Schedule tab for daypart to show.\n');

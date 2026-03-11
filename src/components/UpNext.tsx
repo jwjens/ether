@@ -56,7 +56,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       try {
         const hour = new Date().getHours();
         const rows = await query<{ name: string; clock_name: string | null }>(
-          "SELECT s.name, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.start_hour <= ? AND s.end_hour > ? LIMIT 1",
+          "SELECT s.name, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.start_hour <= ? AND (s.end_hour > ? OR s.end_hour <= s.start_hour) LIMIT 1",
           [hour, hour]
         );
         setActiveShow(rows.length > 0 ? rows[0] : null);

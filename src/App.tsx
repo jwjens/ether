@@ -8,6 +8,7 @@ import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
 import CartWall from "./components/CartWall";
+import ImportDialog from "./components/ImportDialog";
 import JockStrip from "./components/JockStrip";
 import UpNext from "./components/UpNext";
 import Scheduler from "./components/Scheduler";
@@ -323,6 +324,7 @@ function DeckCard({ deck, deckId, accentColor, waveColor, playedColor }: { deck:
 // ============================================================
 
 function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void }) {
+  const [showImport, setShowImport] = useState(false);
   const [catList, setCatList] = useState<{ id: number; code: string; color: string | null }[]>([]);
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -416,13 +418,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
           {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}
         </select>
         <button onClick={queueAll} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-xs font-bold text-white">Queue All</button>
-        <button onClick={handleImport} disabled={importing} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-bold text-white">Import</button>
+        <button onClick={() => setShowImport(!showImport)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">{showImport ? "Cancel" : "Import"}</button>
       </div>
       {status ? <div className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded text-xs text-blue-200">{status}</div> : null}
       {loading ? <div className="text-sm text-zinc-500">Loading...</div> : filtered.length === 0 ? (
         <div className="text-center py-16">
           <div className="text-zinc-400 text-lg mb-2">No music yet</div>
-          <button onClick={handleImport} className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium text-white">Import Music Folder</button>
+          <button onClick={() => setShowImport(true)} className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium text-white">Import Music Folder</button>
         </div>
       ) : (
         <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
