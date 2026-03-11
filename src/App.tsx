@@ -421,6 +421,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
         <button onClick={() => setShowImport(!showImport)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">{showImport ? "Cancel" : "Import"}</button>
       </div>
       {status ? <div className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded text-xs text-blue-200">{status}</div> : null}
+      {showImport && <ImportDialog onDone={() => { setShowImport(false); load(); }} />}
       {loading ? <div className="text-sm text-zinc-500">Loading...</div> : filtered.length === 0 ? (
         <div className="text-center py-16">
           <div className="text-zinc-400 text-lg mb-2">No music yet</div>
