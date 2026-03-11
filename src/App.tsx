@@ -21,8 +21,11 @@ import NowPlayingSettings from "./components/NowPlayingSettings";
 import StreamManager from "./components/StreamManager";
 import AudioDevices from "./components/AudioDevices";
 import VoiceTracker from "./components/VoiceTracker";
+import Announcements, { startAnnouncementEngine } from "./components/Announcements";
+import SplashScreen from "./components/SplashScreen";
+import FirstRunWizard from "./components/FirstRunWizard";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "streaming" | "settings";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -48,6 +51,9 @@ export default function App() {
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
   const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
+  const [showWizard, setShowWizard] = useState(false);
+  const [stationName, setStationName] = useState("Ether");
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
   const [outputDevice, setOutputDevice] = useState("");
@@ -146,7 +152,7 @@ export default function App() {
       {showNowPlaying && <NowPlaying onExit={() => setShowNowPlaying(false)} />}
       <header style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", flexShrink: 0 }}>
         <div className="flex items-center gap-3">
-          <span style={{ fontSize: 22, fontWeight: 300, letterSpacing: "-0.04em" }}><span style={{ color: "var(--accent-blue)" }}>Eth</span><span style={{ color: "var(--text-primary)" }}>er</span></span>
+          <span style={{ fontSize: 22, fontWeight: 300, letterSpacing: "-0.04em" }}><span style={{ color: "var(--accent-blue)" }}>Eth</span><span style={{ color: "var(--text-primary)" }}>er</span></span><span style={{ fontSize: 12, fontWeight: 300, color: "var(--text-tertiary)", marginLeft: 12 }}>{stationName}</span>
           <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 300, letterSpacing: "0.02em" }}>v1.5</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
@@ -165,6 +171,7 @@ export default function App() {
           {panel === "logs" && <Logs />}
           {panel === "spots" && <Spots />}
           {panel === "streaming" && <StreamManager />}
+          {panel === "announce" && <Announcements />}
           {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
           {panel === "settings" && <div className="space-y-6"><ProcessingPanel /><NowPlayingSettings /><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
         </main>
@@ -182,6 +189,7 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
     { id: "live", label: "Live Assist" }, { id: "library", label: "Library" },
     { id: "clocks", label: "Schedule" }, { id: "logs", label: "Logs" },
     { id: "spots", label: "Spots" }, { id: "voicetrack" as Panel, label: "Voice Track" },
+    { id: "announce" as Panel, label: "Announce" },
     { id: "streaming" as Panel, label: "Stream" },
     { id: "settings", label: "Settings" },
   ];

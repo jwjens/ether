@@ -53,5 +53,11 @@ export async function runMigrations(): Promise<void> {
   if ((stCount as any)[0].c === 0) {
     await d.execute("INSERT INTO stream_settings (id, server, port, mount, password, station_name) VALUES (1, 'localhost', 8000, '/stream', 'hackme', 'Ether Radio')");
   }
+  await d.execute("CREATE TABLE IF NOT EXISTS announcements (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, file_path TEXT NOT NULL, trigger_time TEXT NOT NULL, days TEXT NOT NULL DEFAULT '0123456', duck_music INTEGER NOT NULL DEFAULT 1, resume_music INTEGER NOT NULL DEFAULT 1, duck_level REAL NOT NULL DEFAULT 0.1, is_active INTEGER NOT NULL DEFAULT 1, last_played_at INTEGER, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  await d.execute("CREATE TABLE IF NOT EXISTS station_config (id INTEGER PRIMARY KEY, station_name TEXT NOT NULL DEFAULT 'My Station', mode TEXT NOT NULL DEFAULT '', tagline TEXT, logo_path TEXT, setup_complete INTEGER NOT NULL DEFAULT 0)");
+  const cfgCount = await d.select("SELECT COUNT(*) as c FROM station_config");
+  if ((cfgCount as any)[0].c === 0) {
+    await d.execute("INSERT INTO station_config (id) VALUES (1)");
+  }
   console.log("DB ready");
 }
