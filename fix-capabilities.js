@@ -1,10 +1,9 @@
-{
+const fs = require('fs');
+
+fs.writeFileSync('src-tauri/capabilities/default.json', JSON.stringify({
   "identifier": "default",
   "description": "Default permissions for Ether",
-  "windows": [
-    "main",
-    "nowplaying"
-  ],
+  "windows": ["main", "nowplaying"],
   "permissions": [
     "core:default",
     "core:window:allow-create",
@@ -20,11 +19,9 @@
     "fs:read-all",
     {
       "identifier": "fs:scope",
-      "allow": [
-        {
-          "path": "**"
-        }
-      ]
+      "allow": [{"path": "**"}]
     }
   ]
-}
+}, null, 2));
+
+console.log('Done');

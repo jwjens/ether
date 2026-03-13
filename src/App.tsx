@@ -14,6 +14,7 @@ import UpNext from "./components/UpNext";
 import Scheduler from "./components/Scheduler";
 import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
+import { openNowPlayingWindow } from "./components/NowPlayingWindow";
 import Spots from "./components/Spots";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
@@ -149,7 +150,7 @@ export default function App() {
 
   return (
     <div className={"h-screen flex flex-col " + (darkMode ? "dark-theme bg-zinc-950 text-zinc-100" : "")} style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
-      {showNowPlaying && <NowPlaying onExit={() => setShowNowPlaying(false)} />}
+      {/* Now Playing opens as separate window via openNowPlayingWindow() */}
       <header style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", flexShrink: 0 }}>
         <div className="flex items-center gap-3">
           <span style={{ fontSize: 22, fontWeight: 300, letterSpacing: "-0.04em" }}><span style={{ color: "var(--accent-blue)" }}>Eth</span><span style={{ color: "var(--text-primary)" }}>er</span></span><span style={{ fontSize: 12, fontWeight: 300, color: "var(--text-tertiary)", marginLeft: 12 }}>{stationName}</span>
@@ -157,7 +158,7 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
           <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: darkMode ? "var(--accent-purple)" : "var(--bg-tertiary)", color: darkMode ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>{darkMode ? "DARK" : "LIGHT"}</button>
-          <button onClick={() => setShowNowPlaying(true)} className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 rounded text-[10px] font-bold text-zinc-400">NOW PLAYING</button>
+          <button onClick={() => openNowPlayingWindow()} style={{ padding: "4px 12px", background: "var(--bg-tertiary)", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", letterSpacing: "0.05em" }}>NOW PLAYING</button>
           <ClockDisplay />
           <button onClick={() => { engine.init(); setOnAir(!onAir); }} className={onAir ? "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-red-600 text-white animate-pulse" : "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-zinc-700 text-zinc-400 hover:bg-zinc-600"}>{onAir ? "ON AIR" : "OFF AIR"}</button>
         </div>

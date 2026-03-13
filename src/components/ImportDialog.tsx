@@ -76,6 +76,12 @@ export default function ImportDialog({ onDone }: Props) {
     await scanDir(folderPath);
     setProgress({ done: 0, total: files.length, current: "Importing..." });
 
+    // DEBUG: log actual DB schema
+    const songCols = await query<{name:string}>("PRAGMA table_info(songs)");
+    console.log("SONGS TABLE COLS:", (songCols as any[]).map(c=>c.name).join(", "));
+    const albCols = await query<{name:string}>("PRAGMA table_info(albums)");
+    console.log("ALBUMS TABLE COLS:", (albCols as any[]).map(c=>c.name).join(", "));
+
     let count = 0;
     for (const filePath of files) {
       try {
@@ -106,21 +112,10 @@ export default function ImportDialog({ onDone }: Props) {
           artist = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
         }
 
-        // Get or create album
-        let albumId = null;
-        if (tags.album) {
-          let album = await queryOne<{ id: number }>("SELECT id FROM albums WHERE name = ? AND artist_id = ?", [tags.album, artist?.id]);
-          if (!album) {
-            await execute("INSERT INTO albums (name, artist_id) VALUES (?, ?)", [tags.album, artist?.id]);
-            album = await queryOne<{ id: number }>("SELECT id FROM albums WHERE name = ? AND artist_id = ?", [tags.album, artist?.id]);
-          }
-          albumId = album?.id;
-        }
-
-        // Insert song with category
+        // Insert song (skip album lookup for reliability)
         await execute(
-          "INSERT INTO songs (title, file_path, artist_id, album_id, category_id, genre, year, rotation, gender, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'unknown', unixepoch(), unixepoch())",
-          [title, filePath, artist?.id || null, albumId, selectedCat, tags.genre || null, tags.year || null]
+          "INSERT INTO songs (title, file_path, artist_id, category_id, genre, rotation_status, gender, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', 'unknown', unixepoch(), unixepoch())",
+          [title, filePath, artist?.id || null, selectedCat, tags.genre || null]
         );
 
         count++;

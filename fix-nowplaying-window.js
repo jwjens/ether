@@ -1,4 +1,12 @@
-import { useState, useEffect } from "react";
+const fs = require('fs');
+let ok = 0, fail = 0;
+function write(p, c) {
+  try { fs.mkdirSync(require('path').dirname(p), {recursive:true}); fs.writeFileSync(p, c, 'utf8'); console.log('WROTE ' + p); ok++; }
+  catch(e) { console.error('FAIL ' + p + ': ' + e.message); fail++; }
+}
+
+// 1. NowPlaying.tsx — standalone window component (no onExit prop needed)
+write('src/components/NowPlaying.tsx', `import { useState, useEffect } from "react";
 import { engine, DeckState } from "../audio/engine";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -145,7 +153,95 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
           </button>
         </div>
       </div>
-      <style>{"`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }`"}</style>
+      <style>{"\`@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }\`"}</style>
     </div>
   );
 }
+`);
+
+// 2. NowPlayingWindow.tsx — thin wrapper that opens a Tauri window
+write('src/components/NowPlayingWindow.tsx', `import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+
+export async function openNowPlayingWindow() {
+  const existing = await WebviewWindow.getByLabel("nowplaying");
+  if (existing) {
+    await existing.setFocus();
+    return;
+  }
+  new WebviewWindow("nowplaying", {
+    url: "/#nowplaying",
+    title: "Ether — Now Playing",
+    width: 1280,
+    height: 720,
+    minWidth: 800,
+    minHeight: 500,
+    resizable: true,
+    decorations: true,
+    alwaysOnTop: false,
+    focus: true,
+  });
+}
+`);
+
+// 3. Patch App.tsx — replace setShowNowPlaying with openNowPlayingWindow
+let app = fs.readFileSync('src/App.tsx', 'utf8');
+
+// Add import for openNowPlayingWindow
+if (!app.includes('openNowPlayingWindow')) {
+  app = app.replace(
+    'import NowPlaying from "./components/NowPlaying";',
+    'import NowPlaying from "./components/NowPlaying";\nimport { openNowPlayingWindow } from "./components/NowPlayingWindow";'
+  );
+}
+
+// Replace the NOW PLAYING button to use openNowPlayingWindow
+app = app.replace(
+  /onClick=\{[^}]*setShowNowPlaying\(true\)[^}]*\}[^>]*>NOW PLAYING<\/button>/,
+  'onClick={() => openNowPlayingWindow()} style={{ padding: "4px 12px", background: "var(--bg-tertiary)", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", letterSpacing: "0.05em" }}>NOW PLAYING</button>'
+);
+
+// Remove the overlay render (showNowPlaying && <NowPlaying .../>)
+app = app.replace(
+  /\{showNowPlaying && <NowPlaying onExit=\{[^}]+\} \/>\}/,
+  '{/* Now Playing opens as separate window via openNowPlayingWindow() */}'
+);
+
+fs.writeFileSync('src/App.tsx', app, 'utf8');
+console.log('PATCHED src/App.tsx');
+ok++;
+
+// 4. main.tsx — render NowPlaying component when hash is #nowplaying
+let main = fs.readFileSync('src/main.tsx', 'utf8');
+if (!main.includes('nowplaying')) {
+  main = main.replace(
+    /ReactDOM\.createRoot[^;]+;[\s\S]*$/m,
+    `import NowPlaying from "./components/NowPlaying";
+const isNowPlaying = window.location.hash === "#nowplaying";
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  isNowPlaying ? <NowPlaying /> : <App />
+);`
+  );
+  // Fix duplicate import issue — remove the duplicate we might have added
+  const lines = main.split('\n');
+  const seen = new Set();
+  const deduped = lines.filter(l => {
+    if (l.trim().startsWith('import NowPlaying')) {
+      if (seen.has('NowPlaying')) return false;
+      seen.add('NowPlaying');
+    }
+    return true;
+  });
+  main = deduped.join('\n');
+  fs.writeFileSync('src/main.tsx', main, 'utf8');
+  console.log('PATCHED src/main.tsx');
+  ok++;
+} else {
+  console.log('SKIP src/main.tsx (already patched)');
+}
+
+console.log('\n' + '='.repeat(40));
+console.log('Done. OK:' + ok + ' FAIL:' + fail);
+console.log('='.repeat(40));
+console.log('\nRun: npm run tauri:dev');
+console.log('Then click NOW PLAYING in the header.');
+console.log('A second window should open with album art.');

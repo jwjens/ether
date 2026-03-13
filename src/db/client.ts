@@ -17,6 +17,10 @@ export async function runMigrations(): Promise<void> {
   try { await d.execute("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)"); } catch {}
   try { await d.execute("ALTER TABLE categories ADD COLUMN spins_per_hour INTEGER NOT NULL DEFAULT 0"); } catch {}
   try { await d.execute("ALTER TABLE categories ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"); } catch {}
+  // Fix albums table - rename 'name' to 'title' if needed
+  try {
+    await d.execute("ALTER TABLE albums RENAME COLUMN name TO title");
+  } catch {}
   const r = await d.select("SELECT COUNT(*) as c FROM categories");
   if ((r as any)[0].c === 0) {
     await d.execute("INSERT INTO categories (code,name,color) VALUES ('A','Power Current','#ef4444')");
