@@ -349,6 +349,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
   const [count, setCount] = useState(0);
   const [importing, setImporting] = useState(false);
   const [status, setStatus] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const load = async () => {
     try {
@@ -408,6 +409,22 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
     } catch (e) { console.error(e); setStatus("Error: " + e); setImporting(false); }
   };
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  };
+  const selectAll = () => {
+    setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id)));
+  };
+  const deleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm("Delete " + selectedIds.size + " song(s) from library?")) return;
+    for (const id of selectedIds) await execute("DELETE FROM songs WHERE id=?", [id]);
+    setSelectedIds(new Set()); load();
+  };
+  const deleteAll = async () => {
+    if (!confirm("Delete ALL " + count + " songs? This cannot be undone.")) return;
+    await execute("DELETE FROM songs", []); setSelectedIds(new Set()); load();
+  };
   const queueAll = () => {
     const items = filtered.filter(s => s.file_path);
     engine.addToQueue(items.map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" })));
@@ -435,6 +452,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
           {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}
         </select>
         <button onClick={queueAll} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 rounded text-xs font-bold text-white">Queue All</button>
+        {selectedIds.size > 0 && <button onClick={deleteSelected} className="px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded text-xs font-bold text-white">Delete {selectedIds.size}</button>}
+        <button onClick={deleteAll} className="px-3 py-1.5 bg-zinc-700 hover:bg-red-900 rounded text-xs font-bold text-zinc-400 hover:text-red-300">Delete All</button>
         <button onClick={() => setShowImport(!showImport)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">{showImport ? "Cancel" : "Import"}</button>
       </div>
       {status ? <div className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded text-xs text-blue-200">{status}</div> : null}
@@ -448,6 +467,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
         <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
           <table className="w-full text-xs">
             <thead><tr className="text-left text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
+              <th className="px-2 py-1.5 w-7"><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
               <th className="px-2 py-1.5 w-7">#</th>
               <th className="px-2 py-1.5">Title</th>
               <th className="px-2 py-1.5">Artist</th>
@@ -457,6 +477,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
             </tr></thead>
             <tbody>{filtered.map((s, i) => (
               <tr key={s.id} className="border-b border-zinc-800 hover:bg-zinc-800 group">
+                <td className="px-2 py-1.5"><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
                 <td className="px-2 py-1.5 text-zinc-600">{i+1}</td>
                 <td className="px-2 py-1.5 text-zinc-100">{s.title}</td>
                 <td className="px-2 py-1.5 text-zinc-400">{s.artist_name || "Unknown"}</td>
