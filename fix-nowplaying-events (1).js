@@ -1,4 +1,7 @@
-import { useState, useEffect } from "react";
+const fs = require('fs');
+
+// 1. Rewrite NowPlaying.tsx to use Tauri events instead of engine
+fs.writeFileSync('src/components/NowPlaying.tsx', `import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
@@ -139,3 +142,9 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     </div>
   );
 }
+`);
+
+console.log('NowPlaying.tsx written');
+console.log('');
+console.log('Now you need to emit events from App.tsx engine listener.');
+console.log('Run fix-nowplaying-emitter.js next.');

@@ -1,3 +1,4 @@
+import { emit } from "@tauri-apps/api/event";
 import { useState, useEffect, useCallback } from "react";
 import { query, execute, queryOne } from "./db/client";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -106,6 +107,13 @@ export default function App() {
       if (id === "A") setDeckA({...st});
       else setDeckB({...st});
       setQueueLen(engine.getQueue().length);
+      emit("now-playing-update", {
+        title: st.title || "Ether Radio",
+        artist: st.artist || "",
+        positionSec: st.positionSec || 0,
+        durationSec: st.durationSec || 0,
+        isPlaying: st.status === "playing",
+      }).catch(() => {});
     });
   }, []);
 
