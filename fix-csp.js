@@ -1,4 +1,5 @@
-{
+const fs = require('fs');
+const conf = {
   "productName": "Ether",
   "version": "1.9.1",
   "identifier": "com.ether.radio",
@@ -26,16 +27,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": [
-      "icons/icon.ico",
-      "icons/icon.png"
-    ]
+    "icon": ["icons/icon.ico", "icons/icon.png"]
   },
   "plugins": {
     "sql": {
-      "preload": [
-        "sqlite:openair.db"
-      ]
+      "preload": ["sqlite:openair.db"]
     }
   }
-}
+};
+fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(conf, null, 2));
+console.log('Done');
