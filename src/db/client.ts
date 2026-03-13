@@ -63,5 +63,6 @@ export async function runMigrations(): Promise<void> {
   if ((cfgCount as any)[0].c === 0) {
     await d.execute("INSERT INTO station_config (id) VALUES (1)");
   }
+  await d.execute("CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')");
   console.log("DB ready");
 }

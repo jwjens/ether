@@ -1,4 +1,19 @@
-import { useState, useEffect } from "react";
+const fs = require('fs');
+
+// 1. Add station_config_kv table migration to client.ts
+let client = fs.readFileSync('src/db/client.ts', 'utf8');
+if (!client.includes('station_config_kv')) {
+  client = client.replace(
+    'console.log("DB ready");',
+    `await d.execute("CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')");
+  console.log("DB ready");`
+  );
+  fs.writeFileSync('src/db/client.ts', client);
+  console.log('Added station_config_kv table');
+}
+
+// 2. Write NowPlayingSettings.tsx
+fs.writeFileSync('src/components/NowPlayingSettings.tsx', `import { useState, useEffect } from "react";
 import { query, execute } from "../db/client";
 
 export default function NowPlayingSettings() {
@@ -69,3 +84,6 @@ export default function NowPlayingSettings() {
     </div>
   );
 }
+`);
+console.log('NowPlayingSettings.tsx written');
+console.log('Done');

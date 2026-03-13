@@ -1,4 +1,7 @@
-import { useState, useEffect } from "react";
+const fs = require('fs');
+
+// 1. Rewrite NowPlaying.tsx with new layout + Instagram widget
+fs.writeFileSync('src/components/NowPlaying.tsx', `import { useState, useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { query } from "../db/client";
@@ -99,8 +102,8 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   const showAds = adImages.length > 0;
   const showIg = !showAds && igEnabled && igHandle;
   const igSrc = igHandle.startsWith('#')
-    ? `https://www.instagram.com/explore/tags/${igHandle.replace('#','')}/embed`
-    : `https://www.instagram.com/${igHandle.replace('@','')}/embed`;
+    ? \`https://www.instagram.com/explore/tags/\${igHandle.replace('#','')}/embed\`
+    : \`https://www.instagram.com/\${igHandle.replace('@','')}/embed\`;
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0a0a0a", color: "#fff", overflow: "hidden", fontFamily: "system-ui, sans-serif" }}>
@@ -108,7 +111,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
       {albumArt && (
         <div style={{
           position: "absolute", inset: 0,
-          backgroundImage: `url(${albumArt})`,
+          backgroundImage: \`url(\${albumArt})\`,
           backgroundSize: "cover", backgroundPosition: "center",
           filter: "blur(80px) brightness(0.2) saturate(1.8)",
           transform: "scale(1.15)", zIndex: 0
@@ -201,3 +204,6 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     </div>
   );
 }
+`);
+
+console.log('NowPlaying.tsx written');
