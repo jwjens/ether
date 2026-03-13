@@ -59,7 +59,7 @@ export default function NowPlaying({ onExit }: { onExit: () => void }) {
   const dateStr = time.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
 
   return (
-    <div className="fixed inset-0 bg-black flex flex-col z-50 cursor-none select-none" onClick={onExit}>
+    <div className="fixed inset-0 bg-black flex flex-col select-none" style={{zIndex:9999,cursor:"default"}} onMouseDown={(e)=>{e.stopPropagation();e.preventDefault();onExit();}}>
 
       {/* Top bar */}
       <div className="flex items-center justify-between px-12 pt-8">
@@ -109,7 +109,7 @@ export default function NowPlaying({ onExit }: { onExit: () => void }) {
       )}
 
       {/* Exit hint */}
-      <div className="absolute bottom-3 right-6 text-[10px] text-zinc-800">Click anywhere to exit</div>
+      <div className="absolute bottom-3 right-6 text-[10px] text-zinc-800">Click anywhere or press ESC to exit</div>
     </div>
   );
 }

@@ -146,6 +146,7 @@ export class AudioEngine {
   outroCrossfade = false;
   crossfadeDuration = 3; // seconds
   private outroPending = false;
+  private advancing = false;
   continuous = false;
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   shuffle = false;
@@ -213,7 +214,7 @@ export class AudioEngine {
 
   // Check if active deck has hit its outro point
   checkOutroCrossfade() {
-    if (!this.outroCrossfade || !this.autoAdvance || this.outroPending) return;
+    if (!this.outroCrossfade || !this.autoAdvance || this.outroPending || this.advancing) return;
     const deckA = this.getDeck("A");
     const deckB = this.getDeck("B");
     if (!deckA || !deckB) return;
