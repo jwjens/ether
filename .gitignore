@@ -9,3 +9,8 @@ dist/
 *.exe
 *.msi
 fix-*.js
+
+*.mp3
+*.exe
+*.msi
+fix-*.js
