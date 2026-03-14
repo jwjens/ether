@@ -4,3 +4,8 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+
+*.mp3
+*.exe
+*.msi
+fix-*.js
