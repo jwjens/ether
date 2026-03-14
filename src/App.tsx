@@ -120,7 +120,43 @@ export default function App() {
   const handleOutputChange = (deviceId: string) => { setOutputDevice(deviceId); engine.setOutputDevice(deviceId); };
   const handleInputChange = (deviceId: string) => { setInputDevice(deviceId); };
 
-  const toggleAuto = () => { const n = !autoAdv; setAutoAdv(n); engine.autoAdvance = n; };
+  const toggleAuto = async () => {
+    const n = !autoAdv;
+    setAutoAdv(n);
+    engine.autoAdvance = n;
+    if (n) {
+      // AUTO on = fill queue from schedule and start playing
+      engine.init();
+      engine.continuous = true;
+      setContinuous(true);
+      engine.shuffle = false;
+      setShuffle(false);
+      if (engine.getQueue().length === 0) {
+        const count = await fillQueueFromSchedule();
+        if (count === 0) {
+          // Fallback: load all songs randomly
+          engine.setRefillCallback(async () => {
+            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500");
+            return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
+          });
+          const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 50");
+          const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
+          engine.addToQueue(items);
+        }
+      }
+      const q = engine.getQueue();
+      if (q.length > 0 && engine.getDeck('A')?.getState().status !== 'playing') {
+        const first = q[0];
+        engine.clearQueue();
+        engine.addToQueue(q.slice(1));
+        await engine.loadToDeck('A', first.filePath, first.title, first.artist);
+        engine.getDeck('A')?.play();
+      }
+    } else {
+      engine.continuous = false;
+      setContinuous(false);
+    }
+  };
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
   const toggleContinuous = async () => {
     const n = !continuous;
@@ -168,7 +204,7 @@ export default function App() {
           <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: darkMode ? "var(--accent-purple)" : "var(--bg-tertiary)", color: darkMode ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>{darkMode ? "DARK" : "LIGHT"}</button>
           <button onClick={() => openNowPlayingWindow()} style={{ padding: "4px 12px", background: "var(--bg-tertiary)", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", letterSpacing: "0.05em" }}>NOW PLAYING</button>
           <ClockDisplay />
-          <button onClick={() => { engine.init(); setOnAir(!onAir); }} className={onAir ? "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-red-600 text-white animate-pulse" : "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-zinc-700 text-zinc-400 hover:bg-zinc-600"}>{onAir ? "ON AIR" : "OFF AIR"}</button>
+          <div className={onAir ? "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-red-600 text-white animate-pulse" : "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-zinc-700 text-zinc-400"}>{onAir ? "● ON AIR" : "○ OFF AIR"}</div>
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
@@ -214,7 +250,7 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
 // LIVE PANEL — polished
 // ============================================================
 
-function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, toggleShuffle, toggleContinuous, queueLen, showCarts, toggleCarts }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; continuous: boolean; toggleAuto: () => void; toggleShuffle: () => void; toggleContinuous: () => void; queueLen: number; showCarts: boolean; toggleCarts: () => void }) {
+function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, toggleShuffle, toggleContinuous, queueLen, showCarts, toggleCarts }: { deckA: DeckState | null; deckB: DeckState | null; autoAdv: boolean; shuffle: boolean; continuous: boolean; toggleAuto: () => void | Promise<void>; toggleShuffle: () => void; toggleContinuous: () => void | Promise<void>; queueLen: number; showCarts: boolean; toggleCarts: () => void }) {
   const [autoXfade, setAutoXfade] = useState(true);
 
   const handleXfade = () => {
@@ -228,10 +264,9 @@ function LivePanel({ deckA, deckB, autoAdv, shuffle, continuous, toggleAuto, tog
       <div className="flex items-center justify-between mb-3 shrink-0">
         <h1 style={{ fontSize: 22, fontWeight: 300, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Live Assist</h1>
         <div className="flex items-center gap-1.5">
-          <button onClick={async () => { await fillQueueFromSchedule(); }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, background: "var(--accent-green)", letterSpacing: "0.04em", color: "#fff", border: "none", cursor: "pointer" }}>GEN LOG</button>
-          <button onClick={toggleContinuous} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: continuous ? "var(--accent-red)" : "var(--bg-tertiary)", color: continuous ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>24/7</button>
+          
           <button onClick={toggleShuffle} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: shuffle ? "var(--accent-amber)" : "var(--bg-tertiary)", color: shuffle ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>SHUFFLE</button>
-          <button onClick={toggleAuto} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: autoAdv ? "var(--accent-blue)" : "var(--bg-tertiary)", color: autoAdv ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO</button>
+          <button onClick={async () => { await toggleAuto(); }} style={{ padding: "5px 16px", borderRadius: "var(--radius-xs)", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", background: autoAdv ? "var(--accent-blue)" : "var(--bg-tertiary)", color: autoAdv ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO</button>
           <button onClick={toggleCarts} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: showCarts ? "var(--accent-orange)" : "var(--bg-tertiary)", color: showCarts ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>CARTS</button>
           <button onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} style={{ padding: "5px 12px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: autoXfade ? "var(--accent-purple)" : "var(--bg-tertiary)", color: autoXfade ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>AUTO-X</button>
             <button onClick={handleXfade} style={{ padding: "5px 14px", borderRadius: "var(--radius-xs)", fontSize: 11, fontWeight: 500, letterSpacing: "0.04em", background: "var(--accent-purple)", color: "#fff", border: "none", cursor: "pointer" }}>CROSSFADE</button>
