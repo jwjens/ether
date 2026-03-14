@@ -158,38 +158,37 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
               )}
               {!showAds && !showIg && (
                 <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-                  <img src={ovLogo} alt="Opportunity Village" style={{ maxWidth: 220, maxHeight: 120, objectFit: "contain", opacity: 0.85 }} />
-                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", letterSpacing: "0.15em", textTransform: "uppercase" }}>Powered by Ether</div>
+                  <img src={ovLogo} alt="Opportunity Village" style={{ width: "90%", height: "80%", objectFit: "contain", opacity: 0.98 }} />
                 </div>
               )}
             </div>
 
             {/* OV Logo watermark bottom of right panel */}
             <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 10, gap: 10 }}>
-              <img src={ovLogo} alt="OV" style={{ height: 28, opacity: 0.5, objectFit: "contain" }} />
+              <img src={ovLogo} alt="OV" style={{ height: 48, opacity: 0.6, objectFit: "contain" }} />
             </div>
           </div>
         </div>
 
         {/* Bottom: Song info + progress */}
         <div style={{ padding: "0 36px 20px" }}>
-          <div style={{ background: "rgba(0,0,0,0.4)", borderRadius: 14, padding: "16px 24px", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.08)" }}>
+          <div style={{ background: "rgba(0,0,0,0.75)", borderRadius: 14, padding: "20px 28px", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.15)" }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.2em", textTransform: "uppercase" as any, marginBottom: 4 }}>
+                <div style={{ fontSize: 16, color: "#ffffff", letterSpacing: "0.2em", textTransform: "uppercase" as any, marginBottom: 8, fontWeight: 700 }}>
                   {isPlaying ? "Now Playing" : "Up Next"}
                 </div>
-                <div style={{ fontSize: 28, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
-                {artist && <div style={{ fontSize: 16, color: "rgba(255,255,255,0.55)", marginTop: 2 }}>{artist}</div>}
+                <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#ffffff" }}>{title}</div>
+                {artist && <div style={{ fontSize: 28, color: "#ffffff", marginTop: 6, fontWeight: 400 }}>{artist}</div>}
               </div>
-              <button onClick={handleClose} style={{ marginLeft: 20, flexShrink: 0, padding: "6px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, color: "rgba(255,255,255,0.5)", fontSize: 11, cursor: "pointer", letterSpacing: "0.08em" }}>CLOSE</button>
+              <button onClick={handleClose} style={{ marginLeft: 20, flexShrink: 0, padding: "6px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, color: "#ffffff", fontSize: 13, cursor: "pointer", letterSpacing: "0.08em" }}>CLOSE</button>
             </div>
             {dur > 0 && (
               <>
-                <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}>
+                <div style={{ height: 5, background: "rgba(255,255,255,0.2)", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
                   <div style={{ height: "100%", width: pct + "%", background: "#60a5fa", borderRadius: 2, transition: "width 0.5s linear" }} />
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontFamily: "monospace", color: "rgba(255,255,255,0.3)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontFamily: "monospace", color: "rgba(255,255,255,0.8)" }}>
                   <span>{fmtTime(pos)}</span>
                   <span>-{fmtTime(dur - pos)}</span>
                 </div>
