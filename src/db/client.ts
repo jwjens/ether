@@ -64,5 +64,10 @@ export async function runMigrations(): Promise<void> {
     await d.execute("INSERT INTO station_config (id) VALUES (1)");
   }
   await d.execute("CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')");
+  await d.execute("CREATE TABLE IF NOT EXISTS crash_recovery (id INTEGER PRIMARY KEY, queue_json TEXT NOT NULL DEFAULT '[]', deck_a_path TEXT, deck_a_title TEXT, deck_a_artist TEXT, deck_a_position REAL NOT NULL DEFAULT 0, was_playing INTEGER NOT NULL DEFAULT 0, saved_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  const crCount = await d.select("SELECT COUNT(*) as c FROM crash_recovery");
+  if ((crCount as any)[0].c === 0) {
+    await d.execute("INSERT INTO crash_recovery (id, queue_json) VALUES (1, '[]')");
+  }
   console.log("DB ready");
 }

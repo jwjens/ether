@@ -117,6 +117,55 @@ export default function App() {
     });
   }, []);
 
+  // Autosave queue every 30 seconds for crash recovery
+  useEffect(() => {
+    const saveQueue = async () => {
+      try {
+        const queue = engine.getQueue();
+        const deckA = engine.getDeck('A')?.getState();
+        await execute(
+          "UPDATE crash_recovery SET queue_json=?, deck_a_path=?, deck_a_title=?, deck_a_artist=?, deck_a_position=?, was_playing=?, saved_at=unixepoch() WHERE id=1",
+          [
+            JSON.stringify(queue),
+            deckA?.filePath || null,
+            deckA?.title || null,
+            deckA?.artist || null,
+            deckA?.positionSec || 0,
+            deckA?.status === 'playing' ? 1 : 0,
+          ]
+        );
+      } catch (e) { console.error('Autosave failed:', e); }
+    };
+    const id = setInterval(saveQueue, 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Restore queue on startup if crash recovery data exists
+  useEffect(() => {
+    (async () => {
+      try {
+        const row = await queryOne<{queue_json: string, deck_a_path: string | null, deck_a_title: string | null, deck_a_artist: string | null, was_playing: number, saved_at: number}>(
+          "SELECT * FROM crash_recovery WHERE id=1"
+        );
+        if (!row || !row.saved_at) return;
+        const age = Date.now() / 1000 - row.saved_at;
+        if (age > 3600) return; // Only restore if saved within last hour
+        const queue = JSON.parse(row.queue_json || '[]');
+        if (queue.length > 0) {
+          engine.addToQueue(queue);
+          setQueueLen(queue.length);
+          console.log('Restored', queue.length, 'items from crash recovery');
+        }
+        if (row.deck_a_path && row.deck_a_title) {
+          await engine.loadToDeck('A', row.deck_a_path, row.deck_a_title, row.deck_a_artist || '');
+          console.log('Restored deck A:', row.deck_a_title);
+        }
+        // Clear recovery data after restore
+        await execute("UPDATE crash_recovery SET queue_json='[]', deck_a_path=NULL, was_playing=0, saved_at=0 WHERE id=1", []);
+      } catch (e) { console.error('Crash restore failed:', e); }
+    })();
+  }, []);
+
   const handleOutputChange = (deviceId: string) => { setOutputDevice(deviceId); engine.setOutputDevice(deviceId); };
   const handleInputChange = (deviceId: string) => { setInputDevice(deviceId); };
 
