@@ -83,3 +83,59 @@ pub fn get_local_ip() -> String {
 pub fn analyze_lufs(file_path: String) -> Result<f64, String> {
     crate::lufs::analyze_file(&file_path)
 }
+
+use std::sync::atomic::{AtomicBool, Ordering};
+static STREAMING: AtomicBool = AtomicBool::new(false);
+
+#[derive(serde::Deserialize)]
+pub struct IcecastConfig {
+    pub server: String,
+    pub port: u16,
+    pub mount: String,
+    pub password: String,
+    pub bitrate: u32,
+    pub station_name: String,
+}
+
+#[tauri::command]
+pub fn stream_start(config: IcecastConfig, state: State<SharedAudioState>) -> Result<String, String> {
+    if STREAMING.load(Ordering::Relaxed) {
+        return Err("Already streaming".to_string());
+    }
+    STREAMING.store(true, Ordering::Relaxed);
+    
+    // Notify audio thread to start streaming
+    if let Ok(audio) = state.inner().lock() {
+        audio.sender.send(crate::audio::AudioCmd::StartStream {
+            server: config.server,
+            port: config.port,
+            mount: config.mount,
+            password: config.password,
+            station_name: config.station_name,
+        }).map_err(|e| e.to_string())?;
+    }
+    
+    Ok("Streaming started".to_string())
+}
+
+#[tauri::command]
+pub fn stream_stop(state: State<SharedAudioState>) -> Result<String, String> {
+    STREAMING.store(false, Ordering::Relaxed);
+    if let Ok(audio) = state.inner().lock() {
+        audio.sender.send(crate::audio::AudioCmd::StopStream).map_err(|e| e.to_string())?;
+    }
+    Ok("Streaming stopped".to_string())
+}
+
+#[tauri::command]
+pub fn stream_status() -> bool {
+    STREAMING.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+pub fn stream_update_metadata(title: String, artist: String, state: State<SharedAudioState>) -> Result<String, String> {
+    if let Ok(audio) = state.inner().lock() {
+        audio.sender.send(crate::audio::AudioCmd::UpdateMetadata { title, artist }).map_err(|e| e.to_string())?;
+    }
+    Ok("ok".to_string())
+}

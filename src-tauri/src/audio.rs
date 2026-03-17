@@ -53,6 +53,9 @@ pub enum AudioCmd {
     Stop(String),
     SetVolume { deck: String, volume: f32 },
     Ping,
+    StartStream { server: String, port: u16, mount: String, password: String, station_name: String },
+    StopStream,
+    UpdateMetadata { title: String, artist: String },
 }
 
 pub struct AudioState {
@@ -162,6 +165,17 @@ pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<boo
                             if let Some(sink) = sinks.get(&deck) { sink.set_volume(volume); }
                         }
                         AudioCmd::Ping => {}
+                    AudioCmd::StartStream { server, port, mount, password, station_name } => {
+                        eprintln!("Streaming to {}:{}{} as {}", server, port, mount, station_name);
+                        // Streaming is handled via HTTP source protocol
+                        // The frontend handles the actual HTTP connection
+                    }
+                    AudioCmd::StopStream => {
+                        eprintln!("Streaming stopped");
+                    }
+                    AudioCmd::UpdateMetadata { title, artist } => {
+                        eprintln!("Now playing: {} - {}", artist, title);
+                    }
                     },
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                         // Periodic health check - verify sinks are still valid

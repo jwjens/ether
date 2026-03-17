@@ -45,6 +45,10 @@ fn main() {
             commands::audio_get_state,
             commands::watchdog_set,
             commands::get_local_ip,
+            commands::stream_start,
+            commands::stream_stop,
+            commands::stream_status,
+            commands::stream_update_metadata,
             commands::analyze_lufs,
         ])
         .setup(move |app| {
