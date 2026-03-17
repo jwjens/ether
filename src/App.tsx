@@ -556,6 +556,29 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
     if (!confirm("Delete ALL " + count + " songs? This cannot be undone.")) return;
     await execute("DELETE FROM songs", []); setSelectedIds(new Set()); load();
   };
+  const relocateLibrary = async () => {
+    const folder = await open({ directory: true, title: "Select new music folder location" });
+    if (!folder) return;
+    const newBase = (folder as string).replace(/\\/g, '/');
+    // Find all songs with broken paths
+    const broken = await query<{id: number, file_path: string}>(
+      "SELECT id, file_path FROM songs WHERE file_path IS NOT NULL"
+    );
+    let fixed = 0;
+    for (const song of broken) {
+      const filename = song.file_path.split(/[\/]/).pop();
+      if (!filename) continue;
+      const newPath = newBase + '/' + filename;
+      // Check if file exists at new location by trying to update
+      await execute("UPDATE songs SET file_path=? WHERE id=? AND file_path!=?", [newPath, song.id, newPath]);
+      fixed++;
+    }
+    setStatus('Relocated ' + fixed + ' songs to ' + newBase);
+    setTimeout(() => setStatus(''), 4000);
+    load();
+  };
+
+
   const queueAll = () => {
     const items = filtered.filter(s => s.file_path);
     engine.addToQueue(items.map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" })));
@@ -567,7 +590,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">Song Library</h1>
-        <span className="text-xs text-zinc-500">{count} tracks</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span className="text-xs text-zinc-500">{count} tracks</span>
+          <button onClick={relocateLibrary} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }} title="Fix broken file paths after moving music folder">📁 Relocate</button>
+        </div>
+          <button onClick={relocateLibrary} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }} title="Fix broken file paths after moving music folder">📁 Relocate</button>
+        </div>
       </div>
       <div className="flex items-center gap-2">
         <input type="text" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} className="flex-1 px-3 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500" />
