@@ -556,6 +556,26 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
     if (!confirm("Delete ALL " + count + " songs? This cannot be undone.")) return;
     await execute("DELETE FROM songs", []); setSelectedIds(new Set()); load();
   };
+  const analyzeLufs = async () => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const songs = await query<{id: number, file_path: string}>(
+      "SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50"
+    );
+    if (songs.length === 0) { setStatus("All songs already analyzed"); setTimeout(() => setStatus(""), 3000); return; }
+    setStatus("Analyzing loudness... 0/" + songs.length);
+    let done = 0;
+    for (const song of songs) {
+      try {
+        const gain = await invoke<number>("analyze_lufs", { filePath: song.file_path });
+        await execute("UPDATE songs SET gain_db=? WHERE id=?", [gain, song.id]);
+      } catch (e) { console.error("LUFS error:", e); }
+      done++;
+      setStatus("Analyzing loudness... " + done + "/" + songs.length);
+    }
+    setStatus("Done! Analyzed " + done + " songs.");
+    setTimeout(() => setStatus(""), 4000);
+  };
+
   const relocateLibrary = async () => {
     const folder = await open({ directory: true, title: "Select new music folder location" });
     if (!folder) return;
@@ -594,6 +614,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <span className="text-xs text-zinc-500">{count} tracks</span>
           <button onClick={relocateLibrary} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }} title="Fix broken file paths after moving music folder">📁 Relocate</button>
+          <button onClick={analyzeLufs} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }} title="Analyze loudness for volume normalization">🎚 Normalize</button>
         </div>
           <button onClick={relocateLibrary} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }} title="Fix broken file paths after moving music folder">📁 Relocate</button>
         </div>

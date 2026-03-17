@@ -2,6 +2,7 @@
 
 mod audio;
 mod commands;
+mod lufs;
 mod dashboard;
 
 use audio::{AudioState, SharedAudioState, start_audio_thread};
@@ -44,6 +45,7 @@ fn main() {
             commands::audio_get_state,
             commands::watchdog_set,
             commands::get_local_ip,
+            commands::analyze_lufs,
         ])
         .setup(move |app| {
             // Start mobile dashboard on port 4242

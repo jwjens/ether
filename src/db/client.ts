@@ -16,6 +16,7 @@ export async function runMigrations(): Promise<void> {
   await d.execute("CREATE TABLE IF NOT EXISTS schedule_grid (id INTEGER PRIMARY KEY AUTOINCREMENT, day_of_week INTEGER NOT NULL, hour INTEGER NOT NULL, clock_id INTEGER REFERENCES clocks(id), UNIQUE(day_of_week, hour))");
   try { await d.execute("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)"); } catch {}
   try { await d.execute("ALTER TABLE categories ADD COLUMN spins_per_hour INTEGER NOT NULL DEFAULT 0"); } catch {}
+  try { await d.execute("ALTER TABLE songs ADD COLUMN gain_db REAL NOT NULL DEFAULT 0"); } catch {}
   try { await d.execute("ALTER TABLE categories ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"); } catch {}
   // Fix albums table - rename 'name' to 'title' if needed
   try {

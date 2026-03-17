@@ -77,3 +77,8 @@ pub fn get_local_ip() -> String {
     }
     "localhost".to_string()
 }
+
+#[tauri::command]
+pub fn analyze_lufs(file_path: String) -> Result<f64, String> {
+    crate::lufs::analyze_file(&file_path)
+}
