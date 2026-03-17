@@ -25,13 +25,35 @@ function fmtDate(epoch: number): string {
 export default function Logs() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [total, setTotal] = useState(0);
-  const [filter, setFilter] = useState<"today" | "all">("today");
+  const [filter, setFilter] = useState<"today" | "week" | "month" | "all">("today");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
 
   const load = async () => {
     let where = "";
     if (filter === "today") {
       const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
       where = " WHERE played_at >= " + startOfDay;
+    } else if (filter === "week") {
+      const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
+      where = " WHERE played_at >= " + weekAgo;
+    } else if (filter === "month") {
+      const monthAgo = Math.floor(Date.now() / 1000) - 30 * 86400;
+      where = " WHERE played_at >= " + monthAgo;
+    } else if (dateFrom && dateTo) {
+      const from = Math.floor(new Date(dateFrom).getTime() / 1000);
+      const to = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
+      where = " WHERE played_at >= " + from + " AND played_at <= " + to;
+    } else if (filter === "week") {
+      const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
+      where = " WHERE played_at >= " + weekAgo;
+    } else if (filter === "month") {
+      const monthAgo = Math.floor(Date.now() / 1000) - 30 * 86400;
+      where = " WHERE played_at >= " + monthAgo;
+    } else if (dateFrom && dateTo) {
+      const from = Math.floor(new Date(dateFrom).getTime() / 1000);
+      const to = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
+      where = " WHERE played_at >= " + from + " AND played_at <= " + to;
     }
     const rows = await query<LogEntry>("SELECT * FROM play_log" + where + " ORDER BY played_at DESC LIMIT 200");
     setEntries(rows);
@@ -46,18 +68,44 @@ export default function Logs() {
     load();
   };
 
-  const exportCSV = () => {
-    const header = "Time,Title,Artist,Category,Show,Clock,Deck";
-    const rows = entries.map(e => {
-      const time = new Date(e.played_at * 1000).toISOString();
-      return [time, e.title, e.artist || "", e.category_code || "", e.show_name || "", e.clock_name || "", e.deck || ""].map(f => '"' + String(f).replace(/"/g, '""'  ) + '"').join(",");
-    });
+  const exportCSV = (format: "standard" | "bmi" | "ascap" = "standard") => {
+    let header = "";
+    let rows: string[] = [];
+
+    if (format === "bmi") {
+      // BMI format: Title, Artist, Date, Time, Duration
+      header = "Title,Performer,Date Of Use,Time Of Use,Duration";
+      rows = entries.map(e => {
+        const d = new Date(e.played_at * 1000);
+        const date = d.toLocaleDateString("en-US");
+        const time = d.toLocaleTimeString("en-US", { hour12: false });
+        return [e.title, e.artist || "Unknown", date, time, "3:30"].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
+      });
+    } else if (format === "ascap") {
+      // ASCAP format
+      header = "Title,Artist,Date,Start Time,Duration (min),Source";
+      rows = entries.map(e => {
+        const d = new Date(e.played_at * 1000);
+        const date = (d.getMonth()+1) + "/" + d.getDate() + "/" + d.getFullYear();
+        const time = d.toLocaleTimeString("en-US", { hour12: false });
+        return [e.title, e.artist || "Unknown", date, time, "3.5", "Ether Radio"].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
+      });
+    } else {
+      header = "Date,Time,Title,Artist,Category,Show,Clock,Deck";
+      rows = entries.map(e => {
+        const d = new Date(e.played_at * 1000);
+        const date = d.toLocaleDateString();
+        const time = d.toLocaleTimeString();
+        return [date, time, e.title, e.artist || "", e.category_code || "", e.show_name || "", e.clock_name || "", e.deck || ""].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
+      });
+    }
+
     const csv = header + "\n" + rows.join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "ether-log-" + new Date().toISOString().split("T")[0] + ".csv";
+    a.download = "ether-" + format + "-" + new Date().toISOString().split("T")[0] + ".csv";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -72,8 +120,15 @@ export default function Logs() {
         <h1 className="text-lg font-bold">Play Log</h1>
         <div className="flex items-center gap-2">
           <button onClick={() => setFilter("today")} className={filter === "today" ? "px-3 py-1 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1 rounded text-xs font-bold bg-zinc-800 text-zinc-400"}>Today</button>
-          <button onClick={() => setFilter("all")} className={filter === "all" ? "px-3 py-1 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1 rounded text-xs font-bold bg-zinc-800 text-zinc-400"}>All Time</button>
-          <button onClick={exportCSV} className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs font-bold text-white">Export CSV</button>
+          <button onClick={() => setFilter("week")} className={filter === "week" ? "px-3 py-1 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1 rounded text-xs font-bold bg-zinc-800 text-zinc-400"}>7 Days</button>
+          <button onClick={() => setFilter("month")} className={filter === "month" ? "px-3 py-1 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1 rounded text-xs font-bold bg-zinc-800 text-zinc-400"}>30 Days</button>
+          <button onClick={() => setFilter("all")} className={filter === "all" ? "px-3 py-1 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1 rounded text-xs font-bold bg-zinc-800 text-zinc-400"}>All</button>
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setFilter("all"); }} style={{ padding: "2px 6px", borderRadius: 6, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>→</span>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setFilter("all"); }} style={{ padding: "2px 6px", borderRadius: 6, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+          <button onClick={() => exportCSV("standard")} className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs font-bold text-white">Export CSV</button>
+          <button onClick={() => exportCSV("bmi")} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-xs font-bold text-white">BMI</button>
+          <button onClick={() => exportCSV("ascap")} className="px-3 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs font-bold text-white">ASCAP</button>
           <button onClick={clearLog} className="px-3 py-1 bg-zinc-800 hover:bg-red-900 rounded text-xs font-bold text-zinc-400 hover:text-red-400">Clear</button>
         </div>
       </div>
