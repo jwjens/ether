@@ -1,161 +1,286 @@
 const fs = require('fs');
-const code = [
-  'import { useState, useEffect } from "react";',
-  '',
-  'type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "settings";',
-  '',
-  'export default function App() {',
-  '  const [activePanel, setActivePanel] = useState<Panel>("live");',
-  '  const [onAir, setOnAir] = useState(false);',
-  '',
-  '  const onAirClass = onAir',
-  '    ? "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-red-600 text-white animate-pulse"',
-  '    : "ml-3 px-3 py-1 rounded text-xs font-bold uppercase tracking-wider bg-zinc-700 text-zinc-400 hover:bg-zinc-600";',
-  '',
-  '  return (',
-  '    <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100">',
-  '      <header className="h-12 flex items-center justify-between px-4 bg-zinc-900 border-b border-zinc-800 shrink-0">',
-  '        <div className="flex items-center gap-3">',
-  '          <span className="text-lg font-bold tracking-tight">',
-  '            <span className="text-blue-400">Open</span>Air',
-  '          </span>',
-  '          <span className="text-xs text-zinc-500">v0.1.0</span>',
-  '        </div>',
-  '        <div className="flex items-center gap-2 text-sm text-zinc-400">',
-  '          <ClockDisplay />',
-  '          <button onClick={() => setOnAir(!onAir)} className={onAirClass}>',
-  '            {onAir ? "ON AIR" : "OFF AIR"}',
-  '          </button>',
-  '        </div>',
-  '      </header>',
-  '',
-  '      <div className="flex flex-1 overflow-hidden">',
-  '        <Sidebar activePanel={activePanel} setPanel={setActivePanel} />',
-  '        <main className="flex-1 overflow-auto p-6">',
-  '          {activePanel === "live" && <LivePanel onAir={onAir} />}',
-  '          {activePanel === "library" && <P title="Song Library" d="Scan folders, edit metadata, assign categories." />}',
-  '          {activePanel === "clocks" && <P title="Clock Builder" d="Design hourly format clocks with the visual wheel editor." />}',
-  '          {activePanel === "logs" && <P title="Log Builder" d="Generate and edit hourly playlists." />}',
-  '          {activePanel === "spots" && <P title="Spot Inventory" d="Manage commercials, PSAs, promos, and imaging." />}',
-  '          {activePanel === "settings" && <P title="Settings" d="Station name, audio device, scheduling rules, theme." />}',
-  '        </main>',
-  '      </div>',
-  '',
-  '      <footer className="h-7 flex items-center justify-between px-4 bg-zinc-900 border-t border-zinc-800 text-[11px] text-zinc-500 shrink-0">',
-  '        <span>Ready</span>',
-  '        <span>SQLite: connected | Audio: Web Audio API | Mode: Manual</span>',
-  '      </footer>',
-  '    </div>',
-  '  );',
-  '}',
-  '',
-  'function Sidebar({ activePanel, setPanel }: { activePanel: Panel; setPanel: (p: Panel) => void }) {',
-  '  const items: { id: Panel; label: string }[] = [',
-  '    { id: "live", label: "Live Assist" },',
-  '    { id: "library", label: "Library" },',
-  '    { id: "clocks", label: "Clocks" },',
-  '    { id: "logs", label: "Logs" },',
-  '    { id: "spots", label: "Spots" },',
-  '    { id: "settings", label: "Settings" },',
-  '  ];',
-  '',
-  '  return (',
-  '    <nav className="w-48 bg-zinc-900 border-r border-zinc-800 flex flex-col py-2 shrink-0">',
-  '      {items.map((item) => {',
-  '        const cls = activePanel === item.id',
-  '          ? "flex items-center gap-2 px-4 py-2.5 text-sm text-left bg-zinc-800 text-white border-l-2 border-blue-400"',
-  '          : "flex items-center gap-2 px-4 py-2.5 text-sm text-left text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 border-l-2 border-transparent";',
-  '        return (',
-  '          <button key={item.id} onClick={() => setPanel(item.id)} className={cls}>',
-  '            {item.label}',
-  '          </button>',
-  '        );',
-  '      })}',
-  '      <div className="mt-auto px-4 py-3 text-[10px] text-zinc-600">',
-  '        OpenAir v0.1.0<br />MIT License',
-  '      </div>',
-  '    </nav>',
-  '  );',
-  '}',
-  '',
-  'function LivePanel({ onAir }: { onAir: boolean }) {',
-  '  return (',
-  '    <div className="space-y-4">',
-  '      <h1 className="text-xl font-bold">Live Assist</h1>',
-  '      <div className="grid grid-cols-2 gap-4">',
-  '        <DeckCard name="Deck A" color="text-blue-400" active={onAir} />',
-  '        <DeckCard name="Deck B" color="text-emerald-400" active={false} />',
-  '      </div>',
-  '      <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">',
-  '        <h2 className="text-xs font-bold text-zinc-400 uppercase mb-3">Up Next</h2>',
-  '        <div className="text-sm text-zinc-500 italic">No log loaded. Import music and generate a log to populate the queue.</div>',
-  '      </div>',
-  '      <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">',
-  '        <h2 className="text-xs font-bold text-zinc-400 uppercase mb-3">Cart Wall</h2>',
-  '        <div className="grid grid-cols-8 gap-1.5">',
-  '          {Array.from({ length: 32 }, (_, i) => (',
-  '            <button key={i} className="aspect-square rounded bg-zinc-800 hover:bg-zinc-700 text-[10px] text-zinc-600 flex items-center justify-center">',
-  '              {i < 12 ? "F" + (i + 1) : ""}',
-  '            </button>',
-  '          ))}',
-  '        </div>',
-  '      </div>',
-  '    </div>',
-  '  );',
-  '}',
-  '',
-  'function DeckCard({ name, color, active }: { name: string; color: string; active: boolean }) {',
-  '  const playClass = active',
-  '    ? "px-4 py-1.5 rounded text-xs font-bold flex-1 bg-red-600 text-white"',
-  '    : "px-4 py-1.5 rounded text-xs font-bold flex-1 bg-emerald-700 hover:bg-emerald-600 text-white";',
-  '',
-  '  return (',
-  '    <div className="bg-zinc-900 rounded-lg p-4 border border-zinc-800">',
-  '      <div className="flex items-center justify-between mb-3">',
-  '        <span className={"text-xs font-bold uppercase tracking-wider " + color}>{name}</span>',
-  '        <span className="text-[10px] text-zinc-500 uppercase">Idle</span>',
-  '      </div>',
-  '      <div className="h-20 bg-zinc-800 rounded flex items-center justify-center">',
-  '        <span className="text-zinc-600 text-xs">No track loaded</span>',
-  '      </div>',
-  '      <div className="flex justify-between text-xs font-mono text-zinc-500 mt-3">',
-  '        <span>00:00.0</span><span>-00:00.0</span>',
-  '      </div>',
-  '      <div className="flex items-center gap-2 mt-3">',
-  '        <button className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs">Cue</button>',
-  '        <button className={playClass}>{active ? "Stop" : "Play"}</button>',
-  '        <button className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs">Next</button>',
-  '      </div>',
-  '      <div className="flex items-center gap-2 text-xs text-zinc-500 mt-3">',
-  '        <span>Vol</span>',
-  '        <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">',
-  '          <div className="h-full w-4/5 bg-zinc-600 rounded-full"></div>',
-  '        </div>',
-  '        <span>80%</span>',
-  '      </div>',
-  '    </div>',
-  '  );',
-  '}',
-  '',
-  'function P({ title, d }: { title: string; d: string }) {',
-  '  return (',
-  '    <div className="flex flex-col items-center justify-center h-full text-center">',
-  '      <h1 className="text-xl font-bold mb-2">{title}</h1>',
-  '      <p className="text-sm text-zinc-400 max-w-md">{d}</p>',
-  '      <p className="text-xs text-zinc-600 mt-4">Coming soon</p>',
-  '    </div>',
-  '  );',
-  '}',
-  '',
-  'function ClockDisplay() {',
-  '  const [time, setTime] = useState(new Date().toLocaleTimeString());',
-  '  useEffect(() => {',
-  '    const id = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000);',
-  '    return () => clearInterval(id);',
-  '  }, []);',
-  '  return <span className="font-mono text-xs">{time}</span>;',
-  '}',
-].join('\n');
 
-fs.writeFileSync('src/App.tsx', code, 'utf8');
-console.log('App.tsx written!');
+// 1. Add rodio to Cargo.toml
+let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+if (!cargo.includes('rodio')) {
+  cargo = cargo.replace(
+    'serde = { version = "1.0", features = ["derive"] }',
+    `rodio = { version = "0.19", features = ["mp3", "flac", "wav", "vorbis"] }
+serde = { version = "1.0", features = ["derive"] }`
+  );
+  fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+  console.log('Added rodio to Cargo.toml');
+}
+
+// 2. Write the Rust audio engine
+fs.writeFileSync('src-tauri/src/audio.rs', `
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::fs::File;
+use std::io::BufReader;
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeckState {
+    pub id: String,
+    pub status: String,
+    pub title: String,
+    pub artist: String,
+    pub file_path: String,
+    pub duration_sec: f64,
+    pub position_sec: f64,
+    pub volume: f32,
+}
+
+impl Default for DeckState {
+    fn default() -> Self {
+        DeckState {
+            id: String::new(),
+            status: "idle".to_string(),
+            title: String::new(),
+            artist: String::new(),
+            file_path: String::new(),
+            duration_sec: 0.0,
+            position_sec: 0.0,
+            volume: 1.0,
+        }
+    }
+}
+
+pub struct Deck {
+    pub id: String,
+    sink: Option<Sink>,
+    stream_handle: OutputStreamHandle,
+    _stream: OutputStream,
+    pub state: DeckState,
+    pub loaded_path: Option<String>,
+}
+
+impl Deck {
+    pub fn new(id: &str) -> Self {
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let mut state = DeckState::default();
+        state.id = id.to_string();
+        Deck {
+            id: id.to_string(),
+            sink: None,
+            stream_handle,
+            _stream,
+            state,
+            loaded_path: None,
+        }
+    }
+
+    pub fn load(&mut self, file_path: &str, title: &str, artist: &str) -> Result<(), String> {
+        self.stop();
+        let file = File::open(file_path).map_err(|e| e.to_string())?;
+        let reader = BufReader::new(file);
+        let source = Decoder::new(reader).map_err(|e| e.to_string())?;
+        
+        let sink = Sink::try_new(&self.stream_handle).map_err(|e| e.to_string())?;
+        sink.pause();
+        sink.append(source);
+        
+        self.state.file_path = file_path.to_string();
+        self.state.title = title.to_string();
+        self.state.artist = artist.to_string();
+        self.state.status = "idle".to_string();
+        self.state.duration_sec = 0.0; // rodio doesn't expose duration easily
+        self.loaded_path = Some(file_path.to_string());
+        self.sink = Some(sink);
+        Ok(())
+    }
+
+    pub fn play(&mut self) {
+        if let Some(sink) = &self.sink {
+            sink.play();
+            self.state.status = "playing".to_string();
+        }
+    }
+
+    pub fn pause(&mut self) {
+        if let Some(sink) = &self.sink {
+            sink.pause();
+            self.state.status = "paused".to_string();
+        }
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(sink) = self.sink.take() {
+            sink.stop();
+        }
+        self.state.status = "idle".to_string();
+        self.state.position_sec = 0.0;
+        self.loaded_path = None;
+    }
+
+    pub fn set_volume(&mut self, vol: f32) {
+        self.state.volume = vol;
+        if let Some(sink) = &self.sink {
+            sink.set_volume(vol);
+        }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        if let Some(sink) = &self.sink {
+            sink.empty()
+        } else {
+            true
+        }
+    }
+
+    pub fn is_playing(&self) -> bool {
+        if let Some(sink) = &self.sink {
+            !sink.is_paused() && !sink.empty()
+        } else {
+            false
+        }
+    }
+}
+
+pub struct AudioState {
+    pub deck_a: Deck,
+    pub deck_b: Deck,
+}
+
+impl AudioState {
+    pub fn new() -> Self {
+        AudioState {
+            deck_a: Deck::new("A"),
+            deck_b: Deck::new("B"),
+        }
+    }
+}
+
+pub type SharedAudioState = Arc<Mutex<AudioState>>;
+`);
+console.log('Wrote src-tauri/src/audio.rs');
+
+// 3. Write Tauri commands
+fs.writeFileSync('src-tauri/src/commands.rs', `
+use crate::audio::SharedAudioState;
+use serde::{Deserialize, Serialize};
+use tauri::State;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DeckStateResponse {
+    pub id: String,
+    pub status: String,
+    pub title: String,
+    pub artist: String,
+    pub file_path: String,
+    pub duration_sec: f64,
+    pub position_sec: f64,
+    pub volume: f32,
+}
+
+#[tauri::command]
+pub async fn audio_load(
+    deck: String,
+    file_path: String,
+    title: String,
+    artist: String,
+    state: State<'_, SharedAudioState>,
+) -> Result<String, String> {
+    let mut audio = state.lock().map_err(|e| e.to_string())?;
+    let d = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    d.load(&file_path, &title, &artist)?;
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub async fn audio_play(deck: String, state: State<'_, SharedAudioState>) -> Result<String, String> {
+    let mut audio = state.lock().map_err(|e| e.to_string())?;
+    let d = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    d.play();
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub async fn audio_pause(deck: String, state: State<'_, SharedAudioState>) -> Result<String, String> {
+    let mut audio = state.lock().map_err(|e| e.to_string())?;
+    let d = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    d.pause();
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub async fn audio_stop(deck: String, state: State<'_, SharedAudioState>) -> Result<String, String> {
+    let mut audio = state.lock().map_err(|e| e.to_string())?;
+    let d = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    d.stop();
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub async fn audio_set_volume(deck: String, volume: f32, state: State<'_, SharedAudioState>) -> Result<String, String> {
+    let mut audio = state.lock().map_err(|e| e.to_string())?;
+    let d = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    d.set_volume(volume);
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub async fn audio_get_state(state: State<'_, SharedAudioState>) -> Result<serde_json::Value, String> {
+    let audio = state.lock().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "deckA": {
+            "id": "A",
+            "status": if audio.deck_a.is_playing() { "playing" } else { &audio.deck_a.state.status },
+            "title": audio.deck_a.state.title,
+            "artist": audio.deck_a.state.artist,
+            "filePath": audio.deck_a.state.file_path,
+            "volume": audio.deck_a.state.volume,
+            "isFinished": audio.deck_a.is_finished(),
+        },
+        "deckB": {
+            "id": "B",
+            "status": if audio.deck_b.is_playing() { "playing" } else { &audio.deck_b.state.status },
+            "title": audio.deck_b.state.title,
+            "artist": audio.deck_b.state.artist,
+            "filePath": audio.deck_b.state.file_path,
+            "volume": audio.deck_b.state.volume,
+            "isFinished": audio.deck_b.is_finished(),
+        }
+    }))
+}
+`);
+console.log('Wrote src-tauri/src/commands.rs');
+
+// 4. Update main.rs to wire everything up
+fs.writeFileSync('src-tauri/src/main.rs', `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod audio;
+mod commands;
+
+use audio::{AudioState, SharedAudioState};
+use std::sync::{Arc, Mutex};
+
+fn main() {
+    let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState::new()));
+
+    tauri::Builder::default()
+        .manage(audio_state)
+        .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec![])))
+        .invoke_handler(tauri::generate_handler![
+            commands::audio_load,
+            commands::audio_play,
+            commands::audio_pause,
+            commands::audio_stop,
+            commands::audio_set_volume,
+            commands::audio_get_state,
+        ])
+        .setup(|_app| {
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+`);
+console.log('Wrote src-tauri/src/main.rs');
+console.log('Done - run: npm run tauri:dev');
