@@ -17,6 +17,7 @@ pub struct DeckMeta {
     pub artist: String,
     pub file_path: String,
     pub volume: f32,
+    pub gain_db: f32,
     pub status: String,
 }
 
@@ -27,6 +28,7 @@ impl DeckMeta {
             artist: String::new(),
             file_path: String::new(),
             volume: 1.0,
+            gain_db: 0.0,
             status: "idle".to_string(),
         }
     }
@@ -45,7 +47,7 @@ impl DeckMeta {
 
 #[derive(Debug)]
 pub enum AudioCmd {
-    Load { deck: String, file_path: String, title: String, artist: String },
+    Load { deck: String, file_path: String, title: String, artist: String, gain_db: f32 },
     Play(String),
     Pause(String),
     Stop(String),
@@ -117,7 +119,7 @@ pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<boo
                 // Use try_recv with a small sleep to allow periodic health checks
                 match rx.recv_timeout(std::time::Duration::from_millis(500)) {
                     Ok(cmd) => match cmd {
-                        AudioCmd::Load { deck, file_path, title, artist } => {
+                        AudioCmd::Load { deck, file_path, title, artist, gain_db: _ } => {
                             if let Some(old) = sinks.remove(&deck) { old.stop(); }
                             loaded_files.insert(deck.clone(), (file_path.clone(), title.clone(), artist.clone()));
                             playing_decks.remove(&deck);

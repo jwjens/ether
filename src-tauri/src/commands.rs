@@ -2,12 +2,13 @@ use crate::audio::{AudioCmd, SharedAudioState};
 use tauri::State;
 
 #[tauri::command]
-pub fn audio_load(deck: String, file_path: String, title: String, artist: String, state: State<SharedAudioState>) -> Result<String, String> {
+pub fn audio_load(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>, state: State<SharedAudioState>) -> Result<String, String> {
     let mut audio = state.inner().lock().map_err(|e| e.to_string())?;
     let meta = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
     meta.title = title.clone(); meta.artist = artist.clone();
     meta.file_path = file_path.clone(); meta.status = "idle".to_string();
-    audio.sender.send(AudioCmd::Load { deck, file_path, title, artist }).map_err(|e| e.to_string())?;
+    meta.gain_db = gain_db.unwrap_or(0.0) as f32;
+    audio.sender.send(AudioCmd::Load { deck, file_path, title, artist, gain_db: gain_db.unwrap_or(0.0) as f32 }).map_err(|e| e.to_string())?;
     Ok("ok".to_string())
 }
 
