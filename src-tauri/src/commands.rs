@@ -248,3 +248,15 @@ pub fn open_sound_settings() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[tauri::command]
+pub fn get_levels(state: State<SharedAudioState>) -> Result<serde_json::Value, String> {
+    let mut audio = state.inner().lock().map_err(|e| e.to_string())?;
+    // Request level update
+    audio.sender.send(crate::audio::AudioCmd::GetLevel).map_err(|e| e.to_string())?;
+    // Read current levels
+    let (la, lb) = if let Ok(lvl) = audio.levels.lock() {
+        (lvl.level_a, lvl.level_b)
+    } else { (0.0, 0.0) };
+    Ok(serde_json::json!({ "a": la, "b": lb }))
+}

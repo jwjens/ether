@@ -1,3 +1,4 @@
+import VUMeter from "./VUMeter";
 import { useState, useEffect } from "react";
 import { DeckState } from "../audio/engine";
 
@@ -21,6 +22,7 @@ function fmtElapsed(sec: number): string {
 }
 
 export default function OnAirDeck({ deck, label }: Props) {
+  const deckId = label.includes("A") ? "A" : "B";
   const [blink, setBlink] = useState(false);
 
   const status = deck?.status || "idle";
@@ -140,6 +142,8 @@ export default function OnAirDeck({ deck, label }: Props) {
             <div style={{ position: "absolute", top: 0, left: 0, height: "100%", width: pct + "%", background: accentColor, borderRadius: 3, transition: "width 0.2s linear" }}></div>
           </div>
         )}
+        {/* VU Meter */}
+        <VUMeter deckId={deckId as "A" | "B"} isPlaying={status === "playing"} />
       </div>
     </div>
   );

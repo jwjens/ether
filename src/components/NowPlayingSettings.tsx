@@ -14,6 +14,27 @@ export default function NowPlayingSettings() {
   const [igHandle, setIgHandle] = useState("");
   const [igEnabled, setIgEnabled] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [autostart, setAutostart] = useState(false);
+
+  useEffect(() => {
+    import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
+      isEnabled().then(setAutostart).catch(() => {});
+    }).catch(() => {});
+  }, []);
+
+  const toggleAutostart = async () => {
+    try {
+      if (autostart) {
+        const { disable } = await import("@tauri-apps/plugin-autostart");
+        await disable();
+        setAutostart(false);
+      } else {
+        const { enable } = await import("@tauri-apps/plugin-autostart");
+        await enable();
+        setAutostart(true);
+      }
+    } catch (e) { console.error("Autostart error:", e); }
+  };
 
   useEffect(() => {
     (async () => {

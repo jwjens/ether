@@ -53,16 +53,25 @@ pub enum AudioCmd {
     Stop(String),
     SetVolume { deck: String, volume: f32 },
     Ping,
+    GetLevel,
     StartStream { server: String, port: u16, mount: String, password: String, station_name: String },
     StopStream,
     UpdateMetadata { title: String, artist: String },
 }
+
+pub struct AudioLevels {
+    pub level_a: f32,
+    pub level_b: f32,
+}
+
+pub type SharedLevels = Arc<Mutex<AudioLevels>>;
 
 pub struct AudioState {
     pub deck_a: DeckMeta,
     pub deck_b: DeckMeta,
     pub sender: std::sync::mpsc::Sender<AudioCmd>,
     pub is_playing: Arc<Mutex<bool>>,
+    pub levels: SharedLevels,
     pub watchdog_active: bool,
     pub watchdog_threshold_sec: f64,
     pub watchdog_triggered_count: u32,
@@ -70,10 +79,18 @@ pub struct AudioState {
 
 pub type SharedAudioState = Arc<Mutex<AudioState>>;
 
-pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<bool>>) {
+fn rand_level() -> f32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+    (t % 100) as f32 / 100.0
+}
+
+pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<bool>>, SharedLevels) {
     let (tx, rx) = std::sync::mpsc::channel::<AudioCmd>();
     let is_playing = Arc::new(Mutex::new(false));
     let is_playing_clone = is_playing.clone();
+    let levels: SharedLevels = Arc::new(Mutex::new(AudioLevels { level_a: 0.0, level_b: 0.0 }));
+    let levels_clone = levels.clone();
 
     std::thread::spawn(move || {
         use rodio::{Decoder, OutputStream, Sink};
@@ -148,6 +165,17 @@ pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<boo
                                 if let Ok(mut p) = is_playing_clone.lock() { *p = true; }
                             }
                         }
+                        AudioCmd::GetLevel => {
+                            // Update levels based on sink state
+                            if let Ok(mut lvl) = levels_clone.lock() {
+                                lvl.level_a = if sinks.get("A").map(|s| !s.is_paused() && !s.empty()).unwrap_or(false) {
+                                    0.7 + (rand_level() * 0.3)
+                                } else { 0.0 };
+                                lvl.level_b = if sinks.get("B").map(|s| !s.is_paused() && !s.empty()).unwrap_or(false) {
+                                    0.7 + (rand_level() * 0.3)
+                                } else { 0.0 };
+                            }
+                        }
                         AudioCmd::Pause(deck) => {
                             playing_decks.remove(&deck);
                             if let Some(sink) = sinks.get(&deck) { sink.pause(); }
@@ -193,5 +221,5 @@ pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<boo
             }
         }
     });
-    (tx, is_playing)
+    (tx, is_playing, levels)
 }

@@ -15,12 +15,13 @@ use tauri::{
 };
 
 fn main() {
-    let (sender, is_playing) = start_audio_thread();
+    let (sender, is_playing, levels) = start_audio_thread();
     let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState {
         deck_a: audio::DeckMeta::new(),
         deck_b: audio::DeckMeta::new(),
         sender,
         is_playing,
+        levels: levels.clone(),
         watchdog_active: false,
         watchdog_threshold_sec: 10.0,
         watchdog_triggered_count: 0,
@@ -31,6 +32,7 @@ fn main() {
 
     tauri::Builder::default()
         .manage(audio_state.clone())
+        .manage(levels)
         .manage(now_playing.clone())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
@@ -57,6 +59,7 @@ fn main() {
             commands::restore_db,
             commands::update_now_playing,
             commands::open_sound_settings,
+            commands::get_levels,
             commands::analyze_lufs,
         ])
         .setup(move |app| {
