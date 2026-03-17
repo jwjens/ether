@@ -8,16 +8,22 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager,
+    Emitter, Manager,
 };
 
 fn main() {
-    let sender = start_audio_thread();
+    let (sender, is_playing) = start_audio_thread();
     let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState {
         deck_a: audio::DeckMeta::new(),
         deck_b: audio::DeckMeta::new(),
         sender,
+        is_playing,
+        watchdog_active: false,
+        watchdog_threshold_sec: 10.0,
+        watchdog_triggered_count: 0,
     }));
+
+    let watchdog_state = audio_state.clone();
 
     tauri::Builder::default()
         .manage(audio_state)
@@ -35,45 +41,65 @@ fn main() {
             commands::audio_stop,
             commands::audio_set_volume,
             commands::audio_get_state,
+            commands::watchdog_set,
         ])
-        .setup(|app| {
-            // Build tray menu
+        .setup(move |app| {
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let mut silence_start: Option<std::time::Instant> = None;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                    let (active, threshold, playing) = {
+                        match watchdog_state.lock() {
+                            Ok(state) => {
+                                let playing = state.is_playing.lock().map(|p| *p).unwrap_or(false);
+                                (state.watchdog_active, state.watchdog_threshold_sec, playing)
+                            }
+                            Err(_) => continue,
+                        }
+                    };
+
+                    if !active { silence_start = None; continue; }
+
+                    if playing {
+                        silence_start = None;
+                    } else {
+                        let start = silence_start.get_or_insert_with(std::time::Instant::now);
+                        let silence_sec = start.elapsed().as_secs_f64();
+                        if silence_sec >= threshold {
+                            let _ = app_handle.emit("dead-air-detected", silence_sec);
+                            silence_start = None;
+                            if let Ok(mut state) = watchdog_state.lock() {
+                                state.watchdog_triggered_count += 1;
+                            }
+                        }
+                    }
+                }
+            });
+
             let show = MenuItemBuilder::with_id("show", "Show Ether").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
-            // Create tray icon
             let _tray = TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)
                 .tooltip("Ether - On Air")
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+                        if let Some(w) = app.get_webview_window("main") {
+                            let _ = w.show(); let _ = w.set_focus();
                         }
                     }
-                    "quit" => {
-                        app.exit(0);
-                    }
+                    "quit" => { app.exit(0); }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
                         let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            if window.is_visible().unwrap_or(false) {
-                                let _ = window.hide();
-                            } else {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
+                        if let Some(w) = app.get_webview_window("main") {
+                            if w.is_visible().unwrap_or(false) { let _ = w.hide(); }
+                            else { let _ = w.show(); let _ = w.set_focus(); }
                         }
                     }
                 })
@@ -81,7 +107,6 @@ fn main() {
 
             Ok(())
         })
-        // Hide to tray instead of closing
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();

@@ -12,7 +12,6 @@ pub struct DeckInfo {
     pub is_finished: bool,
 }
 
-#[derive(Default)]
 pub struct DeckMeta {
     pub title: String,
     pub artist: String,
@@ -44,12 +43,6 @@ impl DeckMeta {
     }
 }
 
-pub struct AudioState {
-    pub deck_a: DeckMeta,
-    pub deck_b: DeckMeta,
-    pub sender: std::sync::mpsc::Sender<AudioCmd>,
-}
-
 #[derive(Debug)]
 pub enum AudioCmd {
     Load { deck: String, file_path: String, title: String, artist: String },
@@ -57,12 +50,26 @@ pub enum AudioCmd {
     Pause(String),
     Stop(String),
     SetVolume { deck: String, volume: f32 },
+    Ping,
+}
+
+pub struct AudioState {
+    pub deck_a: DeckMeta,
+    pub deck_b: DeckMeta,
+    pub sender: std::sync::mpsc::Sender<AudioCmd>,
+    pub is_playing: Arc<Mutex<bool>>,
+    pub watchdog_active: bool,
+    pub watchdog_threshold_sec: f64,
+    pub watchdog_triggered_count: u32,
 }
 
 pub type SharedAudioState = Arc<Mutex<AudioState>>;
 
-pub fn start_audio_thread() -> std::sync::mpsc::Sender<AudioCmd> {
+pub fn start_audio_thread() -> (std::sync::mpsc::Sender<AudioCmd>, Arc<Mutex<bool>>) {
     let (tx, rx) = std::sync::mpsc::channel::<AudioCmd>();
+    let is_playing = Arc::new(Mutex::new(false));
+    let is_playing_clone = is_playing.clone();
+
     std::thread::spawn(move || {
         use rodio::{Decoder, OutputStream, Sink};
         use std::fs::File;
@@ -75,44 +82,43 @@ pub fn start_audio_thread() -> std::sync::mpsc::Sender<AudioCmd> {
         loop {
             match rx.recv() {
                 Ok(cmd) => match cmd {
-                    AudioCmd::Load { deck, file_path, title: _, artist: _ } => {
+                    AudioCmd::Load { deck, file_path, .. } => {
                         if let Some(old) = sinks.remove(&deck) { old.stop(); }
-                        match File::open(&file_path) {
-                            Ok(file) => {
-                                let reader = BufReader::new(file);
-                                match Decoder::new(reader) {
-                                    Ok(source) => {
-                                        match Sink::try_new(&stream_handle) {
-                                            Ok(sink) => {
-                                                sink.pause();
-                                                sink.append(source);
-                                                sinks.insert(deck, sink);
-                                            }
-                                            Err(e) => eprintln!("Sink error: {}", e),
-                                        }
-                                    }
-                                    Err(e) => eprintln!("Decode error: {}", e),
+                        if let Ok(file) = File::open(&file_path) {
+                            let reader = BufReader::new(file);
+                            if let Ok(source) = Decoder::new(reader) {
+                                if let Ok(sink) = Sink::try_new(&stream_handle) {
+                                    sink.pause();
+                                    sink.append(source);
+                                    sinks.insert(deck, sink);
                                 }
                             }
-                            Err(e) => eprintln!("File error: {}", e),
                         }
                     }
                     AudioCmd::Play(deck) => {
-                        if let Some(sink) = sinks.get(&deck) { sink.play(); }
+                        if let Some(sink) = sinks.get(&deck) {
+                            sink.play();
+                            if let Ok(mut p) = is_playing_clone.lock() { *p = true; }
+                        }
                     }
                     AudioCmd::Pause(deck) => {
                         if let Some(sink) = sinks.get(&deck) { sink.pause(); }
+                        let any = sinks.values().any(|s| !s.is_paused() && !s.empty());
+                        if let Ok(mut p) = is_playing_clone.lock() { *p = any; }
                     }
                     AudioCmd::Stop(deck) => {
                         if let Some(sink) = sinks.remove(&deck) { sink.stop(); }
+                        let any = sinks.values().any(|s| !s.is_paused() && !s.empty());
+                        if let Ok(mut p) = is_playing_clone.lock() { *p = any; }
                     }
                     AudioCmd::SetVolume { deck, volume } => {
                         if let Some(sink) = sinks.get(&deck) { sink.set_volume(volume); }
                     }
+                    AudioCmd::Ping => {}
                 },
                 Err(_) => break,
             }
         }
     });
-    tx
+    (tx, is_playing)
 }

@@ -1,4 +1,5 @@
-import { emit } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { emit, listen } from "@tauri-apps/api/event";
 import { useState, useEffect, useCallback } from "react";
 import { query, execute, queryOne } from "./db/client";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -165,6 +166,52 @@ export default function App() {
       } catch (e) { console.error('Crash restore failed:', e); }
     })();
   }, []);
+
+  // Dead air watchdog - listens for Rust watchdog events and force-advances queue
+  useEffect(() => {
+    // Enable watchdog in Rust when AUTO is on
+    if (autoAdv) {
+      invoke("watchdog_set", { active: true, thresholdSec: 10.0 }).catch(() => {});
+    } else {
+      invoke("watchdog_set", { active: false, thresholdSec: 10.0 }).catch(() => {});
+    }
+  }, [autoAdv]);
+
+  useEffect(() => {
+    const unlisten = listen("dead-air-detected", async (event) => {
+      console.warn("Dead air detected after", event.payload, "seconds - recovering...");
+      // Try to restart playback
+      const q = engine.getQueue();
+      if (q.length > 0) {
+        const next = q[0];
+        engine.clearQueue();
+        engine.addToQueue(q.slice(1));
+        await engine.loadToDeck('A', next.filePath, next.title, next.artist);
+        const deck = engine.getDeck('A');
+        if (deck) deck.play();
+      } else if (autoAdv) {
+        // Refill from schedule and restart
+        await fillQueueFromSchedule().then(async (count) => {
+          if (count === 0) {
+            // Random fallback
+            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 20");
+            const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
+            engine.addToQueue(items);
+          }
+          const q2 = engine.getQueue();
+          if (q2.length > 0) {
+            const next = q2[0];
+            engine.clearQueue();
+            engine.addToQueue(q2.slice(1));
+            await engine.loadToDeck('A', next.filePath, next.title, next.artist);
+            const deck = engine.getDeck('A');
+            if (deck) deck.play();
+          }
+        });
+      }
+    });
+    return () => { unlisten.then(f => f()); };
+  }, [autoAdv]);
 
   const handleOutputChange = (deviceId: string) => { setOutputDevice(deviceId); engine.setOutputDevice(deviceId); };
   const handleInputChange = (deviceId: string) => { setInputDevice(deviceId); };
