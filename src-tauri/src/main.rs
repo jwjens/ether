@@ -2,6 +2,7 @@
 
 mod audio;
 mod commands;
+mod dashboard;
 
 use audio::{AudioState, SharedAudioState, start_audio_thread};
 use std::sync::{Arc, Mutex};
@@ -26,7 +27,7 @@ fn main() {
     let watchdog_state = audio_state.clone();
 
     tauri::Builder::default()
-        .manage(audio_state)
+        .manage(audio_state.clone())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -42,8 +43,12 @@ fn main() {
             commands::audio_set_volume,
             commands::audio_get_state,
             commands::watchdog_set,
+            commands::get_local_ip,
         ])
         .setup(move |app| {
+            // Start mobile dashboard on port 4242
+            dashboard::start_dashboard_server(audio_state.clone(), 4242);
+
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut silence_start: Option<std::time::Instant> = None;

@@ -63,3 +63,17 @@ pub fn watchdog_set(active: bool, threshold_sec: f64, state: State<SharedAudioSt
     audio.watchdog_threshold_sec = threshold_sec;
     Ok("ok".to_string())
 }
+
+#[tauri::command]
+pub fn get_local_ip() -> String {
+    // Simple approach: try to connect to external and get local IP
+    use std::net::UdpSocket;
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                return addr.ip().to_string();
+            }
+        }
+    }
+    "localhost".to_string()
+}

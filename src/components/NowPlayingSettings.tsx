@@ -1,7 +1,16 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { query, execute } from "../db/client";
 
 export default function NowPlayingSettings() {
+  const [dashboardUrl, setDashboardUrl] = React.useState("");
+
+  React.useEffect(() => {
+    import("@tauri-apps/api/core").then(({ invoke }) => {
+      invoke<string>("get_local_ip").then(ip => {
+        setDashboardUrl("http://" + ip + ":4242");
+      }).catch(() => setDashboardUrl("http://localhost:4242"));
+    });
+  }, []);
   const [igHandle, setIgHandle] = useState("");
   const [igEnabled, setIgEnabled] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -27,6 +36,15 @@ export default function NowPlayingSettings() {
 
   return (
     <div style={{ padding: "0 0 20px" }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>📱 Mobile Dashboard</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Open this URL on any phone or tablet on the same WiFi network to remotely control playback:</div>
+        {dashboardUrl && (
+          <div style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "10px 14px", fontFamily: "monospace", fontSize: 14, color: "var(--accent-blue)", letterSpacing: "0.02em", wordBreak: "break-all" as any }}>
+            {dashboardUrl}
+          </div>
+        )}
+      </div>
       <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.06em" }}>Now Playing Screen</h3>
 
       <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)" }}>
