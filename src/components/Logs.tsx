@@ -110,6 +110,69 @@ export default function Logs() {
     URL.revokeObjectURL(url);
   };
 
+  const exportPDF = () => {
+    const stationName = "Ether Radio";
+    const dateRange = filter === "today" ? "Today" : filter === "week" ? "Last 7 Days" : filter === "month" ? "Last 30 Days" : "All Time";
+    const generated = new Date().toLocaleString();
+
+    const rows = entries.map((e, i) => {
+      const d = new Date(e.played_at * 1000);
+      const date = d.toLocaleDateString();
+      const time = d.toLocaleTimeString();
+      const bg = i % 2 === 0 ? "#f9f9f9" : "#ffffff";
+      return `<tr style="background:${bg}">
+        <td>${i + 1}</td>
+        <td>${date}</td>
+        <td>${time}</td>
+        <td><strong>${e.title}</strong></td>
+        <td>${e.artist || "Unknown"}</td>
+        <td>${e.category_code || "—"}</td>
+        <td>${e.show_name || "—"}</td>
+      </tr>`;
+    }).join("\n");
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${stationName} — Traffic Log</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #333; margin: 20px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .meta { color: #666; font-size: 10px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1e293b; color: #fff; padding: 6px 8px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; }
+  .stats { display: flex; gap: 24px; margin-bottom: 16px; }
+  .stat { text-align: center; }
+  .stat-num { font-size: 24px; font-weight: bold; }
+  .stat-label { font-size: 9px; text-transform: uppercase; color: #666; }
+  @media print { body { margin: 0; } }
+</style>
+</head>
+<body>
+<h1>${stationName} — Traffic Log</h1>
+<div class="meta">Period: ${dateRange} &nbsp;|&nbsp; Generated: ${generated} &nbsp;|&nbsp; Total plays: ${entries.length}</div>
+<div class="stats">
+  <div class="stat"><div class="stat-num">${entries.length}</div><div class="stat-label">Total Plays</div></div>
+  <div class="stat"><div class="stat-num">${new Set(entries.map(e => e.artist).filter(Boolean)).size}</div><div class="stat-label">Unique Artists</div></div>
+  <div class="stat"><div class="stat-num">${new Set(entries.map(e => e.title)).size}</div><div class="stat-label">Unique Titles</div></div>
+</div>
+<table>
+  <thead><tr><th>#</th><th>Date</th><th>Time</th><th>Title</th><th>Artist</th><th>Category</th><th>Show</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+      setTimeout(() => win.print(), 500);
+    }
+  };
+
   // Stats
   const uniqueArtists = new Set(entries.filter(e => e.artist).map(e => e.artist)).size;
   const uniqueSongs = new Set(entries.map(e => e.title)).size;
@@ -129,6 +192,7 @@ export default function Logs() {
           <button onClick={() => exportCSV("standard")} className="px-3 py-1 bg-emerald-700 hover:bg-emerald-600 rounded text-xs font-bold text-white">Export CSV</button>
           <button onClick={() => exportCSV("bmi")} className="px-3 py-1 bg-purple-700 hover:bg-purple-600 rounded text-xs font-bold text-white">BMI</button>
           <button onClick={() => exportCSV("ascap")} className="px-3 py-1 bg-indigo-700 hover:bg-indigo-600 rounded text-xs font-bold text-white">ASCAP</button>
+          <button onClick={exportPDF} className="px-3 py-1 bg-red-700 hover:bg-red-600 rounded text-xs font-bold text-white">PDF</button>
           <button onClick={clearLog} className="px-3 py-1 bg-zinc-800 hover:bg-red-900 rounded text-xs font-bold text-zinc-400 hover:text-red-400">Clear</button>
         </div>
       </div>

@@ -45,6 +45,44 @@ export default function NowPlayingSettings() {
           </div>
         )}
       </div>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>🌐 Public Now Playing Endpoint</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+          Your station website can poll this URL to show what's playing:
+        </div>
+        {dashboardUrl && (
+          <div style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: "var(--accent-green)", letterSpacing: "0.02em" }}>
+            {dashboardUrl.replace(":4242", ":4242")}/now-playing.json
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>
+          Returns: title, artist, is_playing, updated_at — CORS enabled for cross-origin requests
+        </div>
+      </div>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>🚀 Launch on Windows Startup</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
+          Automatically start Ether when Windows boots. Recommended for 24/7 stations.
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div
+            onClick={toggleAutostart}
+            style={{
+              width: 36, height: 20, borderRadius: 10, cursor: "pointer", transition: "background 0.2s",
+              background: autostart ? "var(--accent-blue)" : "var(--bg-secondary)",
+              border: "1px solid var(--border-primary)", position: "relative", flexShrink: 0
+            }}
+          >
+            <div style={{
+              position: "absolute", top: 2, left: autostart ? 18 : 2,
+              width: 14, height: 14, borderRadius: 7, background: "#fff", transition: "left 0.2s"
+            }} />
+          </div>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            {autostart ? "Ether will launch on startup" : "Launch on startup disabled"}
+          </span>
+        </div>
+      </div>
       <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.06em" }}>Now Playing Screen</h3>
 
       <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)" }}>

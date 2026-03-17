@@ -1,5 +1,16 @@
 use crate::audio::SharedAudioState;
 use tiny_http::{Server, Response, Header};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct NowPlayingMeta {
+    pub title: String,
+    pub artist: String,
+    pub is_playing: bool,
+    pub updated_at: u64,
+}
+
+pub type SharedNowPlaying = Arc<Mutex<NowPlayingMeta>>;
 
 const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
 <html>
@@ -94,7 +105,7 @@ poll();
 </body>
 </html>"#;
 
-pub fn start_dashboard_server(state: SharedAudioState, port: u16) {
+pub fn start_dashboard_server(state: SharedAudioState, now_playing: SharedNowPlaying, port: u16) {
     std::thread::spawn(move || {
         let addr = format!("0.0.0.0:{}", port);
         let server = match Server::http(&addr) {
@@ -111,6 +122,19 @@ pub fn start_dashboard_server(state: SharedAudioState, port: u16) {
                 ("GET", "/") | ("GET", "/index.html") => {
                     Response::from_string(DASHBOARD_HTML)
                         .with_header(Header::from_bytes("Content-Type", "text/html").unwrap())
+                }
+                ("GET", "/now-playing.json") => {
+                    let json = if let Ok(np) = now_playing.lock() {
+                        serde_json::json!({
+                            "title": np.title,
+                            "artist": np.artist,
+                            "is_playing": np.is_playing,
+                            "updated_at": np.updated_at,
+                        }).to_string()
+                    } else { "{}".to_string() };
+                    Response::from_string(json)
+                        .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
+                        .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
                 }
                 ("GET", "/api/status") => {
                     let json = if let Ok(audio) = state.lock() {

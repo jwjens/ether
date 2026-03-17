@@ -11,6 +11,9 @@ import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
 import CartWall from "./components/CartWall";
 import ImportDialog from "./components/ImportDialog";
+import NexGenImport from "./components/NexGenImport";
+import BackupRestore from "./components/BackupRestore";
+import DMCANotice from "./components/DMCANotice";
 import JockStrip from "./components/JockStrip";
 import UpNext from "./components/UpNext";
 import Scheduler from "./components/Scheduler";
@@ -108,12 +111,22 @@ export default function App() {
       if (id === "A") setDeckA({...st});
       else setDeckB({...st});
       setQueueLen(engine.getQueue().length);
-      emit("now-playing-update", {
+      const npPayload = {
         title: st.title || "Ether Radio",
         artist: st.artist || "",
         positionSec: st.positionSec || 0,
         durationSec: st.durationSec || 0,
         isPlaying: st.status === "playing",
+      };
+      emit("now-playing-update", npPayload).catch(() => {});
+      // Push to /now-playing.json endpoint
+      invoke("update_now_playing", {
+        title: npPayload.title,
+        artist: npPayload.artist,
+        isPlaying: npPayload.isPlaying,
+        tuneinStationId: null,
+        tuneinPartnerId: null,
+        tuneinPartnerKey: null,
       }).catch(() => {});
     });
   }, []);
@@ -314,7 +327,8 @@ export default function App() {
           {panel === "streaming" && <StreamManager />}
           {panel === "announce" && <Announcements />}
           {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
-          {panel === "settings" && <div className="space-y-6"><ProcessingPanel /><NowPlayingSettings /><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
+          <DMCANotice />
+      {panel === "settings" && <div className="space-y-6"><ProcessingPanel /><BackupRestore /><NowPlayingSettings /><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
         </main>
       </div>
       <footer style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>
@@ -473,6 +487,7 @@ function DeckCard({ deck, deckId, accentColor, waveColor, playedColor }: { deck:
 
 function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void }) {
   const [showImport, setShowImport] = useState(false);
+  const [showNexGen, setShowNexGen] = useState(false);
   const [catList, setCatList] = useState<{ id: number; code: string; color: string | null }[]>([]);
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -636,9 +651,11 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue }: { onLoadA: (s: SongRow) => 
         {selectedIds.size > 0 && <button onClick={deleteSelected} className="px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded text-xs font-bold text-white">Delete {selectedIds.size}</button>}
         <button onClick={deleteAll} className="px-3 py-1.5 bg-zinc-700 hover:bg-red-900 rounded text-xs font-bold text-zinc-400 hover:text-red-300">Delete All</button>
         <button onClick={() => setShowImport(!showImport)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">{showImport ? "Cancel" : "Import"}</button>
+        <button onClick={() => setShowNexGen(!showNexGen)} className="px-3 py-1.5 bg-purple-700 hover:bg-purple-600 rounded text-xs font-bold text-white">{showNexGen ? "Cancel" : "NexGen/ENCO"}</button>
       </div>
       {status ? <div className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded text-xs text-blue-200">{status}</div> : null}
       {showImport && <ImportDialog onDone={() => { setShowImport(false); load(); }} />}
+      {showNexGen && <NexGenImport onDone={() => { setShowNexGen(false); load(); }} />}
       {loading ? <div className="text-sm text-zinc-500">Loading...</div> : filtered.length === 0 ? (
         <div className="text-center py-16">
           <div className="text-zinc-400 text-lg mb-2">No music yet</div>

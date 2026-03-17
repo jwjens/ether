@@ -13,6 +13,14 @@ interface Props {
   currentInput: string;
 }
 
+async function openWindowsSoundSettings() {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    // Open Windows sound settings
+    await invoke("open_sound_settings").catch(() => {});
+  } catch {}
+}
+
 export default function AudioDevices({ onOutputChange, onInputChange, currentOutput, currentInput }: Props) {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -40,7 +48,10 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
   useEffect(() => {
     const handler = () => loadDevices();
     navigator.mediaDevices.addEventListener("devicechange", handler);
-    return () => navigator.mediaDevices.removeEventListener("devicechange", handler);
+    const outputs = devices.filter(d => d.kind === "audiooutput");
+  const inputs = devices.filter(d => d.kind === "audioinput");
+
+  return () => navigator.mediaDevices.removeEventListener("devicechange", handler);
   }, []);
 
   const inputs = devices.filter(d => d.kind === "audioinput");
@@ -51,6 +62,16 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
 
   return (
     <div className="space-y-4">
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 14, border: "1px solid var(--border-primary)" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>🔊 Audio Output Device</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+          Ether uses the Windows default audio device. To change output, set your preferred device as default in Windows Sound Settings.
+        </div>
+        <button onClick={openWindowsSoundSettings}
+          style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+          Open Windows Sound Settings ↗
+        </button>
+      </div>
       <h2 className="text-sm font-bold text-zinc-300">Audio Devices</h2>
       <div className="text-xs text-zinc-500">Select your audio interface. Changes take effect on the next song. Plug/unplug detection is automatic.</div>
 

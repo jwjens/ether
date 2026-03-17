@@ -6,6 +6,7 @@ mod lufs;
 mod dashboard;
 
 use audio::{AudioState, SharedAudioState, start_audio_thread};
+use dashboard::{NowPlayingMeta, SharedNowPlaying};
 use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{MenuBuilder, MenuItemBuilder},
@@ -26,9 +27,11 @@ fn main() {
     }));
 
     let watchdog_state = audio_state.clone();
+    let now_playing: SharedNowPlaying = std::sync::Arc::new(std::sync::Mutex::new(NowPlayingMeta::default()));
 
     tauri::Builder::default()
         .manage(audio_state.clone())
+        .manage(now_playing.clone())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -49,11 +52,16 @@ fn main() {
             commands::stream_stop,
             commands::stream_status,
             commands::stream_update_metadata,
+            commands::backup_db,
+            commands::list_backups,
+            commands::restore_db,
+            commands::update_now_playing,
+            commands::open_sound_settings,
             commands::analyze_lufs,
         ])
         .setup(move |app| {
             // Start mobile dashboard on port 4242
-            dashboard::start_dashboard_server(audio_state.clone(), 4242);
+            dashboard::start_dashboard_server(audio_state.clone(), now_playing.clone(), 4242);
 
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {

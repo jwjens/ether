@@ -139,3 +139,112 @@ pub fn stream_update_metadata(title: String, artist: String, state: State<Shared
     }
     Ok("ok".to_string())
 }
+
+#[tauri::command]
+pub fn backup_db(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    // Source DB path
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let db_path = app_dir.join("openair.db");
+
+    // Backup dir
+    let backup_dir = app_dir.join("backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
+
+    // Create timestamped backup
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let backup_name = format!("openair-backup-{}.db", timestamp);
+    let backup_path = backup_dir.join(&backup_name);
+
+    std::fs::copy(&db_path, &backup_path).map_err(|e| e.to_string())?;
+
+    // 7-day rotation: delete backups older than 7 days
+    let cutoff = timestamp - (7 * 24 * 3600);
+    if let Ok(entries) = std::fs::read_dir(&backup_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("openair-backup-") && name.ends_with(".db") {
+                if let Some(ts_str) = name.strip_prefix("openair-backup-").and_then(|s| s.strip_suffix(".db")) {
+                    if let Ok(ts) = ts_str.parse::<u64>() {
+                        if ts < cutoff {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(backup_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn list_backups(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let backup_dir = app_dir.join("backups");
+    if !backup_dir.exists() { return Ok(vec![]); }
+
+    let mut backups: Vec<String> = std::fs::read_dir(&backup_dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("openair-backup-"))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    backups.sort_by(|a, b| b.cmp(a)); // newest first
+    Ok(backups)
+}
+
+#[tauri::command]
+pub fn restore_db(backup_name: String, app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let backup_path = app_dir.join("backups").join(&backup_name);
+    let db_path = app_dir.join("openair.db");
+
+    if !backup_path.exists() {
+        return Err("Backup file not found".to_string());
+    }
+
+    // Copy backup over current DB
+    std::fs::copy(&backup_path, &db_path).map_err(|e| e.to_string())?;
+    Ok("Restored successfully. Please restart Ether.".to_string())
+}
+
+#[tauri::command]
+pub fn update_now_playing(
+    title: String,
+    artist: String,
+    is_playing: bool,
+    tunein_station_id: Option<String>,
+    tunein_partner_id: Option<String>,
+    tunein_partner_key: Option<String>,
+    now_playing: State<crate::dashboard::SharedNowPlaying>,
+) -> Result<String, String> {
+    // Update shared state for /now-playing.json endpoint
+    if let Ok(mut np) = now_playing.inner().lock() {
+        np.title = title.clone();
+        np.artist = artist.clone();
+        np.is_playing = is_playing;
+        np.updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+    }
+    Ok("ok".to_string())
+}
+
+#[tauri::command]
+pub fn open_sound_settings() -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("ms-settings:sound")
+            .spawn()
+            .or_else(|_| std::process::Command::new("mmsys.cpl").spawn())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
