@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { query } from "../db/client";
@@ -31,7 +31,9 @@ async function fetchAlbumArt(artist: string, title: string): Promise<string | nu
 
 export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   const [track, setTrack] = useState<TrackInfo>({ title: "Ether Radio", artist: "", positionSec: 0, durationSec: 0, isPlaying: false });
-  const [time, setTime] = useState(new Date());
+  const [time] = useState(new Date());
+  const clockRef = useRef<HTMLDivElement>(null);
+  const dateRef = useRef<HTMLDivElement>(null);
   const [albumArt, setAlbumArt] = useState<string | null>(null);
   const [lastTrack, setLastTrack] = useState("");
   const [igHandle, setIgHandle] = useState("");
@@ -62,15 +64,45 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     return () => clearInterval(id);
   }, [adImages]);
 
+  const posRef = useRef<{pos: number, dur: number}>({pos: 0, dur: 0});
+  const progressRef = useRef<HTMLDivElement>(null);
+  const posSpanRef = useRef<HTMLSpanElement>(null);
+  const remSpanRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    // Request current track from main window on open
+    import("@tauri-apps/api/event").then(({ emit: emitFn }) => {
+      setTimeout(() => emitFn("now-playing-request", {}).catch(() => {}), 500);
+    });
+  }, []);
+
   useEffect(() => {
     const unlisten = listen<TrackInfo>("now-playing-update", (event) => {
-      setTrack(event.payload);
+      const p = event.payload;
+      // Only trigger React re-render when track/artist/status changes
+      setTrack(prev => {
+        if (prev.title !== p.title || prev.artist !== p.artist || prev.isPlaying !== p.isPlaying) {
+          return p;
+        }
+        // Update position via DOM directly to avoid re-render
+        posRef.current = { pos: p.positionSec, dur: p.durationSec };
+        if (progressRef.current && p.durationSec > 0) {
+          progressRef.current.style.width = (p.positionSec / p.durationSec * 100) + "%";
+        }
+        if (posSpanRef.current) posSpanRef.current.textContent = fmtTime(p.positionSec);
+        if (remSpanRef.current) remSpanRef.current.textContent = "-" + fmtTime(p.durationSec - p.positionSec);
+        return prev;
+      });
     });
     return () => { unlisten.then(f => f()); };
   }, []);
 
   useEffect(() => {
-    const id = setInterval(() => setTime(new Date()), 1000);
+    const id = setInterval(() => {
+      const now = new Date();
+      if (clockRef.current) clockRef.current.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      if (dateRef.current) dateRef.current.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+    }, 1000);
     return () => clearInterval(id);
   }, []);
 
@@ -103,17 +135,20 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     : `https://www.instagram.com/${igHandle.replace('@','')}/embed`;
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0a0a0a", color: "#fff", overflow: "hidden", fontFamily: "system-ui, sans-serif" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#0a0a0a", color: "#fff", overflow: "hidden", fontFamily: "system-ui, sans-serif", willChange: "auto" }}>
       {/* Blurred album art background */}
-      {albumArt && (
+{albumArt && (
         <div style={{
           position: "absolute", inset: 0,
           backgroundImage: `url(${albumArt})`,
           backgroundSize: "cover", backgroundPosition: "center",
           filter: "blur(80px) brightness(0.2) saturate(1.8)",
-          transform: "scale(1.15)", zIndex: 0
+          transform: "scale(1.15) translateZ(0)",
+          willChange: "transform",
+          zIndex: 0
         }} />
       )}
+      {!albumArt && <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)", zIndex: 0 }} />}
 
       <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
 
@@ -128,8 +163,8 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
             )}
           </div>
           <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 40, fontFamily: "monospace", fontWeight: 700, lineHeight: 1 }}>{timeStr}</div>
-            <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{dateStr}</div>
+            <div ref={clockRef} style={{ fontSize: 40, fontFamily: "monospace", fontWeight: 700, lineHeight: 1 }}>{timeStr}</div>
+            <div ref={dateRef} style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{dateStr}</div>
           </div>
         </div>
 
@@ -170,13 +205,13 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
           </div>
         </div>
 
-        {/* Bottom: Song info + progress */}
-        <div style={{ padding: "0 36px 20px" }}>
+        {/* Bottom: Song info + progress - hide when no track */}
+        <div style={{ padding: "0 36px 20px", display: title === "Ether Radio" ? "none" : "block" }}>
           <div style={{ background: "rgba(0,0,0,0.75)", borderRadius: 14, padding: "20px 28px", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.15)" }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 16, color: "#ffffff", letterSpacing: "0.2em", textTransform: "uppercase" as any, marginBottom: 8, fontWeight: 700 }}>
-                  {isPlaying ? "Now Playing" : "Up Next"}
+                  {isPlaying ? "Now Playing" : ""}
                 </div>
                 <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#ffffff" }}>{title}</div>
                 {artist && <div style={{ fontSize: 28, color: "#ffffff", marginTop: 6, fontWeight: 400 }}>{artist}</div>}
@@ -189,8 +224,8 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
                   <div style={{ height: "100%", width: pct + "%", background: "#60a5fa", borderRadius: 2, transition: "width 0.5s linear" }} />
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontFamily: "monospace", color: "rgba(255,255,255,0.8)" }}>
-                  <span>{fmtTime(pos)}</span>
-                  <span>-{fmtTime(dur - pos)}</span>
+                  <span ref={posSpanRef}>{fmtTime(pos)}</span>
+                  <span ref={remSpanRef}>-{fmtTime(dur - pos)}</span>
                 </div>
               </>
             )}

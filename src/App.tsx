@@ -78,6 +78,23 @@ export default function App() {
     });
   }, []);
 
+  // Respond to Now Playing window requesting current track
+  useEffect(() => {
+    const unlisten = listen("now-playing-request", () => {
+      const track = (globalThis as any).__currentTrack;
+      const deckA = engine.getDeck("A");
+      const stA = deckA?.getState();
+      emit("now-playing-update", {
+        title: stA?.title || track?.title || "Ether Radio",
+        artist: stA?.artist || track?.artist || "",
+        positionSec: stA?.positionSec || 0,
+        durationSec: stA?.durationSec || 0,
+        isPlaying: stA?.status === "playing" || false,
+      }).catch(() => {});
+    });
+    return () => { unlisten.then(f => f()); };
+  }, []);
+
   // Refill callback: loads all songs from DB when queue empties
   useEffect(() => {
     engine.setRefillCallback(async () => {
@@ -111,23 +128,7 @@ export default function App() {
       if (id === "A") setDeckA({...st});
       else setDeckB({...st});
       setQueueLen(engine.getQueue().length);
-      const npPayload = {
-        title: st.title || "Ether Radio",
-        artist: st.artist || "",
-        positionSec: st.positionSec || 0,
-        durationSec: st.durationSec || 0,
-        isPlaying: st.status === "playing",
-      };
-      emit("now-playing-update", npPayload).catch(() => {});
-      // Push to /now-playing.json endpoint
-      invoke("update_now_playing", {
-        title: npPayload.title,
-        artist: npPayload.artist,
-        isPlaying: npPayload.isPlaying,
-        tuneinStationId: null,
-        tuneinPartnerId: null,
-        tuneinPartnerKey: null,
-      }).catch(() => {});
+
     });
   }, []);
 

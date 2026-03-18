@@ -131,8 +131,12 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+                // Only hide to tray for the main window
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                // Now Playing window closes normally
             }
         })
         .run(tauri::generate_context!())
