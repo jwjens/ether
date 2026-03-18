@@ -1,7 +1,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type DeckId = "A" | "B";
+export type DeckId = "A" | "B" | "C";
 export type DeckStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
 
 export interface DeckState {

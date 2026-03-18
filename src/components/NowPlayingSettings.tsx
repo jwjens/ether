@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
 import { query, execute } from "../db/client";
 
 export default function NowPlayingSettings() {
@@ -14,6 +15,16 @@ export default function NowPlayingSettings() {
   const [igHandle, setIgHandle] = useState("");
   const [igEnabled, setIgEnabled] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [timezone, setTimezone] = useState("");
+
+  useEffect(() => {
+    getStationTimezone().then(setTimezone);
+  }, []);
+
+  const saveTimezone = async (tz: string) => {
+    setTimezone(tz);
+    await setStationTimezone(tz);
+  };
   const [autostart, setAutostart] = useState(false);
 
   useEffect(() => {
@@ -102,6 +113,21 @@ export default function NowPlayingSettings() {
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
             {autostart ? "Ether will launch on startup" : "Launch on startup disabled"}
           </span>
+        </div>
+      </div>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>🕐 Station Timezone</div>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+          Used for schedule times, DST handling, and play log timestamps.
+        </div>
+        <select value={timezone} onChange={e => saveTimezone(e.target.value)}
+          style={{ width: "100%", padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}>
+          {COMMON_TIMEZONES.map(tz => (
+            <option key={tz.value} value={tz.value}>{tz.label} — {tz.value}</option>
+          ))}
+        </select>
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>
+          Current time in this zone: {timezone ? new Date().toLocaleTimeString('en-US', { timeZone: timezone, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }) : "—"}
         </div>
       </div>
       <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.06em" }}>Now Playing Screen</h3>

@@ -77,5 +77,11 @@ export async function runMigrations(): Promise<void> {
     await d.execute("INSERT INTO users (name, role, pin) VALUES ('Music Director', 'md', '5678')");
     await d.execute("INSERT INTO users (name, role, pin) VALUES ('Jock', 'jock', NULL)");
   }
+  // Ensure timezone is set
+  const tzRow = await d.select("SELECT value FROM station_config_kv WHERE key='timezone'");
+  if (!(tzRow as any)[0]) {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    await d.execute("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('timezone', ?)", [tz]);
+  }
   console.log("DB ready");
 }

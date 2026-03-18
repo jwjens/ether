@@ -210,8 +210,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 cursor: "grab",
                 opacity: dragIdx === i ? 0.3 : 1,
                 borderTop: dragOverIdx === i ? "2px solid var(--accent-blue)" : "none",
-                background: i === 0 ? "var(--bg-tertiary)" : "transparent",
+                background: i === 0 ? "var(--bg-active)" : "transparent",
                 borderLeft: "3px solid " + color,
+                animation: i === 0 ? "upnext-pulse 2s ease-in-out infinite" : "none",
               }}>
               <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 18, flexShrink: 0, textAlign: "right" as any }}>{i + 1}</span>
               {catLabel && (
