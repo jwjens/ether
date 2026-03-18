@@ -19,6 +19,7 @@ fn main() {
     let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState {
         deck_a: audio::DeckMeta::new(),
         deck_b: audio::DeckMeta::new(),
+        deck_c: audio::DeckMeta::new(),
         sender,
         is_playing,
         levels: levels.clone(),
@@ -142,3 +143,5 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+

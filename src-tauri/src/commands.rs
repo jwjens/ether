@@ -4,7 +4,7 @@ use tauri::State;
 #[tauri::command]
 pub fn audio_load(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>, state: State<SharedAudioState>) -> Result<String, String> {
     let mut audio = state.inner().lock().map_err(|e| e.to_string())?;
-    let meta = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    let meta = if deck == "A" { &mut audio.deck_a } else if deck == "C" { &mut audio.deck_c } else { &mut audio.deck_b };
     meta.title = title.clone(); meta.artist = artist.clone();
     meta.file_path = file_path.clone(); meta.status = "idle".to_string();
     meta.gain_db = gain_db.unwrap_or(0.0) as f32;
@@ -54,7 +54,7 @@ pub fn audio_get_state(state: State<SharedAudioState>) -> Result<serde_json::Val
     Ok(serde_json::json!({
         "deckA": audio.deck_a.info("A"),
         "deckB": audio.deck_b.info("B"),
-        "deckC": { "id": "C", "status": "idle", "title": "", "artist": "", "file_path": "", "volume": 1.0, "is_finished": true },
+        "deckC": audio.deck_c.info("C"),
     }))
 }
 
@@ -261,3 +261,5 @@ pub fn get_levels(state: State<SharedAudioState>) -> Result<serde_json::Value, S
     } else { (0.0, 0.0) };
     Ok(serde_json::json!({ "a": la, "b": lb }))
 }
+
+

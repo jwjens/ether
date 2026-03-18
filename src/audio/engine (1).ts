@@ -1,35 +1,32 @@
+
 import { invoke } from "@tauri-apps/api/core";
 
 export type DeckId = "A" | "B" | "C";
 export type DeckStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
 
 export interface DeckState {
-  id: DeckId;
-  status: DeckStatus;
-  title: string;
-  artist: string;
-  filePath: string;
-  positionSec: number;
-  durationSec: number;
-  volume: number;
+  id: DeckId; status: DeckStatus; title: string; artist: string;
+  filePath: string; durationSec: number; positionSec: number;
+  volume: number; error: string | null;
   peaks: number[];
-  error?: string;
+  outroStartSec: number;
 }
 
-type Listener = (id: DeckId, state: DeckState) => void;
+type Listener = (deck: DeckId, state: DeckState) => void;
 
-function makeState(id: DeckId, s: any): DeckState {
+function makeState(id: DeckId, data: any): DeckState {
   return {
     id,
-    status: s.status || "idle",
-    title: s.title || "",
-    artist: s.artist || "",
-    filePath: s.file_path || "",
-    positionSec: s.position_sec || 0,
-    durationSec: s.duration_sec || 0,
-    volume: s.volume ?? 1,
-    peaks: s.peaks || [],
-    error: s.error,
+    status: data.status || "idle",
+    title: data.title || "",
+    artist: data.artist || "",
+    filePath: data.file_path || data.filePath || "",
+    durationSec: data.duration_sec || data.durationSec || 0,
+    positionSec: data.position_sec || data.positionSec || 0,
+    volume: data.volume ?? 1,
+    error: data.error || null,
+    peaks: [],
+    outroStartSec: 0,
   };
 }
 
@@ -41,14 +38,13 @@ export class AudioEngine {
   private stateC: DeckState = makeState("C", {});
   private pollTimer: any = null;
   private queue: { filePath: string; title: string; artist: string }[] = [];
-  private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   autoAdvance = false;
-  shuffle = false;
-  continuous = false;
   outroCrossfade = false;
   crossfadeDuration = 3;
+  continuous = false;
+  shuffle = false;
+  private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   private advancing = false;
-  private outputDeviceId = "";
 
   init() {
     if (this.pollTimer) return;
@@ -60,10 +56,9 @@ export class AudioEngine {
       const s = await invoke<any>("audio_get_state");
       const prevA = this.stateA.status;
       const prevB = this.stateB.status;
-      const prevC = this.stateC.status;
       this.stateA = makeState("A", s.deckA);
       this.stateB = makeState("B", s.deckB);
-      console.log("RAW deckC:", JSON.stringify(s.deckC)); if (s.deckC) this.stateC = makeState("C", s.deckC);
+      if (s.deckC) this.stateC = makeState("C", s.deckC);
 
       this.listeners.forEach(l => l("A", this.stateA));
       this.listeners.forEach(l => l("B", this.stateB));
@@ -79,36 +74,28 @@ export class AudioEngine {
         this.handleDeckEnd("B");
       }
     } catch (e) {
-      // ignore poll errors
+      // Rust not ready yet
     }
   }
 
-  private advancing_a = false;
   private async handleDeckEnd(deckId: DeckId) {
-    if (this.advancing_a) return;
-    this.advancing_a = true;
-    try {
-      if (this.queue.length === 0 && this.refillCallback) {
-        const items = await this.refillCallback();
-        this.queue.push(...items);
-      }
-      if (this.queue.length === 0) { this.advancing_a = false; return; }
-      let idx = this.shuffle ? Math.floor(Math.random() * this.queue.length) : 0;
-      const next = this.queue.splice(idx, 1)[0];
-      await this.loadToDeck(deckId, next.filePath, next.title, next.artist);
-      await invoke("audio_play", { deck: deckId });
-    } finally {
-      this.advancing_a = false;
+    if (this.advancing) return;
+    if (this.queue.length === 0 && this.continuous && this.refillCallback) {
+      const songs = await this.refillCallback();
+      this.queue.push(...songs);
     }
+    if (this.queue.length === 0) return;
+    this.advancing = true;
+    let idx = this.shuffle ? Math.floor(Math.random() * this.queue.length) : 0;
+    const next = this.queue.splice(idx, 1)[0];
+    await this.loadToDeck(deckId, next.filePath, next.title, next.artist);
+    await invoke("audio_play", { deck: deckId });
+    this.advancing = false;
   }
 
   on(fn: Listener): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   onPlayStart(fn: (deckId: DeckId, title: string, artist: string, filePath: string) => void): () => void {
     this.playStartCallbacks.add(fn); return () => this.playStartCallbacks.delete(fn);
-  }
-
-  setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) {
-    this.refillCallback = fn;
   }
 
   getDeck(id: DeckId) {
@@ -120,17 +107,29 @@ export class AudioEngine {
       resume: () => invoke("audio_play", { deck: id }),
       stop: () => invoke("audio_stop", { deck: id }),
       setVolume: (v: number) => invoke("audio_set_volume", { deck: id, volume: v }),
+      fadeTo: (vol: number, sec: number) => {
+        const steps = 20;
+        const current = state.volume;
+        const diff = vol - current;
+        let step = 0;
+        const interval = setInterval(() => {
+          step++;
+          const newVol = current + (diff * step / steps);
+          invoke("audio_set_volume", { deck: id, volume: newVol });
+          if (step >= steps) clearInterval(interval);
+        }, (sec * 1000) / steps);
+      },
     };
   }
 
   async loadToDeck(id: DeckId, filePath: string, title: string, artist: string) {
     this.init();
     await invoke("audio_load", { deck: id, filePath, title, artist });
-    // Store title/artist in local state immediately
+    // Update local state immediately so UI reflects the load
     if (id === "A") { this.stateA.title = title; this.stateA.artist = artist; this.stateA.filePath = filePath; }
     else if (id === "C") { this.stateC.title = title; this.stateC.artist = artist; this.stateC.filePath = filePath; }
     else { this.stateB.title = title; this.stateB.artist = artist; this.stateB.filePath = filePath; }
-    // Only fire playStart callbacks for deck A
+    // Only fire playStart for deck A (B and C are preloads)
     if (id === "A") {
       this.playStartCallbacks.forEach(fn => fn(id, title, artist, filePath));
     }
@@ -140,18 +139,23 @@ export class AudioEngine {
     this.playStartCallbacks.forEach(fn => fn(deckId, title, artist, filePath));
   }
 
-  getQueue() { return this.queue; }
-  addToQueue(items: { filePath: string; title: string; artist: string }[]) { this.queue.push(...items); }
+  addToQueue(songs: { filePath: string; title: string; artist: string }[]) { this.queue.push(...songs); }
   clearQueue() { this.queue = []; }
+  getQueue() { return [...this.queue]; }
+  setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
 
-  async crossfade(fromDeck: DeckId, toDeck: DeckId, durationMs: number) {
-    await invoke("audio_play", { deck: toDeck });
-  }
+  checkOutroCrossfade() {}
 
-  setOutputDevice(deviceId: string) {
-    this.outputDeviceId = deviceId;
+  async setOutputDevice(_deviceId: string) {}
+
+  crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {
+    const from = this.getDeck(fromId);
+    const to = this.getDeck(toId);
+    to.setVolume(1);
+    invoke("audio_play", { deck: toId });
+    from.fadeTo(0, ms / 1000);
+    setTimeout(() => invoke("audio_stop", { deck: fromId }), ms + 100);
   }
 }
 
 export const engine = new AudioEngine();
-

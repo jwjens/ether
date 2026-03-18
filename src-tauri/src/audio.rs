@@ -69,6 +69,7 @@ pub type SharedLevels = Arc<Mutex<AudioLevels>>;
 pub struct AudioState {
     pub deck_a: DeckMeta,
     pub deck_b: DeckMeta,
+    pub deck_c: DeckMeta,
     pub sender: std::sync::mpsc::Sender<AudioCmd>,
     pub is_playing: Arc<Mutex<bool>>,
     pub levels: SharedLevels,

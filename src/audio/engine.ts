@@ -35,6 +35,7 @@ export class AudioEngine {
   private playStartCallbacks = new Set<(deckId: DeckId, title: string, artist: string, filePath: string) => void>();
   private stateA: DeckState = makeState("A", {});
   private stateB: DeckState = makeState("B", {});
+  private stateC: DeckState = makeState("C", {});
   private pollTimer: any = null;
   private queue: { filePath: string; title: string; artist: string }[] = [];
   autoAdvance = false;
@@ -58,9 +59,11 @@ export class AudioEngine {
       const prevB = this.stateB.status;
       this.stateA = makeState("A", s.deckA);
       this.stateB = makeState("B", s.deckB);
+      if (s.deckC) this.stateC = makeState("C", s.deckC);
 
       this.listeners.forEach(l => l("A", this.stateA));
       this.listeners.forEach(l => l("B", this.stateB));
+      this.listeners.forEach(l => l("C", this.stateC));
 
       // Check if deck finished playing
       if (s.deckA.isFinished && prevA === "playing" && this.autoAdvance) {
@@ -97,7 +100,7 @@ export class AudioEngine {
   }
 
   getDeck(id: DeckId) {
-    const state = id === "A" ? this.stateA : this.stateB;
+    const state = id === "A" ? this.stateA : id === "C" ? this.stateC : this.stateB;
     return {
       getState: () => state,
       play: () => invoke("audio_play", { deck: id }),
@@ -155,3 +158,5 @@ export class AudioEngine {
 }
 
 export const engine = new AudioEngine();
+
+

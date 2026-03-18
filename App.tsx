@@ -81,21 +81,11 @@ export default function App() {
         );
       } catch (e) { console.error('Log write error:', e); }
       // Preload B=queue[0], C=queue[1] when A starts a new song
-      if (deckId === "A") { console.log("PLAYSTART A - queue:", engine.getQueue().slice(0,3).map(x=>x.title)); console.log("A title:", title);
+      if (deckId === "A") {
         setTimeout(async () => {
           const q = engine.getQueue();
-          console.log("Loading B with:", q[0]?.title, "C with:", q[1]?.title); if (q.length >= 1) {
-            try {
-              await engine.loadToDeck("B", q[0].filePath, q[0].title, q[0].artist);
-              console.log("B loaded ok:", q[0].title);
-            } catch(e) { console.error("B load failed:", e); }
-          }
-          if (q.length >= 2) {
-            try {
-              await engine.loadToDeck("C" as any, q[1].filePath, q[1].title, q[1].artist);
-              console.log("C loaded ok:", q[1].title);
-            } catch(e) { console.error("C load failed:", e); }
-          }
+          if (q.length >= 1) await engine.loadToDeck("B", q[0].filePath, q[0].title, q[0].artist);
+          if (q.length >= 2) await engine.loadToDeck("C" as any, q[1].filePath, q[1].title, q[1].artist);
         }, 800);
       }
     });
@@ -752,5 +742,3 @@ function ClockDisplay() {
   useEffect(() => { const id = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000); return () => clearInterval(id); }, []);
   return <span className="font-mono text-xs">{time}</span>;
 }
-
-
