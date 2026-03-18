@@ -70,5 +70,12 @@ export async function runMigrations(): Promise<void> {
   if ((crCount as any)[0].c === 0) {
     await d.execute("INSERT INTO crash_recovery (id, queue_json) VALUES (1, '[]')");
   }
+  await d.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'jock', pin TEXT, is_active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL DEFAULT (unixepoch()))");
+  const userCount = await d.select("SELECT COUNT(*) as c FROM users");
+  if ((userCount as any)[0].c === 0) {
+    await d.execute("INSERT INTO users (name, role, pin) VALUES ('Admin', 'admin', '1234')");
+    await d.execute("INSERT INTO users (name, role, pin) VALUES ('Music Director', 'md', '5678')");
+    await d.execute("INSERT INTO users (name, role, pin) VALUES ('Jock', 'jock', NULL)");
+  }
   console.log("DB ready");
 }

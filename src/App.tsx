@@ -1,3 +1,5 @@
+import UserLogin from "./components/UserLogin";
+import { UserContext, AppUser } from "./UserContext";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { useState, useEffect, useCallback } from "react";
@@ -48,6 +50,7 @@ function fmtTime(s: number) { if (!s || s < 0) return "0:00"; return Math.floor(
 function fmtTimeLong(s: number) { if (!s || s < 0) return "00:00.0"; const m = Math.floor(s/60); const sec = s % 60; return String(m).padStart(2,"0") + ":" + sec.toFixed(1).padStart(4,"0"); }
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [panel, setPanel] = useState<Panel>("live");
   const [onAir, setOnAir] = useState(false);
   const [deckA, setDeckA] = useState<DeckState | null>(null);
@@ -302,6 +305,11 @@ export default function App() {
     if (s.file_path) { engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "" }]); setQueueLen(engine.getQueue().length); }
   }, []);
 
+  // User login gate
+  if (!currentUser) {
+    return <UserLogin onLogin={setCurrentUser} />;
+  }
+
   return (
     <div className={"h-screen flex flex-col " + (darkMode ? "dark-theme bg-zinc-950 text-zinc-100" : "")} style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
       {/* Now Playing opens as separate window via openNowPlayingWindow() */}
@@ -311,6 +319,9 @@ export default function App() {
           <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 300, letterSpacing: "0.02em" }}>v1.5</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
+          <button onClick={() => setCurrentUser(null)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", marginRight: 4 }}>
+            {currentUser?.name} ↩
+          </button>
           <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: darkMode ? "var(--accent-purple)" : "var(--bg-tertiary)", color: darkMode ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>{darkMode ? "DARK" : "LIGHT"}</button>
           <button onClick={() => openNowPlayingWindow()} style={{ padding: "4px 12px", background: "var(--bg-tertiary)", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", letterSpacing: "0.05em" }}>NOW PLAYING</button>
           <ClockDisplay />
