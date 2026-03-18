@@ -135,10 +135,10 @@ export default function App() {
     engine.outroCrossfade = true;
     engine.crossfadeDuration = 3;
     return engine.on((id, st) => {
-      if (id === "A") setDeckA({...st});
+      if (id === "A") { setDeckA({...st}); setOnAir(st.status === "playing"); }
       else if (id === "B") setDeckB({...st});
       else if (id === "C") setDeckC({...st});
-      setQueueLen(engine.getQueue().length);
+      setQueueLen(engine.getQueue().length); 
 
     });
   }, []);
@@ -219,7 +219,7 @@ export default function App() {
         await fillQueueFromSchedule().then(async (count) => {
           if (count === 0) {
             // Random fallback
-            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 20");
+            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100");
             const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
             engine.addToQueue(items);
           }
@@ -260,7 +260,7 @@ export default function App() {
             const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500");
             return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
           });
-          const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 50");
+          const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100");
           const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
           engine.addToQueue(items);
         }
@@ -272,12 +272,20 @@ export default function App() {
         engine.addToQueue(q.slice(1));
         await engine.loadToDeck('A', first.filePath, first.title, first.artist);
         engine.getDeck('A')?.play();
+        // Preload B=queue[0], C=queue[1] - guard against double-fire
+        clearTimeout((globalThis as any).__preloadTimer);
+        (globalThis as any).__preloadTimer = setTimeout(async () => {
+          const q2 = engine.getQueue();
+          if (q2.length >= 1) await engine.loadToDeck("B", q2[0].filePath, q2[0].title, q2[0].artist);
+          if (q2.length >= 2) await engine.loadToDeck("C" as any, q2[1].filePath, q2[1].title, q2[1].artist);
+        }, 1500);
       }
     } else {
       engine.continuous = false;
       setContinuous(false);
     }
   };
+
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
   const toggleContinuous = async () => {
     const n = !continuous;
@@ -310,7 +318,7 @@ export default function App() {
   const loadA = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("A", s.file_path, s.title, s.artist_name || ""); }, []);
   const loadB = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("B", s.file_path, s.title, s.artist_name || ""); }, []);
   const addToQueue = useCallback((s: SongRow) => {
-    if (s.file_path) { engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "" }]); setQueueLen(engine.getQueue().length); }
+    if (s.file_path) { engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "" }]); setQueueLen(engine.getQueue().length);  }
   }, []);
 
   // User login gate
@@ -322,15 +330,15 @@ export default function App() {
     <div className={"h-screen flex flex-col " + (darkMode ? "dark-theme bg-zinc-950 text-zinc-100" : "")} style={{ background: "var(--bg-primary)", color: "var(--text-primary)" }}>
       <KeyboardHelp />
       {/* Now Playing opens as separate window via openNowPlayingWindow() */}
-      <header style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", flexShrink: 0 }}>
+      <header style={{ height: 56, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", boxShadow: "var(--shadow-sm)", flexShrink: 0 }}>
         <div className="flex items-center gap-0">
           <Nav active={panel} set={setPanel} />
-          <span className="ether-logo"><span className="eth">Eth</span><span className="er">er</span></span><span style={{ fontSize: 12, fontWeight: 300, color: "var(--text-tertiary)", marginLeft: 12 }}>{stationName}</span>
+          <span className="ether-logo" style={{ marginLeft: 24, fontSize: 24 }}><span className="eth">Eth</span><span className="er">er</span></span><span style={{ fontSize: 13, fontWeight: 400, color: "var(--text-tertiary)", marginLeft: 16 }}>{stationName}</span>
           <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 300, letterSpacing: "0.02em" }}>v1.5</span>
         </div>
         <div className="flex items-center gap-2 text-sm text-zinc-400">
           <button onClick={() => setCurrentUser(null)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", marginRight: 4 }}>
-            {currentUser?.name} <span style={{ fontSize: 9, opacity: 0.6, marginLeft: 2 }}>{currentUser?.role?.toUpperCase()}</span> ↩
+            {currentUser?.name} ↩
           </button>
           <button onClick={() => setDarkMode(!darkMode)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: darkMode ? "var(--accent-purple)" : "var(--bg-tertiary)", color: darkMode ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>{darkMode ? "DARK" : "LIGHT"}</button>
           <button onClick={() => openNowPlayingWindow()} style={{ padding: "4px 12px", background: "var(--bg-tertiary)", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer", letterSpacing: "0.05em" }}>NOW PLAYING</button>
@@ -394,7 +402,7 @@ function Nav({ active, set }: { active: Panel; set: (p: Panel) => void }) {
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
       <button onClick={() => setOpen(o => !o)} style={{
-        display: "flex", alignItems: "center", gap: 8, padding: "0 16px", height: 52,
+        display: "flex", alignItems: "center", gap: 8, padding: "0 20px", height: 56,
         background: open ? "var(--bg-tertiary)" : "transparent",
         border: "none", borderRight: "1px solid var(--border-primary)",
         color: "var(--text-primary)", cursor: "pointer", fontSize: 13, fontWeight: 500, minWidth: 160,
@@ -811,6 +819,16 @@ function ClockDisplay() {
   useEffect(() => { const id = setInterval(() => setTime(new Date().toLocaleTimeString()), 1000); return () => clearInterval(id); }, []);
   return <span className="font-mono text-xs">{time}</span>;
 }
+
+
+
+
+
+
+
+
+
+
 
 
 

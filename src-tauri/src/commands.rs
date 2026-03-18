@@ -54,6 +54,7 @@ pub fn audio_get_state(state: State<SharedAudioState>) -> Result<serde_json::Val
     Ok(serde_json::json!({
         "deckA": audio.deck_a.info("A"),
         "deckB": audio.deck_b.info("B"),
+        "deckC": { "id": "C", "status": "idle", "title": "", "artist": "", "file_path": "", "volume": 1.0, "is_finished": true },
     }))
 }
 
