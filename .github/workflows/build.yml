@@ -14,14 +14,16 @@ jobs:
         include:
           - platform: windows-latest
             args: ''
+            name: Windows
           - platform: macos-latest
             args: '--target aarch64-apple-darwin'
+            name: macOS Apple Silicon
           - platform: macos-latest
             args: '--target x86_64-apple-darwin'
-          - platform: ubuntu-22.04
-            args: ''
+            name: macOS Intel
 
     runs-on: ${{ matrix.platform }}
+    name: Build ${{ matrix.name }}
 
     steps:
       - name: Checkout repository
@@ -43,19 +45,6 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev
-
       - name: Install frontend dependencies
         run: npm install
 
@@ -63,13 +52,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Mac code signing — add these in GitHub repo Settings → Secrets
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Ether ${{ github.ref_name }}'
@@ -80,18 +62,17 @@ jobs:
 
             ### Downloads
             - **Windows:** Download the `.msi` file
-            - **Mac (Apple Silicon):** Download the `aarch64.dmg` file
+            - **Mac (Apple Silicon M1/M2/M3):** Download the `aarch64.dmg` file
             - **Mac (Intel):** Download the `x86_64.dmg` file
-            - **Linux:** Download the `.AppImage` or `.deb` file
 
             ### Windows Installation Note
             Windows may show a security warning. Click **"More info"** → **"Run anyway"** to install.
 
             ### Mac Installation Note
-            Mac may show a security warning. Go to **System Settings → Privacy & Security** and click **"Open Anyway"**.
+            Mac may show a Gatekeeper warning. Right-click the app → **Open** → **Open** to install.
 
             ### What's New
-            See CHANGELOG for details.
+            See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
