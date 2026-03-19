@@ -31,8 +31,9 @@ import StreamManager from "./components/StreamManager";
 import AudioDevices from "./components/AudioDevices";
 import VoiceTracker from "./components/VoiceTracker";
 import ShowPrep from "./components/ShowPrep";
-import Announcements, { startAnnouncementEngine } from "./components/Announcements";
+import SplashScreen from "./components/SplashScreen";
 import FirstRunWizard from "./components/FirstRunWizard";
+import Announcements, { startAnnouncementEngine } from "./components/Announcements";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep";
 
@@ -339,7 +340,7 @@ export default function App() {
               {panel === "streaming" && <StreamManager />}
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
-              {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
+              {panel === "showprep" && <ShowPrep />}
               {panel === "settings" && <SettingsPanel />}
             </div>
           )}
