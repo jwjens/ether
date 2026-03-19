@@ -268,3 +268,12 @@ button, a { transition: all 0.15s ease !important; }
   0%, 100% { background: var(--bg-active); }
   50% { background: var(--bg-hover); }
 }
+
+@keyframes overlay-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.92; }
+}
+@keyframes countdown-blink {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.97); }
+}

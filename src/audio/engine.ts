@@ -66,11 +66,11 @@ export class AudioEngine {
       this.listeners.forEach(l => l("C", this.stateC));
 
       // Check if deck finished playing
-      if (s.deckA.isFinished && prevA === "playing" && this.autoAdvance) {
+      console.log("POLL A:", s.deckA.status, "isFinished:", s.deckA.is_finished, "prev:", prevA); if (s.deckA.is_finished && prevA === "playing" && this.autoAdvance) {
         this.stateA.status = "ended";
         this.handleDeckEnd("A");
       }
-      if (s.deckB.isFinished && prevB === "playing" && this.autoAdvance) {
+      if (s.deckB.is_finished && prevB === "playing" && this.autoAdvance) {
         this.stateB.status = "ended";
         this.handleDeckEnd("B");
       }
@@ -81,7 +81,7 @@ export class AudioEngine {
 
   private async handleDeckEnd(deckId: DeckId) {
     if (this.advancing) return;
-    if (this.queue.length === 0 && this.continuous && this.refillCallback) {
+    if (this.queue.length < 5 && this.refillCallback) {
       const songs = await this.refillCallback();
       this.queue.push(...songs);
     }
@@ -158,5 +158,10 @@ export class AudioEngine {
 }
 
 export const engine = new AudioEngine();
+
+
+
+
+
 
 

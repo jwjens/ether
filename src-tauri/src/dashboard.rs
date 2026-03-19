@@ -136,19 +136,7 @@ pub fn start_dashboard_server(state: SharedAudioState, now_playing: SharedNowPla
                         .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
                         .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
                 }
-                ("GET", "/api/status") => {
-                    let json = if let Ok(audio) = state.lock() {
-                        serde_json::json!({
-                            "deckA": audio.deck_a.info("A"),
-                            "deckB": audio.deck_b.info("B"),
-                        }).to_string()
-                    } else {
-                        "{}".to_string()
-                    };
-                    Response::from_string(json)
-                        .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
-                        .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
-                }
+// status handled below
                 ("POST", "/api/skip") => {
                     if let Ok(mut audio) = state.lock() {
                         let _ = audio.sender.send(crate::audio::AudioCmd::Stop("A".to_string()));
@@ -172,12 +160,60 @@ pub fn start_dashboard_server(state: SharedAudioState, now_playing: SharedNowPla
                     }
                     Response::from_string("ok")
                 }
-                ("POST", "/api/pause") => {
+                ("POST", "/api/pause") | ("POST", "/api/pause-a") => {
                     if let Ok(mut audio) = state.lock() {
                         let _ = audio.sender.send(crate::audio::AudioCmd::Pause("A".to_string()));
                         audio.deck_a.status = "paused".to_string();
                     }
                     Response::from_string("ok")
+                }
+                ("POST", "/api/play-b") => {
+                    if let Ok(audio) = state.lock() {
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Play("B".to_string()));
+                    }
+                    Response::from_string("ok")
+                }
+                ("POST", "/api/pause-b") => {
+                    if let Ok(audio) = state.lock() {
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Pause("B".to_string()));
+                    }
+                    Response::from_string("ok")
+                }
+                ("POST", "/api/play-c") => {
+                    if let Ok(audio) = state.lock() {
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Play("C".to_string()));
+                    }
+                    Response::from_string("ok")
+                }
+                ("POST", "/api/pause-c") => {
+                    if let Ok(audio) = state.lock() {
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Pause("C".to_string()));
+                    }
+                    Response::from_string("ok")
+                }
+                ("POST", "/api/play-a") => {
+                    if let Ok(audio) = state.lock() {
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Play("A".to_string()));
+                    }
+                    Response::from_string("ok")
+                }
+                ("POST", "/api/crossfade") => {
+                    if let Ok(audio) = state.lock() {
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Play("B".to_string()));
+                        let _ = audio.sender.send(crate::audio::AudioCmd::Stop("A".to_string()));
+                    }
+                    Response::from_string("ok")
+                }
+                ("GET", "/api/status") | ("GET", "/api/full-status") => {
+                    let json = if let Ok(audio) = state.lock() {
+                        serde_json::json!({
+                            "deckA": audio.deck_a.info("A"),
+                            "deckB": audio.deck_b.info("B"),
+                                                    }).to_string()
+                    } else { "{}".to_string() };
+                    Response::from_string(json)
+                        .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
+                        .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
                 }
                 _ => Response::from_string("Not found").with_status_code(404)
             };

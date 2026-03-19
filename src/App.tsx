@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne } from "./db/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readDir } from "@tauri-apps/plugin-fs";
-import { engine, DeckState } from "./audio/engine";
+import { engine, DeckState } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
@@ -80,21 +80,29 @@ export default function App() {
           [title, artist, deckId]
         );
       } catch (e) { console.error('Log write error:', e); }
-      // Preload B=queue[0], C=queue[1] when A starts a new song
-      if (deckId === "A") { console.log("PLAYSTART A - queue:", engine.getQueue().slice(0,3).map(x=>x.title)); console.log("A title:", title);
+      // Preload B and C from queue when A starts
+      if (deckId === "A") {
         setTimeout(async () => {
+          // Refill queue to 10 if low
           const q = engine.getQueue();
-          console.log("Loading B with:", q[0]?.title, "C with:", q[1]?.title); if (q.length >= 1) {
+          if (q.length < 8) {
             try {
-              await engine.loadToDeck("B", q[0].filePath, q[0].title, q[0].artist);
-              console.log("B loaded ok:", q[0].title);
-            } catch(e) { console.error("B load failed:", e); }
+              const needed = 10 - q.length;
+              const refill = await query<SongRow>(
+                "SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+                [needed]
+              );
+              const items = refill.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
+              if (items.length > 0) engine.addToQueue(items);
+            } catch {}
           }
-          if (q.length >= 2) {
-            try {
-              await engine.loadToDeck("C" as any, q[1].filePath, q[1].title, q[1].artist);
-              console.log("C loaded ok:", q[1].title);
-            } catch(e) { console.error("C load failed:", e); }
+          const q2 = engine.getQueue();
+          setQueueLen(q2.length);
+          if (q2.length >= 1) {
+            try { await engine.loadToDeck("B", q2[0].filePath, q2[0].title, q2[0].artist); } catch(e) { console.error("B load failed:", e); }
+          }
+          if (q2.length >= 2) {
+            try { await engine.loadToDeck("C" as any, q2[1].filePath, q2[1].title, q2[1].artist); } catch(e) { console.error("C load failed:", e); }
           }
         }, 800);
       }
@@ -273,6 +281,7 @@ export default function App() {
           const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100");
           const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
           engine.addToQueue(items);
+          setQueueLen(items.length);
         }
       }
       const q = engine.getQueue();
@@ -282,7 +291,17 @@ export default function App() {
         engine.addToQueue(q.slice(1));
         await engine.loadToDeck('A', first.filePath, first.title, first.artist);
         engine.getDeck('A')?.play();
-        // B and C will be preloaded via onPlayStart callback above
+        // Immediately preload B and C from queue
+        setTimeout(async () => {
+          const qq = engine.getQueue();
+          if (qq.length >= 1) {
+            try { await engine.loadToDeck('B', qq[0].filePath, qq[0].title, qq[0].artist); } catch {}
+          }
+          if (qq.length >= 2) {
+            try { await engine.loadToDeck('C' as any, qq[1].filePath, qq[1].title, qq[1].artist); } catch {}
+          }
+          setQueueLen(engine.getQueue().length);
+        }, 500);
       }
     } else {
       engine.continuous = false;
@@ -359,17 +378,26 @@ export default function App() {
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
-        <main style={{ flex: 1, overflow: "auto", padding: 20, background: "var(--bg-primary)" }}>
-          {panel === "live" && <LivePanel deckA={deckA} deckB={deckB} deckC={deckC} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} showCarts={showCarts} toggleCarts={() => setShowCarts(!showCarts)} />}
-          {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
+        <main style={{ flex: 1, overflow: "hidden", padding: 20, background: "var(--bg-primary)", display: "flex", flexDirection: "column" }}>
+          {panel === "live" && <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}><LivePanel deckA={deckA} deckB={deckB} deckC={deckC} autoAdv={autoAdv} shuffle={shuffle} continuous={continuous} toggleAuto={toggleAuto} toggleShuffle={toggleShuffle} toggleContinuous={toggleContinuous} queueLen={queueLen} showCarts={showCarts} toggleCarts={() => setShowCarts(!showCarts)} /></div>}
+          {panel !== "live" && <div style={{ flex: 1, overflowY: "auto" }}>{panel !== "live" && <div style={{ flex: 1, overflowY: "auto" }}>{panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} />}
           {panel === "clocks" && <Scheduler />}
           {panel === "logs" && <Logs />}
           {panel === "spots" && <Spots />}
           {panel === "streaming" && <StreamManager />}
           {panel === "announce" && <Announcements />}
           {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
-          <DMCANotice />
           {panel === "settings" && <div className="space-y-6"><ProcessingPanel /><BackupRestore /><NowPlayingSettings /><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
+          </div>}
+          {panel === "clocks" && <Scheduler />}
+          {panel === "logs" && <Logs />}
+          {panel === "spots" && <Spots />}
+          {panel === "streaming" && <StreamManager />}
+          {panel === "announce" && <Announcements />}
+          {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
+          {panel === "settings" && <div className="space-y-6"><ProcessingPanel /><BackupRestore /><NowPlayingSettings /><AudioDevices onOutputChange={handleOutputChange} onInputChange={handleInputChange} currentOutput={outputDevice} currentInput={inputDevice} /><RulesEditor /></div>}
+          </div>}
+          <DMCANotice />
         </main>
       </div>
       <footer style={{ height: 28, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0 }}>
@@ -469,42 +497,28 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, continuous, toggleAu
 
       <div style={{ display: "flex", gap: 12, flex: 1, minHeight: 0, overflow: "hidden" }}>
         {/* LEFT: Queue */}
-        <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ width: 380, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <UpNext queueLen={queueLen} onQueueChange={() => {}} />
         </div>
 
         {/* RIGHT: 3 Decks + search */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
-          <div style={{ display: "flex", gap: 10, flex: "0 0 auto" }}>
-            <div style={{ flex: 1 }}>
-              <OnAirDeck deck={deckA} label="Deck A" deckId="A"
-                onPlay={() => engine.getDeck("A")?.play()}
-                onPause={() => engine.getDeck("A")?.pause()}
-                onResume={() => engine.getDeck("A")?.resume()}
-                onStop={() => engine.getDeck("A")?.stop()}
-                onVolume={v => engine.getDeck("A")?.setVolume(v)}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <OnAirDeck deck={deckB} label="Deck B" deckId="B"
-                onPlay={() => engine.getDeck("B")?.play()}
-                onPause={() => engine.getDeck("B")?.pause()}
-                onResume={() => engine.getDeck("B")?.resume()}
-                onStop={() => engine.getDeck("B")?.stop()}
-                onVolume={v => engine.getDeck("B")?.setVolume(v)}
-              />
-            </div>
-            <div style={{ flex: 1 }}>
-              <OnAirDeck deck={deckC} label="Deck C" deckId="C"
-                onPlay={() => (engine.getDeck as any)("C")?.play()}
-                onPause={() => (engine.getDeck as any)("C")?.pause()}
-                onResume={() => (engine.getDeck as any)("C")?.resume()}
-                onStop={() => (engine.getDeck as any)("C")?.stop()}
-                onVolume={v => (engine.getDeck as any)("C")?.setVolume(v)}
-              />
-            </div>
+          <div style={{ display: "flex", gap: 10, flex: 1, minHeight: 0 }}>
+            {[
+              { deck: deckA, id: "A" as const, play: () => engine.getDeck("A")?.play(), pause: () => engine.getDeck("A")?.pause(), resume: () => engine.getDeck("A")?.resume(), stop: () => engine.getDeck("A")?.stop(), vol: (v: number) => engine.getDeck("A")?.setVolume(v) },
+              { deck: deckB, id: "B" as const, play: () => engine.getDeck("B")?.play(), pause: () => engine.getDeck("B")?.pause(), resume: () => engine.getDeck("B")?.resume(), stop: () => engine.getDeck("B")?.stop(), vol: (v: number) => engine.getDeck("B")?.setVolume(v) },
+              { deck: deckC, id: "C" as const, play: () => (engine.getDeck as any)("C")?.play(), pause: () => (engine.getDeck as any)("C")?.pause(), resume: () => (engine.getDeck as any)("C")?.resume(), stop: () => (engine.getDeck as any)("C")?.stop(), vol: (v: number) => (engine.getDeck as any)("C")?.setVolume(v) },
+            ].map(({ deck, id, play, pause, resume, stop, vol }) => {
+              const isActive = deck?.status === "playing" || deck?.status === "paused";
+              return (
+                <div key={id} style={{ flex: isActive ? 2 : 1, display: "flex", flexDirection: "column", transition: "flex 0.4s ease", minWidth: 0 }}>
+                  <OnAirDeck deck={deck} label={"Deck " + id} deckId={id}
+                    onPlay={play} onPause={pause} onResume={resume} onStop={stop} onVolume={vol} />
+                </div>
+              );
+            })}
           </div>
-          <div style={{ marginTop: 10, flex: 1, minHeight: 0 }}>
+          <div style={{ marginTop: 10, flexShrink: 0 }}>
             {showCarts ? <CartWall /> : <JockStrip deckA={deckA} deckB={deckB} />}
           </div>
         </div>

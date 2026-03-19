@@ -19,7 +19,6 @@ fn main() {
     let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState {
         deck_a: audio::DeckMeta::new(),
         deck_b: audio::DeckMeta::new(),
-        deck_c: audio::DeckMeta::new(),
         sender,
         is_playing,
         levels: levels.clone(),
@@ -61,6 +60,7 @@ fn main() {
             commands::update_now_playing,
             commands::open_sound_settings,
             commands::get_levels,
+            commands::get_file_duration,
             commands::analyze_lufs,
         ])
         .setup(move |app| {

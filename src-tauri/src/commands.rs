@@ -4,7 +4,7 @@ use tauri::State;
 #[tauri::command]
 pub fn audio_load(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>, state: State<SharedAudioState>) -> Result<String, String> {
     let mut audio = state.inner().lock().map_err(|e| e.to_string())?;
-    let meta = if deck == "A" { &mut audio.deck_a } else if deck == "C" { &mut audio.deck_c } else { &mut audio.deck_b };
+    let meta = if deck == "A" { &mut audio.deck_a }  else { &mut audio.deck_b };
     meta.title = title.clone(); meta.artist = artist.clone();
     meta.file_path = file_path.clone(); meta.status = "idle".to_string();
     meta.gain_db = gain_db.unwrap_or(0.0) as f32;
@@ -15,7 +15,7 @@ pub fn audio_load(deck: String, file_path: String, title: String, artist: String
 #[tauri::command]
 pub fn audio_play(deck: String, state: State<SharedAudioState>) -> Result<String, String> {
     let mut audio = state.inner().lock().map_err(|e| e.to_string())?;
-    let meta = if deck == "A" { &mut audio.deck_a } else { &mut audio.deck_b };
+    let meta = if deck == "A" { &mut audio.deck_a } else if deck == "C" { &mut audio.deck_b } else { &mut audio.deck_b };
     meta.status = "playing".to_string();
     audio.sender.send(AudioCmd::Play(deck)).map_err(|e| e.to_string())?;
     Ok("ok".to_string())
@@ -54,8 +54,7 @@ pub fn audio_get_state(state: State<SharedAudioState>) -> Result<serde_json::Val
     Ok(serde_json::json!({
         "deckA": audio.deck_a.info("A"),
         "deckB": audio.deck_b.info("B"),
-        "deckC": audio.deck_c.info("C"),
-    }))
+            }))
 }
 
 #[tauri::command]
@@ -263,3 +262,35 @@ pub fn get_levels(state: State<SharedAudioState>) -> Result<serde_json::Value, S
 }
 
 
+
+#[tauri::command]
+pub fn get_file_duration(file_path: String) -> Result<f64, String> {
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+    use std::fs::File;
+
+    let file = File::open(&file_path).map_err(|e| e.to_string())?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = std::path::Path::new(&file_path).extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .map_err(|e| e.to_string())?;
+    let format = probed.format;
+    if let Some(track) = format.default_track() {
+        let params = &track.codec_params;
+        if let (Some(n_frames), Some(sample_rate)) = (params.n_frames, params.sample_rate) {
+            return Ok(n_frames as f64 / sample_rate as f64);
+        }
+        if let Some(dur) = params.time_base.and_then(|tb| {
+            params.n_frames.map(|n| (n as f64) * tb.numer as f64 / tb.denom as f64)
+        }) {
+            return Ok(dur);
+        }
+    }
+    Ok(0.0)
+}

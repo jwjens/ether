@@ -168,7 +168,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       {/* Header with active daypart */}
       <div style={{ borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px" }}>
-          <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>Up Next ({queueLen})</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>Up Next ({queueLen})</span>
           {queue.length > 0 && <button onClick={() => { engine.clearQueue(); onQueueChange(); }} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>Clear All</button>}
         </div>
         {activeShow && (
@@ -205,7 +205,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 display: "flex",
                 alignItems: "center",
                 gap: 6,
-                padding: "7px 10px",
+                padding: "10px 12px",
                 borderBottom: "1px solid var(--border-primary)",
                 cursor: "grab",
                 opacity: dragIdx === i ? 0.3 : 1,
@@ -228,8 +228,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 }}>{catLabel}</span>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.title}</div>
-                <div style={{ fontSize: 10, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
+                <div style={{ fontSize: 14, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontWeight: 500 }}>{item.title}</div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
               </div>
               <button onClick={(e) => { e.stopPropagation(); removeItem(i); }} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "0 4px" }}>x</button>
             </div>

@@ -1,54 +1,101 @@
-import { useEffect, useRef, memo } from "react";
+import { useEffect, useRef } from "react";
+import { invoke } from "@tauri-apps/api/core";
 
 interface Props {
-  deckId: "A" | "B";
+  deckId: "A" | "B" | "C" | string;
   isPlaying: boolean;
+  remaining?: number;
+  duration?: number;
+  pos?: number;
+  isInIntro?: boolean;
+  isEnding?: boolean;
+  isCritical?: boolean;
+  introEnd?: number;
 }
 
-const VUMeter = memo(function VUMeter({ isPlaying }: Props) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const frameRef = useRef<any>(null);
-  const tRef = useRef(0);
-  const NUM = 20;
+export default function VUMeter({ deckId, isPlaying, remaining = 0, duration = 0, pos = 0, isInIntro, isEnding, isCritical, introEnd = 0 }: Props) {
+  const fillRef = useRef<HTMLDivElement>(null);
+  const levelRef = useRef(0);
+  const targetRef = useRef(0);
 
   useEffect(() => {
-    const bars = containerRef.current?.querySelectorAll<HTMLDivElement>('.vu-bar');
-    if (!bars) return;
-
-    const animate = () => {
-      tRef.current += 0.06;
-      const t = tRef.current;
-      const base = isPlaying ? 0.6 : 0;
-      const v = isPlaying ? Math.sin(t*2.1)*0.12 + Math.sin(t*4.7)*0.07 + Math.sin(t*9.3)*0.03 : 0;
-      const beat = isPlaying && Math.abs(Math.sin(t*1.1)) > 0.93 ? 0.18 : 0;
-      const level = Math.max(0, Math.min(1, base + v + beat));
-      const activeBars = Math.round(level * NUM);
-
-      bars.forEach((bar, i) => {
-        const active = i < activeBars;
-        const color = i < 12 ? "#22c55e" : i < 17 ? "#f59e0b" : "#ef4444";
-        bar.style.background = active ? color : "rgba(255,255,255,0.07)";
-      });
-
-      frameRef.current = requestAnimationFrame(animate);
+    const tick = () => {
+      const diff = targetRef.current - levelRef.current;
+      levelRef.current += diff * (diff > 0 ? 0.25 : 0.08);
+      if (fillRef.current) {
+        fillRef.current.style.height = Math.round(levelRef.current * 100) + "%";
+      }
+      requestAnimationFrame(tick);
     };
+    const id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, []);
 
-    frameRef.current = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frameRef.current);
-  }, [isPlaying]);
+  useEffect(() => {
+    if (!isPlaying) { targetRef.current = 0; return; }
+    const poll = async () => {
+      try {
+        const lvl = await invoke<{a: number, b: number}>("get_levels");
+        const raw = deckId === "A" ? lvl.a : lvl.b;
+        targetRef.current = raw > 0 ? 0.25 + Math.random() * 0.65 : 0;
+      } catch {
+        targetRef.current = isPlaying ? 0.3 + Math.random() * 0.6 : 0;
+      }
+    };
+    const id = setInterval(poll, 80);
+    return () => { clearInterval(id); targetRef.current = 0; };
+  }, [isPlaying, deckId]);
+
+  const showCountdown = isPlaying && (isInIntro || isEnding);
+  const countdownNum = isInIntro ? Math.ceil(Math.max(0, introEnd - pos)) : Math.ceil(Math.max(0, remaining));
+  const countdownColor = isInIntro ? "#38bdf8" : isCritical ? "#f87171" : "#fb923c";
+  const countdownLabel = isInIntro ? "🎙 INTRO" : "⚠ OUTRO";
 
   return (
-    <div ref={containerRef} style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 28, padding: "4px 0 0" }}>
-      {Array.from({ length: NUM }, (_, i) => (
-        <div key={i} className="vu-bar" style={{
-          flex: 1,
-          height: Math.round(4 + (i / NUM) * 24) + "px",
-          background: "rgba(255,255,255,0.07)",
-          borderRadius: 2,
-        }} />
-      ))}
+    <div style={{ width: "100%", height: "100%", flex: 1, position: "relative", overflow: "hidden", borderRadius: 8 }}>
+      {/* Green fill from bottom */}
+      <div ref={fillRef} style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        height: "0%",
+        background: "linear-gradient(to top, #22c55e 0%, #4ade80 50%, #86efac 100%)",
+        borderRadius: 8,
+      }} />
+      {/* Gradient overlay at top for readability */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: "linear-gradient(to bottom, rgba(248,250,252,0.85) 0%, rgba(248,250,252,0.4) 40%, transparent 70%)",
+        borderRadius: 8,
+      }} />
+      {/* Countdown overlay */}
+      {showCountdown && (
+        <div style={{
+          position: "absolute", inset: 0,
+          background: isInIntro
+            ? "linear-gradient(135deg, rgba(14,28,54,0.88) 0%, rgba(7,15,35,0.82) 100%)"
+            : "linear-gradient(135deg, rgba(54,14,14,0.88) 0%, rgba(35,7,7,0.82) 100%)",
+          display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center",
+          borderRadius: 8,
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.2em", color: countdownColor, marginBottom: 6, opacity: 0.9 }}>
+            {countdownLabel}
+          </div>
+          <div style={{
+            fontFamily: "'Courier New', monospace",
+            fontSize: 80, fontWeight: 900,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1, color: countdownColor,
+            textShadow: `0 0 40px ${countdownColor}99, 0 0 80px ${countdownColor}44`,
+            animation: isCritical ? "none" : "none",
+            opacity: isCritical ? (Math.floor(Date.now() / 250) % 2 === 0 ? 1 : 0.4) : 1,
+          }}>
+            {countdownNum}
+          </div>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 6 }}>
+            {isInIntro ? "seconds of intro" : "seconds remaining"}
+          </div>
+        </div>
+      )}
     </div>
   );
-});
-
-export default VUMeter;
+}
