@@ -1,20 +1,28 @@
 # Ether — Free Broadcast Automation
 
-![Ether](https://img.shields.io/badge/version-1.5-blue) ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey) ![License](https://img.shields.io/badge/license-MIT-green)
+![Ether](https://img.shields.io/badge/version-1.5-blue) 
+![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Mac-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 **Ether is a free, open-source broadcast automation platform for radio stations, theme parks, venues, and anyone who needs professional-grade audio scheduling without the $10,000/year price tag.**
 
-Built as a modern replacement for RCS Zetta, GSelector, and similar systems — Ether runs on any Windows PC and handles everything from live assist to 24/7 automation.
+Built as a modern replacement for RCS Zetta, GSelector, and similar systems — Ether runs on Windows and Mac and handles everything from live assist to 24/7 automation.
 
 ---
 
 ## ⬇️ Download
 
-**[Download Ether v1.5 for Windows →](https://github.com/yourusername/ether/releases/latest)**
+**[Download Ether v1.5 →](https://github.com/yourusername/ether/releases/latest)**
 
-> **Note for Windows users:** Windows may show a security warning when installing because Ether is new software without a paid Microsoft certificate. This is normal for independent apps.
+| Platform | File |
+|----------|------|
+| Windows 10/11 | `.msi` installer |
+| Mac (Apple Silicon M1/M2/M3) | `aarch64.dmg` |
+| Mac (Intel) | `x86_64.dmg` |
+
+> **Windows:** If you see "Windows protected your PC" — click **More info** → **Run anyway**
 >
-> To install: click **"More info"** → then **"Run anyway"**
+> **Mac:** If you see a Gatekeeper warning — right-click the app → **Open** → **Open**
 >
 > Ether is fully open source — you can review every line of code in this repository.
 
@@ -25,7 +33,7 @@ Built as a modern replacement for RCS Zetta, GSelector, and similar systems — 
 - **Live Assist** — Three-deck player with waveform display, VU meters, crossfade, and intro/outro detection
 - **24/7 Automation** — Schedule-based log generation with artist and song separation rules
 - **Song Library** — Import and manage your entire music catalog, with loudness normalization
-- **Voice Tracking** — DAW-style recording studio with live waveform, hour programming clock
+- **Voice Tracking** — DAW-style recording studio with live waveform and hour programming clock
 - **Show Prep** — Write scripts, manage liner cards, monitor the board — all in one screen
 - **Spots & Promos** — Manage jingles, PSAs, commercials, and liners
 - **Scheduled Announcements** — Auto-play audio at specific times with music ducking
@@ -37,8 +45,15 @@ Built as a modern replacement for RCS Zetta, GSelector, and similar systems — 
 
 ## System Requirements
 
+**Windows**
 - Windows 10 or 11 (64-bit)
 - 4GB RAM minimum, 8GB recommended
+
+**Mac**
+- macOS 10.15 Catalina or later
+- Apple Silicon (M1/M2/M3) or Intel
+
+**All platforms**
 - Any audio interface or built-in sound card
 - 500MB disk space (plus your music library)
 
@@ -46,17 +61,15 @@ Built as a modern replacement for RCS Zetta, GSelector, and similar systems — 
 
 ## Installation
 
-1. Download the `.msi` installer from the [Releases page](https://github.com/yourusername/ether/releases/latest)
-2. Double-click the installer
-3. If Windows shows **"Windows protected your PC"**:
-   - Click **"More info"**
-   - Click **"Run anyway"**
-4. Follow the installer prompts
-5. Launch Ether from the Start menu or desktop shortcut
+### Windows
+1. Download the `.msi` file from the [Releases page](https://github.com/yourusername/ether/releases/latest)
+2. Double-click to install
+3. If Windows shows a SmartScreen warning — click **More info** → **Run anyway**
 
-### Why does Windows show a warning?
-
-Windows SmartScreen flags software that doesn't have a paid code-signing certificate from Microsoft. These certificates cost $200–400/year and are typically only purchased by large companies. Ether is free and open source — every line of code is visible in this repository. The warning does not mean the software is harmful.
+### Mac
+1. Download the `.dmg` file for your chip (Apple Silicon = aarch64, Intel = x86_64)
+2. Open the `.dmg` and drag Ether to your Applications folder
+3. If Mac shows a Gatekeeper warning — right-click Ether → **Open** → **Open**
 
 ---
 
@@ -77,8 +90,6 @@ Hit **Auto ON** on the main screen and Ether will start playing automatically ba
 ---
 
 ## Running from Source
-
-If you want to build Ether yourself:
 
 ### Prerequisites
 - [Node.js 18+](https://nodejs.org)
@@ -101,7 +112,6 @@ npm run tauri dev
 ```bash
 npm run tauri build
 ```
-The `.msi` installer will be output to `src-tauri/target/release/bundle/msi/`
 
 ---
 
@@ -117,12 +127,11 @@ The `.msi` installer will be output to `src-tauri/target/release/bundle/msi/`
 
 ## Contributing
 
-Pull requests are welcome. For major changes please open an issue first to discuss what you'd like to change.
+Pull requests are welcome. For major changes please open an issue first.
 
 Areas where help is especially welcome:
-- macOS and Linux support
 - Additional audio formats
-- Streaming output (Icecast/SHOUTcast integration improvements)
+- Streaming output improvements
 - Translation/localization
 
 ---
