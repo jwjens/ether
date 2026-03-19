@@ -1,16 +1,18 @@
-/* Fonts loaded via Tauri asset protocol */
+/* ── Fonts ─────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ── Light theme ─────────────────────────────────────────────── */
 :root {
-  /* Light theme */
-  --bg-primary: #f8f7f5;
+  --bg-primary: #f5f4f2;
   --bg-secondary: #ffffff;
-  --bg-tertiary: #f0eeeb;
+  --bg-tertiary: #efeeed;
   --bg-elevated: #ffffff;
-  --bg-hover: #ebe9e6;
-  --bg-active: #e2dfdb;
+  --bg-hover: #e8e6e3;
+  --bg-active: #e0ddd9;
   --text-primary: #141210;
   --text-secondary: #4a4540;
   --text-tertiary: #9a9590;
@@ -26,38 +28,42 @@
   --accent-orange: #f97316;
   --accent-teal: #14b8a6;
   --on-air-glow: 0 0 20px rgba(239,68,68,0.4), 0 0 40px rgba(239,68,68,0.2);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
-  --shadow-lg: 0 12px 32px rgba(0,0,0,0.10);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05), 0 1px 4px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.06);
   --radius: 14px;
   --radius-sm: 10px;
   --radius-xs: 7px;
 }
 
+/* ── Dark theme ──────────────────────────────────────────────── */
 .dark-theme {
-  --bg-primary: #0a0a0c;
-  --bg-secondary: #111116;
-  --bg-tertiary: #18181f;
-  --bg-elevated: #141419;
-  --bg-hover: #1c1c24;
-  --bg-active: #22222c;
-  --text-primary: #eeedf8;
-  --text-secondary: #8886a0;
-  --text-tertiary: #404055;
-  --text-inverse: #0a0a0c;
-  --border-primary: #1a1a24;
-  --border-secondary: #242432;
+  --bg-primary: #0c0c10;
+  --bg-secondary: #13131a;
+  --bg-tertiary: #1a1a24;
+  --bg-elevated: #16161e;
+  --bg-hover: #1e1e2a;
+  --bg-active: #24242f;
+  --text-primary: #f0effe;
+  --text-secondary: #9896b8;
+  --text-tertiary: #4a4860;
+  --text-inverse: #0c0c10;
+  --border-primary: #1e1e2c;
+  --border-secondary: #28283a;
   --accent-blue: #38bdf8;
   --accent-cyan: #22d3ee;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
+  --accent-purple: #a78bfa;
+  --accent-orange: #fb923c;
   --on-air-glow: 0 0 20px rgba(248,113,113,0.5), 0 0 60px rgba(248,113,113,0.2);
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
-  --shadow-lg: 0 12px 32px rgba(0,0,0,0.6);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.6);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.7);
 }
 
+/* ── Base ────────────────────────────────────────────────────── */
 * { box-sizing: border-box; }
 
 body {
@@ -67,36 +73,50 @@ body {
   font-weight: 400;
   letter-spacing: -0.01em;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
 
-/* Typography */
+/* ── Typography ──────────────────────────────────────────────── */
 .font-display { font-family: 'Syne', sans-serif; }
-.font-mono { font-family: 'DM Mono', 'SF Mono', monospace; }
+.font-mono    { font-family: 'DM Mono', 'SF Mono', monospace; }
 
-/* Smooth theme transitions */
-*, *::before, *::after {
-  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+.timer-display {
+  font-family: 'DM Mono', 'SF Mono', monospace;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
 }
-button, a { transition: all 0.15s ease !important; }
 
-/* Scrollbar */
-::-webkit-scrollbar { width: 5px; }
+/* ── Transitions ─────────────────────────────────────────────── */
+*, *::before, *::after {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+button, a { transition: all 0.12s ease !important; }
+
+/* ── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
-/* ON AIR glow animation */
-@keyframes onair-pulse {
-  0%, 100% { box-shadow: var(--on-air-glow); }
-  50% { box-shadow: none; }
+/* ── Ether logo ──────────────────────────────────────────────── */
+.ether-logo {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 21px;
+  letter-spacing: -0.06em;
+  line-height: 1;
 }
+.ether-logo .eth { color: #22d3ee; }
+.ether-logo .er  { color: var(--text-primary); }
 
-.on-air-active {
-  animation: onair-pulse 2s ease-in-out infinite;
-}
+/* Dark mode logo tweak */
+.dark-theme .ether-logo .eth { color: #22d3ee; }
+.dark-theme .ether-logo .er  { color: #f0effe; }
 
-/* Deck card hardware feel */
+/* ── Deck cards ──────────────────────────────────────────────── */
 .deck-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -106,174 +126,87 @@ button, a { transition: all 0.15s ease !important; }
   position: relative;
 }
 
-.deck-card::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  background: var(--border-secondary);
-  transition: background 0.3s ease;
-}
-
-.deck-card.playing::before {
-  background: var(--accent-green);
-  box-shadow: 0 0 12px rgba(52, 211, 153, 0.6);
-}
-
-.deck-card.paused::before {
-  background: var(--accent-amber);
-}
-
-/* Button polish */
+/* ── Buttons ─────────────────────────────────────────────────── */
 .btn-primary {
   background: var(--accent-blue);
   color: white;
   border: none;
   border-radius: var(--radius-sm);
+  font-family: 'Inter', sans-serif;
   font-weight: 600;
   font-size: 13px;
   letter-spacing: 0.02em;
   cursor: pointer;
   padding: 10px 20px;
-  transition: all 0.15s ease;
 }
+.btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.btn-primary:active { transform: translateY(0); filter: brightness(0.95); }
 
-.btn-primary:hover {
-  filter: brightness(1.1);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-.btn-primary:active {
-  transform: translateY(0);
-  filter: brightness(0.95);
-}
-
-/* Nav item active state */
-.nav-item-active {
-  background: var(--bg-active);
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-/* Ether logo wordmark */
-.ether-logo {
-  font-family: 'Syne', sans-serif;
-  font-weight: 700;
-  font-size: 20px;
-  letter-spacing: -0.05em;
-  line-height: 1;
-}
-
-.ether-logo .eth { color: var(--accent-cyan); }
-.ether-logo .er { color: var(--text-primary); }
-
-/* Large timer display */
-.timer-display {
-  font-family: 'DM Mono', monospace;
-  font-weight: 300;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-  line-height: 1;
-}
-
-/* Queue item hover */
-.queue-item {
-  border-radius: var(--radius-xs);
-  transition: background 0.1s ease;
-}
-
-.queue-item:hover { background: var(--bg-hover); }
-.queue-item.active { background: var(--bg-active); border-left: 3px solid var(--accent-cyan); }
-
-/* Status badge */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 20px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.status-badge.playing {
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--accent-green);
-}
-
-.status-badge.paused {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--accent-amber);
-}
-
-.status-badge.idle {
-  background: var(--bg-tertiary);
-  color: var(--text-tertiary);
-}
-
-/* Progress bar glow */
-.progress-bar-active {
-  box-shadow: 0 0 8px currentColor;
-}
-
-/* Grain texture overlay for dark mode */
-.dark-theme body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  z-index: 9999;
-}
-
-/* Timer font */
-.timer-display {
-  font-family: 'Courier New', 'Lucida Console', monospace !important;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-}
-
-/* ON AIR glow */
-@keyframes onair-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,0), 0 0 20px rgba(248,113,113,0.4); }
-  50% { box-shadow: 0 0 0 4px rgba(248,113,113,0.1), 0 0 40px rgba(248,113,113,0.6); }
-}
-.on-air-active {
-  animation: onair-pulse 1.8s ease-in-out infinite !important;
-}
-
-/* Deck status bar */
-.deck-playing { border-top: 3px solid var(--accent-green) !important; }
-.deck-paused { border-top: 3px solid var(--accent-amber) !important; }
-.deck-idle { border-top: 3px solid var(--border-primary) !important; }
-
-/* Logo */
-.ether-logo { font-weight: 700; font-size: 21px; letter-spacing: -0.05em; line-height: 1; }
-.ether-logo .eth { color: #22d3ee; }
-.ether-logo .er { color: var(--text-primary); }
-
-/* Nav items */
-.nav-active { 
-  background: var(--bg-active) !important; 
+/* ── Nav ─────────────────────────────────────────────────────── */
+.nav-active {
+  background: var(--bg-active) !important;
   color: var(--text-primary) !important;
   font-weight: 600 !important;
-  border-left: 3px solid #22d3ee !important;
 }
+
+/* ── Queue ───────────────────────────────────────────────────── */
+.queue-item { transition: background 0.1s ease; }
+.queue-item:hover { background: var(--bg-hover); }
+
+/* ── Dark mode card refinements ──────────────────────────────── */
+.dark-theme .deck-card,
+.dark-theme [style*="bg-secondary"] {
+  box-shadow: 0 1px 0 rgba(255,255,255,0.04) inset, var(--shadow-md);
+}
+
+/* ── Animations ──────────────────────────────────────────────── */
+@keyframes onair-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0), 0 0 20px rgba(239,68,68,0.5); }
+  50%       { box-shadow: 0 0 0 3px rgba(239,68,68,0.15), 0 0 40px rgba(239,68,68,0.7); }
+}
+.on-air-active { animation: onair-pulse 1.8s ease-in-out infinite !important; }
 
 @keyframes upnext-pulse {
   0%, 100% { background: var(--bg-active); }
-  50% { background: var(--bg-hover); }
+  50%       { background: var(--bg-hover); }
 }
 
 @keyframes overlay-pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.92; }
+  50%       { opacity: 0.92; }
 }
+
 @keyframes countdown-blink {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.7; transform: scale(0.97); }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* ── Dark mode input overrides ───────────────────────────────── */
+.dark-theme input[type="text"],
+.dark-theme input[type="search"] {
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.dark-theme input::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* ── Dark mode table overrides (Library) ─────────────────────── */
+.dark-theme .bg-zinc-900 { background: var(--bg-tertiary) !important; }
+.dark-theme .bg-zinc-800 { background: var(--bg-secondary) !important; }
+.dark-theme .border-zinc-800 { border-color: var(--border-primary) !important; }
+.dark-theme .text-zinc-100 { color: var(--text-primary) !important; }
+.dark-theme .text-zinc-400 { color: var(--text-secondary) !important; }
+.dark-theme .text-zinc-500 { color: var(--text-tertiary) !important; }
+
+/* ── Grain overlay for dark mode depth ───────────────────────── */
+.dark-theme::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.018;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  z-index: 9998;
 }

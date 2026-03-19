@@ -5,7 +5,7 @@ import { query, execute } from "../db/client";
 interface SongLevel {
   id: number; title: string; artist_name: string | null;
   lufs_measured: number | null; peak_db: number | null;
-  gain_db: number; is_processed: number;
+  gain_db: number;
 }
 
 export default function ProcessingPanel() {
@@ -18,7 +18,12 @@ export default function ProcessingPanel() {
 
   const load = async () => {
     setStats(await getProcessingStats());
-    setSongs(await query<SongLevel>("SELECT s.id, s.title, a.name as artist_name, s.lufs_measured, s.peak_db, s.gain_db, s.is_processed FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY s.lufs_measured ASC NULLS LAST LIMIT 100"));
+    // is_processed column may not exist — use lufs_measured as proxy for processed status
+    setSongs(await query<SongLevel>(
+      "SELECT s.id, s.title, a.name as artist_name, s.lufs_measured, s.peak_db, s.gain_db " +
+      "FROM songs s LEFT JOIN artists a ON a.id = s.artist_id " +
+      "WHERE s.file_path IS NOT NULL ORDER BY s.lufs_measured ASC NULLS LAST LIMIT 100"
+    ));
   };
   useEffect(() => { load(); }, []);
 
@@ -35,101 +40,125 @@ export default function ProcessingPanel() {
   };
 
   const handleResetAll = async () => {
-    await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0, is_processed=0");
+    // Only reset columns that exist
+    await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0");
     load();
   };
 
   const lufsBar = (lufs: number | null) => {
-    if (lufs === null) return null;
-    // Scale: -30 to 0 LUFS mapped to 0-100%
+    if (lufs === null) return <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>—</span>;
     const pct = Math.max(0, Math.min(100, ((lufs + 30) / 30) * 100));
     const color = Math.abs(lufs - (-14)) < 2 ? "#22c55e" : Math.abs(lufs - (-14)) < 5 ? "#f59e0b" : "#ef4444";
     return (
-      <div className="flex items-center gap-1">
-        <div className="w-20 h-2 bg-zinc-800 rounded-full overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: pct + "%", backgroundColor: color }}></div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ width: 64, height: 4, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{ width: pct + "%", height: "100%", background: color, borderRadius: 2 }} />
         </div>
-        <span className="text-[9px] font-mono" style={{ color }}>{lufs}</span>
+        <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color }}>{lufs}</span>
       </div>
     );
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-bold text-zinc-300">Audio Processing</h2>
-        <div className="flex gap-2">
-          <button onClick={handleProcessAll} disabled={processing} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-bold text-white">{processing ? "Processing..." : "Analyze All"}</button>
-          <button onClick={handleResetAll} className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-xs text-zinc-400">Reset All</button>
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <h2 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Audio Processing</h2>
+          <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "4px 0 0", lineHeight: 1.4 }}>
+            Measures loudness (LUFS) and normalizes all songs to -14 LUFS broadcast standard.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={handleResetAll}
+            style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}
+          >Reset All</button>
+          <button
+            onClick={handleProcessAll}
+            disabled={processing}
+            style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer", opacity: processing ? 0.6 : 1 }}
+          >{processing ? "Processing..." : "Analyze All"}</button>
         </div>
       </div>
 
-      <div className="text-xs text-zinc-500">Measures loudness (LUFS) and calculates gain adjustment to normalize all songs to -14 LUFS (broadcast standard). Gain is applied during playback.</div>
-
+      {/* Progress */}
       {progress && (
-        <div className="px-3 py-2 bg-blue-900 border border-blue-700 rounded text-xs text-blue-200">
+        <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 10, fontSize: 12, color: "var(--accent-blue)" }}>
           {progress}
           {total > 0 && (
-            <div className="w-full h-1.5 bg-blue-800 rounded-full mt-1 overflow-hidden">
-              <div className="h-full bg-blue-400 rounded-full transition-all" style={{ width: (done / total * 100) + "%" }}></div>
+            <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 2, marginTop: 8, overflow: "hidden" }}>
+              <div style={{ width: (done / total * 100) + "%", height: "100%", background: "var(--accent-blue)", borderRadius: 2, transition: "width 0.3s ease" }} />
             </div>
           )}
         </div>
       )}
 
+      {/* Stats grid */}
       {stats && (
-        <div className="grid grid-cols-4 gap-3">
-          <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-            <div className="text-xl font-bold text-zinc-100">{stats.processed}/{stats.total}</div>
-            <div className="text-[10px] text-zinc-500 uppercase">Analyzed</div>
-          </div>
-          <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-            <div className="text-xl font-bold text-zinc-100">{stats.avgLufs || "--"}</div>
-            <div className="text-[10px] text-zinc-500 uppercase">Avg LUFS</div>
-          </div>
-          <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-            <div className="text-xl font-bold text-zinc-100">-14</div>
-            <div className="text-[10px] text-zinc-500 uppercase">Target LUFS</div>
-          </div>
-          <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-            <div className="text-xl font-bold text-emerald-400">{stats.unprocessed}</div>
-            <div className="text-[10px] text-zinc-500 uppercase">Pending</div>
-          </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+          {[
+            { label: "Analyzed", value: stats.processed + "/" + stats.total, color: "var(--text-primary)" },
+            { label: "Avg LUFS", value: stats.avgLufs || "—", color: "var(--text-primary)" },
+            { label: "Target LUFS", value: "-14", color: "var(--accent-green)" },
+            { label: "Pending", value: stats.unprocessed, color: stats.unprocessed > 0 ? "var(--accent-amber)" : "var(--accent-green)" },
+          ].map(s => (
+            <div key={s.label} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "12px 14px", textAlign: "center" as any }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: s.color, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.03em" }}>{s.value}</div>
+              <div style={{ fontSize: 9, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginTop: 4 }}>{s.label}</div>
+            </div>
+          ))}
         </div>
       )}
 
+      {/* Loudest/quietest */}
       {stats?.loudest && (
-        <div className="grid grid-cols-2 gap-3 text-xs">
-          <div className="bg-zinc-900 rounded border border-zinc-800 p-2">
-            <span className="text-zinc-500">Loudest: </span><span className="text-red-400">{stats.loudest}</span>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Loudest: </span>
+            <span style={{ color: "var(--accent-red)", fontWeight: 500 }}>{stats.loudest}</span>
           </div>
-          <div className="bg-zinc-900 rounded border border-zinc-800 p-2">
-            <span className="text-zinc-500">Quietest: </span><span className="text-blue-400">{stats.quietest}</span>
+          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Quietest: </span>
+            <span style={{ color: "var(--accent-blue)", fontWeight: 500 }}>{stats.quietest}</span>
           </div>
         </div>
       )}
 
+      {/* Songs table */}
       {songs.length > 0 && (
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead><tr className="text-left text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
-              <th className="px-3 py-2">Title</th>
-              <th className="px-3 py-2">Artist</th>
-              <th className="px-3 py-2">LUFS</th>
-              <th className="px-3 py-2">Peak</th>
-              <th className="px-3 py-2">Gain</th>
-              <th className="px-3 py-2">Status</th>
-            </tr></thead>
-            <tbody>{songs.map(s => (
-              <tr key={s.id} className="border-b border-zinc-800 hover:bg-zinc-800">
-                <td className="px-3 py-1.5 text-zinc-100 truncate max-w-[200px]">{s.title}</td>
-                <td className="px-3 py-1.5 text-zinc-400">{s.artist_name || ""}</td>
-                <td className="px-3 py-1.5">{lufsBar(s.lufs_measured)}</td>
-                <td className="px-3 py-1.5 text-zinc-400 font-mono text-[10px]">{s.peak_db !== null ? s.peak_db + " dB" : "--"}</td>
-                <td className="px-3 py-1.5 font-mono text-[10px]"><span className={s.gain_db > 0 ? "text-emerald-400" : s.gain_db < -3 ? "text-red-400" : "text-zinc-400"}>{s.gain_db > 0 ? "+" : ""}{s.gain_db} dB</span></td>
-                <td className="px-3 py-1.5">{s.is_processed ? <span className="text-emerald-400 text-[10px]">Done</span> : <span className="text-zinc-600 text-[10px]">Pending</span>}</td>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                {["Title", "Artist", "LUFS", "Peak", "Gain", "Status"].map(h => (
+                  <th key={h} style={{ padding: "8px 12px", textAlign: "left" as any, fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
+                ))}
               </tr>
-            ))}</tbody>
+            </thead>
+            <tbody>
+              {songs.map((s, i) => (
+                <tr key={s.id} style={{ borderBottom: i < songs.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <td style={{ padding: "8px 12px", color: "var(--text-primary)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title}</td>
+                  <td style={{ padding: "8px 12px", color: "var(--text-secondary)" }}>{s.artist_name || ""}</td>
+                  <td style={{ padding: "8px 12px" }}>{lufsBar(s.lufs_measured)}</td>
+                  <td style={{ padding: "8px 12px", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{s.peak_db !== null ? s.peak_db + " dB" : "—"}</td>
+                  <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>
+                    <span style={{ color: s.gain_db > 0 ? "var(--accent-green)" : s.gain_db < -3 ? "var(--accent-red)" : "var(--text-tertiary)" }}>
+                      {s.gain_db > 0 ? "+" : ""}{s.gain_db} dB
+                    </span>
+                  </td>
+                  <td style={{ padding: "8px 12px" }}>
+                    <span style={{ fontSize: 10, fontWeight: 600, color: s.lufs_measured !== null ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+                      {s.lufs_measured !== null ? "Done" : "Pending"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
           </table>
         </div>
       )}

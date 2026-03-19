@@ -1,7 +1,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-export type DeckId = "A" | "B";
+export type DeckId = "A" | "B" | "C";
 export type DeckStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
 
 export interface DeckState {
@@ -20,9 +20,9 @@ function makeState(id: DeckId, data: any): DeckState {
     status: data.status || "idle",
     title: data.title || "",
     artist: data.artist || "",
-    filePath: data.filePath || "",
-    durationSec: data.durationSec || 0,
-    positionSec: data.positionSec || 0,
+    filePath: data.file_path || data.filePath || "",
+    durationSec: data.duration_sec || data.durationSec || 0,
+    positionSec: data.position_sec || data.positionSec || 0,
     volume: data.volume ?? 1,
     error: data.error || null,
     peaks: [],
@@ -48,7 +48,6 @@ export class AudioEngine {
 
   init() {
     if (this.pollTimer) return;
-    // Poll Rust audio state every 100ms
     this.pollTimer = setInterval(() => this.poll(), 100);
   }
 
@@ -66,11 +65,11 @@ export class AudioEngine {
       this.listeners.forEach(l => l("C", this.stateC));
 
       // Check if deck finished playing
-      console.log("POLL A:", s.deckA.status, "isFinished:", s.deckA.is_finished, "prev:", prevA); if (s.deckA.is_finished && prevA === "playing" && this.autoAdvance) {
+      if (s.deckA.isFinished && prevA === "playing" && this.autoAdvance) {
         this.stateA.status = "ended";
         this.handleDeckEnd("A");
       }
-      if (s.deckB.is_finished && prevB === "playing" && this.autoAdvance) {
+      if (s.deckB.isFinished && prevB === "playing" && this.autoAdvance) {
         this.stateB.status = "ended";
         this.handleDeckEnd("B");
       }
@@ -81,7 +80,7 @@ export class AudioEngine {
 
   private async handleDeckEnd(deckId: DeckId) {
     if (this.advancing) return;
-    if (this.queue.length < 5 && this.refillCallback) {
+    if (this.queue.length === 0 && this.continuous && this.refillCallback) {
       const songs = await this.refillCallback();
       this.queue.push(...songs);
     }
@@ -109,7 +108,6 @@ export class AudioEngine {
       stop: () => invoke("audio_stop", { deck: id }),
       setVolume: (v: number) => invoke("audio_set_volume", { deck: id, volume: v }),
       fadeTo: (vol: number, sec: number) => {
-        // Simple stepped fade
         const steps = 20;
         const current = state.volume;
         const diff = vol - current;
@@ -127,7 +125,14 @@ export class AudioEngine {
   async loadToDeck(id: DeckId, filePath: string, title: string, artist: string) {
     this.init();
     await invoke("audio_load", { deck: id, filePath, title, artist });
-    this.playStartCallbacks.forEach(fn => fn(id, title, artist, filePath));
+    // Update local state immediately so UI reflects the load
+    if (id === "A") { this.stateA.title = title; this.stateA.artist = artist; this.stateA.filePath = filePath; }
+    else if (id === "C") { this.stateC.title = title; this.stateC.artist = artist; this.stateC.filePath = filePath; }
+    else { this.stateB.title = title; this.stateB.artist = artist; this.stateB.filePath = filePath; }
+    // Only fire playStart for deck A (B and C are preloads)
+    if (id === "A") {
+      this.playStartCallbacks.forEach(fn => fn(id, title, artist, filePath));
+    }
   }
 
   notifyPlayStart(deckId: DeckId, title: string, artist: string, filePath: string) {
@@ -139,13 +144,9 @@ export class AudioEngine {
   getQueue() { return [...this.queue]; }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
 
-  checkOutroCrossfade() {
-    // Handled by poll + handleDeckEnd
-  }
+  checkOutroCrossfade() {}
 
-  async setOutputDevice(_deviceId: string) {
-    // rodio uses system default - device selection via system settings
-  }
+  async setOutputDevice(_deviceId: string) {}
 
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {
     const from = this.getDeck(fromId);
@@ -158,10 +159,3 @@ export class AudioEngine {
 }
 
 export const engine = new AudioEngine();
-
-
-
-
-
-
-

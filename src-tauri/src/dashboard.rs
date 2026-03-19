@@ -136,7 +136,6 @@ pub fn start_dashboard_server(state: SharedAudioState, now_playing: SharedNowPla
                         .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
                         .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
                 }
-// status handled below
                 ("POST", "/api/skip") => {
                     if let Ok(mut audio) = state.lock() {
                         let _ = audio.sender.send(crate::audio::AudioCmd::Stop("A".to_string()));
@@ -207,9 +206,9 @@ pub fn start_dashboard_server(state: SharedAudioState, now_playing: SharedNowPla
                 ("GET", "/api/status") | ("GET", "/api/full-status") => {
                     let json = if let Ok(audio) = state.lock() {
                         serde_json::json!({
-                            "deckA": audio.deck_a.info("A"),
-                            "deckB": audio.deck_b.info("B"),
-                                                    }).to_string()
+                            "deckA": audio.deck_a.info("A", false),
+                            "deckB": audio.deck_b.info("B", false),
+                        }).to_string()
                     } else { "{}".to_string() };
                     Response::from_string(json)
                         .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
