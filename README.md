@@ -12,7 +12,7 @@ Built as a modern replacement for RCS Zetta, GSelector, and similar systems — 
 
 ## ⬇️ Download
 
-**[Download Ether v1.5 →](https://github.com/yourusername/ether/releases/latest)**
+**[Download Ether v1.5 →](https://github.com/jwjens/ether/releases/latest)**
 
 | Platform | File |
 |----------|------|
@@ -62,7 +62,7 @@ Built as a modern replacement for RCS Zetta, GSelector, and similar systems — 
 ## Installation
 
 ### Windows
-1. Download the `.msi` file from the [Releases page](https://github.com/yourusername/ether/releases/latest)
+1. Download the `.msi` file from the [Releases page](https://github.com/jwjens/ether/releases/latest)
 2. Double-click to install
 3. If Windows shows a SmartScreen warning — click **More info** → **Run anyway**
 
@@ -98,7 +98,7 @@ Hit **Auto ON** on the main screen and Ether will start playing automatically ba
 
 ### Setup
 ```bash
-git clone https://github.com/yourusername/ether.git
+git clone https://github.com/jwjens/ether.git
 cd ether
 npm install
 ```
