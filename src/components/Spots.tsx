@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readDir } from "@tauri-apps/plugin-fs";
-import { engine } from "../audio/engine";
+import { engine } from "../audio/engine-rodio";
 
 interface Spot {
   id: number; title: string; file_path: string | null;
@@ -17,6 +17,11 @@ const SPOT_TYPES = ["promo", "psa", "jingle", "liner", "sweeper", "commercial", 
 const AUDIO_EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
 function isAudio(n: string) { return AUDIO_EXTS.some(e => n.toLowerCase().endsWith(e)); }
 function titleFromFile(p: string) { return (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " "); }
+
+const TYPE_COLORS: Record<string, string> = {
+  promo: "#38bdf8", psa: "#34d399", jingle: "#a78bfa",
+  liner: "#fb923c", sweeper: "#f472b6", commercial: "#fbbf24", imaging: "#22d3ee",
+};
 
 export default function Spots() {
   const [spots, setSpots] = useState<Spot[]>([]);
@@ -33,26 +38,17 @@ export default function Spots() {
 
   const handleImport = async () => {
     try {
-      const files = await open({
-        multiple: true,
-        title: "Select Spot Audio Files",
-        filters: [{ name: "Audio", extensions: ["mp3", "flac", "ogg", "wav", "m4a", "aac"] }]
-      });
+      const files = await open({ multiple: true, title: "Select Spot Audio Files", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
       if (!files || (Array.isArray(files) && files.length === 0)) return;
       setImporting(true);
       const fileList = Array.isArray(files) ? files : [files];
       let n = 0;
       for (const fp of fileList) {
         const ex = await queryOne<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp]);
-        if (!ex) {
-          await execute("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"]);
-          n++;
-        }
+        if (!ex) { await execute("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"]); n++; }
       }
-      setStatus("Imported " + n + " spots.");
-      setTimeout(() => setStatus(""), 3000);
-      setImporting(false);
-      load();
+      setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
+      setImporting(false); load();
     } catch (e) { console.error(e); setImporting(false); }
   };
 
@@ -60,8 +56,7 @@ export default function Spots() {
     try {
       const folder = await open({ directory: true, title: "Select Spots Folder" });
       if (!folder) return;
-      setImporting(true);
-      setStatus("Scanning...");
+      setImporting(true); setStatus("Scanning...");
       const entries = await readDir(folder as string);
       let n = 0;
       for (const e of entries) {
@@ -69,16 +64,11 @@ export default function Spots() {
           const sep = (folder as string).includes("/") ? "/" : "\\";
           const fp = (folder as string) + sep + e.name;
           const ex = await queryOne<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp]);
-          if (!ex) {
-            await execute("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"]);
-            n++;
-          }
+          if (!ex) { await execute("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"]); n++; }
         }
       }
-      setStatus("Imported " + n + " spots.");
-      setTimeout(() => setStatus(""), 3000);
-      setImporting(false);
-      load();
+      setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
+      setImporting(false); load();
     } catch (e) { console.error(e); setImporting(false); }
   };
 
@@ -88,135 +78,177 @@ export default function Spots() {
       await execute("UPDATE spots SET title=?, spot_type=?, advertiser=?, start_date=?, end_date=?, max_plays_day=?, is_active=?, notes=? WHERE id=?",
         [editing.title, editing.spot_type || "promo", editing.advertiser || null, editing.start_date || null, editing.end_date || null, editing.max_plays_day || 999, editing.is_active ?? 1, editing.notes || null, editing.id]);
     }
-    setEditing(null);
-    load();
+    setEditing(null); load();
   };
 
-  const remove = async (id: number) => {
-    await execute("DELETE FROM spots WHERE id=?", [id]);
-    load();
-  };
+  const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await execute("DELETE FROM spots WHERE id=?", [id]); load(); };
 
   const playSpot = (spot: Spot) => {
-    if (spot.file_path) {
-      engine.init();
-      engine.loadToDeck("B", spot.file_path, spot.title, spot.spot_type);
-      setTimeout(() => engine.getDeck("B")?.play(), 500);
-    }
+    if (spot.file_path) { engine.init(); engine.loadToDeck("B", spot.file_path, spot.title, spot.spot_type); setTimeout(() => engine.getDeck("B")?.play(), 500); }
   };
-
   const queueSpot = (spot: Spot) => {
-    if (spot.file_path) {
-      engine.addToQueue([{ filePath: spot.file_path, title: "[" + spot.spot_type.toUpperCase() + "] " + spot.title, artist: spot.advertiser || "" }]);
-    }
+    if (spot.file_path) engine.addToQueue([{ filePath: spot.file_path, title: "[" + spot.spot_type.toUpperCase() + "] " + spot.title, artist: spot.advertiser || "" }]);
   };
 
   const activeCount = spots.filter(s => s.is_active).length;
+  const totalPlays = spots.reduce((s, sp) => s + sp.plays_total, 0);
+
+  const iBtn = (label: string, color: string, onClick: () => void, outline = false) => (
+    <button onClick={onClick} style={{
+      padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, cursor: "pointer",
+      background: outline ? "var(--bg-secondary)" : color,
+      color: outline ? "var(--text-secondary)" : "#fff",
+      border: outline ? "1px solid var(--border-primary)" : "none",
+      opacity: importing ? 0.6 : 1,
+    }}>{label}</button>
+  );
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold">Spots & Promos</h1>
-        <div className="flex gap-1">
-          <button onClick={handleImportFolder} disabled={importing} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-bold text-white">Import Folder</button>
-          <button onClick={handleImport} disabled={importing} className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 rounded text-xs font-bold text-zinc-300">Import Files</button>
+    <div style={{ display: "flex", flexDirection: "column" as any, gap: 16, fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Spots & Promos</h1>
+        <div style={{ display: "flex", gap: 8 }}>
+          {iBtn("Import Folder", "var(--accent-blue)", handleImportFolder)}
+          {iBtn("Import Files", "", handleImport, true)}
         </div>
       </div>
 
-      {/* Type filter */}
-      <div className="flex gap-1">
-        <button onClick={() => setFilter("all")} className={filter === "all" ? "px-2.5 py-1 rounded text-[10px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[10px] font-bold bg-zinc-800 text-zinc-400"}>All ({spots.length})</button>
+      {/* Type filter pills */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as any }}>
+        <button onClick={() => setFilter("all")} style={{
+          padding: "5px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
+          background: filter === "all" ? "var(--accent-blue)" : "var(--bg-secondary)",
+          color: filter === "all" ? "#fff" : "var(--text-tertiary)",
+          border: filter === "all" ? "none" : "1px solid var(--border-primary)",
+        }}>All ({spots.length})</button>
         {SPOT_TYPES.map(t => {
           const c = spots.filter(s => s.spot_type === t).length;
           if (c === 0 && filter !== t) return null;
-          return <button key={t} onClick={() => setFilter(t)} className={filter === t ? "px-2.5 py-1 rounded text-[10px] font-bold bg-blue-600 text-white" : "px-2.5 py-1 rounded text-[10px] font-bold bg-zinc-800 text-zinc-400"}>{t} ({c})</button>;
+          const color = TYPE_COLORS[t] || "var(--accent-blue)";
+          return (
+            <button key={t} onClick={() => setFilter(t)} style={{
+              padding: "5px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, cursor: "pointer",
+              background: filter === t ? color : "var(--bg-secondary)",
+              color: filter === t ? "#000" : "var(--text-tertiary)",
+              border: filter === t ? "none" : "1px solid var(--border-primary)",
+            }}>{t} ({c})</button>
+          );
         })}
       </div>
 
-      {status && <div className="px-3 py-1.5 bg-blue-900 border border-blue-700 rounded text-xs text-blue-200">{status}</div>}
+      {status && <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 8, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-          <div className="text-xl font-bold text-zinc-100">{spots.length}</div>
-          <div className="text-[10px] text-zinc-500 uppercase">Total Spots</div>
-        </div>
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-          <div className="text-xl font-bold text-emerald-400">{activeCount}</div>
-          <div className="text-[10px] text-zinc-500 uppercase">Active</div>
-        </div>
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-2 text-center">
-          <div className="text-xl font-bold text-zinc-100">{spots.reduce((s, sp) => s + sp.plays_total, 0)}</div>
-          <div className="text-[10px] text-zinc-500 uppercase">Total Plays</div>
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+        {[
+          { label: "Total Spots", value: spots.length, color: "var(--text-primary)" },
+          { label: "Active", value: activeCount, color: "var(--accent-green)" },
+          { label: "Total Plays", value: totalPlays, color: "var(--text-primary)" },
+        ].map(s => (
+          <div key={s.label} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, padding: 16, textAlign: "center" as any }}>
+            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.04em", color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginTop: 4 }}>{s.label}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Edit modal */}
+      {/* Edit panel */}
       {editing && (
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
-          <div className="text-xs font-bold text-zinc-300 mb-1">Edit Spot</div>
-          <div className="grid grid-cols-3 gap-2">
-            <input className="col-span-2 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Title" value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})} />
-            <select className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editing.spot_type || "promo"} onChange={e => setEditing({...editing, spot_type: e.target.value})}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, padding: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14, fontFamily: "'Syne', sans-serif" }}>Edit Spot</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 160px", gap: 8, marginBottom: 8 }}>
+            <input placeholder="Title" value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
+              style={{ gridColumn: "1 / 3", padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            <select value={editing.spot_type || "promo"} onChange={e => setEditing({...editing, spot_type: e.target.value})}
+              style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
               {SPOT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <input className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Advertiser" value={editing.advertiser || ""} onChange={e => setEditing({...editing, advertiser: e.target.value})} />
-            <input type="date" className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editing.start_date || ""} onChange={e => setEditing({...editing, start_date: e.target.value})} />
-            <input type="date" className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editing.end_date || ""} onChange={e => setEditing({...editing, end_date: e.target.value})} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <input placeholder="Advertiser" value={editing.advertiser || ""} onChange={e => setEditing({...editing, advertiser: e.target.value})}
+              style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            <input type="date" value={editing.start_date || ""} onChange={e => setEditing({...editing, start_date: e.target.value})}
+              style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            <input type="date" value={editing.end_date || ""} onChange={e => setEditing({...editing, end_date: e.target.value})}
+              style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-zinc-500">Max/day:</span>
-              <input type="number" className="w-16 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editing.max_plays_day || 999} onChange={e => setEditing({...editing, max_plays_day: parseInt(e.target.value) || 999})} />
+          <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Max plays/day:</span>
+              <input type="number" value={editing.max_plays_day || 999} onChange={e => setEditing({...editing, max_plays_day: parseInt(e.target.value) || 999})}
+                style={{ width: 60, padding: "6px 10px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-[10px] text-zinc-500">Active:</label>
-              <input type="checkbox" checked={editing.is_active !== 0} onChange={e => setEditing({...editing, is_active: e.target.checked ? 1 : 0})} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Active:</span>
+              <div onClick={() => setEditing({...editing, is_active: editing.is_active ? 0 : 1})} style={{
+                width: 36, height: 20, borderRadius: 10, cursor: "pointer",
+                background: editing.is_active ? "var(--accent-green)" : "var(--bg-tertiary)",
+                border: "1px solid " + (editing.is_active ? "var(--accent-green)" : "var(--border-secondary)"),
+                position: "relative", transition: "background 0.2s",
+              }}>
+                <div style={{ position: "absolute", top: 3, left: editing.is_active ? 18 : 3, width: 12, height: 12, borderRadius: 6, background: "#fff", transition: "left 0.2s" }} />
+              </div>
             </div>
           </div>
-          <textarea className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100 h-12 resize-none" placeholder="Notes" value={editing.notes || ""} onChange={e => setEditing({...editing, notes: e.target.value})} />
-          <div className="flex gap-2">
-            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save</button>
-            <button onClick={() => setEditing(null)} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
+          <textarea placeholder="Notes" value={editing.notes || ""} onChange={e => setEditing({...editing, notes: e.target.value})}
+            style={{ width: "100%", padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", height: 60, resize: "none" as any, marginBottom: 12, boxSizing: "border-box" as any }} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={save} style={{ padding: "7px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+            <button onClick={() => setEditing(null)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
           </div>
         </div>
       )}
 
       {/* Spot list */}
       {spots.length === 0 ? (
-        <div className="text-center py-12">
-          <div className="text-zinc-400 text-lg mb-2">No spots yet</div>
-          <div className="text-zinc-600 text-xs mb-4">Import jingles, promos, PSAs, and liners.</div>
-          <button onClick={handleImportFolder} className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-medium text-white">Import Spots Folder</button>
+        <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>📢</div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots yet</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners</div>
+          <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Spots Folder</button>
         </div>
       ) : (
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead><tr className="text-left text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
-              <th className="px-3 py-2">Title</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Advertiser</th>
-              <th className="px-3 py-2 text-right">Plays</th>
-              <th className="px-3 py-2 text-center">Active</th>
-              <th className="px-3 py-2 text-right w-36">Actions</th>
-            </tr></thead>
-            <tbody>{spots.map(s => (
-              <tr key={s.id} className={"border-b border-zinc-800 hover:bg-zinc-800" + (s.is_active ? "" : " opacity-50")}>
-                <td className="px-3 py-1.5 text-zinc-100">{s.title}</td>
-                <td className="px-3 py-1.5"><span className="px-1.5 py-0.5 bg-zinc-800 rounded text-[9px] font-bold text-zinc-300 uppercase">{s.spot_type}</span></td>
-                <td className="px-3 py-1.5 text-zinc-400">{s.advertiser || "—"}</td>
-                <td className="px-3 py-1.5 text-right text-zinc-400">{s.plays_total}</td>
-                <td className="px-3 py-1.5 text-center">{s.is_active ? <span className="text-emerald-400">Yes</span> : <span className="text-zinc-600">No</span>}</td>
-                <td className="px-3 py-1.5 text-right">
-                  <button onClick={() => playSpot(s)} className="px-1.5 py-0.5 bg-emerald-700 hover:bg-emerald-600 rounded text-[9px] font-bold text-white mr-0.5">Play</button>
-                  <button onClick={() => queueSpot(s)} className="px-1.5 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[9px] font-bold text-white mr-0.5">Q</button>
-                  <button onClick={() => setEditing(s)} className="px-1.5 py-0.5 bg-zinc-700 hover:bg-zinc-600 rounded text-[9px] font-bold text-zinc-300 mr-0.5">Edit</button>
-                  <button onClick={() => remove(s.id)} className="px-1.5 py-0.5 bg-zinc-800 hover:bg-red-900 rounded text-[9px] font-bold text-zinc-500">Del</button>
-                </td>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
+                {["Title", "Type", "Advertiser", "Plays", "Active", ""].map(h => (
+                  <th key={h} style={{ padding: "10px 14px", textAlign: "left" as any, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
+                ))}
               </tr>
-            ))}</tbody>
+            </thead>
+            <tbody>
+              {spots.map((s, i) => {
+                const typeColor = TYPE_COLORS[s.spot_type] || "var(--text-tertiary)";
+                return (
+                  <tr key={s.id}
+                    style={{ borderBottom: i < spots.length - 1 ? "1px solid var(--border-primary)" : "none", opacity: s.is_active ? 1 : 0.45 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title}</td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: typeColor, background: typeColor + "20", padding: "2px 8px", borderRadius: 20, textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>{s.spot_type}</span>
+                    </td>
+                    <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{s.advertiser || "—"}</td>
+                    <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-tertiary)" }}>{s.plays_total}</td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: s.is_active ? "var(--accent-green)" : "var(--text-tertiary)" }}>{s.is_active ? "Yes" : "No"}</span>
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                        <button onClick={() => playSpot(s)} style={{ padding: "4px 9px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Play</button>
+                        <button onClick={() => queueSpot(s)} style={{ padding: "4px 9px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
+                        <button onClick={() => setEditing(s)} style={{ padding: "4px 9px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
+                        <button onClick={() => remove(s.id)} style={{ padding: "4px 9px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
           </table>
         </div>
       )}

@@ -1,6 +1,5 @@
-import { getCurrentHourInTz, getCurrentDayInTz, getStationTimezone } from "../utils/timezone";
 import { query, queryOne, execute } from "../db/client";
-import { engine } from "./engine";
+import { engine } from "./engine-rodio";
 
 interface SlotDef {
   id: number; position: number; slot_type: string;
@@ -25,7 +24,7 @@ interface RecentPlay {
 }
 
 // ============================================================
-// SCORING ENGINE — rates each candidate
+// SCORING ENGINE
 // ============================================================
 
 async function getRules(): Promise<SepRule[]> {
@@ -46,7 +45,6 @@ function scoreSong(song: SongCandidate, recent: RecentPlay[], rules: SepRule[], 
   const violations: string[] = [];
   const nowSec = Math.floor(Date.now() / 1000);
 
-  // Skip if already used this hour
   if (usedInHour.includes(song.id)) return { score: -99999, violations: ["already scheduled this hour"] };
 
   for (const rule of rules) {
@@ -110,28 +108,27 @@ function scoreSong(song: SongCandidate, recent: RecentPlay[], rules: SepRule[], 
     }
   }
 
-  // Bonus: prefer songs that havent played recently
   if (!song.last_played_at) score += 50;
   else {
     const hoursSince = (nowSec - song.last_played_at) / 3600;
     score += Math.min(hoursSince * 2, 100);
   }
 
-  // Bonus: prefer lower spin counts
   score -= Math.min(song.spins_total * 2, 200);
 
   return { score, violations };
 }
 
 // ============================================================
-// PICK BEST SONG — scores all candidates, returns the winner
+// PICK BEST SONG
 // ============================================================
 
 async function pickBestSong(categoryId: number, recent: RecentPlay[], rules: SepRule[], usedInHour: number[]): Promise<SongCandidate | null> {
+  // Note: no rotation_status filter — use all songs with a file path
   const candidates = await query<SongCandidate>(
     "SELECT s.id, s.title, s.file_path, s.artist_id, a.name as artist_name, s.category_id, s.gender, s.last_played_at, s.spins_total " +
     "FROM songs s LEFT JOIN artists a ON a.id = s.artist_id " +
-    "WHERE s.category_id = ? AND s.file_path IS NOT NULL AND s.rotation_status = 'active' " +
+    "WHERE s.category_id = ? AND s.file_path IS NOT NULL " +
     "ORDER BY s.last_played_at ASC NULLS FIRST, RANDOM() LIMIT 50",
     [categoryId]
   );
@@ -149,17 +146,16 @@ async function pickBestSong(categoryId: number, recent: RecentPlay[], rules: Sep
     }
   }
 
-  // If best score is still deeply negative (all hard rules violated),
-  // still return the best option — prevents dead air
   return bestSong;
 }
 
 async function pickAnySong(recent: RecentPlay[], rules: SepRule[], usedInHour: number[]): Promise<SongCandidate | null> {
+  // Note: no rotation_status filter — use all songs with a file path
   const candidates = await query<SongCandidate>(
     "SELECT s.id, s.title, s.file_path, s.artist_id, a.name as artist_name, s.category_id, s.gender, s.last_played_at, s.spins_total " +
     "FROM songs s LEFT JOIN artists a ON a.id = s.artist_id " +
-    "WHERE s.file_path IS NOT NULL AND s.rotation_status = 'active' " +
-    "ORDER BY RANDOM() LIMIT 30"
+    "WHERE s.file_path IS NOT NULL " +
+    "ORDER BY s.last_played_at ASC NULLS FIRST, RANDOM() LIMIT 50"
   );
   if (candidates.length === 0) return null;
   let best = candidates[0];
@@ -221,11 +217,12 @@ export async function generateLogHour(): Promise<LogItem[]> {
   const recent = await getRecentPlays(240);
 
   if (!clockId) {
-    console.log("No clock assigned, falling back to scored random");
+    console.log("[LOGGEN] No clock assigned, falling back to scored random");
     return generateScoredRandom(rules, recent);
   }
 
   const slots = await getClockSlots(clockId);
+  console.log("[LOGGEN] Clock", clockId, "has", slots.length, "slots");
   if (slots.length === 0) return generateScoredRandom(rules, recent);
 
   const log: LogItem[] = [];
@@ -238,13 +235,14 @@ export async function generateLogHour(): Promise<LogItem[]> {
         const { violations } = scoreSong(song, recent, rules, usedIds);
         log.push({ slotType: "music", songId: song.id, title: song.title, artist: song.artist_name || "", filePath: song.file_path, categoryId: slot.category_id, violations });
         usedIds.push(song.id);
-        // Add to recent for subsequent scoring this hour
         recent.unshift({ song_id: song.id, title: song.title, artist: song.artist_name || null, artist_id: song.artist_id, category_id: song.category_id, gender: song.gender, played_at: Math.floor(Date.now() / 1000) });
       } else {
+        // Category empty — fall back to any song
         const any = await pickAnySong(recent, rules, usedIds);
         if (any) {
           log.push({ slotType: "music", songId: any.id, title: any.title, artist: any.artist_name || "", filePath: any.file_path, categoryId: null, violations: ["category empty, fallback"] });
           usedIds.push(any.id);
+          recent.unshift({ song_id: any.id, title: any.title, artist: any.artist_name || null, artist_id: any.artist_id, category_id: any.category_id, gender: any.gender, played_at: Math.floor(Date.now() / 1000) });
         }
       }
     } else if (slot.slot_type !== "music") {
@@ -252,13 +250,14 @@ export async function generateLogHour(): Promise<LogItem[]> {
     }
   }
 
+  console.log("[LOGGEN] Generated", log.filter(l => l.slotType === "music").length, "music items from", slots.length, "slots");
   return log;
 }
 
 async function generateScoredRandom(rules: SepRule[], recent: RecentPlay[]): Promise<LogItem[]> {
   const log: LogItem[] = [];
   const usedIds: number[] = [];
-  for (let i = 0; i < 15; i++) {
+  for (let i = 0; i < 20; i++) {
     const song = await pickAnySong(recent, rules, usedIds);
     if (song) {
       const { violations } = scoreSong(song, recent, rules, usedIds);

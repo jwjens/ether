@@ -15,13 +15,15 @@ use tauri::{
 };
 
 fn main() {
-    let (sender, is_playing, levels) = start_audio_thread();
+    let (sender, is_playing, levels, finished) = start_audio_thread();
     let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState {
         deck_a: audio::DeckMeta::new(),
         deck_b: audio::DeckMeta::new(),
+        deck_c: audio::DeckMeta::new(),
         sender,
         is_playing,
         levels: levels.clone(),
+        finished,
         watchdog_active: false,
         watchdog_threshold_sec: 10.0,
         watchdog_triggered_count: 0,
@@ -64,7 +66,6 @@ fn main() {
             commands::analyze_lufs,
         ])
         .setup(move |app| {
-            // Start mobile dashboard on port 4242
             dashboard::start_dashboard_server(audio_state.clone(), now_playing.clone(), 4242);
 
             let app_handle = app.handle().clone();
@@ -81,9 +82,7 @@ fn main() {
                             Err(_) => continue,
                         }
                     };
-
                     if !active { silence_start = None; continue; }
-
                     if playing {
                         silence_start = None;
                     } else {
@@ -109,11 +108,7 @@ fn main() {
                 .menu(&menu)
                 .tooltip("Ether - On Air")
                 .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => {
-                        if let Some(w) = app.get_webview_window("main") {
-                            let _ = w.show(); let _ = w.set_focus();
-                        }
-                    }
+                    "show" => { if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); } }
                     "quit" => { app.exit(0); }
                     _ => {}
                 })
@@ -127,21 +122,13 @@ fn main() {
                     }
                 })
                 .build(app)?;
-
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Only hide to tray for the main window
-                if window.label() == "main" {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-                // Now Playing window closes normally
+                if window.label() == "main" { api.prevent_close(); let _ = window.hide(); }
             }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
-
