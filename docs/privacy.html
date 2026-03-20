@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy — Ether Global Technologies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;600;700&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #080810; --bg2: #0d0d1a; --border: rgba(255,255,255,0.07);
+    --text: #f0f0f8; --text2: rgba(255,255,255,0.55); --text3: rgba(255,255,255,0.25);
+    --cyan: #22d3ee;
+  }
+  body { background: var(--bg); color: var(--text); font-family: "Barlow", sans-serif; font-weight: 400; line-height: 1.8; overflow-x: hidden; }
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    padding: 20px 48px; display: flex; align-items: center; justify-content: space-between;
+    background: linear-gradient(to bottom, rgba(8,8,16,0.95), transparent);
+    backdrop-filter: blur(12px);
+  }
+  .nav-logo { display: flex; flex-direction: column; line-height: 1; text-decoration: none; }
+  .nav-logo .name { font-family: "Barlow", sans-serif; font-size: 20px; font-weight: 700; color: #f0f0f8; letter-spacing: -0.02em; }
+  .nav-logo .sub { font-family: "Barlow", sans-serif; font-size: 9px; font-weight: 300; color: #22d3ee; letter-spacing: 0.22em; }
+  .nav-back { font-size: 12px; color: var(--text2); text-decoration: none; letter-spacing: 0.08em; transition: color 0.2s; }
+  .nav-back:hover { color: var(--cyan); }
+  .container { max-width: 760px; margin: 0 auto; padding: 140px 48px 80px; }
+  .eyebrow { font-size: 10px; font-weight: 600; letter-spacing: 0.25em; text-transform: uppercase; color: var(--cyan); margin-bottom: 16px; }
+  h1 { font-family: "Barlow", sans-serif; font-size: 48px; font-weight: 700; letter-spacing: -0.03em; color: var(--text); margin-bottom: 12px; line-height: 1; }
+  .effective { font-size: 13px; color: var(--text3); font-family: "DM Mono", monospace; margin-bottom: 60px; padding-bottom: 40px; border-bottom: 1px solid var(--border); }
+  h2 { font-family: "Barlow", sans-serif; font-size: 22px; font-weight: 700; color: var(--text); margin: 48px 0 16px; letter-spacing: -0.02em; }
+  h3 { font-family: "Barlow", sans-serif; font-size: 16px; font-weight: 600; color: var(--cyan); margin: 28px 0 10px; letter-spacing: 0.02em; }
+  p { font-size: 15px; color: var(--text2); margin-bottom: 16px; }
+  ul { margin: 12px 0 20px 0; padding-left: 20px; }
+  ul li { font-size: 15px; color: var(--text2); margin-bottom: 8px; padding-left: 8px; }
+  ul li::marker { color: var(--cyan); }
+  .highlight { background: rgba(34,211,238,0.06); border: 1px solid rgba(34,211,238,0.15); border-radius: 12px; padding: 20px 24px; margin: 24px 0; }
+  .highlight p { color: var(--text); margin: 0; font-weight: 600; }
+  .contact-block { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; padding: 28px 32px; margin-top: 48px; }
+  .contact-block p { margin-bottom: 8px; }
+  .contact-block a { color: var(--cyan); text-decoration: none; }
+  .contact-block a:hover { text-decoration: underline; }
+  footer { border-top: 1px solid var(--border); padding: 32px 48px; text-align: center; font-size: 11px; color: var(--text3); letter-spacing: 0.06em; margin-top: 80px; }
+  @media (max-width: 700px) { nav { padding: 16px 20px; } .container { padding: 120px 24px 60px; } h1 { font-size: 32px; } footer { padding: 24px 20px; } }
+</style>
+</head>
+<body>
+<nav>
+  <a href="index.html" class="nav-logo">
+    <span class="name">ETHER</span>
+    <span class="sub">GLOBAL TECHNOLOGIES</span>
+  </a>
+  <a href="index.html" class="nav-back">← Back to Home</a>
+</nav>
+
+<div class="container">
+  <div class="eyebrow">Legal</div>
+  <h1>Privacy Policy</h1>
+  <div class="effective">Effective Date: March 19, 2026 &nbsp;·&nbsp; Ether Global Technologies</div>
+
+  <div class="highlight">
+    <p>The short version: Ether does not sell your data. Ether does not display ads. Most data never leaves your computer.</p>
+  </div>
+
+  <h2>Overview</h2>
+  <p>Ether is a free, open-source broadcast automation application. This Privacy Policy explains how Ether handles your information when you use our desktop application and related services, including YouTube integration and optional cloud features.</p>
+
+  <h2>Information We Collect</h2>
+
+  <h3>Information You Provide</h3>
+  <p>When you set up Ether, you provide your station or venue name, tagline, and venue type. You also add audio files and create scheduling rules. All of this is stored locally in a SQLite database on your own machine. We do not transmit this data to our servers unless you explicitly enable a cloud feature.</p>
+
+  <h3>YouTube Integration</h3>
+  <p>If you choose to connect your YouTube account, Ether uses the YouTube Data API v3 to upload content on your behalf. When you connect YouTube:</p>
+  <ul>
+    <li>You are redirected to Google's standard OAuth2 login page</li>
+    <li>Your YouTube access token is stored locally on your device only</li>
+    <li>Ether only uploads content you explicitly select and approve</li>
+    <li>Ether does not read, access, or store any of your existing YouTube videos, comments, or subscriber data</li>
+    <li>You can disconnect your YouTube account at any time in Settings</li>
+  </ul>
+  <p>Ether's use of YouTube API Services is subject to the <a href="https://www.youtube.com/t/terms" style="color:var(--cyan)">YouTube Terms of Service</a> and <a href="https://policies.google.com/privacy" style="color:var(--cyan)">Google's Privacy Policy</a>.</p>
+
+  <h3>Usage Data</h3>
+  <p>Ether does not collect usage analytics, crash reports, or telemetry by default. The free version operates entirely offline and transmits no data of any kind. If a future version introduces optional analytics, it will be clearly disclosed and opt-in only.</p>
+
+  <h3>Pro and Station Plan Features</h3>
+  <p>If you subscribe to a paid plan, we collect only the minimum necessary to provide those services:</p>
+  <ul>
+    <li>Email address for account creation and billing notifications</li>
+    <li>Payment information, processed securely by our payment provider — we never store card numbers</li>
+    <li>Cloud backup data you choose to sync, encrypted in transit and at rest</li>
+  </ul>
+
+  <h2>How We Use Your Information</h2>
+  <p>We use information solely to provide and improve Ether, process payments, respond to support requests, and comply with legal obligations. We will never sell, rent, or share your personal information with third parties for marketing purposes.</p>
+
+  <h2>Information Sharing</h2>
+  <p>We do not sell your personal information. We do not share your information with advertisers. We may share limited information only with service providers who operate under strict data protection agreements, when required by law, or in the event of a business transfer under equivalent privacy protections.</p>
+
+  <h2>Data Retention and Deletion</h2>
+  <p>Local data remains entirely under your control. You can delete your Ether database at any time by removing the application data folder.</p>
+  <p>If you have a paid account, you may request deletion by contacting us at privacy@etherradio.app. We will delete your data within 30 days, except where retention is required by law.</p>
+  <p>Your YouTube access token is stored only on your local machine. Revoking access in Google Account settings or disconnecting in Ether Settings immediately invalidates the token.</p>
+
+  <h2>Security</h2>
+  <p>Cloud backup data is encrypted in transit using TLS and encrypted at rest. Local data security depends on your device's own security settings. If you believe your account has been compromised, contact us immediately at security@etherradio.app.</p>
+
+  <h2>Children's Privacy</h2>
+  <p>Ether is not directed at children under the age of 13. We do not knowingly collect personal information from children under 13. If you believe we have inadvertently collected such information, please contact us immediately.</p>
+
+  <h2>Changes to This Policy</h2>
+  <p>We may update this Privacy Policy from time to time. We will notify users of material changes by updating the effective date and, where appropriate, through in-app notification.</p>
+
+  <div class="contact-block">
+    <h2 style="margin-top:0">Contact Us</h2>
+    <p>Questions about this Privacy Policy or how we handle your data:</p>
+    <p>Email: <a href="mailto:privacy@etherradio.app">privacy@etherradio.app</a></p>
+    <p>GitHub: <a href="https://github.com/jwjens/ether">github.com/jwjens/ether</a></p>
+    <p>Website: <a href="https://jwjens.github.io/ether">jwjens.github.io/ether</a></p>
+  </div>
+</div>
+
+<footer>
+  © 2026 Ether Global Technologies &nbsp;·&nbsp; Free forever &nbsp;·&nbsp; MIT License &nbsp;·&nbsp; We believe privacy is a right, not a feature.
+</footer>
+</body>
+</html>
