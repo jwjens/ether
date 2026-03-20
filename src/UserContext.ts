@@ -3,8 +3,9 @@ import { createContext, useContext } from "react";
 export interface AppUser {
   id: number;
   name: string;
-  role: string;
-  pin: string | null;
+  role: "admin" | "jock" | "music_director";
+  pin_hash: string | null;
+  color: string;
 }
 
 export const UserContext = createContext<AppUser | null>(null);
