@@ -199,7 +199,7 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
             </div>
           )}
           <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-tertiary)" }}>
-            Note: Songs are imported without file paths. Use the 📁 Relocate button in the Library to link them to your audio files.
+            Note: Songs are imported without file paths. Use the Relocate button in the Library to link them to your audio files.
           </div>
         </div>
       )}

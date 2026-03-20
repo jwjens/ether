@@ -6,12 +6,12 @@ import { processAllSongs, getProcessingStats } from "../audio/processor";
 
 // ── Shared UI primitives ─────────────────────────────────────
 
-function Section({ icon, title, description, children }: { icon: string; title: string; description: string; children: React.ReactNode }) {
+function Section({ icon, title, description, children }: { icon: React.ReactNode; title: string; description: string; children: React.ReactNode }) {
   return (
     <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
       <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid var(--border-primary)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 18 }}>{icon}</span>
+          <span style={{ display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>{icon}</span>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", fontFamily: "'Syne', sans-serif" }}>{title}</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{description}</div>
@@ -243,7 +243,7 @@ export default function SettingsPanel() {
       <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 20, fontFamily: "'Syne', sans-serif" }}>Settings</h1>
 
       {/* ── Station ── */}
-      <Section icon="🎙" title="Your Station" description="Basic information about your station">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>} title="Your Station" description="Basic information about your station">
         <SettingRow label="Station name" hint="Shows in the header and window title">
           <div style={{ display: "flex", gap: 8 }}>
             <input value={stationName} onChange={e => setStationName(e.target.value)}
@@ -268,7 +268,7 @@ export default function SettingsPanel() {
       </Section>
 
       {/* ── Audio ── */}
-      <Section icon="🔊" title="Audio Devices" description="Choose where music plays and which mic to use for voice tracking">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="Choose where music plays and which mic to use for voice tracking">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, minWidth: 0 }}>
           {/* Output */}
           <div style={{ minWidth: 0 }}>
@@ -317,7 +317,7 @@ export default function SettingsPanel() {
       </Section>
 
       {/* ── Music Scheduling Rules ── */}
-      <Section icon="🎵" title="Music Scheduling Rules" description="Control how songs are selected — how long before the same artist or song can play again">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>} title="Music Scheduling Rules" description="Control how songs are selected — how long before the same artist or song can play again">
         <div style={{ display: "flex", flexDirection: "column" as any }}>
           {rules.map((r, i) => {
             const meta = RULE_META[r.rule_type];
@@ -375,7 +375,7 @@ export default function SettingsPanel() {
       </Section>
 
       {/* ── Connections ── */}
-      <Section icon="📡" title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Mobile remote control</div>
@@ -392,7 +392,7 @@ export default function SettingsPanel() {
       </Section>
 
       {/* ── Now Playing Screen ── */}
-      <Section icon="📺" title="Now Playing Screen" description="Customize what shows on the on-air display window">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>} title="Now Playing Screen" description="Customize what shows on the on-air display window">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Instagram feed</div>
@@ -411,7 +411,7 @@ export default function SettingsPanel() {
       </Section>
 
       {/* ── Loudness ── */}
-      <Section icon="🎚" title="Loudness Normalization" description="Make every song play at the same volume — no more jarring jumps between quiet and loud tracks">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>} title="Loudness Normalization" description="Make every song play at the same volume — no more jarring jumps between quiet and loud tracks">
         {processingStats && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
             {[
@@ -449,10 +449,10 @@ export default function SettingsPanel() {
       </Section>
 
       {/* ── Backup ── */}
-      <Section icon="🛡" title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">
+      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
           <button onClick={backup} disabled={backupLoading} style={{ padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
-            {backupLoading ? "Saving..." : "💾 Back up now"}
+            {backupLoading ? "Saving..." : "Back up now"}
           </button>
           {backupStatus && <span style={{ fontSize: 12, color: backupStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{backupStatus}</span>}
         </div>

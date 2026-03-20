@@ -1,229 +1,379 @@
 import { useState } from "react";
-import { execute } from "../db/client";
+import { execute, query } from "../db/client";
 
 interface Props {
-  onComplete: () => void;
+  onComplete: (profile: VenueProfile) => void;
 }
 
-const MODES = [
-  {
-    id: "radio",
-    title: "Radio Station",
-    desc: "College radio, internet streaming, community FM, low-power FM",
-    icon: "📻",
-    features: "Format clocks, rotation rules, jock tools, cart wall, voice tracking",
-    color: "#2563eb",
+export interface VenueProfile {
+  venueType: VenueType;
+  name: string;
+  tagline: string;
+}
+
+export type VenueType = "radio" | "venue" | "retail" | "worship" | "podcast";
+
+export const VENUE_LABELS: Record<VenueType, {
+  type: string;
+  icon: string;
+  tagline: string;
+  library: string;
+  spots: string;
+  clock: string;
+  log: string;
+  dj: string;
+  automation: string;
+  schedule: string;
+  showName: string;
+}> = {
+  radio: {
+    type: "Radio Station",
+    icon: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>`,
+    tagline: "AM · FM · Internet · Podcast · College Radio",
+    library: "Song Library",
+    spots: "Spots & Promos",
+    clock: "Program Clock",
+    log: "Play Log",
+    dj: "DJ / Host",
+    automation: "Automation",
+    schedule: "Show Schedule",
+    showName: "Station Name",
   },
-  {
-    id: "venue",
-    title: "Venue / Attraction",
-    desc: "Theme parks, museums, restaurants, hotels, event spaces",
-    icon: "🎪",
-    features: "Scheduled announcements, zone playlists, closing warnings, background music",
-    color: "#7c3aed",
+  venue: {
+    type: "Venue / Attraction",
+    icon: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
+    tagline: "Bars · Clubs · Theme Parks · Arenas · Events",
+    library: "Music Library",
+    spots: "Announcements",
+    clock: "Event Schedule",
+    log: "Activity Log",
+    dj: "Entertainment Host",
+    automation: "Auto-Play",
+    schedule: "Event Schedule",
+    showName: "Venue Name",
   },
-  {
-    id: "retail",
-    title: "Retail / Business",
-    desc: "Stores, gyms, offices, lobbies, waiting rooms",
-    icon: "🏬",
-    features: "Daypart playlists, brand music, simple scheduling, set and forget",
-    color: "#0d9488",
+  retail: {
+    type: "Retail / Business",
+    icon: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>`,
+    tagline: "Stores · Restaurants · Hotels · Gyms · Offices",
+    library: "Music Library",
+    spots: "Store Messages",
+    clock: "Playlist Schedule",
+    log: "Playback Log",
+    dj: "Manager",
+    automation: "Auto-Play",
+    schedule: "Store Hours",
+    showName: "Business Name",
   },
-  {
-    id: "worship",
-    title: "House of Worship",
-    desc: "Churches, mosques, temples, community centers",
-    icon: "⛪",
-    features: "Service scheduling, pre-service music, announcement automation",
-    color: "#d97706",
+  worship: {
+    type: "House of Worship",
+    icon: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 22V10"/><path d="M6 22V10"/><path d="M2 10h20"/><path d="M12 2v8"/><path d="M9 5h6"/></svg>`,
+    tagline: "Churches · Mosques · Synagogues · Temples",
+    library: "Worship Library",
+    spots: "Ministry Audio",
+    clock: "Service Schedule",
+    log: "Service Log",
+    dj: "Worship Leader",
+    automation: "Auto-Play",
+    schedule: "Service Schedule",
+    showName: "Congregation Name",
   },
-];
+  podcast: {
+    type: "Podcast / YouTube",
+    icon: `<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>`,
+    tagline: "Podcasts · YouTube · Livestreams · Video Shows",
+    library: "Episode Library",
+    spots: "Sponsorship Reads",
+    clock: "Episode Schedule",
+    log: "Episode Log",
+    dj: "Host",
+    automation: "Auto-Publish",
+    schedule: "Release Schedule",
+    showName: "Show Name",
+  },
+};
+
+const PLACEHOLDER_NAMES: Record<VenueType, string> = {
+  radio: "WKTR 94.5 The Rock",
+  venue: "The Blue Room",
+  retail: "Main Street Coffee",
+  worship: "Grace Community Church",
+  podcast: "The Daily Deep Dive",
+};
+
+const PLACEHOLDER_TAGLINES: Record<VenueType, string> = {
+  radio: "Your city's home for classic rock",
+  venue: "Where the night comes alive",
+  retail: "Good coffee, great atmosphere",
+  worship: "A place to belong",
+  podcast: "Weekly conversations worth having",
+};
 
 export default function FirstRunWizard({ onComplete }: Props) {
   const [step, setStep] = useState(0);
-  const [stationName, setStationName] = useState("");
+  const [venueType, setVenueType] = useState<VenueType | null>(null);
+  const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
-  const [selectedMode, setSelectedMode] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const finish = async () => {
-    await execute(
-      "UPDATE station_config SET station_name=?, mode=?, tagline=?, setup_complete=1 WHERE id=1",
-      [stationName || "My Station", selectedMode, tagline]
-    );
-    onComplete();
+  const selectedLabel = venueType ? VENUE_LABELS[venueType] : null;
+
+  const handleComplete = async () => {
+    if (!venueType || !name.trim()) return;
+    setSaving(true);
+    try {
+      // Ensure table exists
+      await execute(`CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT)`, []);
+      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_name', ?)", [name.trim()]);
+      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_tagline', ?)", [tagline.trim()]);
+      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('venue_type', ?)", [venueType]);
+      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('first_run_complete', '1')", []);
+      onComplete({ venueType, name: name.trim(), tagline: tagline.trim() });
+    } catch (e) {
+      console.error("Wizard save failed:", e);
+      // Even if DB fails, let them into the app
+      onComplete({ venueType, name: name.trim(), tagline: tagline.trim() });
+    }
+    setSaving(false);
   };
 
   return (
     <div style={{
-      position: "fixed",
-      inset: 0,
-      zIndex: 99998,
-      background: "#09090b",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+      position: "fixed", inset: 0, zIndex: 9998,
+      background: "#080810",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      fontFamily: "'Inter', system-ui, sans-serif",
+      padding: 24,
     }}>
-      <div style={{ width: 600, maxWidth: "90%" }}>
-        {/* Logo */}
-        <div style={{ textAlign: "center", marginBottom: 40 }}>
-          <div style={{ fontSize: 28, fontWeight: 300, color: "#fff", letterSpacing: "-0.03em" }}>
-            <span style={{ color: "#2563eb" }}>Eth</span>er
-          </div>
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", letterSpacing: "0.1em", textTransform: "uppercase" as const, marginTop: 4 }}>
-            Setup
-          </div>
-        </div>
+      {/* Background glow */}
+      <div style={{ position: "absolute", width: 700, height: 700, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 70%)", pointerEvents: "none" }} />
 
-        {/* Step 0: Mode selection */}
-        {step === 0 && (
-          <div>
-            <h2 style={{ fontSize: 20, fontWeight: 300, color: "#fff", textAlign: "center", marginBottom: 8, letterSpacing: "-0.02em" }}>
-              What are you using Ether for?
-            </h2>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", textAlign: "center", marginBottom: 32 }}>
-              This customizes your interface. You can change this later in Settings.
-            </p>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {MODES.map(m => (
-                <button key={m.id} onClick={() => { setSelectedMode(m.id); setStep(1); }} style={{
-                  padding: 20,
-                  borderRadius: 12,
-                  border: selectedMode === m.id ? "2px solid " + m.color : "1px solid rgba(255,255,255,0.08)",
-                  background: selectedMode === m.id ? m.color + "15" : "rgba(255,255,255,0.03)",
-                  cursor: "pointer",
-                  textAlign: "left" as const,
-                  transition: "all 0.2s ease",
-                }}>
-                  <div style={{ fontSize: 28, marginBottom: 8 }}>{m.icon}</div>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "#fff", marginBottom: 4 }}>{m.title}</div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 8, lineHeight: 1.4 }}>{m.desc}</div>
-                  <div style={{ fontSize: 10, color: m.color, lineHeight: 1.4 }}>{m.features}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Step 1: Station name */}
-        {step === 1 && (
-          <div style={{ textAlign: "center" }}>
-            <h2 style={{ fontSize: 20, fontWeight: 300, color: "#fff", marginBottom: 8, letterSpacing: "-0.02em" }}>
-              {selectedMode === "radio" ? "Name your station" : selectedMode === "venue" ? "Name your venue" : selectedMode === "retail" ? "Name your business" : "Name your organization"}
-            </h2>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 32 }}>
-              This appears in the header and on any public displays.
-            </p>
-
-            <input
-              autoFocus
-              type="text"
-              placeholder={selectedMode === "radio" ? "KETH 101.5" : selectedMode === "venue" ? "Magical Forest" : "My Business"}
-              value={stationName}
-              onChange={e => setStationName(e.target.value)}
-              style={{
-                width: "100%",
-                maxWidth: 400,
-                padding: "14px 20px",
-                borderRadius: 10,
-                border: "1px solid rgba(255,255,255,0.12)",
-                background: "rgba(255,255,255,0.05)",
-                color: "#fff",
-                fontSize: 18,
-                fontWeight: 300,
-                textAlign: "center" as const,
-                outline: "none",
-                letterSpacing: "-0.01em",
-                marginBottom: 16,
-              }}
-              onKeyDown={e => { if (e.key === "Enter") setStep(2); }}
-            />
-
-            <div>
-              <input
-                type="text"
-                placeholder="Tagline (optional)"
-                value={tagline}
-                onChange={e => setTagline(e.target.value)}
-                style={{
-                  width: "100%",
-                  maxWidth: 400,
-                  padding: "10px 20px",
-                  borderRadius: 8,
-                  border: "1px solid rgba(255,255,255,0.08)",
-                  background: "rgba(255,255,255,0.03)",
-                  color: "rgba(255,255,255,0.6)",
-                  fontSize: 13,
-                  fontWeight: 300,
-                  textAlign: "center" as const,
-                  outline: "none",
-                  marginBottom: 32,
-                }}
-                onKeyDown={e => { if (e.key === "Enter") setStep(2); }}
-              />
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
-              <button onClick={() => setStep(0)} style={{
-                padding: "10px 24px", borderRadius: 8, border: "none",
-                background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)",
-                fontSize: 13, cursor: "pointer",
-              }}>Back</button>
-              <button onClick={() => setStep(2)} style={{
-                padding: "10px 32px", borderRadius: 8, border: "none",
-                background: "#2563eb", color: "#fff",
-                fontSize: 13, fontWeight: 600, cursor: "pointer",
-              }}>Continue</button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Ready */}
-        {step === 2 && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>🎉</div>
-            <h2 style={{ fontSize: 22, fontWeight: 300, color: "#fff", marginBottom: 8, letterSpacing: "-0.02em" }}>
-              {stationName || "Your station"} is ready
-            </h2>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginBottom: 8 }}>
-              {selectedMode === "radio" && "Import your music library, set up format clocks, and start broadcasting."}
-              {selectedMode === "venue" && "Import background music, set up scheduled announcements, and go live."}
-              {selectedMode === "retail" && "Import your playlists, schedule dayparts, and let it run."}
-              {selectedMode === "worship" && "Import your music, schedule services, and automate transitions."}
-            </p>
-            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", marginBottom: 32 }}>
-              Start by going to Library and importing a music folder.
-            </p>
-
-            <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
-              <button onClick={() => setStep(1)} style={{
-                padding: "10px 24px", borderRadius: 8, border: "none",
-                background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)",
-                fontSize: 13, cursor: "pointer",
-              }}>Back</button>
-              <button onClick={finish} style={{
-                padding: "12px 40px", borderRadius: 10, border: "none",
-                background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
-                color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer",
-                boxShadow: "0 8px 24px rgba(37, 99, 235, 0.3)",
-              }}>Launch Ether</button>
-            </div>
-          </div>
-        )}
-
-        {/* Progress dots */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 40 }}>
-          {[0, 1, 2].map(i => (
-            <div key={i} style={{
-              width: 6, height: 6, borderRadius: "50%",
-              background: step >= i ? "#2563eb" : "rgba(255,255,255,0.1)",
-              transition: "background 0.3s ease",
-            }} />
+      <div style={{ width: "100%", maxWidth: 640, position: "relative" as any }}>
+        {/* Step dots */}
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 48 }}>
+          {[0,1,2].map(i => (
+            <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 4, background: i === step ? "#22d3ee" : i < step ? "rgba(34,211,238,0.4)" : "rgba(255,255,255,0.1)", transition: "all 0.3s ease" }} />
           ))}
         </div>
+
+        {/* ── STEP 0: Venue type ── */}
+        {step === 0 && (
+          <div style={{ animation: "wiz-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#22d3ee", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
+              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>What are you using<br />Ether for?</h1>
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>We'll customize the interface and language to match your setup.</p>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+              {(["radio", "venue", "retail"] as VenueType[]).map((type) => {
+                const label = VENUE_LABELS[type];
+                const selected = venueType === type;
+                return (
+                  <button key={type} onClick={() => setVenueType(type)} style={{
+                    padding: "24px 20px", borderRadius: 16,
+                    background: selected ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
+                    cursor: "pointer", textAlign: "left" as any, transition: "all 0.2s",
+                    boxShadow: selected ? "0 0 24px rgba(34,211,238,0.15)" : "none",
+                  }}>
+                    <div style={{ marginBottom: 10, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: label.icon }} />
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "#22d3ee" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{label.tagline}</div>
+                    {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22d3ee" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "#22d3ee", letterSpacing: "0.1em" }}>SELECTED</span></div>}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: "66.6%", margin: "0 auto" }}>
+              {(["worship", "podcast"] as VenueType[]).map((type) => {
+                const label = VENUE_LABELS[type];
+                const selected = venueType === type;
+                return (
+                  <button key={type} onClick={() => setVenueType(type)} style={{
+                    padding: "24px 20px", borderRadius: 16,
+                    background: selected ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
+                    cursor: "pointer", textAlign: "left" as any, transition: "all 0.2s",
+                    boxShadow: selected ? "0 0 24px rgba(34,211,238,0.15)" : "none",
+                  }}>
+                    <div style={{ marginBottom: 10, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: label.icon }} />
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "#22d3ee" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{label.tagline}</div>
+                    {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22d3ee" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "#22d3ee", letterSpacing: "0.1em" }}>SELECTED</span></div>}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 32, textAlign: "center" as any }}>
+              <button onClick={() => venueType && setStep(1)} disabled={!venueType} style={{
+                padding: "13px 48px", borderRadius: 12,
+                background: venueType ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
+                color: venueType ? "#000" : "rgba(255,255,255,0.2)",
+                fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                border: "none", cursor: venueType ? "pointer" : "default",
+                letterSpacing: "0.04em",
+                boxShadow: venueType ? "0 0 32px rgba(34,211,238,0.3)" : "none",
+                transition: "all 0.2s",
+              }}>
+                Continue →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 1: Name ── */}
+        {step === 1 && selectedLabel && (
+          <div style={{ animation: "wiz-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
+              <div style={{ marginBottom: 12, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: selectedLabel.icon }} />
+              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>
+                Name your<br />{selectedLabel.type.toLowerCase()}
+              </h1>
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)" }}>This shows in the header and on your Now Playing screen.</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column" as any, gap: 12, maxWidth: 420, margin: "0 auto" }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "rgba(255,255,255,0.3)", textTransform: "uppercase" as any, marginBottom: 8 }}>{selectedLabel.showName}</div>
+                <input
+                  autoFocus
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && name.trim() && setStep(2)}
+                  placeholder={PLACEHOLDER_NAMES[venueType!]}
+                  style={{
+                    width: "100%", padding: "14px 18px",
+                    borderRadius: 12, fontSize: 20, fontWeight: 600,
+                    fontFamily: "'Syne', sans-serif",
+                    background: "rgba(255,255,255,0.05)",
+                    border: "1.5px solid rgba(255,255,255,0.12)",
+                    color: "#f0f0f8", outline: "none",
+                    letterSpacing: "-0.02em",
+                    boxSizing: "border-box" as any,
+                    transition: "border-color 0.2s",
+                  }}
+                  onFocus={e => (e.target.style.borderColor = "#22d3ee")}
+                  onBlur={e => (e.target.style.borderColor = "rgba(255,255,255,0.12)")}
+                />
+              </div>
+
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.14em", color: "rgba(255,255,255,0.3)", textTransform: "uppercase" as any, marginBottom: 8 }}>Tagline <span style={{ opacity: 0.5 }}>(optional)</span></div>
+                <input
+                  value={tagline}
+                  onChange={e => setTagline(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && name.trim() && setStep(2)}
+                  placeholder={PLACEHOLDER_TAGLINES[venueType!]}
+                  style={{
+                    width: "100%", padding: "12px 18px",
+                    borderRadius: 12, fontSize: 14,
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1.5px solid rgba(255,255,255,0.08)",
+                    color: "rgba(255,255,255,0.6)", outline: "none",
+                    boxSizing: "border-box" as any,
+                    transition: "border-color 0.2s",
+                    fontFamily: "'Inter', system-ui, sans-serif",
+                  }}
+                  onFocus={e => (e.target.style.borderColor = "#22d3ee")}
+                  onBlur={e => (e.target.style.borderColor = "rgba(255,255,255,0.08)")}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginTop: 36, display: "flex", gap: 10, justifyContent: "center" }}>
+              <button onClick={() => setStep(0)} style={{ padding: "12px 24px", borderRadius: 10, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 13 }}>← Back</button>
+              <button onClick={() => name.trim() && setStep(2)} disabled={!name.trim()} style={{
+                padding: "13px 48px", borderRadius: 12,
+                background: name.trim() ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
+                color: name.trim() ? "#000" : "rgba(255,255,255,0.2)",
+                fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                border: "none", cursor: name.trim() ? "pointer" : "default",
+                letterSpacing: "0.04em",
+                boxShadow: name.trim() ? "0 0 32px rgba(34,211,238,0.3)" : "none",
+                transition: "all 0.2s",
+              }}>Continue →</button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 2: Ready ── */}
+        {step === 2 && selectedLabel && (
+          <div style={{ animation: "wiz-in 0.4s ease both", textAlign: "center" as any }}>
+            {/* Animated checkmark */}
+            <div style={{ marginBottom: 28 }}>
+              <div style={{
+                width: 72, height: 72, borderRadius: "50%",
+                background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                margin: "0 auto",
+                boxShadow: "0 0 40px rgba(34,211,238,0.4)",
+                animation: "wiz-check 0.5s cubic-bezier(0.34,1.56,0.64,1) both",
+              }}>
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <path d="M8 16l6 6 10-12" stroke="#000" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+            </div>
+
+            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", marginBottom: 10 }}>
+              {venueType === "radio" ? "Your station is ready." : venueType === "worship" ? "Welcome." : venueType === "podcast" ? "Your studio is ready." : "You're all set."}
+            </h1>
+
+            {/* Station name preview */}
+            <div style={{ margin: "20px auto", padding: "16px 28px", borderRadius: 14, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", display: "inline-block" }}>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.03em" }}>{name}</div>
+              {tagline && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{tagline}</div>}
+            </div>
+
+            {/* Feature preview */}
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" as any, margin: "20px 0 32px" }}>
+              {[
+                selectedLabel.library,
+                selectedLabel.spots,
+                selectedLabel.clock,
+                selectedLabel.log,
+                "Voice Tracking",
+                "Show Prep",
+              ].map(f => (
+                <span key={f} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: "rgba(167,139,250,0.1)", color: "rgba(167,139,250,0.8)", border: "1px solid rgba(167,139,250,0.2)" }}>{f}</span>
+              ))}
+            </div>
+
+            <button onClick={handleComplete} disabled={saving} style={{
+              padding: "16px 56px", borderRadius: 14,
+              background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
+              color: "#000",
+              fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800,
+              border: "none", cursor: saving ? "default" : "pointer",
+              letterSpacing: "0.04em",
+              boxShadow: "0 0 40px rgba(34,211,238,0.4), 0 0 80px rgba(167,139,250,0.2)",
+              animation: "wiz-glow 2s ease-in-out infinite",
+              opacity: saving ? 0.7 : 1,
+            }}>
+              {saving ? "Setting up..." : `Launch Ether →`}
+            </button>
+
+            <div style={{ marginTop: 16, fontSize: 11, color: "rgba(255,255,255,0.2)" }}>You can change these settings anytime in Settings</div>
+          </div>
+        )}
       </div>
+
+      <style>{`
+        @keyframes wiz-in {
+          from{opacity:0;transform:translateY(16px);}
+          to{opacity:1;transform:translateY(0);}
+        }
+        @keyframes wiz-check {
+          from{opacity:0;transform:scale(0.5);}
+          to{opacity:1;transform:scale(1);}
+        }
+        @keyframes wiz-glow {
+          0%,100%{box-shadow:0 0 40px rgba(34,211,238,0.4),0 0 80px rgba(167,139,250,0.2);}
+          50%{box-shadow:0 0 60px rgba(34,211,238,0.6),0 0 100px rgba(167,139,250,0.35);}
+        }
+      `}</style>
     </div>
   );
 }

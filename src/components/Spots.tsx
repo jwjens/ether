@@ -204,7 +204,7 @@ export default function Spots() {
       {/* Spot list */}
       {spots.length === 0 ? (
         <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>📢</div>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
           <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots yet</div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners</div>
           <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 8, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Spots Folder</button>
