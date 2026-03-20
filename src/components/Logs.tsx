@@ -172,7 +172,7 @@ export default function Logs() {
       {/* Table */}
       {entries.length === 0 ? (
         <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>📋</div>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
           <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No plays yet</div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Start playing music and it will appear here automatically</div>
         </div>

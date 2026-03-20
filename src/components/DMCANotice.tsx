@@ -31,7 +31,9 @@ export default function DMCANotice() {
         background: "var(--bg-secondary)", borderRadius: 16, padding: 32, maxWidth: 540,
         border: "1px solid var(--border-primary)", boxShadow: "0 24px 60px rgba(0,0,0,0.5)"
       }}>
-        <div style={{ fontSize: 24, marginBottom: 12 }}>⚖️</div>
+        <div style={{ marginBottom: 12, display: "flex" }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><path d="m9 12 2 2 4-4"/></svg>
+        </div>
         <h2 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-primary)", marginBottom: 8 }}>
           Music Licensing Notice
         </h2>

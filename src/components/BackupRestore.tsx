@@ -56,7 +56,7 @@ export default function BackupRestore() {
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <button onClick={backup} disabled={loading}
             style={{ padding: "8px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
-            {loading ? "Backing up..." : "💾 Backup Now"}
+            {loading ? "Backing up..." : "Backup Now"}
           </button>
           {status && <span style={{ fontSize: 12, color: status.startsWith("✓") ? "var(--accent-green)" : "#ef4444" }}>{status}</span>}
         </div>

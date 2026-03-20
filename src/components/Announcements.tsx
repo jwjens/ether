@@ -208,7 +208,9 @@ export default function Announcements() {
       {/* List */}
       {list.length === 0 ? (
         <div style={{ textAlign: "center" as any, padding: "56px 24px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 16 }}>
-          <div style={{ fontSize: 36, marginBottom: 12 }}>📢</div>
+          <div style={{ fontSize: 36, marginBottom: 12, display: "flex", justifyContent: "center" }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
+          </div>
           <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No announcements scheduled</div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20, maxWidth: 400, margin: "0 auto 20px" }}>
             Add closing announcements, park alerts, legal station IDs, or any timed audio

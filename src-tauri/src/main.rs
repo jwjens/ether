@@ -64,6 +64,7 @@ fn main() {
             commands::get_levels,
             commands::get_file_duration,
             commands::analyze_lufs,
+            commands::open_url,
         ])
         .setup(move |app| {
             dashboard::start_dashboard_server(audio_state.clone(), now_playing.clone(), 4242);

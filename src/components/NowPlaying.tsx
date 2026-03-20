@@ -2,95 +2,135 @@ import { useState, useEffect, useRef } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { query } from "../db/client";
-import ovLogo from "../assets/cropped-lOVe.png";
 
 interface TrackInfo {
-  title: string;
-  artist: string;
-  positionSec: number;
-  durationSec: number;
+  title: string; artist: string;
+  position?: number; positionSec?: number;
+  duration?: number; durationSec?: number;
   isPlaying: boolean;
+  upcoming?: { title: string; artist: string; duration: number }[];
+}
+interface UpcomingSong {
+  title: string; artist_name: string | null; duration_ms: number;
 }
 
 function fmtTime(s: number) {
   if (!s || s < 0) return "0:00";
   return Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
 }
+function fmtDur(ms: number) {
+  if (!ms) return "--:--";
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
 
 async function fetchAlbumArt(artist: string, title: string): Promise<string | null> {
   try {
-    const q = encodeURIComponent(artist + " " + title);
-    const r = await fetch("https://itunes.apple.com/search?term=" + q + "&media=music&limit=1");
+    const r = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(artist + " " + title) + "&media=music&limit=1");
     const d = await r.json();
-    if (d.results && d.results[0] && d.results[0].artworkUrl100) {
-      return d.results[0].artworkUrl100.replace("100x100bb", "600x600bb");
-    }
+    if (d.results?.[0]?.artworkUrl100) return d.results[0].artworkUrl100.replace("100x100bb", "600x600bb");
   } catch {}
   return null;
 }
 
+const WMO: Record<number, [string, string]> = {
+  0: ["☀️","Clear"], 1: ["🌤","Mostly Clear"], 2: ["⛅","Partly Cloudy"], 3: ["☁️","Overcast"],
+  45: ["🌫️","Foggy"], 48: ["🌫️","Icy Fog"], 51: ["🌦","Light Drizzle"], 53: ["🌧","Drizzle"],
+  61: ["🌧","Light Rain"], 63: ["🌧","Rain"], 65: ["🌧","Heavy Rain"],
+  71: ["❄️","Light Snow"], 73: ["❄️","Snow"], 75: ["❄️","Heavy Snow"],
+  80: ["🌦","Showers"], 95: ["⛈️","Thunderstorm"], 99: ["⛈️","Severe Storm"],
+};
+
 export default function NowPlaying({ onExit }: { onExit?: () => void }) {
-  const [track, setTrack] = useState<TrackInfo>({ title: "Ether Radio", artist: "", positionSec: 0, durationSec: 0, isPlaying: false });
-  const [time] = useState(new Date());
-  const clockRef = useRef<HTMLDivElement>(null);
-  const dateRef = useRef<HTMLDivElement>(null);
+  const [track, setTrack] = useState<TrackInfo>({ title: "Ether", artist: "", positionSec: 0, durationSec: 0, isPlaying: false });
   const [albumArt, setAlbumArt] = useState<string | null>(null);
   const [lastTrack, setLastTrack] = useState("");
-  const [igHandle, setIgHandle] = useState("");
-  const [igEnabled, setIgEnabled] = useState(false);
+  const [upcoming, setUpcoming] = useState<UpcomingSong[]>([]);
+  const [stationName, setStationName] = useState("Ether");
+  const [widgetType, setWidgetType] = useState<"sponsor"|"instagram"|"weather"|"twitter">("sponsor");
   const [adImages, setAdImages] = useState<string[]>([]);
   const [adIndex, setAdIndex] = useState(0);
+  const [igHandle, setIgHandle] = useState("");
+  const [weatherData, setWeatherData] = useState<any>(null);
+  const [weatherCity, setWeatherCity] = useState("Las Vegas");
+  const [weatherLat, setWeatherLat] = useState(36.1699);
+  const [weatherLon, setWeatherLon] = useState(-115.1398);
 
-  // Load Instagram settings from DB
+  const clockRef = useRef<HTMLDivElement>(null);
+  const dateRef = useRef<HTMLDivElement>(null);
+  const progressRef = useRef<HTMLDivElement>(null);
+  const posSpanRef = useRef<HTMLSpanElement>(null);
+  const remSpanRef = useRef<HTMLSpanElement>(null);
+
   useEffect(() => {
     (async () => {
       try {
-        const rows = await query<{key: string, value: string}>("SELECT key, value FROM station_config_kv WHERE key IN ('ig_handle','ig_enabled','ad_images') LIMIT 10");
+        const rows = await query<{key:string;value:string}>("SELECT key, value FROM station_config_kv WHERE key IN ('station_name','ad_images','ig_handle','now_playing_widget','weather_city','weather_lat','weather_lon')");
         for (const r of rows) {
-          if (r.key === 'ig_handle') setIgHandle(r.value);
-          if (r.key === 'ig_enabled') setIgEnabled(r.value === '1');
-          if (r.key === 'ad_images') {
-            try { setAdImages(JSON.parse(r.value)); } catch {}
-          }
+          if (r.key === "station_name") setStationName(r.value || "Ether");
+          if (r.key === "ad_images") { try { setAdImages(JSON.parse(r.value)); } catch {} }
+          if (r.key === "ig_handle") setIgHandle(r.value);
+          if (r.key === "now_playing_widget") setWidgetType((r.value as any) || "sponsor");
+          if (r.key === "weather_city") setWeatherCity(r.value);
+          if (r.key === "weather_lat") setWeatherLat(parseFloat(r.value) || 36.1699);
+          if (r.key === "weather_lon") setWeatherLon(parseFloat(r.value) || -115.1398);
         }
       } catch {}
     })();
   }, []);
 
-  // Rotate ad images
+  useEffect(() => {
+    if (widgetType !== "weather") return;
+    const load = async () => {
+      try {
+        const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${weatherLat}&longitude=${weatherLon}&current_weather=true&temperature_unit=fahrenheit`);
+        const d = await r.json();
+        setWeatherData(d.current_weather);
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [widgetType, weatherLat, weatherLon]);
+
   useEffect(() => {
     if (adImages.length < 2) return;
     const id = setInterval(() => setAdIndex(i => (i + 1) % adImages.length), 8000);
     return () => clearInterval(id);
   }, [adImages]);
 
-  const posRef = useRef<{pos: number, dur: number}>({pos: 0, dur: 0});
-  const progressRef = useRef<HTMLDivElement>(null);
-  const posSpanRef = useRef<HTMLSpanElement>(null);
-  const remSpanRef = useRef<HTMLSpanElement>(null);
+  const loadUpcoming = async () => {
+    // upcoming populated from event payload
+  };
+  useEffect(() => { loadUpcoming(); }, []);
 
   useEffect(() => {
-    // Request current track from main window on open
-    import("@tauri-apps/api/event").then(({ emit: emitFn }) => {
-      setTimeout(() => emitFn("now-playing-request", {}).catch(() => {}), 500);
-    });
+    const id = setInterval(() => {
+      const n = new Date();
+      if (clockRef.current) clockRef.current.textContent = n.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      if (dateRef.current) dateRef.current.textContent = n.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    import("@tauri-apps/api/event").then(({ emit: e }) => { setTimeout(() => e("now-playing-request", {}).catch(() => {}), 500); });
   }, []);
 
   useEffect(() => {
     const unlisten = listen<TrackInfo>("now-playing-update", (event) => {
       const p = event.payload;
-      // Only trigger React re-render when track/artist/status changes
+      const posSec = p.positionSec ?? p.position ?? 0;
+      const durSec = p.durationSec ?? p.duration ?? 0;
+      // Update upcoming from payload
+      if (p.upcoming && p.upcoming.length > 0) {
+        setUpcoming(p.upcoming.map(q => ({ title: q.title, artist_name: q.artist, duration_ms: (q.duration || 0) * 1000 })));
+      }
       setTrack(prev => {
-        if (prev.title !== p.title || prev.artist !== p.artist || prev.isPlaying !== p.isPlaying) {
-          return p;
-        }
-        // Update position via DOM directly to avoid re-render
-        posRef.current = { pos: p.positionSec, dur: p.durationSec };
-        if (progressRef.current && p.durationSec > 0) {
-          progressRef.current.style.width = (p.positionSec / p.durationSec * 100) + "%";
-        }
-        if (posSpanRef.current) posSpanRef.current.textContent = fmtTime(p.positionSec);
-        if (remSpanRef.current) remSpanRef.current.textContent = "-" + fmtTime(p.durationSec - p.positionSec);
+        if (prev.title !== p.title || prev.artist !== p.artist || prev.isPlaying !== p.isPlaying) { return { ...p, positionSec: posSec, durationSec: durSec }; }
+        if (progressRef.current && durSec > 0) progressRef.current.style.width = (posSec / durSec * 100) + "%";
+        if (posSpanRef.current) posSpanRef.current.textContent = fmtTime(posSec);
+        if (remSpanRef.current) remSpanRef.current.textContent = "-" + fmtTime(durSec - posSec);
         return prev;
       });
     });
@@ -98,137 +138,143 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   }, []);
 
   useEffect(() => {
-    const id = setInterval(() => {
-      const now = new Date();
-      if (clockRef.current) clockRef.current.textContent = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      if (dateRef.current) dateRef.current.textContent = now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
     const key = track.artist + "|" + track.title;
     if (key === lastTrack) return;
     setLastTrack(key);
-    if (track.artist && track.title && track.title !== "Ether Radio") {
-      fetchAlbumArt(track.artist, track.title).then(setAlbumArt);
-    } else {
-      setAlbumArt(null);
-    }
+    if (track.artist && track.title && track.title !== "Ether") fetchAlbumArt(track.artist, track.title).then(setAlbumArt);
+    else setAlbumArt(null);
   }, [track.artist, track.title]);
 
-  const { title, artist, positionSec: pos, durationSec: dur, isPlaying } = track;
+  const { title, artist, positionSec: pos = 0, durationSec: dur = 0, isPlaying } = track;
   const pct = dur > 0 ? (pos / dur) * 100 : 0;
-  const timeStr = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const dateStr = time.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  const now = new Date();
+  const wCode = weatherData?.weathercode ?? -1;
+  const [wIcon, wDesc] = WMO[wCode] ?? ["🌡️", ""];
+  const igSrc = igHandle.startsWith("#")
+    ? `https://www.instagram.com/explore/tags/${igHandle.replace("#", "")}/embed`
+    : `https://www.instagram.com/${igHandle.replace("@", "")}/embed`;
 
   const handleClose = async () => {
     if (onExit) { onExit(); return; }
     try { await getCurrentWindow().close(); } catch {}
   };
 
-  // Right panel: ads > instagram > placeholder
-  const showAds = adImages.length > 0;
-  const showIg = !showAds && igEnabled && igHandle;
-  const igSrc = igHandle.startsWith('#')
-    ? `https://www.instagram.com/explore/tags/${igHandle.replace('#','')}/embed`
-    : `https://www.instagram.com/${igHandle.replace('@','')}/embed`;
-
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0a0a0a", color: "#fff", overflow: "hidden", fontFamily: "system-ui, sans-serif", willChange: "auto" }}>
-      {/* Blurred album art background */}
-{albumArt && (
-        <div style={{
-          position: "absolute", inset: 0,
-          backgroundImage: `url(${albumArt})`,
-          backgroundSize: "cover", backgroundPosition: "center",
-          filter: "blur(80px) brightness(0.2) saturate(1.8)",
-          transform: "scale(1.15) translateZ(0)",
-          willChange: "transform",
-          zIndex: 0
-        }} />
-      )}
-      {!albumArt && <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #0f172a 100%)", zIndex: 0 }} />}
+    <div style={{ position: "fixed", inset: 0, background: "#080810", color: "#fff", overflow: "hidden", fontFamily: "'Inter', system-ui, sans-serif", display: "flex", flexDirection: "column" }}>
+      {albumArt && <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${albumArt})`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(80px) brightness(0.12) saturate(1.8)", transform: "scale(1.15)", zIndex: 0 }} />}
+      {!albumArt && <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg,#080810 0%,#0f0f2e 50%,#080810 100%)", zIndex: 0 }} />}
 
       <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column" }}>
 
         {/* Top bar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "20px 36px 0" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <span style={{ fontSize: 28, fontWeight: 300, letterSpacing: "-0.04em" }}>
-              <span style={{ color: "#60a5fa" }}>Eth</span><span style={{ color: "#fff" }}>er</span>
-            </span>
-            {isPlaying && (
-              <span style={{ padding: "3px 10px", background: "#dc2626", borderRadius: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.1em" }}>ON AIR</span>
-            )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 32px 14px", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <svg width="42" height="42" viewBox="0 0 512 512" style={{ borderRadius: 10, flexShrink: 0 }}>
+              <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#06b6d4"/><stop offset="100%" stopColor="#8b5cf6"/></linearGradient></defs>
+              <rect width="512" height="512" rx="112" fill="url(#lg)"/>
+              <rect x="128" y="136" width="256" height="56" rx="16" fill="#0a0a18"/>
+              <rect x="128" y="228" width="192" height="52" rx="16" fill="#0a0a18"/>
+              <rect x="128" y="320" width="256" height="56" rx="16" fill="#0a0a18"/>
+              <rect x="128" y="136" width="56" height="240" rx="16" fill="#0a0a18"/>
+            </svg>
+            <div>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{stationName}</div>
+              <div style={{ fontSize: 8, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const, marginTop: 2 }}>Powered by Ether</div>
+            </div>
+            {isPlaying && <span style={{ padding: "4px 12px", background: "#dc2626", borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", boxShadow: "0 0 16px rgba(220,38,38,0.5)", marginLeft: 4 }}>ON AIR</span>}
           </div>
           <div style={{ textAlign: "right" }}>
-            <div ref={clockRef} style={{ fontSize: 40, fontFamily: "monospace", fontWeight: 700, lineHeight: 1 }}>{timeStr}</div>
-            <div ref={dateRef} style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 2 }}>{dateStr}</div>
+            <div ref={clockRef} style={{ fontFamily: "'DM Mono', monospace", fontSize: 40, fontWeight: 300, lineHeight: 1, letterSpacing: "-0.02em" }}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+            <div ref={dateRef} style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", marginTop: 3 }}>{now.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</div>
           </div>
         </div>
 
-        {/* Main content: album art | right panel */}
-        <div style={{ flex: 1, display: "flex", gap: 32, padding: "20px 36px", minHeight: 0 }}>
+        {/* Main area */}
+        <div style={{ flex: 1, display: "flex", gap: 16, padding: "0 32px", minHeight: 0 }}>
 
-          {/* Left: Album art */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            {albumArt ? (
-              <img src={albumArt} alt="Album art" style={{ width: 320, height: 320, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.8)", objectFit: "cover" }} />
-            ) : (
-              <div style={{ width: 320, height: 320, borderRadius: 16, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ fontSize: 64, opacity: 0.2 }}>♪</span>
-              </div>
-            )}
+          {/* Left: Upcoming */}
+          <div style={{ width: 320, flexShrink: 0, background: "rgba(0,0,0,0.45)", borderRadius: 18, border: "1px solid rgba(255,255,255,0.07)", padding: "18px 18px", display: "flex", flexDirection: "column", backdropFilter: "blur(20px)" }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.24em", color: "rgba(255,255,255,0.22)", textTransform: "uppercase" as const, marginBottom: 12 }}>Up Next</div>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, overflow: "hidden" }}>
+              {upcoming.length === 0
+                ? <div style={{ color: "rgba(255,255,255,0.15)", fontSize: 13, marginTop: 32, textAlign: "center" as const }}>Queue is empty</div>
+                : upcoming.map((s, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: 11, background: i === 0 ? "rgba(34,211,238,0.09)" : "rgba(255,255,255,0.025)", border: `1px solid ${i === 0 ? "rgba(34,211,238,0.2)" : "rgba(255,255,255,0.035)"}` }}>
+                    <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, background: i === 0 ? "rgba(34,211,238,0.18)" : "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: i === 0 ? "#22d3ee" : "rgba(255,255,255,0.22)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? "#f0f0f8" : "rgba(255,255,255,0.6)", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 1, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{s.artist_name || "Unknown Artist"}</div>
+                    </div>
+                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "rgba(255,255,255,0.18)", flexShrink: 0 }}>{fmtDur(s.duration_ms)}</div>
+                  </div>
+                ))}
+            </div>
           </div>
 
-          {/* Right: Ad / Instagram / placeholder */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-            <div style={{ flex: 1, borderRadius: 16, overflow: "hidden", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", position: "relative" }}>
-              {showAds && (
-                <img src={adImages[adIndex]} alt="Ad" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-              )}
-              {showIg && (
-                <iframe src={igSrc} style={{ width: "100%", height: "100%", border: "none" }} title="Instagram" />
-              )}
-              {!showAds && !showIg && (
-                <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
-                  <img src={ovLogo} alt="Opportunity Village" style={{ width: "90%", height: "80%", objectFit: "contain", opacity: 0.98 }} />
-                </div>
-              )}
-            </div>
-
-            {/* OV Logo watermark bottom of right panel */}
-            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginTop: 10, gap: 10 }}>
-              <img src={ovLogo} alt="OV" style={{ height: 48, opacity: 0.6, objectFit: "contain" }} />
-            </div>
+          {/* Right: Big widget */}
+          <div style={{ flex: 1, borderRadius: 18, overflow: "hidden", background: "rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.07)", position: "relative", backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {widgetType === "sponsor" && adImages.length > 0 && <img src={adImages[adIndex]} alt="Sponsor" style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
+            {widgetType === "sponsor" && adImages.length === 0 && (
+              <div style={{ textAlign: "center" as const, padding: 48 }}>
+                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 20 }}><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.18)", lineHeight: 2 }}>Sponsor Display<br/>Add images in Settings → Now Playing</div>
+              </div>
+            )}
+            {widgetType === "instagram" && igHandle && <iframe src={igSrc} style={{ width: "100%", height: "100%", border: "none" }} title="Instagram" />}
+            {widgetType === "instagram" && !igHandle && (
+              <div style={{ textAlign: "center" as const, padding: 48 }}>
+                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 20 }}><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1.5" fill="rgba(255,255,255,0.12)" stroke="none"/></svg>
+                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.18)" }}>Set Instagram handle in Settings → Now Playing</div>
+              </div>
+            )}
+            {widgetType === "weather" && (
+              <div style={{ textAlign: "center" as const }}>
+                {weatherData ? (
+                  <>
+                    <div style={{ fontSize: 96, lineHeight: 1, marginBottom: 16 }}>{wIcon}</div>
+                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 88, fontWeight: 300, letterSpacing: "-0.04em", lineHeight: 1, marginBottom: 10 }}>{Math.round(weatherData.temperature)}°</div>
+                    <div style={{ fontSize: 24, color: "rgba(255,255,255,0.45)", marginBottom: 8 }}>{wDesc}</div>
+                    <div style={{ fontSize: 14, color: "rgba(255,255,255,0.25)", letterSpacing: "0.16em", textTransform: "uppercase" as const }}>{weatherCity}</div>
+                  </>
+                ) : <div style={{ color: "rgba(255,255,255,0.18)", fontSize: 14 }}>Loading weather...</div>}
+              </div>
+            )}
+            {widgetType === "twitter" && (
+              <div style={{ textAlign: "center" as const, padding: 48 }}>
+                <div style={{ fontSize: 72, marginBottom: 20, opacity: 0.12, fontFamily: "serif" }}>𝕏</div>
+                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.18)", lineHeight: 2 }}>Twitter / X Ticker<br/>Coming soon in Ether Pro</div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Bottom: Song info + progress - hide when no track */}
-        <div style={{ padding: "0 36px 20px", display: title === "Ether Radio" ? "none" : "block" }}>
-          <div style={{ background: "rgba(0,0,0,0.75)", borderRadius: 14, padding: "20px 28px", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.15)" }}>
-            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 16, color: "#ffffff", letterSpacing: "0.2em", textTransform: "uppercase" as any, marginBottom: 8, fontWeight: 700 }}>
-                  {isPlaying ? "Now Playing" : ""}
-                </div>
-                <div style={{ fontSize: 42, fontWeight: 800, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#ffffff" }}>{title}</div>
-                {artist && <div style={{ fontSize: 28, color: "#ffffff", marginTop: 6, fontWeight: 400 }}>{artist}</div>}
-              </div>
-              <button onClick={handleClose} style={{ marginLeft: 20, flexShrink: 0, padding: "6px 16px", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, color: "#ffffff", fontSize: 13, cursor: "pointer", letterSpacing: "0.08em" }}>CLOSE</button>
+        {/* Bottom: album art + info */}
+        <div style={{ padding: "14px 32px 22px", flexShrink: 0 }}>
+          <div style={{ background: "rgba(0,0,0,0.7)", borderRadius: 18, padding: "16px 22px", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: 20 }}>
+            <div style={{ flexShrink: 0 }}>
+              {albumArt
+                ? <img src={albumArt} alt="Art" style={{ width: 100, height: 100, borderRadius: 14, objectFit: "cover", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }} />
+                : <div style={{ width: 100, height: 100, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.2 }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                  </div>}
             </div>
-            {dur > 0 && (
-              <>
-                <div style={{ height: 5, background: "rgba(255,255,255,0.2)", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
-                  <div style={{ height: "100%", width: pct + "%", background: "#60a5fa", borderRadius: 2, transition: "width 0.5s linear" }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {isPlaying && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 4 }}>Now Playing</div>}
+              <div style={{ fontSize: 32, fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.03em", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
+              {artist && <div style={{ fontSize: 17, color: "rgba(255,255,255,0.45)", marginTop: 4, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{artist}</div>}
+              {dur > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden", marginBottom: 5 }}>
+                    <div ref={progressRef} style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#22d3ee,#8b5cf6)", borderRadius: 2, transition: "width 0.5s linear" }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: "'DM Mono', monospace", color: "rgba(255,255,255,0.28)" }}>
+                    <span ref={posSpanRef}>{fmtTime(pos)}</span>
+                    <span ref={remSpanRef}>-{fmtTime(dur - pos)}</span>
+                  </div>
                 </div>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontFamily: "monospace", color: "rgba(255,255,255,0.8)" }}>
-                  <span ref={posSpanRef}>{fmtTime(pos)}</span>
-                  <span ref={remSpanRef}>-{fmtTime(dur - pos)}</span>
-                </div>
-              </>
-            )}
+              )}
+            </div>
+            <button onClick={handleClose} style={{ flexShrink: 0, padding: "10px 20px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "rgba(255,255,255,0.4)", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", cursor: "pointer", textTransform: "uppercase" as const }}>CLOSE</button>
           </div>
         </div>
       </div>

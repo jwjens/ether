@@ -101,20 +101,7 @@ button, a { transition: all 0.12s ease !important; }
 ::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
-/* ── Ether logo ──────────────────────────────────────────────── */
-.ether-logo {
-  font-family: 'Syne', sans-serif;
-  font-weight: 800;
-  font-size: 21px;
-  letter-spacing: -0.06em;
-  line-height: 1;
-}
-.ether-logo .eth { color: #22d3ee; }
-.ether-logo .er  { color: var(--text-primary); }
-
-/* Dark mode logo tweak */
-.dark-theme .ether-logo .eth { color: #22d3ee; }
-.dark-theme .ether-logo .er  { color: #f0effe; }
+/* ── Ether logo — rendered via EtherLogo.tsx (inline SVG) ─────── */
 
 /* ── Deck cards ──────────────────────────────────────────────── */
 .deck-card {

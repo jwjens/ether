@@ -287,7 +287,9 @@ function GiantClock({ slots, tracks, onAssign, onUnassign, selectedSlot, onSelec
         <div style={{ width: "100%", maxWidth: 500, background: "rgba(255,255,255,0.05)", backdropFilter: "blur(20px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: 20 }}>
           {slots[selectedSlot].type === "break" ? (
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 12 }}>🎙 Assign a voice break to this slot</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
+                Assign a voice break to this slot</div>
               {slots[selectedSlot].trackId ? (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.3)", borderRadius: 10, padding: "10px 14px" }}>
                   <span style={{ fontSize: 13, color: "#34d399", fontWeight: 600 }}>✓ {tracks.find(t => t.id === slots[selectedSlot].trackId)?.title}</span>
@@ -555,7 +557,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
         <div style={{ margin: "0 20px", flex: 1, minHeight: 150, background: "rgba(0,0,0,0.5)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.05)", position: "relative" as any, overflow: "hidden" }}>
           {!recording && wavePointsRef.current.length === 0 && (
             <div style={{ position: "absolute" as any, inset: 0, display: "flex", flexDirection: "column" as any, alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <div style={{ fontSize: 24, opacity: 0.1 }}>🎙</div>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", letterSpacing: "0.1em" }}>WAVEFORM</div>
             </div>
           )}
@@ -640,8 +642,12 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Record breaks · assign them to the clock · let automation handle playback</p>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => setView("clock")} style={{ padding: "7px 16px", borderRadius: 9, fontSize: 11, fontWeight: 700, cursor: "pointer", background: view === "clock" ? "var(--accent-blue)" : "var(--bg-secondary)", color: view === "clock" ? "#fff" : "var(--text-tertiary)", border: view === "clock" ? "none" : "1px solid var(--border-primary)" }}>🕐 Clock</button>
-            <button onClick={() => setView("list")} style={{ padding: "7px 16px", borderRadius: 9, fontSize: 11, fontWeight: 700, cursor: "pointer", background: view === "list" ? "var(--accent-blue)" : "var(--bg-secondary)", color: view === "list" ? "#fff" : "var(--text-tertiary)", border: view === "list" ? "none" : "1px solid var(--border-primary)" }}>☰ List</button>
+            <button onClick={() => setView("clock")} style={{ padding: "7px 16px", borderRadius: 9, fontSize: 11, fontWeight: 700, cursor: "pointer", background: view === "clock" ? "var(--accent-blue)" : "var(--bg-secondary)", color: view === "clock" ? "#fff" : "var(--text-tertiary)", border: view === "clock" ? "none" : "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 5 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Clock</button>
+            <button onClick={() => setView("list")} style={{ padding: "7px 16px", borderRadius: 9, fontSize: 11, fontWeight: 700, cursor: "pointer", background: view === "list" ? "var(--accent-blue)" : "var(--bg-secondary)", color: view === "list" ? "#fff" : "var(--text-tertiary)", border: view === "list" ? "none" : "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 5 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              List</button>
           </div>
         </div>
 
@@ -683,7 +689,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", fontFamily: "'Syne', sans-serif" }}>Recorded Breaks</div>
             {tracks.length === 0 ? (
               <div style={{ textAlign: "center" as any, padding: "48px 24px" }}>
-                <div style={{ fontSize: 36, marginBottom: 10 }}>🎙</div>
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 10, opacity: 0.4 }}><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
                 <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No voice tracks yet</div>
                 <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Record a break in the studio panel</div>
               </div>
