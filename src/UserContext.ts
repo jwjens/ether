@@ -21,10 +21,10 @@ export function useRole() {
 
 export function useCanEdit() {
   const role = useRole();
-  return role === "admin" || role === "md";
+  return role === "admin" || role === "music_director";
 }
 
 export function useCanManageSpots() {
   const role = useRole();
-  return role === "admin" || role === "md" || role === "traffic";
+  return role === "admin" || role === "music_director";
 }
