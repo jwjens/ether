@@ -1,6 +1,6 @@
 [package]
 name = "openair"
-version = "0.1.0"
+version = "1.5.2"
 edition = "2021"
 description = "Free broadcast automation"
 

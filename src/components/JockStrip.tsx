@@ -21,7 +21,7 @@ function fmtDur(ms: number): string {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
-export default function JockStrip({ deckA, deckB }: Props) {
+export default function JockStrip({ deckA, deckB, dropDown = false }: Props & { dropDown?: boolean }) {
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<SongResult[]>([]);
   const [showResults, setShowResults] = useState(false);
@@ -93,12 +93,12 @@ export default function JockStrip({ deckA, deckB }: Props) {
       {showResults && results.length > 0 && (
         <div style={{
           position: "absolute",
-          bottom: "calc(100% + 6px)",
+          ...(dropDown ? { top: "calc(100% + 6px)" } : { bottom: "calc(100% + 6px)" }),
           left: 0, right: 0,
           background: "var(--bg-secondary)",
           border: "1px solid var(--border-secondary)",
           borderRadius: 12,
-          boxShadow: "0 -8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-primary)",
+          boxShadow: dropDown ? "0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-primary)" : "0 -8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-primary)",
           zIndex: 9999,
           maxHeight: 340,
           overflowY: "auto",

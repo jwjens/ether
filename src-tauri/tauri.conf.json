@@ -1,6 +1,6 @@
 {
   "productName": "Ether",
-  "version": "1.9.1",
+  "version": "1.5.2",
   "identifier": "com.ether.radio",
   "build": {
     "frontendDist": "../dist",
