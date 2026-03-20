@@ -11,6 +11,7 @@ interface Props {
   onResume: () => void;
   onStop: () => void;
   onVolume: (v: number) => void;
+  onDragStart?: (e: React.MouseEvent) => void;
 }
 
 function fmt(sec: number): string {
@@ -25,7 +26,7 @@ function fmtMs(sec: number): string {
   return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0") + "." + ms;
 }
 
-export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume }: Props) {
+export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume, onDragStart }: Props) {
   const [blink, setBlink] = useState(false);
 
   const status = deck?.status || "idle";
@@ -129,6 +130,21 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       }}>
         {/* Deck badge */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {onDragStart && (
+            <div
+              onMouseDown={onDragStart}
+              title="Drag to reorder"
+              style={{ cursor: "grab", padding: "2px 3px", borderRadius: 4, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.5 }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; }}
+            >
+              <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+                <circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/>
+                <circle cx="3" cy="6" r="1.2"/><circle cx="7" cy="6" r="1.2"/>
+                <circle cx="3" cy="10" r="1.2"/><circle cx="7" cy="10" r="1.2"/>
+              </svg>
+            </div>
+          )}
           <div style={{
             width: 28, height: 28, borderRadius: 8,
             background: deckHueBg,
@@ -278,7 +294,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       <div style={{
         margin: "0 16px 10px",
         flex: 1,
-        minHeight: 64,
+        minHeight: 44,
         position: "relative",
         borderRadius: 10,
         overflow: "hidden",
