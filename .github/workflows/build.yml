@@ -1,11 +1,9 @@
 name: Build Ether
-
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
-
 jobs:
   build-tauri:
     permissions:
@@ -23,33 +21,26 @@ jobs:
           - platform: macos-latest
             args: '--target x86_64-apple-darwin'
             name: macOS Intel
-
     runs-on: ${{ matrix.platform }}
     name: Build ${{ matrix.name }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
       - name: Cache Rust dependencies
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-
       - name: Install frontend dependencies
         run: npm install
-
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -59,22 +50,104 @@ jobs:
           releaseName: 'Ether ${{ github.ref_name }}'
           releaseBody: |
             ## Ether ${{ github.ref_name }}
-
             Free broadcast automation for radio stations, theme parks, and venues.
-
             ### Downloads
             - **Windows:** Download the `.msi` file
             - **Mac (Apple Silicon M1/M2/M3):** Download the `aarch64.dmg` file
             - **Mac (Intel):** Download the `x86_64.dmg` file
-
+            - **Everything bundle:** Download `Ether-${{ github.ref_name }}-Bundle.zip` for all installers + documentation
             ### Windows Installation Note
             Windows may show a security warning. Click **"More info"** → **"Run anyway"** to install.
-
             ### Mac Installation Note
             Mac may show a Gatekeeper warning. Right-click the app → **Open** → **Open** to install.
-
             ### What's New
             See [CHANGELOG](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  bundle:
+    name: Bundle Installers + Docs
+    needs: build-tauri
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p bundle/installers
+          TAG=${{ github.ref_name }}
+          # Wait a moment for assets to be fully uploaded
+          sleep 30
+          # Download all release assets using gh cli
+          gh release download "$TAG" \
+            --pattern "*.msi" \
+            --pattern "*.dmg" \
+            --dir bundle/installers \
+            --repo ${{ github.repository }} || true
+
+      - name: Copy documentation
+        run: |
+          mkdir -p bundle/docs
+          if [ -d "docs" ]; then
+            cp docs/*.pdf bundle/docs/ 2>/dev/null || true
+            cp docs/*.docx bundle/docs/ 2>/dev/null || true
+            cp docs/*.md bundle/docs/ 2>/dev/null || true
+            cp docs/*.txt bundle/docs/ 2>/dev/null || true
+          fi
+          # Copy root-level docs if they exist
+          cp README.md bundle/ 2>/dev/null || true
+          cp CHANGELOG.md bundle/ 2>/dev/null || true
+
+      - name: Create install guide
+        run: |
+          cat > bundle/INSTALL.txt << 'EOF'
+          ETHER - Installation Guide
+          ==========================
+
+          WINDOWS
+          -------
+          1. Run the .msi file in the installers/ folder
+          2. If Windows shows a security warning, click "More info" then "Run anyway"
+          3. Follow the installer prompts
+
+          MAC - APPLE SILICON (M1/M2/M3)
+          --------------------------------
+          1. Open the aarch64.dmg file in the installers/ folder
+          2. Drag Ether to your Applications folder
+          3. If macOS shows a Gatekeeper warning, right-click the app → Open → Open
+
+          MAC - INTEL
+          -----------
+          1. Open the x86_64.dmg file in the installers/ folder
+          2. Drag Ether to your Applications folder
+          3. If macOS shows a Gatekeeper warning, right-click the app → Open → Open
+
+          SUPPORT
+          -------
+          Email: hello@etherradio.app
+          Website: etherradio.app
+          EOF
+
+      - name: Create ZIP bundle
+        run: |
+          TAG=${{ github.ref_name }}
+          cd bundle
+          zip -r "../Ether-${TAG}-Bundle.zip" .
+          cd ..
+          ls -lh "Ether-${TAG}-Bundle.zip"
+
+      - name: Upload bundle to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${{ github.ref_name }}
+          gh release upload "$TAG" \
+            "Ether-${TAG}-Bundle.zip" \
+            --repo ${{ github.repository }} \
+            --clobber
