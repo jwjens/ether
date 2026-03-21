@@ -29,7 +29,11 @@
     "icon": [
       "icons/icon.ico",
       "icons/icon.png"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "./Ether.entitlements",
+      "infoPlistString": "<key>NSMicrophoneUsageDescription</key><string>Ether needs microphone access for live broadcasting and voice tracking.</string><key>NSAudioInputUsageDescription</key><string>Ether needs audio input access to monitor and switch audio devices.</string>"
+    }
   },
   "plugins": {
     "sql": {
