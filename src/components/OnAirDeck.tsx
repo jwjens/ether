@@ -238,7 +238,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   const deckHueBg = `rgba(${deckHueRaw},0.1)`;
   const deckHueBorder = `rgba(${deckHueRaw},0.25)`;
 
-  const playBtnBg = isPlaying ? "#fbbf24" : isPaused ? "#34d399" : deckHue;
+  const playBtnBg    = isPlaying ? "var(--accent-green)" : isPaused ? "var(--accent-cyan)" : deckHue;
   const playBtnLabel = isPlaying ? "PAUSE" : isPaused ? "RESUME" : "PLAY";
 
   return (
@@ -458,6 +458,29 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         overflow: "hidden",
         background: "var(--bg-tertiary)",
       }}>
+        {/* Artwork background for standby decks */}
+        {!isPlaying && artUrl && artReady && (
+          <>
+            <img
+              src={artUrl}
+              alt=""
+              style={{
+                position: "absolute", inset: 0,
+                width: "100%", height: "100%",
+                objectFit: "cover",
+                opacity: 0.12,
+                filter: "blur(8px) saturate(1.4)",
+                transform: "scale(1.05)",
+                pointerEvents: "none",
+              }}
+            />
+            <div style={{
+              position: "absolute", inset: 0,
+              background: "linear-gradient(to top, var(--bg-tertiary) 0%, transparent 60%)",
+              pointerEvents: "none",
+            }} />
+          </>
+        )}
         <VUMeter
           deckId={deckId}
           isPlaying={isPlaying}
@@ -469,6 +492,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           isCritical={isCritical}
           introEnd={introEnd}
           hasTrack={!!title}
+          filePath={deck?.filePath || undefined}
         />
 
         {/* Countdown overlay — background fades letting waveform show through, text fully opaque */}
@@ -591,7 +615,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             borderRadius: 10,
             background: playBtnBg,
             border: "none",
-            color: "#000",
+            color: isPlaying ? "#fff" : "#000",
             cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             gap: 6,
@@ -606,6 +630,10 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">
               <rect x="0" y="0" width="3.5" height="12" rx="1"/>
               <rect x="6.5" y="0" width="3.5" height="12" rx="1"/>
+            </svg>
+          ) : isPaused ? (
+            <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">
+              <polygon points="0,0 10,6 0,12"/>
             </svg>
           ) : (
             <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor">

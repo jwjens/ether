@@ -1,15 +1,14 @@
 import { useState, useEffect } from "react";
 import { execute, query } from "../db/client";
-import { setPlanGlobally } from "../hooks/usePlan";
 
 // ── Stripe config ──
-const STRIPE_PK = "pk_test_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
+const STRIPE_PK = "pk_live_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
 const PRICE_PRO     = "price_1TCwR6QJRnsdUhPM6RPqhjdA";
 const PRICE_STATION = "price_1TCwRZQJRnsdUhPMjwK0y9sA";
 const API_URL       = "https://ether-backend-production.up.railway.app";
 
-const PAYMENT_LINK_PRO     = "https://buy.stripe.com/test_8x228tgzFdmgb7F4qLawo00";
-const PAYMENT_LINK_STATION = "https://buy.stripe.com/test_4gMeVf4QXgyscbJcXhawo01";
+const PAYMENT_LINK_PRO     = "https://buy.stripe.com/aFa5kx6X2b8Nac78c79k402";
+const PAYMENT_LINK_STATION = "https://buy.stripe.com/cNi14hgxC6Sx1FB2RN9k401";
 
 export type PlanTier = "free" | "pro" | "station";
 
@@ -30,16 +29,15 @@ const FEATURES: PlanFeature[] = [
   { label: "Show prep platform",             pro: true,  station: true  },
   { label: "Track editor (cue points)",      pro: true,  station: true  },
   { label: "Live mic deck",                  pro: true,  station: true  },
-  { label: "Phone desk (call intake)",       pro: true,  station: true  },
-  { label: "Cloud log backup",               pro: true,  station: true,  comingSoon: true },
-  { label: "Remote web dashboard",           pro: true,  station: true,  comingSoon: true },
-  { label: "Mobile emergency override",      pro: true,  station: true,  comingSoon: true },
-  { label: "PDF traffic reports",            pro: true,  station: true,  comingSoon: true },
-  { label: "Multi-output audio",             pro: true,  station: true,  comingSoon: true },
-  { label: "Multi-station console",          pro: false, station: true,  comingSoon: true },
-  { label: "User accounts + roles",          pro: false, station: true,  comingSoon: true },
-  { label: "NexGen / ENCO import",           pro: false, station: true,  comingSoon: true },
-  { label: "Listener analytics",             pro: false, station: true,  comingSoon: true },
+  { label: "Cloud log backup",               pro: true,  station: true  },
+  { label: "Remote web dashboard",           pro: true,  station: true  },
+  { label: "Mobile emergency override",      pro: true,  station: true  },
+  { label: "PDF traffic reports",            pro: true,  station: true  },
+  { label: "Listener analytics",             pro: true,  station: true  },
+  { label: "Multi-output audio (ASIO)",      pro: true,  station: true  },
+  { label: "Multi-station console",          pro: false, station: true  },
+  { label: "NexGen / ENCO import",           pro: false, station: true  },
+  { label: "User accounts + roles",          pro: false, station: true, comingSoon: true },
 ];
 
 export default function SubscriptionPanel() {
@@ -105,7 +103,6 @@ export default function SubscriptionPanel() {
       await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('license_key', ?)", [licenseKey.trim()]);
       await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('license_email', ?)", [licenseEmail.trim()]);
       setCurrentPlan(data.plan as PlanTier);
-      setPlanGlobally(data.plan as PlanTier);
       setLicenseSuccess(true);
       setShowLicenseEntry(false);
       setTimeout(() => setLicenseSuccess(false), 4000);
@@ -120,7 +117,6 @@ export default function SubscriptionPanel() {
     await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('plan_tier', 'free')", []);
     await execute("DELETE FROM station_config_kv WHERE key = 'license_key'", []);
     setCurrentPlan("free");
-    setPlanGlobally("free");
   };
 
   const planColor = (plan: PlanTier) => {
@@ -163,7 +159,7 @@ export default function SubscriptionPanel() {
             Enter your license key
           </div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
-            After completing payment, check your email for a license key from Ether Technologies.
+            After completing payment, check your email for a license key from Ether Global Technologies.
           </div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
             <input
@@ -210,7 +206,7 @@ export default function SubscriptionPanel() {
             {currentPlan === "free" ? "✓ Current Plan" : "Downgrade"}
           </div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
-            {FEATURES.filter(f => !f.pro && !f.station || (f.label.includes("library") || f.label.includes("scheduling") || f.label.includes("Clock") || f.label.includes("Spot") || f.label.includes("Live assist") || f.label.includes("Voice") || f.label.includes("Show") || f.label.includes("Track editor") || f.label.includes("Live mic") || f.label.includes("Phone desk"))).slice(0, 10).map(f => (
+            {FEATURES.filter(f => !f.pro && !f.station || (f.label.includes("library") || f.label.includes("scheduling") || f.label.includes("Clock") || f.label.includes("Spot") || f.label.includes("Live assist") || f.label.includes("Voice") || f.label.includes("Show") || f.label.includes("Track editor") || f.label.includes("Live mic"))).slice(0, 9).map(f => (
               <div key={f.label} style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ color: "#34d399", flexShrink: 0 }}>✓</span>{f.label}
               </div>
@@ -227,7 +223,7 @@ export default function SubscriptionPanel() {
         }}>
           <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "#22d3ee", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Pro</div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$10</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 24 }}>per month · small station</div>
           {currentPlan === "pro" ? (
             <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 10, background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#22d3ee", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 24 }}>
@@ -258,7 +254,7 @@ export default function SubscriptionPanel() {
           boxShadow: currentPlan === "station" ? "0 0 24px rgba(167,139,250,0.08)" : "none",
         }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#a78bfa", textTransform: "uppercase" as const, marginBottom: 12 }}>Station</div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$79</div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$50</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 24 }}>per month · commercial station</div>
           {currentPlan === "station" ? (
             <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 10, background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 24 }}>
@@ -291,7 +287,7 @@ export default function SubscriptionPanel() {
             <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Pro for cloud backup, remote dashboard, PDF traffic reports, and more</div>
           </div>
           <button onClick={() => openCheckout("pro")} style={{ flexShrink: 0, marginLeft: 20, padding: "10px 20px", borderRadius: 10, background: "#7c3aed", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" as const }}>
-            Upgrade — $19/mo
+            Upgrade — $10/mo
           </button>
         </div>
       )}

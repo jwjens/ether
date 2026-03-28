@@ -51,6 +51,8 @@ import TrackEditor from "./components/TrackEditor";
 import AboutPanel from "./components/AboutPanel";
 import ListenerAnalytics from "./components/ListenerAnalytics";
 import CloudBackup from "./components/CloudBackup";
+import MultiOutputPanel from "./components/MultiOutputPanel";
+import StationManager from "./components/StationManager";
 import { usePlan, setPlanGlobally, PlanGate } from "./hooks/usePlan";
 import PhoneDesk from "./components/PhoneDesk";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
@@ -58,7 +60,7 @@ import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPic
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -392,13 +394,13 @@ export default function App() {
         switch (cmd) {
           case "stop_all":
             engine.stopAll?.();
-            dA?.stop(); dB?.stop(); dC?.stop();
+            deckA?.stop(); deckB?.stop(); deckC?.stop();
             break;
           case "play":
-            engine.resumeActive?.() || dA?.play();
+            engine.resumeActive?.() || deckA?.play();
             break;
           case "pause":
-            engine.pauseActive?.() || dA?.pause();
+            engine.pauseActive?.() || deckA?.pause();
             break;
           case "skip":
             engine.skipToNext?.();
@@ -437,7 +439,7 @@ export default function App() {
 
     const timer = setInterval(poll, 2000);
     return () => clearInterval(timer);
-  }, [dA, dB, dC]);
+  }, [deckA, deckB, deckC]);
 
   const handleWizardComplete = (profile: VenueProfile) => {
     setStationName(profile.name);
@@ -933,6 +935,16 @@ export default function App() {
                   <CloudBackup />
                 </PlanGate>
               )}
+              {panel === "multioutput" && (
+                <PlanGate requires="pro" feature="Multi-Output Audio Routing">
+                  <MultiOutputPanel />
+                </PlanGate>
+              )}
+              {panel === "stationmanager" && (
+                <PlanGate requires="station" feature="Multi-Station Console">
+                  <StationManager onStationSwitch={(id, name) => setStationName(name)} />
+                </PlanGate>
+              )}
               {panel === "smartschedule" && (
                 <SmartScheduler onClose={() => setPanel("live")} />
               )}
@@ -1184,6 +1196,8 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Auto-Cue Library..." onClick={() => set("autocue")} />
         <Item label="Listener Analytics" onClick={() => set("analytics")} />
         <Item label="Cloud Log Backup"   onClick={() => set("cloudbackup")} />
+        <Item label="Audio Routing"      onClick={() => set("multioutput")} />
+        <Item label="Station Manager"    onClick={() => set("stationmanager")} />
         <Item separator />
         <Item label="Remote Dashboard ↗" onClick={async () => {
           try {
@@ -2341,14 +2355,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         padding: "4px 8px",
       }}>
         <div style={{ display: "flex", gap: 2 }}>
-          <ToolbarBtn label="SHUFFLE" active={shuffle} onClick={toggleShuffle} color="#fbbf24" />
-          <ToolbarBtn label="TRIM" active={autoSilenceTrim??true} onClick={() => setAutoSilenceTrim?.(!autoSilenceTrim)} color="#34d399" />
-        </div>
-        <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
-        <div style={{ display: "flex", gap: 2 }}>
-          <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
-          <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#a78bfa" />
-          <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
+          <ToolbarBtn label="SHUFFLE" active={shuffle} onClick={toggleShuffle} color="#34d399" />
+          <ToolbarBtn label="TRIM"    active={autoSilenceTrim??true} onClick={() => setAutoSilenceTrim?.(!autoSilenceTrim)} color="#38bdf8" />
+          <ToolbarBtn label="CARTS"   active={showCarts} onClick={toggleCarts} color="#f97316" />
+          <ToolbarBtn label="XFADE"   active={autoXfade || xfadeActive} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; if (!n) {} }} color="#a78bfa" title="Auto crossfade between tracks" />
         </div>
         <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
         <div style={{ flex: 1, minWidth: 0, position: "relative" as const }}>

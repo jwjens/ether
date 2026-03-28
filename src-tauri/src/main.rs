@@ -3,6 +3,7 @@
 mod audio;
 mod commands;
 mod audio_engine;
+mod audio_routing;
 mod lufs;
 mod dashboard;
 mod clock;
@@ -42,6 +43,7 @@ fn main() {
         .manage(now_playing.clone())
         .manage(heartbeat_log.clone())
         .manage(clock_state.clone())
+        .manage(Arc::new(Mutex::new(audio_routing::DeckRouting::default())))
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -82,6 +84,9 @@ fn main() {
             commands::open_url,
             clock::update_clock,
             clock::get_clock_state,
+            audio_routing::list_audio_output_devices,
+            audio_routing::get_deck_routing,
+            audio_routing::set_deck_output,
         ])
         .setup(move |app| {
             dashboard::start_dashboard_server(audio_state.clone(), now_playing.clone(), 4242);

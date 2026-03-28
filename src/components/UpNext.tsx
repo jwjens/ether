@@ -221,13 +221,22 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       {/* Header */}
       <div style={{ borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>Up Next ({queueLen})</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>Up Next ({queueLen})</span>
+            {totalDuration > 0 && (
+              <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", background: "var(--bg-tertiary)", padding: "2px 7px", borderRadius: 6, border: "1px solid var(--border-primary)" }}>
+                {Math.floor(totalDuration / 3600000) > 0
+                  ? `${Math.floor(totalDuration / 3600000)}h ${Math.floor((totalDuration % 3600000) / 60000)}m`
+                  : `${Math.floor(totalDuration / 60000)}m ${Math.floor((totalDuration % 60000) / 1000)}s`}
+              </span>
+            )}
+          </div>
           {queue.length > 0 && <button onClick={() => { engine.clearQueue(); onQueueChange(); }} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>Clear All</button>}
         </div>
         {activeShow && (
           <div style={{ padding: "0 14px 8px", display: "flex", alignItems: "center", gap: 6 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-green)" }} />
-            <span style={{ fontSize: 10, fontWeight: 500, color: "var(--accent-green)" }}>{activeShow.name}</span>
+            <span style={{ fontSize: 10, fontWeight: 600, color: "var(--accent-green)" }}>{activeShow.name}</span>
             {activeShow.clock_name && <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>— {activeShow.clock_name}</span>}
           </div>
         )}
@@ -257,37 +266,62 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               onMouseDown={e => handleMouseDown(e, i)}
               onContextMenu={e => handleContext(e, i)}
               style={{
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "10px 12px",
+                display: "flex", alignItems: "center", gap: 8,
+                padding: i === 0 ? "10px 12px" : "8px 12px",
                 borderBottom: "1px solid var(--border-primary)",
-                borderLeft: "4px solid " + color,
+                borderLeft: `3px solid ${color}`,
                 borderTop: isDropTarget ? "2px solid #38bdf8" : "none",
-                background: isBeingDragged ? "rgba(56,189,248,0.08)" : i === 0 ? "var(--bg-active)" : "transparent",
+                background: isBeingDragged
+                  ? "rgba(56,189,248,0.08)"
+                  : i === 0
+                  ? `${color}08`
+                  : "transparent",
                 opacity: isBeingDragged ? 0.45 : 1,
                 cursor: isBeingDragged ? "grabbing" : "grab",
                 userSelect: "none" as any,
                 outline: "none",
-                animation: i === 0 && !isBeingDragged ? "upnext-pulse 2s ease-in-out infinite" : "none",
+                transition: "background 0.15s",
               }}
             >
-              <span style={{ fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0, opacity: 0.35, pointerEvents: "none" }}>⠿</span>
-              <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 18, flexShrink: 0, textAlign: "right" as any, pointerEvents: "none" }}>{i + 1}</span>
-              {catLabel && (
-                <span style={{ fontSize: 7, fontWeight: 800, color: "#fff", background: color, padding: "2px 6px", borderRadius: 10, letterSpacing: "0.08em", flexShrink: 0, pointerEvents: "none", opacity: 0.9 }}>{catLabel}</span>
-              )}
-              <div style={{ flex: 1, minWidth: 0, pointerEvents: "none" }}>
-                <div style={{ fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontWeight: 600, letterSpacing: "-0.01em" }}>{item.title}</div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
+              {/* Position number */}
+              <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 16, flexShrink: 0, textAlign: "right" as any, pointerEvents: "none", fontFamily: "'DM Mono', monospace", opacity: 0.5 }}>{i + 1}</span>
+
+              {/* Artwork thumbnail */}
+              <div style={{ width: 32, height: 32, borderRadius: 6, flexShrink: 0, overflow: "hidden", background: `${color}18`, border: `1px solid ${color}30`, pointerEvents: "none" }}>
+                {artUrls[i] ? (
+                  <img src={artUrls[i]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>🎵</div>
+                )}
               </div>
-              {(item as any).duration_ms > 0 && (
-                <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", flexShrink: 0, pointerEvents: "none" }}>
-                  {Math.floor((item as any).duration_ms/60000)}:{String(Math.floor(((item as any).duration_ms%60000)/1000)).padStart(2,"0")}
-                </span>
+
+              {/* Category badge */}
+              {catLabel && (
+                <span style={{ fontSize: 7, fontWeight: 800, color: "#fff", background: color, padding: "2px 5px", borderRadius: 4, letterSpacing: "0.06em", flexShrink: 0, pointerEvents: "none" }}>{catLabel}</span>
               )}
+
+              {/* Title + artist */}
+              <div style={{ flex: 1, minWidth: 0, pointerEvents: "none" }}>
+                <div style={{ fontSize: i === 0 ? 13 : 12, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontWeight: i === 0 ? 700 : 600, letterSpacing: "-0.01em" }}>{item.title}</div>
+                <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
+              </div>
+
+              {/* Duration — always shown */}
+              <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", flexShrink: 0, pointerEvents: "none", opacity: 0.7 }}>
+                {(item as any).durationMs > 0
+                  ? `${Math.floor((item as any).durationMs/60000)}:${String(Math.floor(((item as any).durationMs%60000)/1000)).padStart(2,"0")}`
+                  : (item as any).duration_ms > 0
+                  ? `${Math.floor((item as any).duration_ms/60000)}:${String(Math.floor(((item as any).duration_ms%60000)/1000)).padStart(2,"0")}`
+                  : ""}
+              </span>
+
+              {/* Remove button */}
               <button
                 onMouseDown={e => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); removeItem(i); }}
-                style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "0 4px", flexShrink: 0 }}
+                style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "0 2px", flexShrink: 0, opacity: 0.5 }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
               >✕</button>
             </div>
           );
