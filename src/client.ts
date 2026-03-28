@@ -203,7 +203,7 @@ const MIGRATIONS: Array<{ version: number; name: string; up: string[] }> = [
         transcript TEXT
       )`,
 
-      \`CREATE TABLE IF NOT EXISTS announcements (
+      `CREATE TABLE IF NOT EXISTS announcements (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
         file_path TEXT,
@@ -469,3 +469,4 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     [title, artist, deck, durationMs ?? null, getSessionId()]
   );
 }
+
