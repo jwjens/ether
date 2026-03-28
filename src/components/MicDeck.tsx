@@ -1,4 +1,3 @@
-import React from "react";
 import { useState, useEffect, useRef } from "react";
 
 const BAR_COUNT = 32;
@@ -6,15 +5,45 @@ const PEAK_HOLD_MS = 1200;
 
 interface Props {
   inputDeviceId?: string;
-  onDragStart?: (e: React.MouseEvent) => void;
 }
 
-export default function MicDeck({ inputDeviceId, onDragStart }: Props) {
+function DuckToggle() {
+  const [duck, setDuck] = useState(true);
+  useEffect(() => {
+    (window as any).__etherDuck = duck;
+  }, [duck]);
+  return (
+    <div style={{ padding: "0 14px 6px" }}>
+      <button
+        onClick={() => setDuck(d => !d)}
+        style={{
+          width: "100%", padding: "5px 10px", borderRadius: 8,
+          background: duck ? "rgba(56,189,248,0.1)" : "var(--bg-tertiary)",
+          border: `1px solid ${duck ? "rgba(56,189,248,0.3)" : "var(--border-primary)"}`,
+          color: duck ? "var(--accent-cyan)" : "var(--text-tertiary)",
+          fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+          transition: "all 0.15s",
+        }}
+      >
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+          {duck ? <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/> : <line x1="23" y1="1" x2="1" y2="23"/>}
+        </svg>
+        {duck ? "AUTO-DUCK ON" : "AUTO-DUCK OFF"}
+      </button>
+    </div>
+  );
+}
+
+export default function MicDeck({ inputDeviceId }: Props) {
   const [micLive, setMicLive] = useState(false);
+  const [showProcessing, setShowProcessing] = useState(false);
   const [level, setLevel] = useState(0);
   const [peakHold, setPeakHold] = useState(0);
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const animRef = useRef<number>(0);
   const peakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -176,6 +205,7 @@ export default function MicDeck({ inputDeviceId, onDragStart }: Props) {
       });
       streamRef.current = stream;
       const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 64;
@@ -207,6 +237,8 @@ export default function MicDeck({ inputDeviceId, onDragStart }: Props) {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
+    audioCtxRef.current?.close();
+    audioCtxRef.current = null;
     targetLevelRef.current = 0;
     levelsRef.current = new Array(BAR_COUNT).fill(0);
     peaksRef.current = new Array(BAR_COUNT).fill(0);
@@ -219,58 +251,63 @@ export default function MicDeck({ inputDeviceId, onDragStart }: Props) {
 
   const accentBorder = micLive ? "rgba(239,68,68,0.3)" : "var(--border-primary)";
 
+  // dBFS conversion for display
+  const db = micLive && level > 0 ? Math.round(20 * Math.log10(level)) : null;
+  const peakDb = peakHold > 0 ? Math.round(20 * Math.log10(Math.max(peakHold, 0.001))) : null;
+
   return (
     <div style={{
       display: "flex", flexDirection: "column",
       background: "var(--bg-secondary)",
       borderRadius: 18,
-      border: `1px solid ${accentBorder}`,
+      border: micLive ? "1px solid rgba(239,68,68,0.35)" : "1px solid var(--border-primary)",
       overflow: "hidden",
       height: "100%",
-      transition: "border-color 0.3s ease",
-      boxShadow: micLive ? "0 0 20px rgba(239,68,68,0.15)" : "none",
+      transition: "border-color 0.3s ease, box-shadow 0.3s ease",
+      boxShadow: micLive ? "0 0 0 1px rgba(239,68,68,0.15), 0 4px 24px rgba(239,68,68,0.12)" : "var(--shadow-sm)",
     }}>
-      {/* Top accent bar */}
+
+      {/* Top accent stripe — thicker, more intentional */}
       <div style={{
-        height: 3, flexShrink: 0,
-        background: micLive ? "#ef4444" : "rgba(100,116,139,0.2)",
-        boxShadow: micLive ? "0 0 12px rgba(239,68,68,0.6)" : "none",
+        height: micLive ? 4 : 3, flexShrink: 0,
+        background: micLive
+          ? "linear-gradient(90deg, #ef4444, #f87171)"
+          : "var(--border-primary)",
+        boxShadow: micLive ? "0 0 16px rgba(239,68,68,0.5)" : "none",
         transition: "all 0.3s ease",
       }} />
 
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 6px", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {onDragStart && (
-            <div
-              onMouseDown={onDragStart}
-              title="Drag to reorder"
-              style={{ cursor: "grab", padding: "2px 3px", borderRadius: 4, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.5 }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; }}
-            >
-              <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
-                <circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/>
-                <circle cx="3" cy="6" r="1.2"/><circle cx="7" cy="6" r="1.2"/>
-                <circle cx="3" cy="10" r="1.2"/><circle cx="7" cy="10" r="1.2"/>
-              </svg>
-            </div>
-          )}
+      {/* Channel strip header */}
+      <div style={{ padding: "12px 14px 8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          {/* Mic icon — channel strip style */}
           <div style={{
-            width: 28, height: 28, borderRadius: 8,
-            background: micLive ? "rgba(239,68,68,0.15)" : "var(--bg-tertiary)",
-            border: `1px solid ${micLive ? "rgba(239,68,68,0.4)" : "var(--border-primary)"}`,
+            width: 26, height: 26, borderRadius: 7,
+            background: micLive ? "rgba(239,68,68,0.12)" : "var(--bg-tertiary)",
+            border: `1px solid ${micLive ? "rgba(239,68,68,0.3)" : "var(--border-primary)"}`,
             display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 14, flexShrink: 0, transition: "all 0.3s ease",
-          }}>🎙</div>
-          <span style={{ fontSize: 9, fontWeight: 700, color: micLive ? "#ef4444" : "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const }}>
-            {micLive ? "ON AIR" : "MIC"}
-          </span>
+            transition: "all 0.2s",
+          }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={micLive ? "#ef4444" : "var(--text-tertiary)"} strokeWidth="2" strokeLinecap="round">
+              <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+              <path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", color: micLive ? "#ef4444" : "var(--text-tertiary)", textTransform: "uppercase" as const }}>
+              {micLive ? "ON AIR" : "MIC"}
+            </div>
+          </div>
         </div>
+
+        {/* Live indicator badge */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20,
-          background: micLive ? "rgba(239,68,68,0.1)" : "var(--bg-tertiary)",
-          border: `1px solid ${micLive ? "rgba(239,68,68,0.3)" : "var(--border-primary)"}`,
+          display: "flex", alignItems: "center", gap: 4,
+          padding: "3px 8px", borderRadius: 20,
+          background: micLive ? "rgba(239,68,68,0.08)" : "var(--bg-tertiary)",
+          border: `1px solid ${micLive ? "rgba(239,68,68,0.25)" : "var(--border-primary)"}`,
+          transition: "all 0.2s",
         }}>
           <div style={{
             width: 5, height: 5, borderRadius: "50%",
@@ -278,74 +315,137 @@ export default function MicDeck({ inputDeviceId, onDragStart }: Props) {
             boxShadow: micLive ? "0 0 6px #ef4444" : "none",
             animation: micLive ? "mic-blink 1.2s ease-in-out infinite" : "none",
           }} />
-          <span style={{ fontSize: 9, fontWeight: 700, color: micLive ? "#ef4444" : "var(--text-tertiary)", letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+          <span style={{ fontSize: 8, fontWeight: 700, color: micLive ? "#ef4444" : "var(--text-tertiary)", letterSpacing: "0.1em" }}>
             {micLive ? "LIVE" : "READY"}
           </span>
         </div>
       </div>
 
-      {/* Label */}
-      <div style={{ padding: "2px 16px 10px", flexShrink: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: micLive ? 600 : 400, color: micLive ? "var(--text-primary)" : "var(--text-tertiary)", fontStyle: micLive ? "normal" : "italic", letterSpacing: "-0.025em", lineHeight: 1.3 }}>
-          {micLive ? "Live Microphone" : "No mic active"}
+      {/* Status text */}
+      <div style={{ padding: "0 14px 10px", flexShrink: 0 }}>
+        <div style={{
+          fontSize: 13, fontWeight: micLive ? 600 : 400,
+          color: micLive ? "var(--text-primary)" : "var(--text-tertiary)",
+          fontStyle: micLive ? "normal" : "italic",
+          letterSpacing: "-0.02em",
+          animation: micLive ? "track-load 0.3s ease both" : "none",
+        }}>
+          {micLive ? "Live Microphone" : "Your mic is ready"}
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3, minHeight: 15 }}>
-          {micLive ? "Input monitoring" : "Click to go live"}
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>
+          {micLive ? "Broadcasting now" : "Click when you want to go live"}
         </div>
       </div>
 
-      {/* Level display */}
-      <div style={{ padding: "0 16px 8px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexShrink: 0 }}>
-        <div>
-          <div style={{ fontSize: 8, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const, marginBottom: 3 }}>LEVEL</div>
-          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 40, fontWeight: 300, letterSpacing: "-0.04em", lineHeight: 1, color: micLive ? (level > 0.85 ? "#ef4444" : "#ef4444") : "var(--text-tertiary)", transition: "color 0.1s" }}>
-            {micLive ? Math.round(level * 100) + "%" : "—"}
+      {/* dBFS meters — professional channel strip readout */}
+      <div style={{ padding: "0 14px 8px", display: "flex", gap: 12, alignItems: "flex-end", flexShrink: 0 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 7, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const, marginBottom: 4 }}>INPUT</div>
+          {/* Segmented level bar */}
+          <div style={{ display: "flex", gap: 1.5, height: 8, alignItems: "flex-end" }}>
+            {Array.from({ length: 20 }).map((_, i) => {
+              const threshold = i / 20;
+              const active = micLive && level > threshold;
+              const color = i < 14 ? "var(--accent-green)" : i < 17 ? "var(--accent-amber)" : "#ef4444";
+              return (
+                <div key={i} style={{
+                  flex: 1, height: active ? "100%" : "30%",
+                  borderRadius: 1, background: active ? color : "var(--bg-tertiary)",
+                  transition: "height 0.05s, background 0.05s",
+                }} />
+              );
+            })}
           </div>
         </div>
-        <div style={{ textAlign: "right" as const, paddingBottom: 4 }}>
-          <div style={{ fontSize: 8, color: "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const, marginBottom: 3 }}>PEAK</div>
-          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 400, color: peakHold > 0.85 ? "#ef4444" : "var(--text-secondary)" }}>
-            {micLive ? Math.round(peakHold * 100) + "%" : "——"}
+        <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
+          <div style={{ fontSize: 7, color: "var(--text-tertiary)", letterSpacing: "0.1em", marginBottom: 4 }}>PEAK</div>
+          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 500, color: (peakDb !== null && peakDb > -3) ? "#ef4444" : "var(--text-secondary)", letterSpacing: "-0.02em" }}>
+            {peakDb !== null ? `${peakDb} dB` : "—"}
           </div>
         </div>
       </div>
 
       {/* Progress bar */}
-      <div style={{ margin: "0 16px 10px", height: 3, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
-        <div style={{ height: "100%", width: micLive ? Math.round(level * 100) + "%" : "0%", background: "#ef4444", borderRadius: 2, transition: "width 0.05s linear", boxShadow: micLive ? "0 0 6px #ef4444" : "none" }} />
+      <div style={{ margin: "0 14px 8px", height: 2, background: "var(--bg-tertiary)", borderRadius: 1, overflow: "hidden", flexShrink: 0 }}>
+        <div style={{ height: "100%", width: micLive ? Math.round(level * 100) + "%" : "0%", background: level > 0.85 ? "#ef4444" : "var(--accent-green)", borderRadius: 1, transition: "width 0.05s linear" }} />
       </div>
 
-      {/* Canvas VU meter */}
-      <div style={{ margin: "0 16px 10px", flex: 1, minHeight: 44, position: "relative", borderRadius: 10, overflow: "hidden", background: "var(--bg-tertiary)" }}>
-        <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", borderRadius: 8 }} />
+      {/* Canvas VU */}
+      <div style={{ margin: "0 14px 8px", flex: 1, minHeight: 40, borderRadius: 10, overflow: "hidden", background: "var(--bg-tertiary)" }}>
+        <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
       </div>
+
+      {/* Auto-duck toggle */}
+      {/* Studio Sound */}
+      <div style={{ padding: "0 14px 4px" }}>
+        <button onClick={() => setShowProcessing((p: boolean) => !p)} style={{
+          width: "100%", padding: "5px 10px", borderRadius: 8, border: "none",
+          background: showProcessing ? "rgba(56,189,248,0.12)" : "var(--bg-tertiary)",
+          color: showProcessing ? "var(--accent-cyan)" : "var(--text-tertiary)",
+          fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.08em",
+          outline: showProcessing ? "1px solid rgba(56,189,248,0.3)" : "1px solid var(--border-primary)",
+          transition: "all 0.15s", marginBottom: 4,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+        }}>
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+          </svg>
+          STUDIO SOUND {showProcessing ? "ON" : "OFF"}
+        </button>
+        {showProcessing && streamRef.current && (
+          <div style={{ marginBottom: 6, padding: "8px 10px", borderRadius: 9, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+            <AudioProcessorPanel stream={streamRef.current} compact onLevel={(lv) => setLevel(lv)} />
+          </div>
+        )}
+      </div>
+      <DuckToggle />
 
       {/* Controls */}
-      <div style={{ padding: "10px 16px 14px", borderTop: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-        <button onClick={micLive ? stopMic : () => {}} style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)", color: "var(--text-tertiary)", cursor: micLive ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, flexShrink: 0, opacity: micLive ? 1 : 0.4 }} title="Cut mic">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="0" y="0" width="10" height="10" rx="1.5"/></svg>
+      <div style={{ padding: "8px 14px 14px", borderTop: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", gap: 7, flexShrink: 0 }}>
+        {/* Stop/cut button */}
+        <button
+          onClick={micLive ? stopMic : () => {}}
+          disabled={!micLive}
+          title="Cut mic"
+          style={{
+            width: 36, height: 36, borderRadius: 9,
+            background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
+            color: "var(--text-tertiary)", cursor: micLive ? "pointer" : "default",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            opacity: micLive ? 1 : 0.35, transition: "all 0.15s",
+          }}
+        >
+          <svg width="9" height="9" viewBox="0 0 9 9" fill="currentColor"><rect width="9" height="9" rx="1.5"/></svg>
         </button>
-        <button onClick={micLive ? stopMic : startMic} style={{
-          flex: 1, height: 36, borderRadius: 10,
-          background: micLive ? "#ef4444" : "rgba(239,68,68,0.12)",
-          border: micLive ? "none" : "1px solid rgba(239,68,68,0.3)",
-          color: micLive ? "#fff" : "#ef4444",
-          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-          fontFamily: "'Syne', sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: "0.06em",
-          whiteSpace: "nowrap" as const,
-          boxShadow: micLive ? "0 0 20px rgba(239,68,68,0.4)" : "none",
-          transition: "all 0.2s ease",
-          animation: micLive ? "mic-glow 1.8s ease-in-out infinite" : "none",
-          overflow: "hidden",
-        }}>
-          <div style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: micLive ? "rgba(255,255,255,0.8)" : "#ef4444", boxShadow: micLive ? "0 0 6px rgba(255,255,255,0.6)" : "none", animation: micLive ? "mic-blink 1.2s ease-in-out infinite" : "none" }} />
+
+        {/* Main live button */}
+        <button
+          onClick={micLive ? stopMic : startMic}
+          style={{
+            flex: 1, height: 36, borderRadius: 9,
+            background: micLive ? "linear-gradient(135deg, #ef4444, #dc2626)" : "rgba(239,68,68,0.1)",
+            border: micLive ? "none" : "1px solid rgba(239,68,68,0.25)",
+            color: micLive ? "#fff" : "#ef4444",
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            fontFamily: "'Syne', sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em",
+            boxShadow: micLive ? "0 2px 16px rgba(239,68,68,0.4)" : "none",
+            transition: "all 0.2s ease",
+            animation: micLive ? "mic-glow 1.8s ease-in-out infinite" : "none",
+          }}
+        >
+          <div style={{
+            width: 6, height: 6, borderRadius: "50%",
+            background: micLive ? "rgba(255,255,255,0.9)" : "#ef4444",
+            boxShadow: micLive ? "0 0 6px rgba(255,255,255,0.6)" : "none",
+            animation: micLive ? "mic-blink 1.2s ease-in-out infinite" : "none",
+          }} />
           {micLive ? "CUT" : "LIVE MIC"}
         </button>
       </div>
 
       <style>{`
-        @keyframes mic-blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        @keyframes mic-glow { 0%,100%{box-shadow:0 0 20px rgba(239,68,68,0.4)} 50%{box-shadow:0 0 32px rgba(239,68,68,0.7)} }
+        @keyframes mic-blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+        @keyframes mic-glow { 0%,100%{box-shadow:0 2px 16px rgba(239,68,68,0.4)} 50%{box-shadow:0 2px 28px rgba(239,68,68,0.65)} }
       `}</style>
     </div>
   );

@@ -30,10 +30,28 @@ const CATEGORY_COLORS: Record<string, string> = {
   "news": "#6366f1",
 };
 
+// Tiny artwork cache so we don't re-fetch on every render
+const artCache: Record<string, string> = {};
+
+async function fetchArt(title: string, artist: string): Promise<string | null> {
+  const key = `${title}::${artist}`;
+  if (artCache[key] !== undefined) return artCache[key] || null;
+  try {
+    const q = encodeURIComponent(`${title} ${artist}`.replace(/\(feat\..*?\)/gi, '').replace(/\s*[-–]\s*remaster.*/gi, '').trim());
+    const r = await fetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`);
+    const d = await r.json();
+    const url = d?.results?.[0]?.artworkUrl100?.replace('100x100bb', '60x60bb') ?? null;
+    artCache[key] = url || '';
+    return url;
+  } catch { artCache[key] = ''; return null; }
+}
+
 export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
   const [activeShow, setActiveShow] = useState<ActiveShow | null>(null);
+  const [artUrls, setArtUrls] = useState<Record<number, string>>({});
+  const [totalDuration, setTotalDuration] = useState(0);
 
   // All drag state in refs so closures always read current values
   const dragIdxRef = useRef<number | null>(null);
@@ -45,6 +63,19 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [dragVisual, setDragVisual] = useState<{ from: number | null; over: number | null }>({ from: null, over: null });
 
   const queue = engine.getQueue();
+
+  // Fetch artwork for queue items
+  useEffect(() => {
+    queue.forEach((item, i) => {
+      if (artUrls[i] !== undefined) return;
+      fetchArt(item.title || '', item.artist || '').then(url => {
+        if (url) setArtUrls(prev => ({ ...prev, [i]: url }));
+      });
+    });
+    // Calculate total queue duration
+    const total = queue.reduce((sum, q) => sum + (q.durationMs || 0), 0);
+    setTotalDuration(total);
+  }, [queueLen]);
 
   useEffect(() => {
     (async () => {
@@ -229,7 +260,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "10px 12px",
                 borderBottom: "1px solid var(--border-primary)",
-                borderLeft: "3px solid " + color,
+                borderLeft: "4px solid " + color,
                 borderTop: isDropTarget ? "2px solid #38bdf8" : "none",
                 background: isBeingDragged ? "rgba(56,189,248,0.08)" : i === 0 ? "var(--bg-active)" : "transparent",
                 opacity: isBeingDragged ? 0.45 : 1,
@@ -242,10 +273,10 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               <span style={{ fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0, opacity: 0.35, pointerEvents: "none" }}>⠿</span>
               <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 18, flexShrink: 0, textAlign: "right" as any, pointerEvents: "none" }}>{i + 1}</span>
               {catLabel && (
-                <span style={{ fontSize: 8, fontWeight: 700, color: "#fff", background: color, padding: "1px 5px", borderRadius: 3, letterSpacing: "0.05em", flexShrink: 0, pointerEvents: "none" }}>{catLabel}</span>
+                <span style={{ fontSize: 7, fontWeight: 800, color: "#fff", background: color, padding: "2px 6px", borderRadius: 10, letterSpacing: "0.08em", flexShrink: 0, pointerEvents: "none", opacity: 0.9 }}>{catLabel}</span>
               )}
               <div style={{ flex: 1, minWidth: 0, pointerEvents: "none" }}>
-                <div style={{ fontSize: 14, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontWeight: 500 }}>{item.title}</div>
+                <div style={{ fontSize: 13, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontWeight: 600, letterSpacing: "-0.01em" }}>{item.title}</div>
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
               </div>
               {(item as any).duration_ms > 0 && (

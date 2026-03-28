@@ -83,13 +83,13 @@ export default function EtherLogo({
         fontFamily: "'Syne', 'Inter', system-ui, sans-serif",
         fontSize: size * 0.56,
         fontWeight: 800,
-        letterSpacing: "-0.04em",
+        letterSpacing: "-0.02em",
         color: "var(--text-primary)",
         lineHeight: 1,
         userSelect: "none",
       }}
     >
-      Ether
+      Ether Technologies
     </span>
   );
 

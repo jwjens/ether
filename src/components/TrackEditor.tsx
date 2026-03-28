@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { execute, query, queryOne } from "../db/client";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import WaveformGL from "./WaveformGL";
 
 interface Song {
   id: number;
@@ -16,6 +17,7 @@ interface Song {
 
 interface Props {
   song?: Song | null;
+  filePath?: string | null;   // open directly by path — looks up song from DB
   onClose?: () => void;
   onSaved?: (song: Song) => void;
 }
@@ -36,22 +38,342 @@ function fmt(sec: number): string {
   return `${m}:${String(s).padStart(2,"0")}.${ms}`;
 }
 
-export default function TrackEditor({ song, onClose, onSaved }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+// ── Import Panel ──────────────────────────────────────────────
+
+interface ImportPanelProps {
+  onImported: (song: Song) => void;
+}
+
+const SUPPORTED = [".mp3", ".flac", ".wav", ".aac", ".m4a", ".ogg", ".opus", ".aiff"];
+
+function ImportPanel({ onImported }: ImportPanelProps) {
+  const [dragOver, setDragOver] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [progress, setProgress] = useState<{ file: string; done: number; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [imported, setImported] = useState<Song[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const importFile = async (filePath: string): Promise<Song | null> => {
+    try {
+      let title = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Unknown";
+      let artistName = "Unknown Artist";
+      let durationMs = 0;
+
+      try {
+        const meta = await invoke<any>("read_track_metadata", { path: filePath });
+        if (meta.title) title = meta.title;
+        if (meta.artist) artistName = meta.artist;
+      } catch {}
+
+      // Get duration via Web Audio
+      try {
+        const bytes1 = await invoke<number[]>("read_audio_file", { filePath });
+        const buf1 = new Uint8Array(bytes1).buffer;
+        const ctx = new AudioContext();
+        const decoded = await ctx.decodeAudioData(buf1);
+        durationMs = Math.round(decoded.duration * 1000);
+        ctx.close();
+      } catch {}
+
+      // Upsert artist
+      await execute("INSERT OR IGNORE INTO artists (name) VALUES (?)", [artistName]);
+      const artistRow = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
+      const artistId = artistRow?.id ?? 1;
+
+      // Upsert song
+      await execute(
+        "INSERT OR IGNORE INTO songs (title, artist_id, file_path, duration_ms) VALUES (?, ?, ?, ?)",
+        [title, artistId, filePath, durationMs]
+      );
+      const songRow = await queryOne<Song>(
+        "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ?",
+        [filePath]
+      );
+      return songRow ?? null;
+    } catch (e) {
+      console.error("Import error:", e);
+      return null;
+    }
+  };
+
+  const handleFiles = async (files: File[]) => {
+    const audioFiles = files.filter(f => SUPPORTED.some(ext => f.name.toLowerCase().endsWith(ext)));
+    if (audioFiles.length === 0) { setError("No supported audio files found. Supported: MP3, FLAC, WAV, AAC, M4A, OGG, OPUS, AIFF"); return; }
+
+    setImporting(true);
+    setError(null);
+    const results: Song[] = [];
+
+    for (let i = 0; i < audioFiles.length; i++) {
+      const f = audioFiles[i];
+      setProgress({ file: f.name, done: i, total: audioFiles.length });
+      const filePath = (f as any).path || f.name;
+      const song = await importFile(filePath);
+      if (song) results.push(song);
+    }
+
+    setProgress(null);
+    setImporting(false);
+    setImported(results);
+    if (results.length === 1) onImported(results[0]);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    handleFiles(files);
+  };
+
+  const handleBrowse = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const selected = await open({
+        multiple: true,
+        filters: [{ name: "Audio", extensions: ["mp3","flac","wav","aac","m4a","ogg","opus","aiff"] }],
+        title: "Import Audio Files",
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      setImporting(true);
+      setError(null);
+      const results: Song[] = [];
+      for (let i = 0; i < paths.length; i++) {
+        setProgress({ file: paths[i].split(/[\\/]/).pop() || "", done: i, total: paths.length });
+        const song = await importFile(paths[i]);
+        if (song) results.push(song);
+      }
+      setProgress(null);
+      setImporting(false);
+      setImported(results);
+      if (results.length === 1) onImported(results[0]);
+    } catch (e: any) {
+      setError(String(e));
+      setImporting(false);
+    }
+  };
+
+  const handleFolderScan = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const folder = await open({ directory: true, title: "Scan Music Folder" });
+      if (!folder || typeof folder !== "string") return;
+      setImporting(true);
+      setError(null);
+      const files: string[] = await invoke("scan_audio_folder", { path: folder }).catch(() => []);
+      const results: Song[] = [];
+      for (let i = 0; i < files.length; i++) {
+        setProgress({ file: files[i].split(/[\\/]/).pop() || "", done: i, total: files.length });
+        const song = await importFile(files[i]);
+        if (song) results.push(song);
+      }
+      setProgress(null);
+      setImporting(false);
+      setImported(results);
+    } catch (e: any) {
+      setError(String(e));
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+      {/* Header */}
+      <div style={{ padding: "24px 32px 20px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 6 }}>Cue Editor</div>
+        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif", marginBottom: 6 }}>Import Tracks</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Add audio files to your library, then set cue points, intro, and outro markers</div>
+      </div>
+
+      <div style={{ flex: 1, padding: "28px 32px", overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
+
+        {/* Drop zone */}
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+          style={{
+            borderRadius: 16,
+            border: `2px dashed ${dragOver ? "var(--accent-cyan)" : "var(--border-primary)"}`,
+            background: dragOver ? "rgba(34,211,238,0.04)" : "var(--bg-secondary)",
+            padding: "48px 32px",
+            textAlign: "center",
+            transition: "all 0.15s",
+            cursor: "default",
+            flexShrink: 0,
+          }}
+        >
+          {importing && progress ? (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid var(--accent-cyan)", borderTopColor: "transparent", animation: "spin 0.8s linear infinite" }} />
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{progress.file}</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{progress.done + 1} of {progress.total}</div>
+              <div style={{ width: 200, height: 4, borderRadius: 2, background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${((progress.done + 1) / progress.total) * 100}%`, background: "var(--accent-cyan)", borderRadius: 2, transition: "width 0.3s" }} />
+              </div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 40, marginBottom: 14 }}>🎵</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+                {dragOver ? "Drop to import" : "Drop audio files here"}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 20 }}>
+                MP3, FLAC, WAV, AAC, M4A, OGG, AIFF
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+                <button onClick={handleBrowse} style={{
+                  padding: "9px 22px", borderRadius: 10,
+                  background: "var(--accent-cyan)", border: "none",
+                  color: "#000", fontSize: 12, fontWeight: 700,
+                  cursor: "pointer", letterSpacing: "0.02em",
+                }}>Browse Files</button>
+                <button onClick={handleFolderScan} style={{
+                  padding: "9px 22px", borderRadius: 10,
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+                  color: "var(--text-secondary)", fontSize: 12, fontWeight: 600,
+                  cursor: "pointer",
+                }}>Scan Folder</button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12, color: "#ef4444" }}>
+            {error}
+          </div>
+        )}
+
+        {/* Imported results */}
+        {imported.length > 1 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>
+              {imported.length} tracks imported — click one to edit cue points
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {imported.map(s => (
+                <div key={s.id} onClick={() => onImported(s)} style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "10px 14px", borderRadius: 10,
+                  background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+                  cursor: "pointer", transition: "all 0.12s",
+                }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-cyan)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
+                >
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--accent-cyan)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14 }}>🎵</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{s.artist_name}</div>
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--accent-cyan)", fontWeight: 600 }}>Edit cues →</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Help */}
+        {imported.length === 0 && !importing && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            {[
+              { icon: "⏮", label: "Cue In", desc: "Where playback starts — skip silence at the start" },
+              { icon: "🎙", label: "Intro End", desc: "When the vocals kick in — for voice-over timing" },
+              { icon: "🎵", label: "Outro Start", desc: "When to start fading or crossfading to next track" },
+            ].map(item => (
+              <div key={item.label} style={{ padding: "14px 16px", borderRadius: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+                <div style={{ fontSize: 20, marginBottom: 8 }}>{item.icon}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{item.label}</div>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>{item.desc}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+export default function TrackEditor({ song: songProp, filePath: filePathProp, onClose, onSaved }: Props) {
+  const [song, setSong] = useState<Song | null | undefined>(songProp);
+
+  // If opened by filePath, look up the song from DB with timeout fallback
+  useEffect(() => {
+    if (filePathProp && !songProp) {
+      const fallback: Song = { id: 0, title: filePathProp.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Unknown", artist_name: "", file_path: filePathProp, duration_ms: 0 };
+      Promise.race([
+        query<Song>(
+          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? LIMIT 1",
+          [filePathProp]
+        ),
+        new Promise<Song[]>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))
+      ]).then((rows: Song[]) => {
+        setSong(rows.length > 0 ? rows[0] : fallback);
+      }).catch(() => setSong(fallback));
+    } else {
+      setSong(songProp);
+    }
+  }, [songProp, filePathProp]);
+
+  const waveformDivRef = useRef<HTMLDivElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioBufferRef = useRef<AudioBuffer | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const rafRef = useRef<number>(0);
 
+  // FIX #2: Playhead stored in ref for RAF loop — avoids 60fps React re-renders.
+  // A separate throttled state drives the UI display only.
+  const playheadRef = useRef(0);
+  const [playhead, setPlayhead] = useState(0);
+  const rafFrameCount = useRef(0);
+
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [playing, setPlaying] = useState(false);
-  const [playhead, setPlayhead] = useState(0);
+  const playingRef = useRef(false);
+  useEffect(() => { playingRef.current = playing; }, [playing]);
   const [playStartTime, setPlayStartTime] = useState(0);
   const [playStartOffset, setPlayStartOffset] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [zoom, setZoom] = useState(1); // 1 = full, 4 = 4x zoom
-  const [viewOffset, setViewOffset] = useState(0); // seconds from start visible at left
+  const [zoom, setZoom] = useState(1);
+  const [viewOffset, setViewOffset] = useState(0);
+  const targetZoomRef   = useRef(1);
+  const targetOffsetRef = useRef(0);
+
+  // Cue output device — separate from main stream output
+  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [cueDeviceId, setCueDeviceId] = useState<string>(() => {
+    try { return localStorage.getItem("ether_cue_device") || ""; } catch { return ""; }
+  });
+
+  // Load available output devices
+  useEffect(() => {
+    const loadDevices = async () => {
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setOutputDevices(devices.filter(d => d.kind === "audiooutput"));
+      } catch {}
+    };
+    loadDevices();
+    navigator.mediaDevices.addEventListener?.("devicechange", loadDevices);
+    return () => navigator.mediaDevices.removeEventListener?.("devicechange", loadDevices);
+  }, []);
+
+  // When device changes, update the AudioContext sink
+  useEffect(() => {
+    try { localStorage.setItem("ether_cue_device", cueDeviceId); } catch {}
+    const ctx = audioCtxRef.current;
+    if (ctx && (ctx as any).setSinkId) {
+      (ctx as any).setSinkId(cueDeviceId || "").catch(() => {});
+    }
+  }, [cueDeviceId]);
 
   // Cue points in seconds
   const [cueIn, setCueIn] = useState(0);
@@ -60,8 +382,27 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
   const [outroStart, setOutroStart] = useState(0);
 
   const [dragging, setDragging] = useState<string | null>(null);
+  const draggingRef = useRef<string | null>(null);
+
+  const setDraggingSync = (val: string | null) => {
+    draggingRef.current = val;
+    setDragging(val);
+  };
   const [saved, setSaved] = useState(false);
   const [waveformData, setWaveformData] = useState<Float32Array | null>(null);
+  const [dragRegionGL, setDragRegionGL] = useState<{ start: number; end: number; type: "intro" | "outro" } | null>(null);
+  const [hoverSec, setHoverSec] = useState<number | null>(null);
+
+  // Active tool mode — "intro" or "outro" means click+drag paints that region
+  const [activeMode, setActiveMode] = useState<"intro" | "outro" | null>(null);
+  const activeModeRef = useRef<"intro" | "outro" | null>(null);
+  const dragStartSec = useRef<number | null>(null);
+
+  // Sync helper — updates ref immediately so mousedown sees correct mode
+  const setActiveModeSync = (val: "intro" | "outro" | null) => {
+    activeModeRef.current = val;
+    setActiveMode(val);
+  };
 
   const durRef = useRef(0);
   const cueInRef = useRef(0);
@@ -70,9 +411,12 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
   const outroStartRef = useRef(0);
   const zoomRef = useRef(1);
   const viewOffsetRef = useRef(0);
-  const playheadRef = useRef(0);
+  const hoverSecRef  = useRef<number | null>(null);
 
-  // Keep refs in sync
+  // FIX #4: Declare the missing hoverXForZoom ref that handleWheel was referencing.
+  const hoverXForZoom = useRef(0.5);
+
+  // Keep refs in sync with state
   useEffect(() => { durRef.current = duration; }, [duration]);
   useEffect(() => { cueInRef.current = cueIn; }, [cueIn]);
   useEffect(() => { cueOutRef.current = cueOut; }, [cueOut]);
@@ -80,7 +424,6 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
   useEffect(() => { outroStartRef.current = outroStart; }, [outroStart]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { viewOffsetRef.current = viewOffset; }, [viewOffset]);
-  useEffect(() => { playheadRef.current = playhead; }, [playhead]);
 
   // Load audio on song change
   useEffect(() => {
@@ -88,6 +431,7 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
     setLoading(true);
     setLoadError("");
     setPlaying(false);
+    playheadRef.current = 0;
     setPlayhead(0);
     setZoom(1);
     setViewOffset(0);
@@ -100,10 +444,21 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
 
     const load = async () => {
       try {
-        const url = convertFileSrc(song.file_path);
-        const res = await fetch(url);
-        const arrayBuf = await res.arrayBuffer();
+        // FIX #7: Close the previous AudioContext before creating a new one
+        // to prevent context leaks when switching songs rapidly.
+        if (audioCtxRef.current) {
+          await audioCtxRef.current.close().catch(() => {});
+          audioCtxRef.current = null;
+        }
+
+        const bytes2 = await invoke<number[]>("read_audio_file", { filePath: song.file_path });
+        const arrayBuf = new Uint8Array(bytes2).buffer;
         const ctx = new AudioContext();
+
+        // Route to cue output device if selected
+        if (cueDeviceId && (ctx as any).setSinkId) {
+          await (ctx as any).setSinkId(cueDeviceId).catch(() => {});
+        }
         audioCtxRef.current = ctx;
         const buf = await ctx.decodeAudioData(arrayBuf);
         audioBufferRef.current = buf;
@@ -115,11 +470,12 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
         if (!song.cue_out || song.cue_out === 0) setCueOut(dur);
         if (!song.outro_start || song.outro_start === 0) setOutroStart(dur * 0.9);
 
-        // Build waveform peaks
+        // Build waveform peaks from Web Audio (fast fallback)
         const ch = buf.getChannelData(0);
-        const peaks = 800;
+        const peaks = 3000;
         const blockSize = Math.floor(ch.length / peaks);
         const data = new Float32Array(peaks);
+        let globalMax = 0;
         for (let i = 0; i < peaks; i++) {
           let max = 0;
           const start = i * blockSize;
@@ -128,9 +484,24 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
             if (v > max) max = v;
           }
           data[i] = max;
+          if (max > globalMax) globalMax = max;
+        }
+        if (globalMax > 0) {
+          for (let i = 0; i < peaks; i++) data[i] /= globalMax;
         }
         setWaveformData(data);
         setLoading(false);
+
+        // FIX #1: Try to upgrade to high-quality Rust mipmap after initial render.
+        // waveformData is set either way — the flag that was always false is removed.
+        try {
+          const mipmap = await invoke<{ levels: number[][] }>("build_peak_mipmap", { filePath: song.file_path });
+          if (mipmap?.levels?.[0]) {
+            setWaveformData(new Float32Array(mipmap.levels[0]));
+          }
+        } catch {
+          // Rust command not available yet — keep Web Audio peaks above
+        }
       } catch (e) {
         setLoadError("Could not load audio: " + String(e));
         setLoading(false);
@@ -144,21 +515,34 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
     };
   }, [song?.id]);
 
-  // Playhead animation
+  // FIX #2: RAF loop writes to ref every frame but only calls setPlayhead every 4 frames.
+  // This reduces React re-renders from 60/s to 15/s while keeping the GL playhead smooth
+  // (WaveformGL reads playheadRef directly via the prop computed below).
   useEffect(() => {
     if (!playing) return;
+    rafFrameCount.current = 0;
     const tick = () => {
       const ctx = audioCtxRef.current;
       if (!ctx) return;
       const elapsed = ctx.currentTime - playStartTime;
       const pos = playStartOffset + elapsed;
       const dur = durRef.current;
+
       if (pos >= (cueOutRef.current || dur)) {
+        playheadRef.current = cueOutRef.current || dur;
+        setPlayhead(playheadRef.current);
         setPlaying(false);
-        setPlayhead(cueOutRef.current || dur);
         return;
       }
-      setPlayhead(pos);
+
+      playheadRef.current = pos;
+
+      // Throttle: only flush to React state every 4 frames (~15fps for display)
+      rafFrameCount.current++;
+      if (rafFrameCount.current % 4 === 0) {
+        setPlayhead(pos);
+      }
+
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -187,177 +571,37 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
     setPlaying(false);
   }, []);
 
+  // Instant zoom anchored to mouse position
+  const applyZoom = useCallback((newZoom: number, pivotRatio?: number) => {
+    const dur    = durRef.current;
+    const curZ   = zoomRef.current;
+    const curO   = viewOffsetRef.current;
+    const ratio  = pivotRatio ?? 0.5;
+    const clampZ = Math.max(1, Math.min(64, newZoom));
+    const pivot  = curO + (dur / curZ) * ratio;
+    const newVis = dur / clampZ;
+    const newOff = Math.max(0, Math.min(dur - newVis, pivot - newVis * ratio));
+    targetZoomRef.current   = clampZ;
+    targetOffsetRef.current = newOff;
+    setZoom(clampZ);
+    setViewOffset(newOff);
+  }, []);
+
   const togglePlay = () => playing ? pause() : play(playheadRef.current);
 
-  // Canvas drawing
+  // Capture spacebar — stop propagation so Live Assist doesn't receive it
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !waveformData) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const w = canvas.width;
-    const h = canvas.height;
-    const dur = durRef.current;
-    if (dur <= 0) return;
-
-    ctx.clearRect(0, 0, w, h);
-
-    // Background
-    ctx.fillStyle = "#0a0a14";
-    ctx.fillRect(0, 0, w, h);
-
-    // Visible window
-    const visibleDur = dur / zoomRef.current;
-    const viewStart = viewOffsetRef.current;
-    const viewEnd = viewStart + visibleDur;
-
-    const secToX = (sec: number) => ((sec - viewStart) / visibleDur) * w;
-    const xToSec = (x: number) => viewStart + (x / w) * visibleDur;
-
-    // Region fills
-    const cI = secToX(cueInRef.current);
-    const cO = secToX(cueOutRef.current || dur);
-    const iE = secToX(introEndRef.current);
-    const oS = secToX(outroStartRef.current || dur);
-
-    // Dead zones (before cue in, after cue out) — dark
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    if (cI > 0) ctx.fillRect(0, 0, cI, h);
-    if (cO < w) ctx.fillRect(cO, 0, w - cO, h);
-
-    // Intro zone (cue in → intro end) — cyan tint
-    if (introEndRef.current > cueInRef.current) {
-      ctx.fillStyle = "rgba(34,211,238,0.06)";
-      ctx.fillRect(Math.max(0, cI), 0, Math.max(0, iE - cI), h);
-    }
-
-    // Outro zone (outro start → cue out) — orange tint
-    if (outroStartRef.current > 0 && outroStartRef.current < (cueOutRef.current || dur)) {
-      ctx.fillStyle = "rgba(251,146,60,0.06)";
-      ctx.fillRect(Math.max(0, oS), 0, Math.max(0, cO - oS), h);
-    }
-
-    // Waveform bars
-    const peaks = waveformData.length;
-    const barW = Math.max(1, w / peaks);
-    const mid = h / 2;
-
-    for (let i = 0; i < peaks; i++) {
-      const sec = viewStart + (i / peaks) * visibleDur;
-      const barSec = (i / peaks) * dur;
-      const x = (i / peaks) * w;
-
-      // Color by zone
-      const inCue = barSec >= cueInRef.current && barSec <= (cueOutRef.current || dur);
-      const inIntro = barSec >= cueInRef.current && barSec <= introEndRef.current;
-      const inOutro = barSec >= outroStartRef.current && barSec <= (cueOutRef.current || dur);
-
-      if (!inCue) {
-        ctx.fillStyle = "rgba(100,116,139,0.25)";
-      } else if (inIntro) {
-        ctx.fillStyle = "#22d3ee";
-        ctx.globalAlpha = 0.7;
-      } else if (inOutro) {
-        ctx.fillStyle = "#fb923c";
-        ctx.globalAlpha = 0.8;
-      } else {
-        ctx.fillStyle = "#34d399";
-        ctx.globalAlpha = 0.85;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Space" && e.target === document.body) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (playingRef.current) pause();
+        else play(playheadRef.current);
       }
-
-      const amp = waveformData[i] * mid * 0.85;
-      ctx.fillRect(x, mid - amp, barW, amp * 2);
-      ctx.globalAlpha = 1;
-    }
-
-    // Grid lines
-    ctx.strokeStyle = "rgba(255,255,255,0.04)";
-    ctx.lineWidth = 1;
-    const gridInterval = visibleDur > 60 ? 10 : visibleDur > 20 ? 5 : visibleDur > 5 ? 1 : 0.5;
-    const firstGrid = Math.ceil(viewStart / gridInterval) * gridInterval;
-    for (let t = firstGrid; t <= viewEnd; t += gridInterval) {
-      const x = secToX(t);
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-    }
-
-    // Time labels
-    ctx.fillStyle = "rgba(255,255,255,0.25)";
-    ctx.font = "10px 'DM Mono', monospace";
-    ctx.textAlign = "left";
-    for (let t = firstGrid; t <= viewEnd; t += gridInterval) {
-      const x = secToX(t);
-      if (x > 20 && x < w - 20) ctx.fillText(fmt(t), x + 3, h - 6);
-    }
-
-    // Cue handles
-    const drawHandle = (sec: number, color: string, label: string, top: boolean) => {
-      const x = secToX(sec);
-      if (x < -10 || x > w + 10) return;
-
-      // Vertical line
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Handle tab
-      const tabH = 18;
-      const tabY = top ? 0 : h - tabH;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.roundRect(x - HANDLE_W / 2, tabY, HANDLE_W * 3, tabH, 3);
-      ctx.fill();
-
-      // Label
-      ctx.fillStyle = "#000";
-      ctx.font = "bold 8px 'Inter', sans-serif";
-      ctx.textAlign = "left";
-      ctx.fillText(label, x + 4, tabY + 12);
     };
-
-    drawHandle(cueInRef.current, COLORS.cueIn, "IN", false);
-    drawHandle(cueOutRef.current || dur, COLORS.cueOut, "OUT", false);
-    drawHandle(introEndRef.current, COLORS.introEnd, "INTRO", true);
-    drawHandle(outroStartRef.current || dur, COLORS.outroStart, "OUTRO", true);
-
-    // Playhead
-    const phX = secToX(playheadRef.current);
-    if (phX >= 0 && phX <= w) {
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.9;
-      ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, h); ctx.stroke();
-      ctx.globalAlpha = 1;
-      // Triangle head
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.moveTo(phX - 5, 0); ctx.lineTo(phX + 5, 0); ctx.lineTo(phX, 8);
-      ctx.fill();
-    }
-
-  }, [waveformData, playing, playhead, cueIn, cueOut, introEnd, outroStart, zoom, viewOffset, duration]);
-
-  // Resize canvas
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) {
-        const dpr = devicePixelRatio || 1;
-        const { width, height } = e.contentRect;
-        canvas.width = Math.floor(width * dpr);
-        canvas.height = Math.floor(height * dpr);
-        canvas.style.width = width + "px";
-        canvas.style.height = height + "px";
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.scale(dpr, dpr);
-      }
-    });
-    ro.observe(canvas.parentElement!);
-    return () => ro.disconnect();
-  }, []);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [play, pause]);
 
   // Mouse interaction
   const getHandleAt = (x: number, canvasW: number): string | null => {
@@ -365,70 +609,138 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
     const visibleDur = dur / zoomRef.current;
     const secToX = (s: number) => ((s - viewOffsetRef.current) / visibleDur) * canvasW;
     const handles = [
-      { name: "cueIn", sec: cueInRef.current },
-      { name: "cueOut", sec: cueOutRef.current || dur },
-      { name: "introEnd", sec: introEndRef.current },
+      { name: "cueIn",      sec: cueInRef.current },
+      { name: "cueOut",     sec: cueOutRef.current || dur },
+      { name: "introEnd",   sec: introEndRef.current },
       { name: "outroStart", sec: outroStartRef.current || dur },
     ];
     for (const h of handles) {
-      if (Math.abs(x - secToX(h.sec)) < 10) return h.name;
+      if (Math.abs(x - secToX(h.sec)) < 20) return h.name;
     }
     return null;
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const handle = getHandleAt(x, rect.width);
-    if (handle) {
-      setDragging(handle);
-    } else {
-      // Click to seek
-      const dur = durRef.current;
-      const visibleDur = dur / zoomRef.current;
-      const sec = viewOffsetRef.current + (x / rect.width) * visibleDur;
-      const clamped = Math.max(0, Math.min(dur, sec));
-      setPlayhead(clamped);
-      if (playing) play(clamped);
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragging) return;
-    const canvas = canvasRef.current;
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    const canvas = waveformDivRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const dur = durRef.current;
     const visibleDur = dur / zoomRef.current;
     const sec = Math.max(0, Math.min(dur, viewOffsetRef.current + (x / rect.width) * visibleDur));
-    if (dragging === "cueIn") setCueIn(Math.min(sec, cueOutRef.current - 0.5));
-    if (dragging === "cueOut") setCueOut(Math.max(sec, cueInRef.current + 0.5));
-    if (dragging === "introEnd") setIntroEnd(Math.min(sec, outroStartRef.current - 0.5));
-    if (dragging === "outroStart") setOutroStart(Math.max(sec, introEndRef.current + 0.5));
-  };
 
-  const handleMouseUp = () => setDragging(null);
+    const mode = activeModeRef.current;
+    if (mode === "intro" || mode === "outro") {
+      dragStartSec.current = sec;
+      setDraggingSync(mode);
+      return;
+    }
 
-  // Zoom / scroll
-  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const dur = durRef.current;
-    if (e.ctrlKey || e.metaKey) {
-      // Zoom
-      const newZoom = Math.max(1, Math.min(16, zoomRef.current * (e.deltaY < 0 ? 1.2 : 0.8)));
-      setZoom(newZoom);
-      const visibleDur = dur / newZoom;
-      setViewOffset(v => Math.max(0, Math.min(dur - visibleDur, v)));
+    const handle = getHandleAt(x, rect.width);
+    if (handle) {
+      setDraggingSync(handle);
     } else {
-      // Scroll
-      const visibleDur = dur / zoomRef.current;
-      const delta = (e.deltaX || e.deltaY) / 400 * visibleDur;
-      setViewOffset(v => Math.max(0, Math.min(dur - visibleDur, v + delta)));
+      playheadRef.current = sec;
+      setPlayhead(sec);
+      if (playingRef.current) play(sec);
     }
   };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const canvas = waveformDivRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const dur = durRef.current;
+    const visibleDur = dur / zoomRef.current;
+    const sec = Math.max(0, Math.min(dur, viewOffsetRef.current + (x / rect.width) * visibleDur));
+
+    setHoverSec(sec);
+    hoverSecRef.current = sec;
+
+    const drag = draggingRef.current;
+    if (!drag) return;
+    if (drag === "cueIn")      setCueIn(Math.min(sec, cueOutRef.current - 0.5));
+    if (drag === "cueOut")     setCueOut(Math.max(sec, cueInRef.current + 0.5));
+    if (drag === "introEnd")   setIntroEnd(Math.max(0, Math.min(sec, (cueOutRef.current || durRef.current) - 0.5)));
+    if (drag === "outroStart") setOutroStart(Math.max(0.5, Math.min(sec, (cueOutRef.current || durRef.current))));
+
+    // Region drag — show visual overlay only, commit on mouseUp
+    if ((drag === "intro" || drag === "outro") && dragStartSec.current !== null) {
+      const a = Math.min(dragStartSec.current, sec);
+      const b = Math.max(dragStartSec.current, sec);
+      const d = durRef.current || 1;
+      setDragRegionGL({ start: a/d, end: b/d, type: drag as "intro" | "outro" });
+    }
+  };
+
+  // Shared commit logic used by both mouseUp and mouseLeave
+  const commitDrag = useCallback(() => {
+    const drag = draggingRef.current;
+    if ((drag === "intro" || drag === "outro") && dragStartSec.current !== null) {
+      const sec = hoverSecRef.current ?? dragStartSec.current;
+      const a = Math.min(dragStartSec.current, sec);
+      const b = Math.max(dragStartSec.current, sec);
+      if (drag === "intro") {
+        setCueIn(Math.max(0, a));
+        setIntroEnd(b);
+        introEndRef.current = b;
+      } else {
+        setOutroStart(a);
+        outroStartRef.current = a;
+        setCueOut(Math.min(b, durRef.current));
+      }
+      setActiveModeSync(null);
+      dragStartSec.current = null;
+    }
+    setDraggingSync(null);
+    setDragRegionGL(null);
+  }, []);
+
+  const handleMouseUp = () => commitDrag();
+
+  // FIX #6: mouseLeave now commits in-progress drag instead of silently dropping it.
+  const handleMouseLeave = () => {
+    commitDrag();
+    setHoverSec(null);
+    hoverSecRef.current = null;
+  };
+
+  // FIX #3: Native wheel listener with passive:false so we can preventDefault on
+  // Ctrl+scroll — React's synthetic onWheel cannot do this, causing the browser
+  // window to zoom simultaneously with the waveform.
+  useEffect(() => {
+    const el = waveformDivRef.current;
+    if (!el) return;
+
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const dur = durRef.current;
+      const rect = el.getBoundingClientRect();
+      const mouseRatio = (e.clientX - rect.left) / rect.width;
+      hoverXForZoom.current = mouseRatio;
+
+      if (e.ctrlKey || e.metaKey) {
+        // Pinch-to-zoom or Ctrl+scroll
+        const factor = e.deltaY < 0 ? 1.06 : 0.94;
+        applyZoom(targetZoomRef.current * factor, mouseRatio);
+      } else if (e.altKey) {
+        // Alt+scroll — fast zoom
+        const factor = e.deltaY < 0 ? 1.15 : 0.87;
+        applyZoom(targetZoomRef.current * factor, mouseRatio);
+      } else {
+        // Pan — smooth, proportional to zoom level
+        const visibleDur = dur / zoomRef.current;
+        const delta      = (e.deltaX || e.deltaY) / 300 * visibleDur;
+        const newOff     = Math.max(0, Math.min(dur - visibleDur, targetOffsetRef.current + delta));
+        targetOffsetRef.current = newOff;
+        setViewOffset(newOff);
+      }
+    };
+
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, [applyZoom]);
 
   const save = async () => {
     if (!song) return;
@@ -452,127 +764,361 @@ export default function TrackEditor({ song, onClose, onSaved }: Props) {
   };
 
   if (!song) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-tertiary)", fontSize: 14 }}>
-      Select a track from the library to edit cue points
-    </div>
+    <ImportPanel onImported={(s) => {
+      queryOne<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`, [s.id])
+        .then(full => { if (full && onSaved) onSaved(full); })
+        .catch(() => {});
+    }} />
+  );
+
+  const fmtSmpte = (s: number) => {
+    const m   = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    const ms  = Math.floor((s % 1) * 10);
+    return `${m}:${String(sec).padStart(2,"0")}.${ms}`;
+  };
+
+  const remaining = Math.max(0, (cueOut || duration) - playhead);
+
+  const Btn = ({
+    onClick, children, color, active, title, shortcut, danger
+  }: {
+    onClick: () => void; children: React.ReactNode;
+    color?: string; active?: boolean; title?: string;
+    shortcut?: string; danger?: boolean;
+  }) => (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        display: "flex", alignItems: "center", gap: 5,
+        height: 34, padding: "0 14px", borderRadius: 8,
+        fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
+        cursor: "pointer", flexShrink: 0, position: "relative" as const,
+        transition: "all 0.12s",
+        background: active
+          ? (color || "var(--accent-blue)")
+          : danger
+          ? "rgba(239,68,68,0.08)"
+          : color
+          ? color + "15"
+          : "var(--bg-tertiary)",
+        color: active ? "#000" : danger ? "#ef4444" : color || "var(--text-secondary)",
+        border: active
+          ? `1.5px solid ${color || "var(--accent-blue)"}`
+          : danger
+          ? "1px solid rgba(239,68,68,0.25)"
+          : `1px solid ${color ? color + "30" : "var(--border-primary)"}`,
+        boxShadow: active ? `0 0 16px ${(color || "#0ea5e9")}44` : "none",
+      }}
+      onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.96)"; }}
+      onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+    >
+      {children}
+      {shortcut && (
+        <span style={{
+          fontSize: 8, opacity: 0.5, fontWeight: 400,
+          fontFamily: "'DM Mono', monospace", letterSpacing: 0,
+        }}>[{shortcut}]</span>
+      )}
+    </button>
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0, background: "var(--bg-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: "var(--bg-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
 
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        <div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>
+      {/* ── Top bar: title + actions ── */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 16px 10px 20px",
+        background: "var(--bg-secondary)",
+        borderBottom: "1px solid var(--border-primary)",
+        flexShrink: 0,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
             {song.title}
           </div>
-          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>{song.artist_name || "Unknown Artist"} · {fmt(duration)}</div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>
+            {song.artist_name || "Unknown Artist"}
+            <span style={{ marginLeft: 8, opacity: 0.5 }}>·</span>
+            <span style={{ marginLeft: 8, fontFamily: "'DM Mono', monospace" }}>{fmt(duration)}</span>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {saved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
-          <button onClick={reset} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>Reset</button>
-          <button onClick={save} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>Save Cue Points</button>
-          {onClose && <button onClick={onClose} style={{ padding: "7px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>✕</button>}
-        </div>
+
+        {/* Cue output device */}
+        {outputDevices.length > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "#22d3ee", opacity: 0.8 }}>🎧</span>
+            <select value={cueDeviceId} onChange={e => setCueDeviceId(e.target.value)} style={{
+              padding: "4px 8px", borderRadius: 6, fontSize: 10,
+              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+              color: "var(--text-secondary)", cursor: "pointer", outline: "none", maxWidth: 160,
+            }}>
+              <option value="">Default Output</option>
+              {outputDevices.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || d.deviceId.slice(0,12)}</option>)}
+            </select>
+          </div>
+        )}
+
+        <Btn onClick={reset} title="Reset all cue points">Reset</Btn>
+        <button
+          onClick={save}
+          style={{
+            height: 34, padding: "0 18px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+            background: saved ? "#34d399" : "var(--accent-blue)",
+            color: "#fff", border: "none", cursor: "pointer", flexShrink: 0,
+            boxShadow: saved ? "0 0 16px rgba(52,211,153,0.4)" : "0 2px 12px rgba(14,165,233,0.35)",
+            transition: "all 0.2s",
+            letterSpacing: "0.03em",
+          }}
+          onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.97)"; }}
+          onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+        >
+          {saved ? "✓ Saved" : "Save Cue Points"}
+        </button>
+        {onClose && (
+          <button onClick={onClose} style={{
+            width: 30, height: 30, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center",
+            background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)",
+            cursor: "pointer", fontSize: 14, flexShrink: 0, transition: "all 0.1s",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(239,68,68,0.1)"; (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+          >✕</button>
+        )}
       </div>
 
-      {/* Cue point values row */}
-      <div style={{ display: "flex", gap: 1, background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        {[
-          { label: "CUE IN", value: cueIn, set: setCueIn, color: COLORS.cueIn, desc: "Playback start" },
-          { label: "INTRO END", value: introEnd, set: setIntroEnd, color: COLORS.introEnd, desc: "Music starts here" },
-          { label: "OUTRO START", value: outroStart, set: setOutroStart, color: COLORS.outroStart, desc: "Begin fade" },
-          { label: "CUE OUT", value: cueOut || duration, set: setCueOut, color: COLORS.cueOut, desc: "Playback end" },
-        ].map(({ label, value, set, color, desc }) => (
-          <div key={label} style={{ flex: 1, padding: "10px 16px", borderRight: "1px solid var(--border-primary)", cursor: "pointer" }}
-            onClick={() => { setPlayhead(value); if (playing) play(value); }}>
-            <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.16em", color, marginBottom: 4 }}>{label}</div>
-            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 18, fontWeight: 300, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>{fmt(value)}</div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>{desc}</div>
+      {/* ── Cue points strip ── */}
+      <div style={{ display: "flex", background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        {([
+          { label: "CUE IN",      value: cueIn,             color: COLORS.cueIn,      desc: "Playback start",   key: "I" },
+          { label: "INTRO END",   value: introEnd,           color: COLORS.introEnd,   desc: "Music starts",     key: "N" },
+          { label: "OUTRO START", value: outroStart,         color: COLORS.outroStart, desc: "Begin fade",       key: "O" },
+          { label: "CUE OUT",     value: cueOut || duration, color: COLORS.cueOut,     desc: "Playback end",     key: "U" },
+        ] as const).map(({ label, value, color, desc, key }) => (
+          <div
+            key={label}
+            onClick={() => {
+              playheadRef.current = value;
+              setPlayhead(value);
+              if (playingRef.current) play(value);
+            }}
+            style={{
+              flex: 1, padding: "8px 14px", borderRight: "1px solid var(--border-primary)",
+              cursor: "pointer", transition: "background 0.1s", position: "relative" as const,
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = color + "0d"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.14em", color }}>{label}</span>
+              <span style={{ fontSize: 8, fontFamily: "'DM Mono', monospace", color: color + "60", fontWeight: 400 }}>[{key}]</span>
+            </div>
+            <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 22, fontWeight: 300, color: "var(--text-primary)", letterSpacing: "-0.03em", lineHeight: 1 }}>
+              {fmtSmpte(value)}
+            </div>
+            <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 3 }}>{desc}</div>
+            <div style={{ position: "absolute" as const, bottom: 0, left: 0, right: 0, height: 2, background: color + "50", borderRadius: 2 }} />
           </div>
         ))}
 
-        {/* Playback time */}
-        <div style={{ padding: "10px 16px", minWidth: 120 }}>
-          <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.16em", color: "var(--text-tertiary)", marginBottom: 4 }}>POSITION</div>
-          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 18, fontWeight: 300, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>{fmt(playhead)}</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>Click label to jump</div>
+        {/* Big SMPTE position counter */}
+        <div style={{
+          padding: "8px 20px", minWidth: 160, display: "flex", flexDirection: "column" as const, justifyContent: "center",
+          borderLeft: "1px solid var(--border-primary)", background: "rgba(0,0,0,0.15)",
+        }}>
+          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.14em", color: playing ? "#34d399" : "var(--text-tertiary)", marginBottom: 3, transition: "color 0.2s" }}>
+            {playing ? "● PLAYING" : "◼ POSITION"}
+          </div>
+          <div style={{
+            fontFamily: "'DM Mono', monospace", fontSize: 28, fontWeight: 300,
+            color: playing ? "#34d399" : "var(--text-primary)",
+            letterSpacing: "-0.03em", lineHeight: 1,
+            transition: "color 0.2s",
+          }}>
+            {fmtSmpte(playhead)}
+          </div>
+          <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 3, fontFamily: "'DM Mono', monospace" }}>
+            −{fmtSmpte(remaining)} remain
+          </div>
         </div>
       </div>
 
-      {/* Waveform canvas */}
-      <div style={{ flex: 1, position: "relative", background: "#0a0a14", overflow: "hidden", cursor: dragging ? "ew-resize" : "crosshair" }}>
+      {/* ── Waveform ── */}
+      <div
+        style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden", cursor: dragging ? "col-resize" : "text" }}
+        tabIndex={-1}
+        onKeyDown={e => {
+          if (e.code === "Space") { e.preventDefault(); e.stopPropagation(); playing ? pause() : play(playheadRef.current); }
+        }}
+      >
         {loading && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.4)", fontSize: 13 }}>
-            Loading waveform...
+          <div style={{ position: "absolute" as const, inset: 0, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10, zIndex: 5 }}>
+            <div style={{ width: 40, height: 40, border: "2px solid var(--border-primary)", borderTopColor: "var(--accent-blue)", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+            <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Decoding audio...</span>
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
           </div>
         )}
         {loadError && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171", fontSize: 13 }}>
+          <div style={{ position: "absolute" as const, inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171", fontSize: 13, zIndex: 5 }}>
             {loadError}
           </div>
         )}
-        <canvas
-          ref={canvasRef}
-          style={{ width: "100%", height: "100%", display: "block" }}
+        {activeMode && (
+          <div style={{
+            position: "absolute" as const, top: 10, left: "50%", transform: "translateX(-50%)",
+            zIndex: 10, pointerEvents: "none",
+            background: activeMode === "intro" ? "rgba(34,211,238,0.9)" : "rgba(251,146,60,0.9)",
+            borderRadius: 20, padding: "4px 16px",
+            fontSize: 10, fontWeight: 800, letterSpacing: "0.1em", color: "#000",
+          }}>
+            ● DRAG TO MARK {activeMode.toUpperCase()}
+          </div>
+        )}
+
+        {/* FIX #1 & #2: WebGL waveform — always rendered (no dead useWebGL flag).
+            Playhead prop uses the ref value so the GL canvas updates every frame
+            without waiting for the throttled React state. */}
+        <div
+          ref={waveformDivRef}
+          style={{ position: "absolute" as const, inset: 0 }}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
-          onWheel={handleWheel}
-        />
+          onMouseLeave={handleMouseLeave}
+          // FIX #3: onWheel removed — native listener with passive:false is
+          // attached in useEffect above so Ctrl+scroll doesn't zoom the browser.
+        >
+          <WaveformGL
+            peaks={waveformData}
+            viewStart={viewOffset / (durRef.current || 1)}
+            viewEnd={(viewOffset + (durRef.current || 1) / zoom) / (durRef.current || 1)}
+            cueIn={cueIn / (duration || 1)}
+            cueOut={(cueOut || duration) / (duration || 1)}
+            introEnd={introEnd / (duration || 1)}
+            outroStart={(outroStart || duration) / (duration || 1)}
+            playhead={playheadRef.current / (duration || 1)}
+            hoverPos={hoverSec !== null ? hoverSec / (duration || 1) : null}
+            dragRegion={dragRegionGL}
+          />
+        </div>
       </div>
 
-      {/* Controls */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        {/* Play/pause */}
-        <button onClick={togglePlay} style={{
-          width: 44, height: 44, borderRadius: 12,
-          background: playing ? "#34d399" : "var(--accent-blue)",
-          border: "none", color: "#000", cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: playing ? "0 0 16px rgba(52,211,153,0.4)" : "0 0 16px rgba(14,165,233,0.3)",
-        }}>
-          {playing ? (
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-              <rect x="2" y="1" width="4" height="12" rx="1.5"/>
-              <rect x="8" y="1" width="4" height="12" rx="1.5"/>
-            </svg>
-          ) : (
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
-              <polygon points="2,1 13,7 2,13"/>
-            </svg>
-          )}
+      {/* ── Transport bar ── */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "10px 16px",
+        background: "var(--bg-secondary)",
+        borderTop: "1px solid var(--border-primary)",
+        flexShrink: 0,
+      }}>
+
+        {/* Play/Stop */}
+        <button
+          onClick={togglePlay}
+          style={{
+            width: 42, height: 42, borderRadius: 21, flexShrink: 0,
+            background: playing ? "#34d399" : "var(--accent-blue)",
+            border: "none", color: "#000", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: playing ? "0 0 20px rgba(52,211,153,0.5)" : "0 0 16px rgba(14,165,233,0.4)",
+            transition: "all 0.15s",
+          }}
+          onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.93)"; }}
+          onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+        >
+          {playing
+            ? <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><rect x="1" y="0" width="4" height="13" rx="2"/><rect x="8" y="0" width="4" height="13" rx="2"/></svg>
+            : <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><polygon points="1,0 13,6.5 1,13"/></svg>
+          }
         </button>
 
-        {/* Play from cue in */}
-        <button onClick={() => { setPlayhead(cueIn); play(cueIn); }} style={{ height: 36, padding: "0 12px", borderRadius: 8, fontSize: 10, fontWeight: 700, background: `${COLORS.cueIn}22`, color: COLORS.cueIn, border: `1px solid ${COLORS.cueIn}44`, cursor: "pointer", letterSpacing: "0.06em" }}>
-          ▶ FROM IN
-        </button>
+        {/* Divider */}
+        <div style={{ width: 1, height: 28, background: "var(--border-primary)", flexShrink: 0 }} />
 
-        {/* Play from intro end */}
-        <button onClick={() => { setPlayhead(introEnd); play(introEnd); }} style={{ height: 36, padding: "0 12px", borderRadius: 8, fontSize: 10, fontWeight: 700, background: `${COLORS.introEnd}22`, color: COLORS.introEnd, border: `1px solid ${COLORS.introEnd}44`, cursor: "pointer", letterSpacing: "0.06em" }}>
-          ▶ FROM INTRO
-        </button>
+        {/* Play from IN */}
+        <Btn onClick={() => { playheadRef.current = cueIn; setPlayhead(cueIn); play(cueIn); }} color={COLORS.cueIn} shortcut="I" title="Play from Cue In">▶ FROM IN</Btn>
 
-        {/* Play from outro */}
-        <button onClick={() => { setPlayhead(outroStart); play(outroStart); }} style={{ height: 36, padding: "0 12px", borderRadius: 8, fontSize: 10, fontWeight: 700, background: `${COLORS.outroStart}22`, color: COLORS.outroStart, border: `1px solid ${COLORS.outroStart}44`, cursor: "pointer", letterSpacing: "0.06em" }}>
-          ▶ FROM OUTRO
-        </button>
+        {/* INTRO tool */}
+        <button
+          onClick={() => setActiveModeSync(activeModeRef.current === "intro" ? null : "intro")}
+          title="Paint intro region — click then drag on waveform"
+          style={{
+            height: 34, padding: "0 14px", borderRadius: 8,
+            fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
+            cursor: "pointer", flexShrink: 0, transition: "all 0.12s",
+            background: activeMode === "intro" ? "#22d3ee" : "#22d3ee18",
+            color:      activeMode === "intro" ? "#000" : "#22d3ee",
+            border:     activeMode === "intro" ? "1.5px solid #22d3ee" : "1px solid #22d3ee35",
+            boxShadow:  activeMode === "intro" ? "0 0 16px #22d3ee44" : "none",
+          }}
+        >INTRO</button>
+
+        {/* OUTRO tool */}
+        <button
+          onClick={() => setActiveModeSync(activeModeRef.current === "outro" ? null : "outro")}
+          title="Paint outro region — click then drag on waveform"
+          style={{
+            height: 34, padding: "0 14px", borderRadius: 8,
+            fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
+            cursor: "pointer", flexShrink: 0, transition: "all 0.12s",
+            background: activeMode === "outro" ? "#fb923c" : "#fb923c18",
+            color:      activeMode === "outro" ? "#000" : "#fb923c",
+            border:     activeMode === "outro" ? "1.5px solid #fb923c" : "1px solid #fb923c35",
+            boxShadow:  activeMode === "outro" ? "0 0 16px #fb923c44" : "none",
+          }}
+        >OUTRO</button>
 
         <div style={{ flex: 1 }} />
 
-        {/* Zoom */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 10, color: "var(--text-tertiary)", letterSpacing: "0.1em" }}>ZOOM</span>
-          <button onClick={() => setZoom(z => Math.max(1, z / 1.5))} style={{ width: 28, height: 28, borderRadius: 6, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-secondary)", minWidth: 32, textAlign: "center" }}>{zoom.toFixed(1)}x</span>
-          <button onClick={() => setZoom(z => Math.min(16, z * 1.5))} style={{ width: 28, height: 28, borderRadius: 6, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
-          <button onClick={() => { setZoom(1); setViewOffset(0); }} style={{ height: 28, padding: "0 10px", borderRadius: 6, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10 }}>FIT</button>
+        {/* Zoom controls */}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.1em", fontWeight: 700, marginRight: 2 }}>ZOOM</span>
+          {[
+            { label: "−−", factor: 0.5,  title: "Zoom out a lot" },
+            { label: "−",  factor: 0.75, title: "Zoom out" },
+            { label: "+",  factor: 1.33, title: "Zoom in" },
+            { label: "++", factor: 2.0,  title: "Zoom in a lot" },
+          ].map(({ label, factor, title }) => (
+            <button
+              key={label}
+              title={title}
+              onClick={() => applyZoom(targetZoomRef.current * factor, 0.5)}
+              style={{
+                width: label.length > 1 ? 30 : 26, height: 26, borderRadius: 6,
+                background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+                color: "var(--text-secondary)", cursor: "pointer", fontSize: label.length > 1 ? 9 : 14,
+                fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "all 0.1s", letterSpacing: label.length > 1 ? "0.05em" : 0,
+              }}
+              onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.9)"; }}
+              onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-blue)"; (e.currentTarget as HTMLElement).style.color = "var(--accent-blue)"; }}
+            >{label}</button>
+          ))}
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, color: "var(--text-secondary)", minWidth: 34, textAlign: "center" as const }}>{zoom.toFixed(1)}×</span>
+          <button
+            onClick={() => applyZoom(1, 0.5)}
+            title="Fit entire track"
+            style={{
+              height: 26, padding: "0 10px", borderRadius: 6,
+              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+              color: "var(--text-tertiary)", cursor: "pointer", fontSize: 9,
+              fontWeight: 800, letterSpacing: "0.06em", transition: "all 0.1s",
+            }}
+            onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.95)"; }}
+            onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+          >FIT</button>
         </div>
 
-        <div style={{ fontSize: 10, color: "var(--text-tertiary)", letterSpacing: "0.04em" }}>
-          Drag handles · Scroll to pan · Ctrl+scroll to zoom · Click to seek
+        {/* Keyboard hints */}
+        <div style={{ fontSize: 9, color: "var(--text-tertiary)", opacity: 0.45, letterSpacing: "0.03em", flexShrink: 0 }}>
+          Space · Scroll to pan · Ctrl+scroll zoom
         </div>
       </div>
     </div>

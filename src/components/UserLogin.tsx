@@ -93,7 +93,7 @@ export default function UserLogin({ onLogin }: Props) {
           <rect x="128" y="136" width="56" height="240" rx="16" fill="#0a0a18"/>
         </svg>
         <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
-        <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const }}>Global Technologies</div>
+        <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const }}>Technologies</div>
       </div>
 
       {!selected ? (

@@ -1,5 +1,53 @@
 use crate::audio::{AudioCmd, SharedAudioState};
 use tauri::State;
+use std::sync::{Arc, Mutex};
+
+// ── Telemetry Heartbeat ───────────────────────────────────────
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct HeartbeatEvent {
+    pub timestamp: String,
+    pub level: String,         // "green" | "yellow" | "red"
+    pub message: String,
+    pub value: Option<String>,
+}
+
+pub type SharedHeartbeat = Arc<Mutex<Vec<HeartbeatEvent>>>;
+
+pub fn new_heartbeat_log() -> SharedHeartbeat {
+    Arc::new(Mutex::new(Vec::with_capacity(200)))
+}
+
+fn hb_now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{:02}:{:02}:{:02}", (secs % 86400) / 3600, (secs % 3600) / 60, secs % 60)
+}
+
+pub fn push_event(log: &SharedHeartbeat, level: &str, msg: &str, val: Option<&str>) {
+    if let Ok(mut v) = log.lock() {
+        v.push(HeartbeatEvent {
+            timestamp: hb_now(),
+            level: level.to_string(),
+            message: msg.to_string(),
+            value: val.map(|s| s.to_string()),
+        });
+        if v.len() > 200 { v.drain(0..50); }
+    }
+}
+
+#[tauri::command]
+pub fn get_heartbeat(
+    n: Option<usize>,
+    log: State<'_, SharedHeartbeat>,
+) -> Result<Vec<HeartbeatEvent>, String> {
+    let v = log.inner().lock().map_err(|e| e.to_string())?;
+    let count = n.unwrap_or(60).min(v.len());
+    Ok(v[v.len() - count..].to_vec())
+}
 
 fn deck_meta_mut<'a>(audio: &'a mut crate::audio::AudioState, deck: &str) -> &'a mut crate::audio::DeckMeta {
     match deck {
@@ -260,6 +308,11 @@ pub fn get_file_duration(file_path: String) -> Result<f64, String> {
         }
     }
     Ok(0.0)
+}
+
+#[tauri::command]
+pub fn read_audio_file(file_path: String) -> Result<Vec<u8>, String> {
+    std::fs::read(&file_path).map_err(|e| format!("Cannot read {}: {}", file_path, e))
 }
 
 #[tauri::command]

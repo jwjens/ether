@@ -23,9 +23,11 @@ export default function StreamManager() {
   const [status, setStatus] = useState("Disconnected");
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState("");
+  const [health, setHealth] = useState<any>(null);
   const timerRef = useRef<any>(null);
   const startRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
+  const healthRef = useRef<any>(null);
 
   const load = async () => {
     const row = await queryOne<StreamSettings>("SELECT * FROM stream_settings WHERE id = 1");
@@ -39,6 +41,18 @@ export default function StreamManager() {
   };
 
   useEffect(() => { load(); }, []);
+
+  // Poll stream health when streaming
+  useEffect(() => {
+    if (!streaming) { setHealth(null); return; }
+    healthRef.current = setInterval(async () => {
+      try {
+        const h = await invoke<any>("stream_health");
+        setHealth(h);
+      } catch {}
+    }, 1000);
+    return () => clearInterval(healthRef.current);
+  }, [streaming]);
 
   // Listen for now-playing updates to push metadata to Icecast
   useEffect(() => {
@@ -78,7 +92,7 @@ export default function StreamManager() {
     setError("");
     setStatus("Connecting...");
     try {
-      await invoke("stream_start", {
+      await invoke<void>("stream_start", {
         config: {
           server: settings.server,
           port: settings.port,
@@ -118,12 +132,37 @@ export default function StreamManager() {
       <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20, color: "var(--text-primary)" }}>Stream Manager</h1>
 
       {/* Status bar */}
-      <div style={{ background: streaming ? "rgba(34,197,94,0.1)" : "var(--bg-secondary)", border: "1px solid " + (streaming ? "#22c55e" : "var(--border-primary)"), borderRadius: 10, padding: "12px 16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 10, height: 10, borderRadius: "50%", background: streaming ? "#22c55e" : "#666", boxShadow: streaming ? "0 0 8px #22c55e" : "none" }} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: streaming ? "#22c55e" : "var(--text-secondary)" }}>{status}</span>
+      <div style={{ background: streaming ? "rgba(34,197,94,0.06)" : "var(--bg-secondary)", border: "1px solid " + (streaming ? "rgba(34,197,94,0.25)" : "var(--border-primary)"), borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: health && streaming ? 12 : 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: streaming ? "#22c55e" : "#666", boxShadow: streaming ? "0 0 8px #22c55e" : "none", transition: "all 0.3s" }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: streaming ? "#22c55e" : "var(--text-secondary)" }}>
+              {health?.status === "reconnecting" ? "Reconnecting..." : health?.status === "buffering" ? "Replaying buffer..." : status}
+            </span>
+          </div>
+          {streaming && <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "monospace" }}>{fmtDuration(duration)}</span>}
         </div>
-        {streaming && <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "monospace" }}>{fmtDuration(duration)}</span>}
+        {/* Resilient stream health meters */}
+        {health && streaming && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+            {[
+              { label: "Status", value: (health.status || "").toUpperCase(), color: health.status === "live" ? "#22c55e" : health.status === "reconnecting" ? "#fbbf24" : "var(--text-secondary)" },
+              { label: "Uptime", value: fmtDuration(health.uptimeSecs || 0), color: "var(--text-primary)" },
+              { label: "Drops", value: String(health.dropCount ?? 0), color: health.dropCount > 0 ? "#fbbf24" : "#22c55e" },
+              { label: "Buffer", value: `${health.bufferSecs || 0}s`, color: "#38bdf8" },
+            ].map(({ label, value, color }) => (
+              <div key={label} style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as any, marginBottom: 3 }}>{label}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>{value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {streaming && (health?.dropCount ?? 0) > 0 && (
+          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 11, color: "#fbbf24" }}>
+            ⚡ {health.dropCount} reconnect{health.dropCount !== 1 ? "s" : ""} — listeners heard no gap thanks to the replay buffer
+          </div>
+        )}
       </div>
 
       {/* Server settings */}

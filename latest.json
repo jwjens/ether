@@ -1,0 +1,19 @@
+{
+  "version": "1.5.2",
+  "notes": "Ether v1.5.2 \u2014 Foundation release with auto-updater, album art, health monitor, and persona modes.",
+  "pub_date": "2026-03-21T00:00:00Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "",
+      "url": "https://github.com/jwjens/ether/releases/download/v1.5.2/Ether_1.5.2_x64_en-US.msi.zip"
+    },
+    "darwin-aarch64": {
+      "signature": "",
+      "url": "https://github.com/jwjens/ether/releases/download/v1.5.2/Ether_1.5.2_aarch64.dmg.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "",
+      "url": "https://github.com/jwjens/ether/releases/download/v1.5.2/Ether_1.5.2_x64.dmg.tar.gz"
+    }
+  }
+}
