@@ -408,38 +408,39 @@ export default function MicDeck({ inputDeviceId }: Props) {
           disabled={!micLive}
           title="Cut mic"
           style={{
-            width: 36, height: 36, borderRadius: 9,
+            width: 40, height: 44, borderRadius: 9,
             background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
             color: "var(--text-tertiary)", cursor: micLive ? "pointer" : "default",
             display: "flex", alignItems: "center", justifyContent: "center",
             opacity: micLive ? 1 : 0.35, transition: "all 0.15s",
           }}
         >
-          <svg width="9" height="9" viewBox="0 0 9 9" fill="currentColor"><rect width="9" height="9" rx="1.5"/></svg>
+          <svg width="10" height="10" viewBox="0 0 9 9" fill="currentColor"><rect width="9" height="9" rx="1.5"/></svg>
         </button>
 
         {/* Main live button */}
         <button
           onClick={micLive ? stopMic : startMic}
           style={{
-            flex: 1, height: 36, borderRadius: 9,
+            flex: 1, height: 44, borderRadius: 9,
             background: micLive ? "linear-gradient(135deg, #ef4444, #dc2626)" : "rgba(239,68,68,0.1)",
             border: micLive ? "none" : "1px solid rgba(239,68,68,0.25)",
             color: micLive ? "#fff" : "#ef4444",
-            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            fontFamily: "'Syne', sans-serif", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em",
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
             boxShadow: micLive ? "0 2px 16px rgba(239,68,68,0.4)" : "none",
             transition: "all 0.2s ease",
             animation: micLive ? "mic-glow 1.8s ease-in-out infinite" : "none",
+            whiteSpace: "nowrap",
           }}
         >
           <div style={{
-            width: 6, height: 6, borderRadius: "50%",
+            width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
             background: micLive ? "rgba(255,255,255,0.9)" : "#ef4444",
             boxShadow: micLive ? "0 0 6px rgba(255,255,255,0.6)" : "none",
             animation: micLive ? "mic-blink 1.2s ease-in-out infinite" : "none",
           }} />
-          {micLive ? "CUT" : "LIVE MIC"}
+          {micLive ? "CUT MIC" : "LIVE MIC"}
         </button>
       </div>
 
