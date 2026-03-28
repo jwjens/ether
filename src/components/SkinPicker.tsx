@@ -479,7 +479,7 @@ export function SkinPickerOverlay({
     await saveTheme(activePreset, vars);
     onSelect(activePreset);
     setSaved(true);
-    setTimeout(() => { setSaved(false); onClose(); }, 900);
+    setTimeout(() => { window.location.reload(); }, 900);
   };
 
   const handleExport = () => {
@@ -787,3 +787,4 @@ const ghostBtn: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, cursor: "pointer",
   letterSpacing: "0.02em",
 };
+
