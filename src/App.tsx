@@ -510,16 +510,17 @@ export default function App() {
             for (let xi = 1; xi <= 2; xi++) {
               const xCand = xOrder[(xIdx + xi) % 3];
               const xState = xCand === "A" ? deckA : xCand === "B" ? deckB : deckC;
-              if (xState?.filePath) { engine.crossfade(xPlaying, xCand, 2000); break; }
+              if (xState?.filePath) { engine.crossfade(xPlaying, xCand, xfadeDuration * 1000); break; }
             }
           }
           break;
-        case "Escape": dA?.stop(); dB?.stop(); break;
         case "KeyN": setPanel("live"); break;
         case "KeyL": setPanel("library"); break;
         case "KeyS": setPanel("clocks"); break;
         case "KeyG": setPanel("logs"); break;
         case "KeyA": e.preventDefault(); toggleAuto(); break;
+        case "Slash": if (e.shiftKey) { e.preventDefault(); setShowShortcuts(s => !s); } break;
+        case "Escape": dA?.stop(); dB?.stop(); setShowShortcuts(false); break;
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -529,7 +530,7 @@ export default function App() {
   useEffect(() => {
     engine.init();
     engine.outroCrossfade = true;
-    engine.crossfadeDuration = 3;
+    engine.crossfadeDuration = xfadeDuration;
     return engine.on((id, st) => {
       if (id === "A") setDeckA({...st});
       else if (id === "B") setDeckB({...st});
@@ -648,8 +649,16 @@ export default function App() {
 
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
 
-  const loadA = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("A", s.file_path, s.title, s.artist_name || ""); }, []);
-  const loadB = useCallback((s: SongRow) => { if (s.file_path) engine.loadToDeck("B", s.file_path, s.title, s.artist_name || ""); }, []);
+  const loadA = useCallback(async (s: SongRow) => {
+    if (!s.file_path) return;
+    await engine.loadToDeck("A", s.file_path, s.title, s.artist_name || "");
+    if (s.gain_db && s.gain_db !== 0) engine.setDeckGain?.("A", s.gain_db);
+  }, []);
+  const loadB = useCallback(async (s: SongRow) => {
+    if (!s.file_path) return;
+    await engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
+    if (s.gain_db && s.gain_db !== 0) engine.setDeckGain?.("B", s.gain_db);
+  }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
   });
@@ -675,6 +684,8 @@ export default function App() {
   });
   const toggleVisible = (key: string) => setVisiblePanels((p: Record<string, boolean>) => ({ ...p, [key]: !p[key] }));
   const { skinId, setSkin } = useSkin();
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [xfadeDuration, setXfadeDuration] = useState(3);
 
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -726,16 +737,18 @@ export default function App() {
     // Also push via Tauri command for local companion
     invoke("set_now_playing", { data: JSON.stringify(payload) }).catch(() => {});
 
-    // Emit to NowPlaying window so it stays in sync
-    emit("now-playing-update", {
-      title:      payload.title || "Ether",
-      artist:     payload.artist || "",
-      positionSec: payload.position,
-      durationSec: payload.duration,
-      isPlaying:  payload.playing,
-      upcoming:   payload.queue,
-    }).catch(() => {});
-  }, [deckA, deckB, deckC, stationName]);
+    // Only emit to NowPlaying window when the playing track actually changes
+    if (playing) {
+      emit("now-playing-update", {
+        title:       payload.title || "",
+        artist:      payload.artist || "",
+        positionSec: payload.position,
+        durationSec: payload.duration,
+        isPlaying:   true,
+        upcoming:    payload.queue,
+      }).catch(() => {});
+    }
+  }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName]);
 
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
   if (firstRunChecked && !wizardDone) return <FirstRunWizard onComplete={handleWizardComplete} />;
@@ -988,6 +1001,68 @@ export default function App() {
           onSelect={setSkin}
           onClose={() => setSkinPickerPos(null)}
         />
+      )}
+
+      {/* ── Keyboard Shortcut Overlay ── */}
+      {showShortcuts && (
+        <div onClick={() => setShowShortcuts(false)} style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "'Inter', system-ui, sans-serif",
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
+            borderRadius: 20, padding: "28px 32px", width: 560, maxHeight: "80vh", overflowY: "auto",
+            boxShadow: "0 32px 80px rgba(0,0,0,0.6)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>Keyboard Shortcuts</div>
+              <button onClick={() => setShowShortcuts(false)} style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>✕</button>
+            </div>
+            {[
+              { group: "Playback", items: [
+                { key: "Space", desc: "Play / Pause Deck A" },
+                { key: "B", desc: "Play / Pause Deck B" },
+                { key: "X", desc: "Crossfade to next loaded deck" },
+                { key: "Esc", desc: "Stop all decks" },
+              ]},
+              { group: "Navigation", items: [
+                { key: "N", desc: "Live Assist view" },
+                { key: "L", desc: "Library" },
+                { key: "S", desc: "Schedule / Clocks" },
+                { key: "G", desc: "Program Log" },
+                { key: "A", desc: "Toggle Automation" },
+              ]},
+              { group: "Interface", items: [
+                { key: "Shift + ?", desc: "Toggle this shortcut overlay" },
+                { key: "Right-click", desc: "Theme Studio & Reset Layout" },
+              ]},
+            ].map(({ group, items }) => (
+              <div key={group} style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 10 }}>{group}</div>
+                <div style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
+                  {items.map(({ key, desc }) => (
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderRadius: 8, background: "var(--bg-tertiary)" }}>
+                      <kbd style={{
+                        fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700,
+                        background: "var(--bg-primary)", color: "var(--accent-cyan)",
+                        border: "1px solid var(--border-secondary)", borderRadius: 6,
+                        padding: "3px 8px", whiteSpace: "nowrap" as const, flexShrink: 0,
+                        minWidth: 80, textAlign: "center" as const,
+                        boxShadow: "0 2px 0 var(--border-primary)",
+                      }}>{key}</kbd>
+                      <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{desc}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const }}>
+              Press <kbd style={{ fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 4, border: "1px solid var(--border-primary)" }}>Esc</kbd> or click outside to close
+            </div>
+          </div>
+        </div>
       )}
 
       {!updater.dismissed && <UpdateBanner
@@ -2164,7 +2239,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     if (!targetDeck) return;
 
     // Fire the crossfade
-    engine.crossfade(playingDeck, targetDeck, 2000);
+    engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
 
     // After crossfade completes — stop source deck and load next from queue
     setTimeout(async () => {
@@ -2365,10 +2440,25 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         padding: "4px 8px",
       }}>
         <div style={{ display: "flex", gap: 2 }}>
-          <ToolbarBtn label="SHUFFLE" active={shuffle} onClick={toggleShuffle} color="#34d399" />
-          <ToolbarBtn label="TRIM"    active={autoSilenceTrim??true} onClick={() => setAutoSilenceTrim?.(!autoSilenceTrim)} color="#38bdf8" />
-          <ToolbarBtn label="CARTS"   active={showCarts} onClick={toggleCarts} color="#f97316" />
-          <ToolbarBtn label="XFADE"   active={autoXfade || xfadeActive} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; if (!n) {} }} color="#a78bfa" title="Auto crossfade between tracks" />
+          <ToolbarBtn label="SHUFFLE" active={shuffle} onClick={toggleShuffle} color="#fbbf24" />
+          <ToolbarBtn label="TRIM" active={autoSilenceTrim??true} onClick={() => setAutoSilenceTrim?.(!autoSilenceTrim)} color="#34d399" />
+        </div>
+        <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
+        <div style={{ display: "flex", gap: 2 }}>
+          <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
+          <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#a78bfa" />
+          <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
+          {/* Crossfade duration control */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 6px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", height: 28 }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>XF</span>
+            <select
+              value={xfadeDuration}
+              onChange={e => { const v = Number(e.target.value); setXfadeDuration(v); engine.crossfadeDuration = v; }}
+              style={{ fontSize: 10, fontWeight: 700, background: "transparent", border: "none", color: "var(--accent-cyan)", cursor: "pointer", outline: "none", fontFamily: "'DM Mono', monospace" }}
+            >
+              {[1,2,3,4,5,6,8,10].map(s => <option key={s} value={s}>{s}s</option>)}
+            </select>
+          </div>
         </div>
         <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
         <div style={{ flex: 1, minWidth: 0, position: "relative" as const }}>
@@ -2626,4 +2716,3 @@ function ClockDisplay() {
   }, []);
   return <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-secondary)", letterSpacing: "0.05em" }}>{time}</span>;
 }
-

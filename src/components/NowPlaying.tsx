@@ -25,7 +25,7 @@ function fmtDur(ms: number) {
 }
 
 async function fetchAlbumArt(artist: string, title: string): Promise<string | null> {
-  const cacheKey = `ether_art_${(artist || "").toLowerCase().replace(/\s+/g, "_")}_${(title || "").toLowerCase().replace(/\s+/g, "_")}`;
+  const cacheKey = `ether_art_${(artist || "").toLowerCase().replace(/\s+/g, "_")}`;
   const cached = sessionStorage.getItem(cacheKey);
   if (cached) return cached || null;
 
@@ -210,13 +210,14 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     const key = track.artist + "|" + track.title;
     if (key === lastTrack) return;
     setLastTrack(key);
+    setAlbumArt(null);
     if (track.artist || track.title) {
-      fetchAlbumArt(track.artist, track.title).then(url => {
-        if (url) setAlbumArt(url);
-        else setAlbumArt(null);
-      });
-    } else {
-      setAlbumArt(null);
+      const timer = setTimeout(() => {
+        fetchAlbumArt(track.artist, track.title).then(url => {
+          if (url) setAlbumArt(url);
+        });
+      }, 400);
+      return () => clearTimeout(timer);
     }
   }, [track.artist, track.title]);
 
@@ -353,3 +354,4 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     </div>
   );
 }
+
