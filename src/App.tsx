@@ -725,6 +725,16 @@ export default function App() {
 
     // Also push via Tauri command for local companion
     invoke("set_now_playing", { data: JSON.stringify(payload) }).catch(() => {});
+
+    // Emit to NowPlaying window so it stays in sync
+    emit("now-playing-update", {
+      title:      payload.title || "Ether",
+      artist:     payload.artist || "",
+      positionSec: payload.position,
+      durationSec: payload.duration,
+      isPlaying:  payload.playing,
+      upcoming:   payload.queue,
+    }).catch(() => {});
   }, [deckA, deckB, deckC, stationName]);
 
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
@@ -2616,3 +2626,4 @@ function ClockDisplay() {
   }, []);
   return <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-secondary)", letterSpacing: "0.05em" }}>{time}</span>;
 }
+

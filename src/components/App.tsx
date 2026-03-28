@@ -49,6 +49,10 @@ import WidgetCanvas from "./canvas/WidgetCanvas";
 import MicDeck from "./components/MicDeck";
 import TrackEditor from "./components/TrackEditor";
 import AboutPanel from "./components/AboutPanel";
+import ListenerAnalytics from "./components/ListenerAnalytics";
+import CloudBackup from "./components/CloudBackup";
+import MultiOutputPanel from "./components/MultiOutputPanel";
+import StationManager from "./components/StationManager";
 import { usePlan, setPlanGlobally, PlanGate } from "./hooks/usePlan";
 import PhoneDesk from "./components/PhoneDesk";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
@@ -56,7 +60,7 @@ import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPic
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -382,6 +386,61 @@ export default function App() {
     return () => window.removeEventListener("ether:open-subscription", handler);
   }, []);
 
+  // ── Remote command polling (emergency override + companion) ──
+  useEffect(() => {
+    const POLL_URL = "https://ether-backend-production.up.railway.app/api/pending-cmds";
+    const execCmd  = async (cmd: string, data: any) => {
+      try {
+        switch (cmd) {
+          case "stop_all":
+            engine.stopAll?.();
+            deckA?.stop(); deckB?.stop(); deckC?.stop();
+            break;
+          case "play":
+            engine.resumeActive?.() || deckA?.play();
+            break;
+          case "pause":
+            engine.pauseActive?.() || deckA?.pause();
+            break;
+          case "skip":
+            engine.skipToNext?.();
+            break;
+          case "set_volume":
+            if (data.volume !== undefined) engine.setMasterVolume?.(data.volume);
+            break;
+          case "automation_on":
+            setAutoMode(true);
+            break;
+          case "automation_off":
+            setAutoMode(false);
+            break;
+          case "play_emergency_cart":
+            engine.playEmergencyCart?.();
+            break;
+          case "mic_on":
+            engine.openMic?.();
+            break;
+          default:
+            console.log("[RemoteCmd] Unknown command:", cmd);
+        }
+      } catch (e) {
+        console.error("[RemoteCmd] Exec failed:", cmd, e);
+      }
+    };
+
+    const poll = async () => {
+      try {
+        const res  = await fetch(POLL_URL, { signal: AbortSignal.timeout(4000) });
+        if (!res.ok) return;
+        const cmds: Array<{ cmd: string; data: any; ts: number }> = await res.json();
+        for (const c of cmds) await execCmd(c.cmd, c.data || {});
+      } catch {}
+    };
+
+    const timer = setInterval(poll, 2000);
+    return () => clearInterval(timer);
+  }, [deckA, deckB, deckC]);
+
   const handleWizardComplete = (profile: VenueProfile) => {
     setStationName(profile.name);
     setWizardDone(true);
@@ -642,17 +701,41 @@ export default function App() {
     ].find(d => d.state?.status === "playing");
 
     const payload = {
-      playing: !!playing,
-      title: playing?.state?.title || null,
-      artist: playing?.state?.artist || null,
-      position: playing?.state?.positionSec || 0,
-      duration: playing?.state?.durationSec || 0,
+      playing:      !!playing,
+      title:        playing?.state?.title  || null,
+      artist:       playing?.state?.artist || null,
+      position:     playing?.state?.positionSec  || 0,
+      duration:     playing?.state?.durationSec  || 0,
+      deck:         playing?.deck || null,
+      station_name: stationName,
+      decks: {
+        A: deckA ? { title: deckA.title, artist: deckA.artist, status: deckA.status, positionSec: deckA.positionSec, durationSec: deckA.durationSec } : null,
+        B: deckB ? { title: deckB.title, artist: deckB.artist, status: deckB.status, positionSec: deckB.positionSec, durationSec: deckB.durationSec } : null,
+        C: deckC ? { title: deckC.title, artist: deckC.artist, status: deckC.status, positionSec: deckC.positionSec, durationSec: deckC.durationSec } : null,
+      },
       queue: engine.getQueue().slice(0, 10).map(q => ({ title: q.title, artist: q.artist, duration: q.durationMs || 0 })),
     };
 
-    // Push to backend so /api/now-playing serves it
+    // Push to Railway backend so /api/now-playing and /dashboard serve it
+    fetch("https://ether-backend-production.up.railway.app/api/now-playing", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+
+    // Also push via Tauri command for local companion
     invoke("set_now_playing", { data: JSON.stringify(payload) }).catch(() => {});
-  }, [deckA, deckB, deckC]);
+
+    // Emit to NowPlaying window so it stays in sync
+    emit("now-playing-update", {
+      title:       payload.title || "",
+      artist:      payload.artist || "",
+      positionSec: payload.position,
+      durationSec: payload.duration,
+      isPlaying:   payload.playing,
+      upcoming:    payload.queue,
+    }).catch(() => {});
+  }, [deckA, deckB, deckC, stationName]);
 
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
   if (firstRunChecked && !wizardDone) return <FirstRunWizard onComplete={handleWizardComplete} />;
@@ -852,6 +935,26 @@ export default function App() {
               {panel === "subscription" && <SubscriptionPanel />}
               {panel === "autocue" && <AutoCue onClose={() => setPanel("live")} />}
               {panel === "health" && <HealthMonitor onClose={() => setPanel("live")} />}
+              {panel === "analytics" && (
+                <PlanGate requires="pro" feature="Listener Analytics">
+                  <ListenerAnalytics onClose={() => setPanel("live")} />
+                </PlanGate>
+              )}
+              {panel === "cloudbackup" && (
+                <PlanGate requires="pro" feature="Cloud Log Backup">
+                  <CloudBackup />
+                </PlanGate>
+              )}
+              {panel === "multioutput" && (
+                <PlanGate requires="pro" feature="Multi-Output Audio Routing">
+                  <MultiOutputPanel />
+                </PlanGate>
+              )}
+              {panel === "stationmanager" && (
+                <PlanGate requires="station" feature="Multi-Station Console">
+                  <StationManager onStationSwitch={(id, name) => setStationName(name)} />
+                </PlanGate>
+              )}
               {panel === "smartschedule" && (
                 <SmartScheduler onClose={() => setPanel("live")} />
               )}
@@ -1101,6 +1204,23 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Cart Wall"         onClick={() => set("cartwall")} />
         <Item label="Playlist Player"   onClick={() => set("playlist")} />
         <Item label="Auto-Cue Library..." onClick={() => set("autocue")} />
+        <Item label="Listener Analytics" onClick={() => set("analytics")} />
+        <Item label="Cloud Log Backup"   onClick={() => set("cloudbackup")} />
+        <Item label="Audio Routing"      onClick={() => set("multioutput")} />
+        <Item label="Station Manager"    onClick={() => set("stationmanager")} />
+        <Item separator />
+        <Item label="Remote Dashboard ↗" onClick={async () => {
+          try {
+            const { invoke: inv } = await import("@tauri-apps/api/core");
+            await inv("open_url", { url: "https://ether-backend-production.up.railway.app/dashboard" });
+          } catch { window.open("https://ether-backend-production.up.railway.app/dashboard", "_blank"); }
+        }} />
+        <Item label="Emergency Override ↗" onClick={async () => {
+          try {
+            const { invoke: inv } = await import("@tauri-apps/api/core");
+            await inv("open_url", { url: "https://ether-backend-production.up.railway.app/emergency" });
+          } catch { window.open("https://ether-backend-production.up.railway.app/emergency", "_blank"); }
+        }} />
         <Item label="System Health"     onClick={() => set("health")} />
         <Item separator />
         <Item label="Auto-Duck Settings" disabled />

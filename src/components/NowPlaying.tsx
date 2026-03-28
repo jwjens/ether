@@ -25,12 +25,49 @@ function fmtDur(ms: number) {
 }
 
 async function fetchAlbumArt(artist: string, title: string): Promise<string | null> {
-  try {
-    const r = await fetch("https://itunes.apple.com/search?term=" + encodeURIComponent(artist + " " + title) + "&media=music&limit=1");
-    const d = await r.json();
-    if (d.results?.[0]?.artworkUrl100) return d.results[0].artworkUrl100.replace("100x100bb", "600x600bb");
-  } catch {}
-  return null;
+  const cacheKey = `ether_art_${(artist || "").toLowerCase().replace(/\s+/g, "_")}`;
+  const cached = sessionStorage.getItem(cacheKey);
+  if (cached) return cached || null;
+
+  const clean = (s: string) => s
+    .replace(/\s*[-–]\s*(remaster(ed)?|\d{4}\s*remaster(ed)?).*/gi, "")
+    .replace(/\s*\(feat\..*?\)/gi, "")
+    .trim();
+
+  const cleanArtist = clean(artist || "");
+  const cleanTitle  = clean(title || "");
+
+  const tryFetch = async (url: string) => {
+    try { const r = await fetch(url); if (!r.ok) return null; return await r.json(); } catch { return null; }
+  };
+
+  let photoUrl: string | null = null;
+
+  // Strategy 1: Wikipedia artist photo
+  if (cleanArtist) {
+    const wikiName = cleanArtist.replace(/\s+/g, "_");
+    const w = await tryFetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiName)}`);
+    if (w && w.type !== "disambiguation") {
+      const hasImage = w.originalimage?.source || w.thumbnail?.source;
+      const looksLikeMusician = w.description?.toLowerCase().match(/sing|music|rap|artist|band|produc|songwrit|dj/) ||
+        w.extract?.toLowerCase().match(/sing|music|rap|record|album|song|band/);
+      if (hasImage && looksLikeMusician) {
+        photoUrl = w.originalimage?.source || w.thumbnail?.source;
+      }
+    }
+  }
+
+  // Strategy 2: iTunes artwork
+  if (!photoUrl) {
+    const q = encodeURIComponent(`${cleanArtist} ${cleanTitle}`.trim());
+    const d = await tryFetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=3`);
+    if (d?.results?.[0]?.artworkUrl100) {
+      photoUrl = d.results[0].artworkUrl100.replace("100x100bb", "600x600bb");
+    }
+  }
+
+  sessionStorage.setItem(cacheKey, photoUrl || "");
+  return photoUrl;
 }
 
 const WMO: Record<number, [string, string]> = {
@@ -40,6 +77,38 @@ const WMO: Record<number, [string, string]> = {
   71: ["❄️","Light Snow"], 73: ["❄️","Snow"], 75: ["❄️","Heavy Snow"],
   80: ["🌦","Showers"], 95: ["⛈️","Thunderstorm"], 99: ["⛈️","Severe Storm"],
 };
+
+const MOCK_ADS = [
+  { bg: "linear-gradient(135deg,#0f172a,#1e1b4b)", accent: "#a78bfa", logo: "⚡", headline: "Ether Technologies", sub: "Professional Broadcast Automation", tag: "FREE TO DOWNLOAD", url: "etherradio.app" },
+  { bg: "linear-gradient(135deg,#0c1a0c,#052e16)", accent: "#34d399", logo: "📻", headline: "Broadcast Smarter", sub: "Replace RCS Zetta & WideOrbit — for $0", tag: "OPEN SOURCE", url: "github.com/jwjens/ether" },
+  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "#38bdf8", logo: "🎙️", headline: "Ether Pro", sub: "Cloud backup · Analytics · Remote dashboard", tag: "$19 / MONTH", url: "etherradio.app/#pricing" },
+  { bg: "linear-gradient(135deg,#1a0a2e,#2d1b69)", accent: "#c084fc", logo: "🏢", headline: "Ether Station", sub: "Multi-station · NexGen import · ASIO audio", tag: "$79 / MONTH", url: "etherradio.app/#pricing" },
+];
+
+function MockAdRotator() {
+  const [idx, setIdx] = useState(0);
+  const [fade, setFade] = useState(true);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setFade(false);
+      setTimeout(() => { setIdx(i => (i + 1) % MOCK_ADS.length); setFade(true); }, 400);
+    }, 6000);
+    return () => clearInterval(id);
+  }, []);
+  const ad = MOCK_ADS[idx];
+  return (
+    <div style={{ width: "100%", height: "100%", background: ad.bg, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 48, textAlign: "center" as const, opacity: fade ? 1 : 0, transition: "opacity 0.4s ease", position: "relative" as const }}>
+      <div style={{ position: "absolute" as const, bottom: 18, display: "flex", gap: 6 }}>
+        {MOCK_ADS.map((_, i) => <div key={i} style={{ width: i === idx ? 18 : 6, height: 6, borderRadius: 3, background: i === idx ? ad.accent : "rgba(255,255,255,0.2)", transition: "all 0.3s" }} />)}
+      </div>
+      <div style={{ fontSize: 56, marginBottom: 16 }}>{ad.logo}</div>
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.2em", color: ad.accent, marginBottom: 12, textTransform: "uppercase" as const }}>{ad.tag}</div>
+      <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.02em", color: "#f0f0f8", marginBottom: 12, lineHeight: 1.1 }}>{ad.headline}</div>
+      <div style={{ fontSize: 16, color: "rgba(255,255,255,0.5)", marginBottom: 24, lineHeight: 1.6 }}>{ad.sub}</div>
+      <div style={{ padding: "8px 20px", borderRadius: 20, border: `1px solid ${ad.accent}50`, fontSize: 11, color: ad.accent, fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>{ad.url}</div>
+    </div>
+  );
+}
 
 export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   const [track, setTrack] = useState<TrackInfo>({ title: "Ether", artist: "", positionSec: 0, durationSec: 0, isPlaying: false });
@@ -141,8 +210,14 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
     const key = track.artist + "|" + track.title;
     if (key === lastTrack) return;
     setLastTrack(key);
-    if (track.artist && track.title && track.title !== "Ether") fetchAlbumArt(track.artist, track.title).then(setAlbumArt);
-    else setAlbumArt(null);
+    if (track.artist || track.title) {
+      fetchAlbumArt(track.artist, track.title).then(url => {
+        if (url) setAlbumArt(url);
+        else setAlbumArt(null);
+      });
+    } else {
+      setAlbumArt(null);
+    }
   }, [track.artist, track.title]);
 
   const { title, artist, positionSec: pos = 0, durationSec: dur = 0, isPlaying } = track;
@@ -215,10 +290,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
           <div style={{ flex: 1, borderRadius: 18, overflow: "hidden", background: "rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.07)", position: "relative", backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {widgetType === "sponsor" && adImages.length > 0 && <img src={adImages[adIndex]} alt="Sponsor" style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
             {widgetType === "sponsor" && adImages.length === 0 && (
-              <div style={{ textAlign: "center" as const, padding: 48 }}>
-                <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.12)" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 20 }}><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.18)", lineHeight: 2 }}>Sponsor Display<br/>Add images in Settings → Now Playing</div>
-              </div>
+              <MockAdRotator />
             )}
             {widgetType === "instagram" && igHandle && <iframe src={igSrc} style={{ width: "100%", height: "100%", border: "none" }} title="Instagram" />}
             {widgetType === "instagram" && !igHandle && (
