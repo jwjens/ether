@@ -148,6 +148,34 @@ export default function SubscriptionPanel() {
         </div>
       </div>
 
+      {/* Product Hunt promo banner */}
+      {currentPlan === "free" && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 14,
+          padding: "12px 18px", borderRadius: 12, marginBottom: 20,
+          background: "linear-gradient(135deg, rgba(251,191,36,0.08), rgba(251,191,36,0.04))",
+          border: "1px solid rgba(251,191,36,0.25)",
+        }}>
+          <span style={{ fontSize: 22, flexShrink: 0 }}>🐱</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "#fbbf24", marginBottom: 2 }}>Product Hunt Exclusive — 50% off for 3 months</div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Enter code <strong style={{ fontFamily: "'DM Mono', monospace", color: "#fbbf24", letterSpacing: "0.08em" }}>PHUNT50</strong> at checkout</div>
+          </div>
+          <div style={{
+            padding: "5px 12px", borderRadius: 8,
+            background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.3)",
+            fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700,
+            color: "#fbbf24", letterSpacing: "0.1em", flexShrink: 0,
+            cursor: "pointer", userSelect: "all" as const,
+          }}
+            onClick={() => navigator.clipboard?.writeText("PHUNT50")}
+            title="Click to copy"
+          >
+            PHUNT50
+          </div>
+        </div>
+      )}
+
       {/* License entry modal */}
       {showLicenseEntry && (
         <div style={{
@@ -223,7 +251,7 @@ export default function SubscriptionPanel() {
         }}>
           <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "#22d3ee", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Pro</div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$10</div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 24 }}>per month · small station</div>
           {currentPlan === "pro" ? (
             <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 10, background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#22d3ee", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 24 }}>
@@ -236,7 +264,7 @@ export default function SubscriptionPanel() {
           )}
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Free, plus:</div>
-            {FEATURES.filter(f => f.pro && !f.station).concat(FEATURES.filter(f => f.pro && f.station && f.comingSoon)).map(f => (
+            {FEATURES.filter(f => f.pro).map(f => (
               <div key={f.label} style={{ fontSize: 11, color: f.comingSoon ? "var(--text-tertiary)" : "var(--text-secondary)", display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ color: "#22d3ee", flexShrink: 0 }}>✓</span>
                 {f.label}
@@ -254,7 +282,7 @@ export default function SubscriptionPanel() {
           boxShadow: currentPlan === "station" ? "0 0 24px rgba(167,139,250,0.08)" : "none",
         }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#a78bfa", textTransform: "uppercase" as const, marginBottom: 12 }}>Station</div>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$50</div>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$79</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 24 }}>per month · commercial station</div>
           {currentPlan === "station" ? (
             <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 10, background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 24 }}>
@@ -287,7 +315,7 @@ export default function SubscriptionPanel() {
             <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Pro for cloud backup, remote dashboard, PDF traffic reports, and more</div>
           </div>
           <button onClick={() => openCheckout("pro")} style={{ flexShrink: 0, marginLeft: 20, padding: "10px 20px", borderRadius: 10, background: "#7c3aed", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" as const }}>
-            Upgrade — $10/mo
+            Upgrade — $19/mo
           </button>
         </div>
       )}
