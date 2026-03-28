@@ -1,6 +1,8 @@
 import VUMeter from "./VUMeter";
-import { useState, useEffect } from "react";
+import ArtistCard from "./ArtistCard";
+import { useState, useEffect, useRef } from "react";
 import { DeckState } from "../audio/engine-rodio";
+import { query } from "../db/client";
 
 interface Props {
   deck: DeckState | null;
@@ -12,6 +14,8 @@ interface Props {
   onStop: () => void;
   onVolume: (v: number) => void;
   onDragStart?: (e: React.MouseEvent) => void;
+  bpm?: number | null;
+  introEndSec?: number | null; // from DB auto-cue
 }
 
 function fmt(sec: number): string {
@@ -26,22 +30,155 @@ function fmtMs(sec: number): string {
   return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0") + "." + ms;
 }
 
-export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume, onDragStart }: Props) {
-  const [blink, setBlink] = useState(false);
 
+export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume, onDragStart, bpm, introEndSec }: Props) {
+  const [blink, setBlink] = useState(false);
+  const [categoryColor, setCategoryColor] = useState<string | null>(null);
+  const [categoryName, setCategoryName] = useState<string | null>(null);
+
+  // Deck values — must be declared before any useEffect that references them
   const status = deck?.status || "idle";
-  const title = deck?.title || "";
+  const title  = deck?.title  || "";
   const artist = deck?.artist || "";
-  const pos = deck?.positionSec || 0;
-  const dur = deck?.durationSec || 0;
-  const vol = deck?.volume ?? 1;
+  const pos    = deck?.positionSec  || 0;
+  const dur    = deck?.durationSec  || 0;
+  const vol    = deck?.volume ?? 1;
+
+
+  // Look up category color when track changes
+  useEffect(() => {
+    if (!title) { setCategoryColor(null); setCategoryName(null); return; }
+    query<{ color: string; name: string; code: string }>(
+      `SELECT c.color, c.name, c.code FROM songs s
+       LEFT JOIN categories c ON c.id = s.category_id
+       WHERE s.title = ? AND s.file_path IS NOT NULL
+       LIMIT 1`,
+      [title]
+    ).then(rows => {
+      setCategoryColor(rows[0]?.color || null);
+      setCategoryName(rows[0]?.name || rows[0]?.code || null);
+    }).catch(() => {});
+  }, [title]);
+
   const remaining = Math.max(0, dur - pos);
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
 
   const isPlaying = status === "playing";
+
+  // ── Album artwork ──────────────────────────────────────────
+  const [artUrl, setArtUrl] = useState<string | null>(null);
+  const [artPulse, setArtPulse] = useState(false);
+  const [artReady, setArtReady] = useState(false);
+  const artLoadedFor = useRef<string>("");
+
+  // When title/artist changes, fetch artwork using smart multi-source strategy
+  useEffect(() => {
+    if (!title) { setArtUrl(null); setArtReady(false); return; }
+    // Cache key is artist — same artist = same photo regardless of track
+    const cacheKey = `ether_artist_photo_${(artist||"").toLowerCase().replace(/\s+/g,"_")}`;
+    if (artLoadedFor.current === (artist || title)) return;
+    artLoadedFor.current = artist || title;
+    setArtReady(false);
+
+    (async () => {
+      // Check cache first
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) { setArtUrl(cached); setArtReady(true); return; }
+
+      try {
+        const clean = (s: string) => s
+          .replace(/\s*[-–]\s*(remaster(ed)?|re-?master(ed)?|\d{4}\s*remaster(ed)?).*/gi, "")
+          .replace(/\s*\(feat\..*?\)/gi, "")
+          .replace(/\s*\(ft\..*?\)/gi, "")
+          .replace(/\s*[-–]\s*(single|ep|deluxe|expanded|anniversary).*/gi, "")
+          .replace(/\s*\(\d{4}\)/g, "")
+          .trim();
+
+        const cleanArtist = clean(artist || "");
+        const cleanTitle  = clean(title);
+
+        const tryFetch = async (url: string) => {
+          try { const r = await fetch(url); if (!r.ok) return null; return await r.json(); }
+          catch { return null; }
+        };
+
+        let photoUrl: string | null = null;
+
+        // ── Artist photo strategy — Wikipedia first, then Deezer ──
+        // Wikipedia: free licensed press photos, clean backgrounds, no key needed
+        // All fetches go through local proxy (port 4242) for CORS canvas access
+        const PROXY = "http://localhost:4242";
+
+        // ── Artist photo — Wikipedia first, then iTunes ──
+        // Note: Deezer removed — blocked by CORS in browser context
+
+        // Strategy 1: Wikipedia — good photos
+        if (!photoUrl && cleanArtist) {
+          const wikiFormats = [
+            cleanArtist.trim().replace(/\s+/g, "_"),
+            cleanArtist.trim().replace(/\s+/g, "_").replace(/\.$/, ""),
+            cleanArtist.split("/")[0].trim().replace(/\s+/g, "_"),
+          ];
+          for (const wikiName of wikiFormats) {
+            if (photoUrl) break;
+            const w = await tryFetch(
+              `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiName)}`
+            );
+            if (!w || w.type === "disambiguation") continue;
+            const hasImage = w.originalimage?.source || w.thumbnail?.source;
+            const looksLikeMusician =
+              w.description?.toLowerCase().match(/sing|music|rap|artist|band|produc|songwrit|dj/) ||
+              w.extract?.toLowerCase().match(/sing|music|rap|record|album|song|band/);
+            if (hasImage && looksLikeMusician) {
+              photoUrl = `${PROXY}/api/img-proxy?url=${encodeURIComponent(w.originalimage?.source || w.thumbnail?.source)}`;
+            }
+          }
+        }
+
+        // Strategy 3: iTunes musicArtist — last resort
+        if (!photoUrl && cleanArtist) {
+          const q = encodeURIComponent(cleanArtist);
+          const d = await tryFetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=musicArtist&limit=5`);
+          if (d?.results?.length) {
+            const match = d.results.find((r: any) =>
+              (r.artistName || "").toLowerCase() === cleanArtist.toLowerCase()
+            ) || d.results[0];
+            if (match?.artworkUrl100) {
+              photoUrl = `${PROXY}/api/img-proxy?url=${encodeURIComponent(
+                match.artworkUrl100.replace("100x100bb", "3000x3000bb")
+              )}`;
+            }
+          }
+        }
+
+        // If no artist photo found — color backdrop renders, looks intentional
+
+        if (photoUrl) {
+          sessionStorage.setItem(cacheKey, photoUrl);
+          setArtUrl(photoUrl);
+          setArtReady(true);
+        } else {
+          setArtUrl(null);
+        }
+      } catch {
+        setArtUrl(null);
+      }
+    })();
+  }, [artist]); // key on artist, not title — same artist across tracks = same photo
+
+  // Pulse the artwork in sync with the beat (tied to VU level)
+  useEffect(() => {
+    if (!isPlaying || !artReady) return;
+    const id = setInterval(() => {
+      setArtPulse(true);
+      setTimeout(() => setArtPulse(false), 180);
+    }, 620); // ~97 BPM default pulse
+    return () => clearInterval(id);
+  }, [isPlaying, artReady]);
   const isPaused = status === "paused";
   const isIdle = !title;
-  const introEnd = dur * 0.08;
+  // Use DB cue point if available, else fall back to 8% heuristic
+  const introEnd = introEndSec && introEndSec > 0 ? introEndSec : dur * 0.08;
   const isInIntro = pos < introEnd && isPlaying && dur > 0 && introEnd > 3;
   const isEnding = remaining < 15 && remaining > 0 && isPlaying;
   const isCritical = remaining < 5 && remaining > 0 && isPlaying;
@@ -66,33 +203,40 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
 
   if (isPlaying) {
     if (isCritical) {
-      accent = "#f87171"; statusLabel = "ENDING"; statusColor = "#f87171";
-      topBarColor = "#f87171";
-      cardBg = blink ? "rgba(248,113,113,0.04)" : "var(--bg-secondary)";
+      accent = "var(--accent-red)"; statusLabel = "ENDING"; statusColor = "var(--accent-red)";
+      topBarColor = "var(--accent-red)";
+      cardBg = blink ? "rgba(248,113,113,0.05)" : "var(--bg-secondary)";
       cardShadow = "0 0 0 1px rgba(248,113,113,0.2), 0 8px 32px rgba(248,113,113,0.12)";
-      cardBorder = "rgba(248,113,113,0.25)";
+      cardBorder = "rgba(248,113,113,0.3)";
     } else if (isEnding) {
-      accent = "#fb923c"; statusLabel = "OUTRO"; statusColor = "#fb923c";
-      topBarColor = "#fb923c";
+      accent = "var(--accent-orange)"; statusLabel = "OUTRO"; statusColor = "var(--accent-orange)";
+      topBarColor = "var(--accent-orange)";
       cardShadow = "0 0 0 1px rgba(251,146,60,0.15), 0 8px 32px rgba(251,146,60,0.1)";
-      cardBorder = "rgba(251,146,60,0.2)";
+      cardBorder = "rgba(251,146,60,0.25)";
     } else {
-      accent = "#34d399"; statusLabel = "ON AIR"; statusColor = "#34d399";
-      topBarColor = "#34d399";
+      accent = "var(--accent-green)"; statusLabel = "ON AIR"; statusColor = "var(--accent-green)";
+      topBarColor = "var(--accent-green)";
       cardShadow = "0 0 0 1px rgba(52,211,153,0.15), 0 8px 32px rgba(52,211,153,0.1)";
-      cardBorder = "rgba(52,211,153,0.2)";
+      cardBorder = "rgba(52,211,153,0.25)";
     }
   } else if (isPaused) {
-    accent = "#fbbf24"; statusLabel = "PAUSED"; statusColor = "#fbbf24";
-    topBarColor = "#fbbf24";
+    accent = "var(--accent-amber)"; statusLabel = "PAUSED"; statusColor = "var(--accent-amber)";
+    topBarColor = "var(--accent-amber)";
   } else if (title) {
-    accent = "#64748b"; statusLabel = "READY"; statusColor = "#64748b";
+    accent = "var(--text-tertiary)"; statusLabel = "READY"; statusColor = "var(--text-tertiary)";
   }
 
   // Deck identity colors
-  const deckHue = deckId === "A" ? "#38bdf8" : deckId === "B" ? "#34d399" : "#a78bfa";
-  const deckHueBg = deckId === "A" ? "rgba(56,189,248,0.1)" : deckId === "B" ? "rgba(52,211,153,0.1)" : "rgba(167,139,250,0.1)";
-  const deckHueBorder = deckId === "A" ? "rgba(56,189,248,0.25)" : deckId === "B" ? "rgba(52,211,153,0.25)" : "rgba(167,139,250,0.25)";
+  // Skin-aware deck colors — pull from CSS variables so every skin
+  // gets its own palette rather than hardcoded hex
+  const deckHue = deckId === "A"
+    ? "var(--accent-cyan)"
+    : deckId === "B"
+    ? "var(--accent-green)"
+    : "var(--accent-purple)";
+  const deckHueRaw = deckId === "A" ? "56,189,248" : deckId === "B" ? "52,211,153" : "167,139,250";
+  const deckHueBg = `rgba(${deckHueRaw},0.1)`;
+  const deckHueBorder = `rgba(${deckHueRaw},0.25)`;
 
   const playBtnBg = isPlaying ? "#fbbf24" : isPaused ? "#34d399" : deckHue;
   const playBtnLabel = isPlaying ? "PAUSE" : isPaused ? "RESUME" : "PLAY";
@@ -100,6 +244,8 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   return (
     <div style={{
       background: cardBg,
+      backdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
+      WebkitBackdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
       borderRadius: 18,
       border: `1px solid ${cardBorder}`,
       boxShadow: cardShadow,
@@ -107,7 +253,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       flexDirection: "column",
       height: "100%",
       overflow: "hidden",
-      transition: "background 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease",
+      transition: "background 0.4s ease, box-shadow 0.4s ease, border-color 0.4s ease",
       fontFamily: "'Inter', system-ui, sans-serif",
     }}>
 
@@ -158,15 +304,15 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           }}>{deckId}</div>
           <span style={{
             fontSize: 9, fontWeight: 700,
-            color: "var(--text-tertiary)",
-            letterSpacing: "0.14em",
+            color: isPlaying ? deckHue : "var(--text-tertiary)",
+            letterSpacing: "0.12em",
             textTransform: "uppercase",
           }}>
             {isPlaying ? "ON AIR" : isPaused ? "PAUSED" : deckId === "A" ? "PRIMARY" : deckId === "B" ? "STANDBY" : "NEXT UP"}
           </span>
         </div>
 
-        {/* Status pill */}
+        {/* Status pill — bold text, no dot */}
         <div style={{
           display: "flex", alignItems: "center", gap: 5,
           padding: "3px 10px",
@@ -174,45 +320,56 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           background: isPlaying ? `${accent}14` : "var(--bg-tertiary)",
           border: `1px solid ${isPlaying ? accent + "30" : "var(--border-primary)"}`,
         }}>
-          <div style={{
-            width: 5, height: 5, borderRadius: "50%",
-            background: statusColor,
-            boxShadow: isPlaying ? `0 0 6px ${statusColor}` : "none",
-          }} />
           <span style={{
             fontSize: 9, fontWeight: 700,
             color: statusColor,
-            letterSpacing: "0.12em",
+            letterSpacing: "0.1em",
             textTransform: "uppercase",
           }}>{statusLabel}</span>
         </div>
       </div>
 
-      {/* ── Track info ── */}
-      <div style={{ padding: "2px 16px 10px", flexShrink: 0 }}>
-        <div style={{
-          fontSize: isPlaying ? 16 : 14,
-          color: isIdle ? "var(--text-tertiary)" : "var(--text-primary)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          letterSpacing: "-0.025em",
-          lineHeight: 1.3,
-          transition: "font-size 0.2s ease",
-          fontStyle: isIdle ? "italic" : "normal",
-          fontWeight: isIdle ? 400 : 600,
-        }}>
-          {title || "No track loaded"}
+      {/* ── Track info — Apple Music bold hierarchy ── */}
+      <div style={{ padding: "4px 16px 10px", flexShrink: 0 }}>
+        <div
+          key={title}
+          style={{
+            fontSize: 14,
+            color: isIdle ? "var(--text-tertiary)" : "var(--text-primary)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            letterSpacing: "-0.02em",
+            lineHeight: 1.3,
+            fontFamily: "'Inter', system-ui, sans-serif",
+            fontStyle: isIdle ? "italic" : "normal",
+            fontWeight: isIdle ? 400 : 700,
+            animation: title ? "deck-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both" : "none",
+            transition: "color 0.2s ease",
+          }}>
+          {title ? (() => {
+            const remaster = title.match(/\s*[-–]\s*([\d]{4}\s*remaster(?:ed)?|remaster(?:ed)?|re-?master(?:ed)?.*)/i);
+            const cleanTitle = remaster ? title.slice(0, remaster.index).trim() : title;
+            const remasterTag = remaster ? remaster[0].replace(/\s*[-–]\s*/, '').trim() : null;
+            return (
+              <>
+                {cleanTitle}
+                {remasterTag && <span style={{ fontSize: "0.6em", fontWeight: 400, opacity: 0.4, marginLeft: 6 }}>{remasterTag}</span>}
+              </>
+            );
+          })() : "No track loaded"}
         </div>
         <div style={{
           fontSize: 11,
-          color: isPlaying ? "var(--text-secondary)" : "var(--text-tertiary)",
-          marginTop: 3,
+          fontWeight: 400,
+          color: "var(--text-tertiary)",
+          marginTop: 2,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
-          letterSpacing: "0.005em",
-          minHeight: 15,
+          letterSpacing: "-0.005em",
+          opacity: isIdle ? 0 : 0.8,
+          transition: "opacity 0.2s",
         }}>
           {artist || ""}
         </div>
@@ -229,13 +386,6 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         {/* Remaining — hero number */}
         <div>
           <div style={{
-            fontSize: 8, fontWeight: 600,
-            color: "var(--text-tertiary)",
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            marginBottom: 3,
-          }}>REMAINING</div>
-          <div style={{
             fontFamily: "'DM Mono', 'SF Mono', monospace",
             fontSize: dur > 0 ? 40 : 28,
             fontWeight: 300,
@@ -249,24 +399,32 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           </div>
         </div>
 
-        {/* Elapsed — secondary */}
-        <div style={{ textAlign: "right" as const, paddingBottom: 4 }}>
-          <div style={{
-            fontSize: 8,
-            color: "var(--text-tertiary)",
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            marginBottom: 3,
-          }}>ELAPSED</div>
-          <div style={{
-            fontFamily: "'DM Mono', 'SF Mono', monospace",
-            fontSize: 13,
-            fontWeight: 400,
-            fontVariantNumeric: "tabular-nums",
-            letterSpacing: "-0.02em",
-            color: dur > 0 ? "var(--text-secondary)" : "var(--text-tertiary)",
-          }}>
-            {dur > 0 ? fmtMs(pos) : "——:——.—"}
+        {/* Elapsed — minimal, no label */}
+        <div style={{ textAlign: "right" as const, paddingBottom: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 3 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 7, fontWeight: 600, letterSpacing: "0.14em", color: "var(--text-tertiary)", opacity: 0.5, textTransform: "uppercase" as const }}>elapsed</span>
+              <span style={{
+                fontFamily: "'DM Mono', 'SF Mono', monospace",
+                fontSize: 11, fontWeight: 300,
+                fontVariantNumeric: "tabular-nums",
+                letterSpacing: "-0.02em",
+                color: "var(--text-tertiary)",
+              }}>
+                {dur > 0 ? fmtMs(pos) : ""}
+              </span>
+            </div>
+            {bpm && bpm > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+                <svg width="7" height="8" viewBox="0 0 10 12" fill="var(--accent-amber)" opacity="0.6">
+                  <rect x="0" y="4" width="3" height="8" rx="1"/>
+                  <rect x="3.5" y="2" width="3" height="10" rx="1"/>
+                  <rect x="7" y="0" width="3" height="12" rx="1"/>
+                </svg>
+                <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-amber)", fontFamily: "'DM Mono', monospace", opacity: 0.8 }}>{Math.round(bpm)}</span>
+                <span style={{ fontSize: 7, color: "var(--text-tertiary)", opacity: 0.5, letterSpacing: "0.08em" }}>BPM</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -290,7 +448,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         }} />
       </div>
 
-      {/* ── VU Meter with countdown overlay ── */}
+      {/* ── VU Meter ── */}
       <div style={{
         margin: "0 16px 10px",
         flex: 1,
@@ -313,43 +471,81 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           hasTrack={!!title}
         />
 
-        {/* Countdown overlay — only covers VU area */}
+        {/* Countdown overlay — background fades letting waveform show through, text fully opaque */}
         {showOverlay && (
           <div style={{
             position: "absolute", inset: 0, borderRadius: 10,
-            background: "var(--bg-secondary)",
-            opacity: 0.92,
-            backdropFilter: "blur(2px)",
+            overflow: "hidden",
             display: "flex", flexDirection: "column",
             alignItems: "center", justifyContent: "center",
-            gap: 2,
           }}>
+            {/* Semi-transparent background — waveform bleeds through */}
             <div style={{
-              fontSize: 8, fontWeight: 700, letterSpacing: "0.2em",
-              textTransform: "uppercase",
-              color: isInIntro ? "var(--accent-blue)" : isCritical ? "var(--accent-red)" : "var(--accent-orange)",
-              opacity: 0.8,
-            }}>
-              {isInIntro ? "🎙 INTRO" : "⚠ OUTRO"}
-            </div>
-            <div style={{
-              fontFamily: "'DM Mono', monospace",
-              fontSize: 88, fontWeight: 500,
-              fontVariantNumeric: "tabular-nums",
-              lineHeight: 1,
-              letterSpacing: "-0.05em",
-              color: isInIntro ? "var(--accent-blue)" : isCritical ? "var(--accent-red)" : "var(--accent-orange)",
-              opacity: isCritical && blink ? 0.4 : 1,
-              transition: "opacity 0.1s",
-            }}>
-              {isInIntro ? Math.ceil(introEnd - pos) : Math.ceil(remaining)}
-            </div>
-            <div style={{
-              fontSize: 8, fontWeight: 500, letterSpacing: "0.1em",
-              color: "var(--text-tertiary)",
-            }}>
-              {isInIntro ? "seconds of intro" : "seconds remaining"}
-            </div>
+              position: "absolute", inset: 0,
+              background: "var(--bg-secondary)",
+              opacity: 0.9,
+            }} />
+            {/* Full bleed intro countdown */}
+            {isInIntro ? (
+              <>
+                {/* Artist + title at top */}
+                <div style={{
+                  position: "absolute", top: 12, left: 14, right: 14,
+                  zIndex: 1,
+                  animation: "deck-slide-in 0.4s ease both",
+                }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{title}</div>
+                  <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 2 }}>{artist}</div>
+                </div>
+                {/* Big countdown */}
+                <div style={{ position: "relative", zIndex: 1, textAlign: "center" as const }}>
+                  <div style={{
+                    fontFamily: "'DM Mono', monospace",
+                    fontSize: 96, fontWeight: 700,
+                    color: "var(--accent-cyan)",
+                    lineHeight: 1,
+                    letterSpacing: "-0.06em",
+                    transform: artPulse ? "scale(1.05)" : "scale(1)",
+                    transition: "transform 0.18s ease-out",
+                  }}>
+                    {Math.ceil(introEnd - pos)}
+                  </div>
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.28em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginTop: 2 }}>
+                    INTRO
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* Non-intro overlay — OUTRO/CRITICAL, no art */
+              <div style={{
+                position: "absolute", inset: 0, borderRadius: 10,
+                background: "var(--bg-secondary)",
+                opacity: 0.92,
+                backdropFilter: "blur(2px)",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center",
+                gap: 2,
+              }}>
+                <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.2em", textTransform: "uppercase" as const, color: isCritical ? "var(--accent-red)" : "var(--accent-orange)", opacity: 0.8 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    OUTRO
+                  </span>
+                </div>
+                <div style={{
+                  fontFamily: "'DM Mono', monospace",
+                  fontSize: 88, fontWeight: 500,
+                  fontVariantNumeric: "tabular-nums",
+                  lineHeight: 1, letterSpacing: "-0.05em",
+                  color: isCritical ? "var(--accent-red)" : "var(--accent-orange)",
+                  opacity: isCritical && blink ? 0.4 : 1,
+                  transition: "opacity 0.1s",
+                }}>
+                  {Math.ceil(remaining)}
+                </div>
+                <div style={{ fontSize: 8, fontWeight: 500, letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>seconds remaining</div>
+              </div>
+            )}
           </div>
         )}
       </div>

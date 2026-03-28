@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { query, execute } from "../db/client";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
-import { processAllSongs, getProcessingStats } from "../audio/processor";
+import { processLibrary as processAllSongs, getProcessingStats } from "../audio/songAnalysis";
 
 // ── Shared UI primitives ─────────────────────────────────────
 

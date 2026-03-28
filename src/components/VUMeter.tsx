@@ -115,11 +115,19 @@ export default function VUMeter({
         ctx.setLineDash([]);
         ctx.globalAlpha = 1;
 
+        // Status label — bottom center, styled nicely
+        const statusText = isC ? "NEXT UP" : isA ? "PRIMARY" : "STANDBY";
+        const labelW = ctx.measureText(statusText).width + 16;
         ctx.fillStyle = colors.bar;
-        ctx.globalAlpha = 0.55;
-        ctx.font = `700 9px 'Inter', sans-serif`;
+        ctx.globalAlpha = 0.12;
+        ctx.beginPath();
+        ctx.roundRect(w / 2 - labelW / 2, h - 22, labelW, 16, 4);
+        ctx.fill();
+        ctx.globalAlpha = 0.5;
+        ctx.font = `700 8px 'Inter', sans-serif`;
+        ctx.letterSpacing = "0.1em";
         ctx.textAlign = "center";
-        ctx.fillText(isC ? "NEXT UP" : "STANDBY", w / 2, h - 8);
+        ctx.fillText(statusText, w / 2, h - 11);
         ctx.globalAlpha = 1;
 
         rafRef.current = requestAnimationFrame(draw);

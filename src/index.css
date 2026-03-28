@@ -5,35 +5,49 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Light theme ─────────────────────────────────────────────── */
+/* ── Light theme — warm editorial, not clinical grey ──────────── */
 :root {
-  --bg-primary: #f5f4f2;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #efeeed;
+  /* Warm off-white base — like good paper, not a hospital */
+  --bg-primary: #f2f0ed;
+  --bg-secondary: #faf9f7;
+  --bg-tertiary: #ede9e4;
   --bg-elevated: #ffffff;
-  --bg-hover: #e8e6e3;
-  --bg-active: #e0ddd9;
-  --text-primary: #141210;
-  --text-secondary: #4a4540;
-  --text-tertiary: #9a9590;
-  --text-inverse: #ffffff;
-  --border-primary: #e5e2de;
-  --border-secondary: #d4d0cb;
-  --accent-blue: #0ea5e9;
-  --accent-cyan: #06b6d4;
-  --accent-green: #10b981;
-  --accent-red: #ef4444;
-  --accent-amber: #f59e0b;
-  --accent-purple: #8b5cf6;
-  --accent-orange: #f97316;
-  --accent-teal: #14b8a6;
-  --on-air-glow: 0 0 20px rgba(239,68,68,0.4), 0 0 40px rgba(239,68,68,0.2);
-  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05), 0 1px 4px rgba(0,0,0,0.04);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05);
-  --shadow-lg: 0 12px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.06);
+  --bg-hover: #e8e3dc;
+  --bg-active: #ddd7ce;
+
+  /* Rich warm dark text — not pure black */
+  --text-primary: #1a1714;
+  --text-secondary: #4a443c;
+  --text-tertiary: #9c948a;
+  --text-inverse: #faf9f7;
+
+  /* Subtle warm borders */
+  --border-primary: #ddd8d0;
+  --border-secondary: #ccc6bc;
+
+  /* Vivid accents — pop against warm backgrounds */
+  --accent-blue: #0284c7;
+  --accent-cyan: #0891b2;
+  --accent-green: #059669;
+  --accent-red: #dc2626;
+  --accent-amber: #d97706;
+  --accent-purple: #7c3aed;
+  --accent-orange: #ea580c;
+  --accent-teal: #0d9488;
+
+  /* Warm shadows */
+  --on-air-glow: 0 0 20px rgba(220,38,38,0.35), 0 0 40px rgba(220,38,38,0.15);
+  --shadow-sm: 0 1px 3px rgba(26,23,20,0.06), 0 1px 2px rgba(26,23,20,0.04);
+  --shadow-md: 0 4px 16px rgba(26,23,20,0.1), 0 2px 4px rgba(26,23,20,0.06);
+  --shadow-lg: 0 12px 40px rgba(26,23,20,0.12), 0 4px 8px rgba(26,23,20,0.08);
   --radius: 14px;
   --radius-sm: 10px;
   --radius-xs: 7px;
+
+  /* Deck-specific colors — richer in light mode */
+  --deck-a-bg: linear-gradient(180deg, rgba(5,150,105,0.04) 0%, transparent 100%);
+  --deck-b-bg: linear-gradient(180deg, rgba(8,145,178,0.03) 0%, transparent 100%);
+  --deck-c-bg: linear-gradient(180deg, rgba(124,58,237,0.03) 0%, transparent 100%);
 }
 
 /* ── Dark theme ──────────────────────────────────────────────── */
@@ -61,6 +75,11 @@
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.6);
   --shadow-lg: 0 12px 40px rgba(0,0,0,0.7);
+
+  /* Deck-specific colors */
+  --deck-a-bg: linear-gradient(180deg, rgba(52,211,153,0.04) 0%, transparent 100%);
+  --deck-b-bg: linear-gradient(180deg, rgba(34,211,238,0.03) 0%, transparent 100%);
+  --deck-c-bg: linear-gradient(180deg, rgba(167,139,250,0.03) 0%, transparent 100%);
 }
 
 /* ── Base ────────────────────────────────────────────────────── */
@@ -93,10 +112,238 @@ body {
 *, *::before, *::after {
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
-button, a { transition: all 0.12s ease !important; }
+button:not(.menu-btn):not(.menu-item), a { transition: all 0.12s ease !important; }
+.menu-btn, .menu-item { transition: none !important; }
 
 /* ── Scrollbar ───────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; }
+
+/* ── Apple Music-inspired typography system ──────────────────
+   Bold, large, unambiguous. Every element knows its hierarchy.
+   ─────────────────────────────────────────────────────────── */
+
+/* Display — song titles, big numbers */
+.text-display {
+  font-family: 'Syne', system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+}
+
+/* Title — track name in deck */
+.text-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+/* Artist — secondary credit */
+.text-artist {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.55;
+  letter-spacing: -0.01em;
+}
+
+/* Label — ALL CAPS status labels */
+.text-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-family: 'Syne', sans-serif;
+}
+
+/* Timer — the big countdown numbers */
+.text-timer {
+  font-family: 'DM Mono', 'SF Mono', monospace;
+  font-weight: 300;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Status badge — ON AIR, STANDBY, READY */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-family: 'Syne', sans-serif;
+}
+
+/* Icon buttons — thick stroke, Apple HIG compliant */
+.icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.12s;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.icon-btn svg { stroke-width: 2.5; }
+
+/* Play/Pause buttons — bold, high contrast */
+.play-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.play-btn:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.play-btn:active { transform: translateY(0); filter: brightness(0.95); }
+
+/* Deck card header — tighter, more intentional */
+.deck-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px 8px;
+}
+
+/* ── Deck cards — light mode gets warm tinted backgrounds ─── */
+.deck-card-a { background: var(--deck-a-bg) var(--bg-secondary) !important; }
+.deck-card-b { background: var(--deck-b-bg) var(--bg-secondary) !important; }
+.deck-card-c { background: var(--deck-c-bg) var(--bg-secondary) !important; }
+
+/* ── Light mode deck card borders ─────────────────────────── */
+:root .deck-card {
+  box-shadow: var(--shadow-sm);
+}
+:root .deck-card.on-air {
+  box-shadow: 0 0 0 1.5px var(--accent-green), var(--shadow-md);
+}
+
+/* ── Title + artist hierarchy ─────────────────────────────── */
+.track-title {
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-artist {
+  font-size: 0.8em;
+  opacity: 0.55;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-remaster {
+  font-size: 0.7em;
+  opacity: 0.35;
+  font-weight: 400;
+}
+
+/* ── Queue items ───────────────────────────────────────────── */
+.queue-row {
+  display: grid;
+  grid-template-columns: 20px 32px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: grab;
+  transition: background 0.1s;
+}
+.queue-row:hover { background: var(--bg-hover); }
+.queue-row.dragging { opacity: 0.4; }
+.queue-row.drag-over { background: var(--bg-active); }
+
+/* ── Queue art thumbnail ───────────────────────────────────── */
+.queue-art {
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.queue-art img { width: 100%; height: 100%; object-fit: cover; }
+
+/* ── Mic deck — channel strip style ───────────────────────── */
+.mic-channel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+/* ── ON AIR button pulse ───────────────────────────────────── */
+@keyframes on-air-breathe {
+  0%, 100% { box-shadow: var(--on-air-glow); }
+  50% { box-shadow: 0 0 8px rgba(220,38,38,0.2); }
+}
+
+/* ── Toolbar pills ─────────────────────────────────────────── */
+.toolbar-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 13px; border-radius: 8px;
+  font-size: 11px; font-weight: 800; letter-spacing: 0.06em;
+  cursor: pointer; transition: all 0.12s; border: none;
+  font-family: 'Syne', sans-serif;
+  user-select: none;
+}
+.toolbar-pill.inactive {
+  background: transparent;
+  color: var(--text-tertiary);
+}
+.toolbar-pill.inactive:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* ── State transition animations ──────────────────────────── */
+@keyframes track-load {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes on-air-activate {
+  0% { transform: scale(0.96); }
+  60% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── Header zones ──────────────────────────────────────────── */
+.header-left { display: flex; align-items: center; gap: 12px; }
+.header-center { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; }
+.header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+/* ── Now playing pill in header ────────────────────────────── */
+.now-playing-pill {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-radius: 100px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-primary);
+  max-width: 280px;
+  overflow: hidden;
+}
+.now-playing-pill .note { font-size: 11px; opacity: 0.5; flex-shrink: 0; }
+.now-playing-pill .track { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
@@ -166,6 +413,68 @@ button, a { transition: all 0.12s ease !important; }
 @keyframes countdown-blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.5; }
+}
+
+@keyframes deck-slide-in {
+  0%   { opacity: 0; transform: translateY(6px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes on-air-load {
+  0%   { opacity: 0; transform: translateX(-8px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Menu bar styles ─────────────────────────────────────── */
+.menu-btn {
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  letter-spacing: -0.01em;
+  user-select: none;
+}
+.menu-btn:hover,
+.menu-btn.open {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 400;
+  cursor: pointer;
+  text-align: left;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+.menu-item:hover {
+  background: var(--bg-active);
+}
+.menu-item:disabled,
+.menu-item.disabled {
+  color: var(--text-tertiary);
+  cursor: default;
+}
+.menu-item:disabled:hover,
+.menu-item.disabled:hover {
+  background: none;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* ── Dark mode input overrides ───────────────────────────────── */

@@ -86,18 +86,12 @@ export default function SplashScreen({ onDone }: Props) {
           <div style={{
             fontFamily: "'Syne', sans-serif",
             fontSize: 36, fontWeight: 800,
-            letterSpacing: "-0.04em",
+            letterSpacing: "-0.02em",
             background: "linear-gradient(135deg, #f0f0f8 0%, rgba(240,240,248,0.7) 100%)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             marginBottom: 4,
-          }}>ETHER</div>
-          <div style={{
-            fontSize: 10, fontWeight: 300,
-            letterSpacing: "0.28em",
-            color: "#22d3ee",
-            textTransform: "uppercase" as any,
-          }}>GLOBAL TECHNOLOGIES</div>
+          }}>ETHER TECHNOLOGIES</div>
         </div>
       </div>
 
