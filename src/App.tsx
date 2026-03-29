@@ -59,6 +59,7 @@ import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPicker";
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
+import OnboardingTour, { useTour } from "./components/OnboardingTour";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager";
 
@@ -68,6 +69,7 @@ interface SongRow {
   genre: string | null; duration_ms: number;
   category_code: string | null; category_color: string | null;
   intro_end?: number | null; outro_start?: number | null; bpm?: number | null;
+  gain_db?: number | null;
 }
 
 const EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
@@ -308,7 +310,10 @@ export default function App() {
   const [currentPlan, setCurrentPlan] = useState<PlanTier>("free");
   const [panel, setPanel] = useState<Panel>("live");
   const panelRef = useRef<Panel>("live");
-  useEffect(() => { panelRef.current = panel; }, [panel]);
+  useEffect(() => {
+    panelRef.current = panel;
+    if (panel === "library") window.dispatchEvent(new Event("ether:tour-library-opened"));
+  }, [panel]);
   const [onAir, setOnAir] = useState(false);
   const [onAirOverride, setOnAirOverride] = useState(false);
   const onAirOverrideRef = useRef(false); // ref avoids stale closure in engine.on
@@ -393,32 +398,33 @@ export default function App() {
       try {
         switch (cmd) {
           case "stop_all":
-            engine.stopAll?.();
-            deckA?.stop(); deckB?.stop(); deckC?.stop();
+            engine.getDeck("A")?.stop(); engine.getDeck("B")?.stop(); engine.getDeck("C")?.stop();
             break;
           case "play":
-            engine.resumeActive?.() || deckA?.play();
+            engine.getDeck("A")?.play();
             break;
           case "pause":
-            engine.pauseActive?.() || deckA?.pause();
+            engine.getDeck("A")?.pause();
             break;
           case "skip":
-            engine.skipToNext?.();
+            engine.triggerPreload?.();
             break;
           case "set_volume":
-            if (data.volume !== undefined) engine.setMasterVolume?.(data.volume);
+            if (data.volume !== undefined) (engine as any).setMasterVolume?.(data.volume);
             break;
           case "automation_on":
-            setAutoMode(true);
+            setAutoAdv(true);
+            engine.autoAdvance = true;
             break;
           case "automation_off":
-            setAutoMode(false);
+            setAutoAdv(false);
+            engine.autoAdvance = false;
             break;
           case "play_emergency_cart":
-            engine.playEmergencyCart?.();
+            (engine as any).playEmergencyCart?.();
             break;
           case "mic_on":
-            engine.openMic?.();
+            (engine as any).openMic?.();
             break;
           default:
             console.log("[RemoteCmd] Unknown command:", cmd);
@@ -495,6 +501,8 @@ export default function App() {
     });
   }, []);
 
+  const [xfadeDuration, setXfadeDuration] = useState(3);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
@@ -536,6 +544,9 @@ export default function App() {
       else if (id === "B") setDeckB({...st});
       else if (id === "C") setDeckC({...st});
       setQueueLen(engine.getQueue().length);
+      // Fire tour events
+      if (id === "A" && st.filePath) window.dispatchEvent(new Event("ether:tour-deck-loaded"));
+      if (st.status === "playing") window.dispatchEvent(new Event("ether:tour-deck-playing"));
       // Auto-set ON AIR when any deck starts playing (unless manually overridden)
       if (st.status === "playing" && !onAirOverrideRef.current) {
         setOnAir(true);
@@ -566,7 +577,7 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const row = await queryOne<{queue_json: string, deck_a_path: string | null, deck_a_title: string | null, deck_a_artist: string | null, was_playing: number, saved_at: number}>("SELECT * FROM crash_recovery WHERE id=1");
+        const row = await queryOne<{queue_json: string, deck_a_path: string | null, deck_a_title: string | null, deck_a_artist: string | null, deck_a_position: number | null, was_playing: number, saved_at: number}>("SELECT * FROM crash_recovery WHERE id=1");
         if (!row || !row.saved_at) return;
         if (Date.now() / 1000 - row.saved_at > 3600) return;
         const queue = JSON.parse(row.queue_json || '[]');
@@ -652,19 +663,19 @@ export default function App() {
   const loadA = useCallback(async (s: SongRow) => {
     if (!s.file_path) return;
     await engine.loadToDeck("A", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) engine.setDeckGain?.("A", s.gain_db);
+    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("A", s.gain_db);
   }, []);
   const loadB = useCallback(async (s: SongRow) => {
     if (!s.file_path) return;
     await engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) engine.setDeckGain?.("B", s.gain_db);
+    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("B", s.gain_db);
   }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
   });
   const addToQueue = useCallback((s: SongRow) => {
     if (s.file_path) {
-      engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }]);
+      engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any]);
       setQueueLen(engine.getQueue().length);
       // Auto-detect cue points in background if not set
       if (autoSilenceTrim && s.id && !s.intro_end) {
@@ -675,6 +686,7 @@ export default function App() {
 
   const canvasEngine = useCanvasEngine();
   const updater = useUpdater();
+  const { showTour, dismissTour } = useTour();
   const [sessionEditing, setSessionEditing] = useState(false);
   // Canvas mode — only true when user explicitly activates custom layout
   const [useCanvas, setUseCanvas] = useState(false);
@@ -685,8 +697,6 @@ export default function App() {
   const toggleVisible = (key: string) => setVisiblePanels((p: Record<string, boolean>) => ({ ...p, [key]: !p[key] }));
   const { skinId, setSkin } = useSkin();
   const [showShortcuts, setShowShortcuts] = useState(false);
-  const [xfadeDuration, setXfadeDuration] = useState(3);
-
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [skinPickerPos, setSkinPickerPos] = useState<{ x: number; y: number } | null>(null);
@@ -724,7 +734,7 @@ export default function App() {
         B: deckB ? { title: deckB.title, artist: deckB.artist, status: deckB.status, positionSec: deckB.positionSec, durationSec: deckB.durationSec } : null,
         C: deckC ? { title: deckC.title, artist: deckC.artist, status: deckC.status, positionSec: deckC.positionSec, durationSec: deckC.durationSec } : null,
       },
-      queue: engine.getQueue().slice(0, 10).map(q => ({ title: q.title, artist: q.artist, duration: q.durationMs || 0 })),
+      queue: engine.getQueue().slice(0, 10).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
     };
 
     // Push to Railway backend so /api/now-playing and /dashboard serve it
@@ -763,7 +773,7 @@ export default function App() {
       <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
         {/* ── LEFT: Logo + Menu + Session ── */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, zIndex: 1 }}>
+        <div data-tour="logo" style={{ display: "flex", alignItems: "center", gap: 10, zIndex: 1 }}>
           <MenuBar
             active={panel} set={setPanel}
             canvasEngine={canvasEngine}
@@ -775,6 +785,8 @@ export default function App() {
             toggleVisible={toggleVisible}
             setVisiblePanels={setVisiblePanels}
             setUseCanvas={setUseCanvas}
+            onConfigureDecks={() => setShowDeckConfig(true)}
+            onCheckForUpdates={() => updater.checkForUpdate?.()}
             onReset={() => {
               setVisiblePanels({ queue: true, deckA: true, deckB: true, deckC: true, mic: true, clock: false, history: false, cartwall: false });
               setUseCanvas(false);
@@ -848,28 +860,45 @@ export default function App() {
             {currentUser?.name}
           </button>
           <button
-            onClick={() => {
-              const anyPlaying = ["A","B","C"].some(d => engine.getDeck(d)?.getState().status === "playing");
+            data-tour="onair-btn"
+            onClick={async () => {
               if (onAir) {
+                // Going OFF AIR — stop stream but keep music playing
                 setOnAir(false);
                 setOnAirOverride(true);
                 onAirOverrideRef.current = true;
                 invoke("stream_stop").catch(() => {});
               } else {
-                if (anyPlaying) {
-                  setOnAir(true);
-                  setOnAirOverride(false);
-                  onAirOverrideRef.current = false;
-                  invoke("stream_start_if_configured").catch(() => {});
+                // Going ON AIR — start music if nothing playing, then start stream
+                setOnAir(true);
+                setOnAirOverride(false);
+                onAirOverrideRef.current = false;
+                if (!anyDeckPlaying) {
+                  // Nothing playing — kick off auto-advance to start music
+                  if (!autoAdv) {
+                    await toggleAuto();
+                  } else {
+                    // Auto already on but nothing playing — load from queue
+                    const q = engine.getQueue();
+                    if (q.length > 0) {
+                      const next = q[0];
+                      engine.clearQueue();
+                      engine.addToQueue(q.slice(1));
+                      await engine.loadToDeck("A", next.filePath, next.title, next.artist);
+                      engine.getDeck("A")?.play();
+                      setTimeout(() => engine.triggerPreload(), 800);
+                    }
+                  }
                 }
+                invoke("stream_start_if_configured").catch(() => {});
               }
             }}
-            title={onAir ? "Stop streaming — music continues playing" : "Go on air — starts your stream (music must be playing)"}
+            title={onAir ? "Go off air — stops the stream, music keeps playing" : "Go on air — starts music and your stream"}
             style={{
               height: 30, padding: "0 12px", borderRadius: 8,
               fontSize: 10, fontWeight: 800, letterSpacing: "0.12em",
               display: "flex", alignItems: "center", gap: 5,
-              opacity: (!onAir && !anyDeckPlaying) ? 0.45 : 1,
+              opacity: 1,
               cursor: "pointer",
               background: onAir ? "#ef4444" : "var(--bg-tertiary)",
               color: onAir ? "#fff" : "var(--text-tertiary)",
@@ -915,6 +944,8 @@ export default function App() {
                   onConfigureDecks={() => setShowDeckConfig(true)}
                   autoSilenceTrim={autoSilenceTrim}
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
+                  xfadeDuration={xfadeDuration}
+                  setXfadeDuration={setXfadeDuration}
                 />
               )}
             </div>
@@ -1072,6 +1103,7 @@ export default function App() {
         onDismiss={updater.dismiss}
       />}
       {restoreInfo && <SessionRestoreToast info={restoreInfo} onDismiss={() => setRestoreInfo(null)} />}
+      {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0, letterSpacing: "0.02em", fontFamily: "'DM Mono', monospace" }}>
         <span style={{ color: onAir ? "var(--accent-green)" : "var(--text-tertiary)" }}>
@@ -1097,14 +1129,6 @@ export default function App() {
         <ProducerDesk
           onClose={() => setShowProducerDesk(false)}
           episodeTitle={nowPlayingTitle || undefined}
-          onSendToQueue={(track) => {
-            engine.addToQueue([{
-              filePath: track.filePath || "",
-              title: track.title,
-              artist: track.artist,
-            }]);
-            setQueueLen(engine.getQueue().length);
-          }}
         />
       )}
       {showDeckConfig && (
@@ -1119,7 +1143,7 @@ export default function App() {
 
 // ── Nav ──────────────────────────────────────────────────────
 
-function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan, currentUser, setCurrentUser, onSave, visiblePanels, toggleVisible, setVisiblePanels, onReset, setUseCanvas }: {
+function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan, currentUser, setCurrentUser, onSave, visiblePanels, toggleVisible, setVisiblePanels, onReset, setUseCanvas, onConfigureDecks, onCheckForUpdates }: {
   active: Panel;
   set: (p: Panel) => void;
   canvasEngine: any;
@@ -1134,6 +1158,8 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
   setVisiblePanels: (v: Record<string, boolean>) => void;
   onReset: () => void;
   setUseCanvas: (v: boolean) => void;
+  onConfigureDecks?: () => void;
+  onCheckForUpdates?: () => void;
 }) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [venueType, setVenueType] = useState("radio");
@@ -1181,15 +1207,28 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
     label?: string; shortcut?: string; onClick?: () => void;
     checked?: boolean; separator?: boolean; disabled?: boolean;
   }) => {
+    const [hovered, setHovered] = useState(false);
     if (separator) return <div style={{ height: 1, background: "var(--border-primary)", margin: "3px 6px" }} />;
     return (
       <button
-        className={`menu-item${disabled ? " disabled" : ""}`}
         disabled={disabled}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
         onMouseDown={e => { e.stopPropagation(); if (!disabled && onClick) { onClick(); close(); } }}
+        style={{
+          display: "flex", alignItems: "center", width: "100%",
+          padding: "7px 10px", borderRadius: 7, border: "none",
+          background: hovered && !disabled ? "rgba(255,255,255,0.07)" : "transparent",
+          color: disabled ? "var(--text-tertiary)" : "var(--text-primary)",
+          fontSize: 12, fontFamily: "'Inter', sans-serif",
+          cursor: disabled ? "default" : "pointer",
+          opacity: disabled ? 0.45 : 1,
+          textAlign: "left" as const, gap: 8,
+          transition: "background 0.1s",
+        }}
       >
         <span style={{ width: 14, fontSize: 10, color: "var(--accent-cyan)", flexShrink: 0 }}>
-          {checked === true ? "✓" : checked === false ? "" : ""}
+          {checked === true ? "✓" : ""}
         </span>
         <span style={{ flex: 1 }}>{label}</span>
         {shortcut && <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", marginLeft: 12 }}>{shortcut}</span>}
@@ -1233,7 +1272,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Song History"  checked={visiblePanels.history}  onClick={() => toggleVisible("history")} />
         <Item label="Cart Wall"     checked={visiblePanels.cartwall} onClick={() => toggleVisible("cartwall")} />
         <Item separator />
-        <Item label="Configure Decks..." onClick={() => { set("live"); setShowDeckConfig(true); }} />
+        <Item label="Configure Decks..." onClick={() => { set("live"); onConfigureDecks?.(); }} />
         <Item label="Reset to Default" onClick={() => onReset()} />
       </Menu>
     ),
@@ -1242,8 +1281,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label={L.library}    onClick={() => { set("library"); }} />
         <Item label={L.spots}      onClick={() => { set("spots"); }} />
         <Item label={L.voicetrack} onClick={() => { set("voicetrack"); }} />
-        <Item label={L.spots}    onClick={() => { set("spots"); }} />
-        <Item label="Cart Wall"  onClick={() => { set("live"); togglePanel("cartwall"); }} />
+        <Item label="Cart Wall"    onClick={() => { set("live"); togglePanel("cartwall"); }} />
         <Item separator />
         <Item label="Import from Folder..." onClick={() => set("library")} />
         <Item label="Cue Editor"          onClick={() => set("trackedit")} />
@@ -1261,44 +1299,35 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
     ),
     tools: (
       <Menu>
-        <Item label={L.voicetrack}      onClick={() => set("voicetrack")} />
-        <Item label="Studio Editor"     onClick={() => set("studio")} />
-        <Item label="Production Editor" onClick={() => set("broadcasteditor")} />
-        <Item label="Cue Editor"        onClick={() => set("trackedit")} />
-        <Item label="Phone Desk"        onClick={() => set("phonedesk")} />
+        {/* Production */}
+        <Item label={L.voicetrack}         onClick={() => set("voicetrack")} />
+        <Item label="Studio Editor"        onClick={() => set("studio")} />
+        <Item label="Production Editor"    onClick={() => set("broadcasteditor")} />
+        <Item label="Cue Editor"           onClick={() => set("trackedit")} />
+        <Item label="Auto-Cue Library"     onClick={() => set("autocue")} />
         <Item separator />
-        <Item label="Show Prep"         onClick={() => set("showprep")} />
-        <Item label="Announcements"     onClick={() => set("announce")} />
-        <Item label="Stream Manager"    onClick={() => set("streaming")} />
-        <Item label="Smart Scheduler"   onClick={() => set("smartschedule")} />
+        {/* Live tools */}
+        <Item label="Cart Wall"            onClick={() => set("cartwall")} />
+        <Item label="Playlist Player"      onClick={() => set("playlist")} />
+        <Item label="Phone Desk"           onClick={() => set("phonedesk")} />
+        <Item label="Announcements"        onClick={() => set("announce")} />
+        <Item label="Show Prep"            onClick={() => set("showprep")} />
         <Item separator />
-        <Item label="AI Show Notes"     onClick={() => { set("live"); togglePanel("shownotes"); }} />
-        <Item label="Export Episode"    onClick={() => set("podcast")} />
+        {/* Station */}
+        <Item label="Stream Manager"       onClick={() => set("streaming")} />
+        <Item label="Smart Scheduler"      onClick={() => set("smartschedule")} />
+        <Item label="Listener Analytics"   onClick={() => set("analytics")} />
+        <Item label="Cloud Log Backup"     onClick={() => set("cloudbackup")} />
+        <Item label="Audio Routing"        onClick={() => set("multioutput")} />
+        <Item label="Station Manager"      onClick={() => set("stationmanager")} />
         <Item separator />
-        <Item label="Podcast Studio"    onClick={() => set("podcast")} />
-        <Item label="Cart Wall"         onClick={() => set("cartwall")} />
-        <Item label="Playlist Player"   onClick={() => set("playlist")} />
-        <Item label="Auto-Cue Library..." onClick={() => set("autocue")} />
-        <Item label="Listener Analytics" onClick={() => set("analytics")} />
-        <Item label="Cloud Log Backup"   onClick={() => set("cloudbackup")} />
-        <Item label="Audio Routing"      onClick={() => set("multioutput")} />
-        <Item label="Station Manager"    onClick={() => set("stationmanager")} />
-        <Item separator />
-        <Item label="Remote Dashboard ↗" onClick={async () => {
+        <Item label="Remote Dashboard ↗"  onClick={async () => {
           try {
             const { invoke: inv } = await import("@tauri-apps/api/core");
             await inv("open_url", { url: "https://ether-backend-production.up.railway.app/dashboard" });
           } catch { window.open("https://ether-backend-production.up.railway.app/dashboard", "_blank"); }
         }} />
-        <Item label="Emergency Override ↗" onClick={async () => {
-          try {
-            const { invoke: inv } = await import("@tauri-apps/api/core");
-            await inv("open_url", { url: "https://ether-backend-production.up.railway.app/emergency" });
-          } catch { window.open("https://ether-backend-production.up.railway.app/emergency", "_blank"); }
-        }} />
-        <Item label="System Health"     onClick={() => set("health")} />
-        <Item separator />
-        <Item label="Auto-Duck Settings" disabled />
+        <Item label="System Health"        onClick={() => set("health")} />
       </Menu>
     ),
     help: (
@@ -1307,7 +1336,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Documentation" onClick={() => {}} />
         <Item label="Contact Support" onClick={() => {}} />
         <Item separator />
-        <Item label="Check for Updates" onClick={() => updater.checkForUpdate()} />
+        <Item label="Check for Updates" onClick={() => onCheckForUpdates?.()} />
         <Item separator />
         <Item label="About Ether v1.5.2" disabled />
       </Menu>
@@ -1322,7 +1351,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         onMouseDown={e => e.preventDefault()}
       />}
       {(["file","view","library","schedule","tools","help"] as const).map(id => (
-        <div key={id} style={{ position: "relative" as const }}>
+        <div key={id} data-tour={id === "library" ? "nav-library" : undefined} style={{ position: "relative" as const }}>
           <MenuBtn id={id} label={id.charAt(0).toUpperCase() + id.slice(1)} />
           {openMenu === id && menus[id]}
         </div>
@@ -1331,7 +1360,6 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
   );
 }
 
-// ── Live Panel ───────────────────────────────────────────────
 // ── Live Panel ───────────────────────────────────────────────
 
 // ── Drag handle icon ────────────────────────────────────────
@@ -2083,7 +2111,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -2094,6 +2122,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   onConfigureDecks?: () => void;
   autoSilenceTrim?: boolean;
   setAutoSilenceTrim?: (v: boolean) => void;
+  xfadeDuration: number;
+  setXfadeDuration: (v: number) => void;
 }) {
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const [autoXfade, setAutoXfade] = useState(true);
@@ -2292,6 +2322,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const queuePanel = (
     <div
       key="queue"
+      data-tour="queue"
       style={{
         width: queueWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
         opacity: dragging === "queue" ? 0.55 : 1,
@@ -2377,6 +2408,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             <React.Fragment key={slot}>
               <div
                 data-deck-slot={slot}
+                data-tour={slot === "A" ? "deck-a" : undefined}
                 style={{
                   ...sizeStyle, display: "flex", flexDirection: "column", minWidth: 0,
                   opacity: isDragging ? 0.45 : 1,

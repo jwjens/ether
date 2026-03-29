@@ -161,7 +161,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
       if (!folder || typeof folder !== "string") return;
       setImporting(true);
       setError(null);
-      const files: string[] = await invoke("scan_audio_folder", { path: folder }).catch(() => []);
+      const files: string[] = await invoke<string[]>("scan_audio_folder", { path: folder }).catch(() => []);
       const results: Song[] = [];
       for (let i = 0; i < files.length; i++) {
         setProgress({ file: files[i].split(/[\\/]/).pop() || "", done: i, total: files.length });

@@ -50,7 +50,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
   const [activeShow, setActiveShow] = useState<ActiveShow | null>(null);
-  const [artUrls, setArtUrls] = useState<Record<number, string>>({});
+  const [artUrls, setArtUrls] = useState<Record<string, string>>({});
   const [totalDuration, setTotalDuration] = useState(0);
 
   // All drag state in refs so closures always read current values
@@ -66,14 +66,15 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
   // Fetch artwork for queue items
   useEffect(() => {
-    queue.forEach((item, i) => {
-      if (artUrls[i] !== undefined) return;
+    queue.forEach((item) => {
+      const key = `${item.title}::${item.artist}`;
+      if (artUrls[key] !== undefined) return;
       fetchArt(item.title || '', item.artist || '').then(url => {
-        if (url) setArtUrls(prev => ({ ...prev, [i]: url }));
+        if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
       });
     });
     // Calculate total queue duration
-    const total = queue.reduce((sum, q) => sum + (q.durationMs || 0), 0);
+    const total = queue.reduce((sum, q) => sum + ((q as any).durationMs || 0), 0);
     setTotalDuration(total);
   }, [queueLen]);
 
@@ -288,8 +289,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
               {/* Artwork thumbnail */}
               <div style={{ width: 32, height: 32, borderRadius: 6, flexShrink: 0, overflow: "hidden", background: `${color}18`, border: `1px solid ${color}30`, pointerEvents: "none" }}>
-                {artUrls[i] ? (
-                  <img src={artUrls[i]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                {artUrls[`${item.title}::${item.artist}`] ? (
+                  <img src={artUrls[`${item.title}::${item.artist}`]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
                   <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>🎵</div>
                 )}

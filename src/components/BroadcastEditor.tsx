@@ -397,8 +397,8 @@ export default function BroadcastEditor({
     try {
       const ctx   = getCtx();
       const bytes = await readFile(filePath);
-      const ab    = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-      const buffer = await ctx.decodeAudioData(ab as ArrayBuffer);
+      const ab    = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const buffer = await ctx.decodeAudioData(ab);
       const peaks  = extractPeaks(buffer);
       const durMs  = buffer.duration * 1000;
       const peak   = measurePeakDb(buffer);
@@ -1141,7 +1141,7 @@ export default function BroadcastEditor({
 
       // Encode to MP3 using lamejs
       const { Mp3Encoder } = await import("lamejs");
-      const encoder = new Mp3Encoder(2, rendered.sampleRate, 192);
+      const encoder = new (Mp3Encoder as any)(2, rendered.sampleRate, 192);
       const left  = rendered.getChannelData(0);
       const right = rendered.getChannelData(1);
       const BLOCK = 1152;
