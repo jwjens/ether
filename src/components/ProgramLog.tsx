@@ -414,7 +414,8 @@ export default function ProgramLog({ onClose }: Props) {
     } catch {}
 
     // Fetch song metadata (BPM, LUFS) for entries that have song_ids
-    const songIds = [...new Set(hourBlocks.flatMap(b => b.entries.map(e => e.song_id).filter(Boolean)))];
+    const allSongIds = hourBlocks.flatMap(b => b.entries.map(e => e.song_id)).filter(id => id !== null);
+    const songIds: number[] = [...new Set(allSongIds)] as number[];
     const songMeta: Record<number, { bpm: number | null; lufs: number | null; gain_db: number | null }> = {};
     if (songIds.length > 0) {
       try {
@@ -593,7 +594,7 @@ export default function ProgramLog({ onClose }: Props) {
           ${block.entries.map((e, i) => {
             const isUnfilled = e.status === "unfilled";
             const isOverflow = e.overflow === 1;
-            const meta = e.song_id ? (songMeta[e.song_id] ?? {}) : {};
+            const meta: { bpm: number | null; lufs: number | null; gain_db: number | null } = e.song_id ? (songMeta[e.song_id] ?? { bpm: null, lufs: null, gain_db: null }) : { bpm: null, lufs: null, gain_db: null };
             const catColor = e.category_color || "#94a3b8";
             const catBg = catColor + "22";
 

@@ -1,5 +1,14 @@
 import { useState, useEffect, useRef } from "react";
 
+// Inline stub — replace with full ProcessingPanel integration when ready
+function AudioProcessorPanel({ stream, compact, onLevel }: { stream: MediaStream; compact?: boolean; onLevel?: (level: number) => void }) {
+  return (
+    <div style={{ fontSize: 10, color: "var(--text-tertiary)", padding: "2px 0" }}>
+      Studio Sound active
+    </div>
+  );
+}
+
 const BAR_COUNT = 32;
 const PEAK_HOLD_MS = 1200;
 

@@ -71,6 +71,7 @@
   --accent-amber: #fbbf24;
   --accent-purple: #a78bfa;
   --accent-orange: #fb923c;
+  --accent-teal: #14b8a6;
   --on-air-glow: 0 0 20px rgba(248,113,113,0.5), 0 0 60px rgba(248,113,113,0.2);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.5);
   --shadow-md: 0 4px 16px rgba(0,0,0,0.6);
@@ -109,7 +110,7 @@ body {
 }
 
 /* ── Transitions ─────────────────────────────────────────────── */
-*, *::before, *::after {
+*:not(.menu-btn):not(.menu-item), *:not(.menu-btn):not(.menu-item)::before, *:not(.menu-btn):not(.menu-item)::after {
   transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 button:not(.menu-btn):not(.menu-item), a { transition: all 0.12s ease !important; }
@@ -117,6 +118,9 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.12s ease !important
 
 /* ── Scrollbar ───────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
 /* ── Apple Music-inspired typography system ──────────────────
    Bold, large, unambiguous. Every element knows its hierarchy.
@@ -344,10 +348,6 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.12s ease !important
 }
 .now-playing-pill .note { font-size: 11px; opacity: 0.5; flex-shrink: 0; }
 .now-playing-pill .track { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border-secondary); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
-
 /* ── Ether logo — rendered via EtherLogo.tsx (inline SVG) ─────── */
 
 /* ── Deck cards ──────────────────────────────────────────────── */

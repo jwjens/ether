@@ -67,7 +67,7 @@ async function gzipString(str: string): Promise<Uint8Array> {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
+    chunks.push(value as Uint8Array);
   }
   const total = chunks.reduce((s, c) => s + c.length, 0);
   const result = new Uint8Array(total);
@@ -86,7 +86,7 @@ async function gunzipBytes(bytes: Uint8Array): Promise<string> {
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    chunks.push(value);
+    chunks.push(value as Uint8Array);
   }
   const total = chunks.reduce((s, c) => s + c.length, 0);
   const result = new Uint8Array(total);

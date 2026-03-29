@@ -7,6 +7,7 @@
 // - Retry logic on SQLITE_BUSY
 // - Query timing in dev mode
 
+/// <reference types="vite/client" />
 import Database from "@tauri-apps/plugin-sql";
 
 let _db: Database | null = null;
@@ -469,3 +470,4 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     [title, artist, deck, durationMs ?? null, getSessionId()]
   );
 }
+

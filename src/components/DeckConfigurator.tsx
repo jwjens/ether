@@ -187,7 +187,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                         disabled={!c.enabled && enabled.length >= 6}
                         style={{
                           display: "flex", alignItems: "center", gap: 4,
-                          padding: "5px 10px", borderRadius: 8, border: "none",
+                          padding: "5px 10px", borderRadius: 8,
                           background: c.type === type && c.enabled ? `${TYPE_META[type].color}20` : "var(--bg-secondary)",
                           border: `1px solid ${c.type === type && c.enabled ? TYPE_META[type].color + "50" : "var(--border-primary)"}`,
                           color: c.type === type && c.enabled ? TYPE_META[type].color : "var(--text-tertiary)",

@@ -260,8 +260,9 @@ export default function MultiOutputPanel() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           {(["A", "B", "C", "MONITOR", "MASTER"] as const).map(deckKey => {
             const meta = DECK_LABELS[deckKey];
-            const routingKey = `deck_${deckKey.toLowerCase()}` as keyof DeckRouting;
-            const value = deckKey === "MONITOR" ? routing.monitor : deckKey === "MASTER" ? routing.master : routing[routingKey as keyof DeckRouting];
+            const isSpecial = deckKey === "MONITOR" || deckKey === "MASTER";
+            const routingKey = isSpecial ? null : `deck_${deckKey.toLowerCase()}` as keyof DeckRouting;
+            const value = deckKey === "MONITOR" ? routing.monitor : deckKey === "MASTER" ? routing.master : routingKey ? routing[routingKey] : null;
             const selectedDevice = devices.find(d => d.name === value);
 
             return (
@@ -291,7 +292,7 @@ export default function MultiOutputPanel() {
                   onChange={v => {
                     if (deckKey === "MONITOR") updateRoute("monitor", v);
                     else if (deckKey === "MASTER") updateRoute("master", v);
-                    else updateRoute(routingKey as keyof DeckRouting, v);
+                    else if (routingKey) updateRoute(routingKey, v);
                   }}
                 />
 
