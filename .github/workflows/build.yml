@@ -62,6 +62,9 @@ jobs:
 
       - name: Build Vite
         run: npm run build
+        env:
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          VITE_APP_VERSION: ${{ github.ref_name }}
 
       - name: Build and publish (Windows)
         if: matrix.platform == 'win'
