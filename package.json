@@ -59,10 +59,10 @@
                             "vitest":  "^4.0.18",
                             "wait-on":  "^9.0.4"
                         },
-    "version":  "1.0.0",
     "main":  "electron/main.js",
     "author":  {
                    "email":  "jensj@ov.org",
                    "name":  "Jeffrey Jens"
-               }
+               },
+    "version":  "2.0.6"
 }
