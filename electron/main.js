@@ -390,6 +390,27 @@ ipcMain.on("desk-send-to-queue", (_, payload) => {
 // ── Relaunch ──────────────────────────────────────────────────
 ipcMain.handle("relaunch", () => { app.relaunch(); app.exit(0); });
 
+ipcMain.handle("open_nowplaying_window", async () => {
+  const existing = BrowserWindow.getAllWindows().find(w => w.getTitle().includes("Now Playing"));
+  if (existing) { existing.show(); existing.focus(); return; }
+  const { screen } = require("electron");
+  const np = new BrowserWindow({
+    width: 1280, height: 720,
+    minWidth: 1280, minHeight: 720,
+    title: "Ether - Now Playing",
+    resizable: false,
+    center: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+  });
+  if (isDev) np.loadURL(VITE_DEV_URL + "#nowplaying");
+  else np.loadFile(path.join(__dirname, "../dist/index.html"), { hash: "nowplaying" });
+});
+
 // ── Auto-updater ──────────────────────────────────────────────
 let autoUpdater = null;
 try {

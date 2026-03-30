@@ -41,7 +41,9 @@ jobs:
 
       - name: Build native audio addon
         working-directory: native
-        run: cargo build --release
+        run: |
+          if [ -f cargo.toml ]; then mv cargo.toml Cargo.toml; fi
+          cargo build --release
 
       - name: Copy native addon (Windows)
         if: matrix.platform == 'win'
