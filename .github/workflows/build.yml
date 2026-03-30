@@ -68,7 +68,7 @@ jobs:
         shell: bash
 
       - name: Install Node dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build Vite
         run: npm run build
