@@ -39,11 +39,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
 
+      - name: Rename cargo.toml on Unix
+        if: matrix.platform != 'win'
+        working-directory: native
+        run: if [ -f cargo.toml ]; then mv cargo.toml Cargo.toml; fi
+        shell: bash
+
+      - name: Rename cargo.toml on Windows
+        if: matrix.platform == 'win'
+        working-directory: native
+        run: if (Test-Path cargo.toml) { Rename-Item cargo.toml Cargo.toml }
+        shell: pwsh
+
       - name: Build native audio addon
         working-directory: native
-        run: |
-          if [ -f cargo.toml ]; then mv cargo.toml Cargo.toml; fi
-          cargo build --release
+        run: cargo build --release
 
       - name: Copy native addon (Windows)
         if: matrix.platform == 'win'
