@@ -1,4 +1,4 @@
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+// WebviewWindow replaced by Electron IPC
 
 export async function openNowPlayingWindow() {
   // Close existing window if present

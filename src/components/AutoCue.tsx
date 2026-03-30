@@ -144,7 +144,7 @@ async function analyzeAudioCues(filePath: string, durationMs: number): Promise<{
   const durationSec = durationMs / 1000;
 
   try {
-    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    const convertFileSrc = (p: string) => `file:///${p.replace(/\\/g, "/")}`;
     const url = convertFileSrc(filePath);
     const ctx = new AudioContext();
     const response = await fetch(url);
@@ -254,7 +254,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
       try {
         if (mode !== "analyze-all") {
           // Try ID3 tags first
-          const { readFile } = await import("@tauri-apps/plugin-fs");
+          const readFile = (p: string) => (window as any).ether.fs.readFile(p);
           const bytes = await readFile(song.file_path);
           const cues = readID3Cues(bytes);
           introEnd = cues.introEnd;

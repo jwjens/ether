@@ -1,4 +1,4 @@
-import { readFile } from "@tauri-apps/plugin-fs";
+const readFile = (p: string): Promise<Uint8Array> => (window as any).ether.fs.readFile(p).then((r: any) => new Uint8Array(r.data ?? r));
 
 export interface ID3Tags {
   title: string | null;

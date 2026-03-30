@@ -255,7 +255,7 @@ export default function AboutPanel({ onClose }: Props) {
                     <div key={link.label}
                       onClick={async () => {
                         try {
-                          const { invoke } = await import("@tauri-apps/api/core");
+                          const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
                           await invoke("open_url", { url: link.href });
                         } catch {
                           window.open(link.href, "_blank");
@@ -341,7 +341,7 @@ export default function AboutPanel({ onClose }: Props) {
                   <div key={dep.name}
                     onClick={async () => {
                       try {
-                        const { invoke } = await import("@tauri-apps/api/core");
+                        const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
                         await invoke("open_url", { url: dep.url });
                       } catch {
                         window.open(dep.url, "_blank");

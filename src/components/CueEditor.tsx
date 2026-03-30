@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { readFile } from "@tauri-apps/plugin-fs";
+const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { queryOne, execute } from "../db/client";
 
 interface Props {

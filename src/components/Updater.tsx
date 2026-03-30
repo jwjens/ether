@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
+// Updater: use electron auto-updater via IPC
+const relaunch = () => (window as any).ether.invoke("relaunch");
 
 interface UpdateInfo {
   version: string;

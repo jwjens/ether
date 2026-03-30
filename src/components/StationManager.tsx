@@ -476,7 +476,7 @@ export default function StationManager({ onStationSwitch }: Props) {
           <button
             onClick={async () => {
               try {
-                const { invoke } = await import("@tauri-apps/api/core");
+                const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
                 await invoke("open_url", { url: "https://ether-backend-production.up.railway.app/console" });
               } catch { window.open("https://ether-backend-production.up.railway.app/console", "_blank"); }
             }}

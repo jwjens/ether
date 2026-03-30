@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { execute, query, queryOne } from "../db/client";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import WaveformGL from "./WaveformGL";
 
 interface Song {
@@ -128,7 +128,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
 
   const handleBrowse = async () => {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
+      const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
       const selected = await open({
         multiple: true,
         filters: [{ name: "Audio", extensions: ["mp3","flac","wav","aac","m4a","ogg","opus","aiff"] }],
@@ -156,7 +156,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
 
   const handleFolderScan = async () => {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
+      const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
       const folder = await open({ directory: true, title: "Scan Music Folder" });
       if (!folder || typeof folder !== "string") return;
       setImporting(true);

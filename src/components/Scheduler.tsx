@@ -191,7 +191,7 @@ function CategoriesTab() {
     setScanning(true);
     setScanStatus("Finding songs...");
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
+      const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
       const songs = await query<{ id: number; file_path: string; title: string }>(
         "SELECT id, file_path, title FROM songs WHERE duration_ms IS NULL OR duration_ms < 1000"
       );
@@ -640,7 +640,7 @@ function ClocksTab() {
             let durMs = songs[0].duration_ms;
             if ((!durMs || durMs < 1000) && songs[0].file_path) {
               try {
-                const { invoke } = await import("@tauri-apps/api/core");
+                const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
                 const durSec = await invoke<number>("get_file_duration", { filePath: songs[0].file_path });
                 durMs = Math.round(durSec * 1000);
                 if (durMs > 0) await execute("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, songs[0].id]);

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
 export default function BackupRestore() {
   const [backups, setBackups] = useState<string[]>([]);

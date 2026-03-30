@@ -16,9 +16,11 @@
 // a jock at a Zetta station can prep in Ether, export, and hand
 // the folder to their engineer.
 
-import { invoke } from "@tauri-apps/api/core";
-import { writeFile, mkdir, copyFile } from "@tauri-apps/plugin-fs";
-import { save } from "@tauri-apps/plugin-dialog";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
+const mkdir = (p: string) => (window as any).ether.fs.mkdir(p);
+const copyFile = (src: string, dst: string) => (window as any).ether.fs.copyFile(src, dst);
+const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 
 // ── Types ─────────────────────────────────────────────────────
 

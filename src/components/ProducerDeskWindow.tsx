@@ -4,8 +4,8 @@
 // since the OS window itself handles drag/resize/minimize.
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { emit } from "@tauri-apps/api/event";
+const getCurrentWindow = () => ({ setTitle: (t: string) => document.title = t, close: () => window.close() });
+const emit = (e: string, p?: any): Promise<void> => Promise.resolve((window as any).ether.emit(e, p));
 
 // ── Reuse all types and constants from ProducerDesk ──────────
 type NoteColor = "yellow" | "pink" | "cyan" | "green" | "purple" | "white";

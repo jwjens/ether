@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readDir } from "@tauri-apps/plugin-fs";
+const open = (opts?: { directory?: boolean; title?: string }) =>
+  opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+const readDir = (path: string) => (window as any).ether.fs.readDir(path);
 import { readID3 } from "../audio/id3";
 
 interface Category {
@@ -35,7 +36,7 @@ export default function ImportDialog({ onDone }: Props) {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     const colors = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6", "#6366f1"];
     const color = colors[categories.length % colors.length];
-    await execute("INSERT INTO categories (code, name, color, spins_per_hour) VALUES (?, ?, ?, 0)", [newCatCode.trim().toUpperCase(), newCatName.trim(), color]);
+    await execute("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), color]);
     const cats = await query<Category>("SELECT id, code, name, color FROM categories ORDER BY code");
     setCategories(cats);
     const newCat = cats.find(c => c.code === newCatCode.trim().toUpperCase());
@@ -61,7 +62,7 @@ export default function ImportDialog({ onDone }: Props) {
         const entries = await readDir(dirPath);
         for (const entry of entries) {
           const fullPath = dirPath + "/" + entry.name;
-          if (entry.isDirectory) {
+          if (entry.isDir) {
             await scanDir(fullPath);
           } else {
             const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
@@ -105,16 +106,13 @@ export default function ImportDialog({ onDone }: Props) {
         // Get or create artist
         let artist = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
         if (!artist) {
-          await execute("INSERT INTO artists (name, sort_name) VALUES (?, ?)", [
-            artistName,
-            artistName.replace(/^The\s+/i, "").trim() + (artistName.match(/^The\s+/i) ? ", The" : "")
-          ]);
+          await execute("INSERT INTO artists (name) VALUES (?)", [artistName]);
           artist = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
         }
 
         // Insert song (skip album lookup for reliability)
         await execute(
-          "INSERT INTO songs (title, file_path, artist_id, category_id, genre, rotation_status, gender, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'active', 'unknown', unixepoch(), unixepoch())",
+          "INSERT INTO songs (title, file_path, artist_id, category_id, genre, created_at, updated_at) VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())",
           [title, filePath, artist?.id || null, selectedCat, tags.genre || null]
         );
 

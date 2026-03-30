@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readDir } from "@tauri-apps/plugin-fs";
+const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 import { engine } from "../audio/engine-rodio";
 
 interface Spot {

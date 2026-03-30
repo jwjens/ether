@@ -12,7 +12,7 @@
 //   <SelfHealingClock logRemainingMs={queueTotalMs} />
 
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
 interface ClockState {
   wall_time: string;

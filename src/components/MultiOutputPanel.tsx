@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
 

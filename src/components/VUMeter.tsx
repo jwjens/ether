@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
 interface Props {
   deckId: "A" | "B" | "C" | string;

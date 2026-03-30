@@ -23,9 +23,11 @@
 //   • Export MP3 (requires: npm install lamejs)
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readFile, writeFile } from "@tauri-apps/plugin-fs";
-import { save, open as openDialog } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+const readFile = (p: string) => (window as any).ether.fs.readFile(p);
+const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
+const openDialog = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import TrackEditor from "./TrackEditor";
 
 // Open Cue Editor as a free-floating native OS window

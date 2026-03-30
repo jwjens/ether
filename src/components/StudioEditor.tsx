@@ -16,9 +16,9 @@
 //   • Export the finished mix as a WAV file
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
-import { writeFile } from "@tauri-apps/plugin-fs";
+const convertFileSrc = (p: string) => `file:///${p.replace(/\\/g, "/")}`;
+const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
+const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
 
 // ── Types ──────────────────────────────────────────────────────
 

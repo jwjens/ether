@@ -32,7 +32,7 @@ export default function NowPlayingSettings() {
   const [weatherLon, setWeatherLon] = useState("-115.1398");
 
   React.useEffect(() => {
-    import("@tauri-apps/api/core").then(({ invoke }) => {
+    (async () => { const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args); {
       invoke<string>("get_local_ip").then(ip => setDashboardUrl("http://" + ip + ":4242")).catch(() => setDashboardUrl("http://localhost:4242"));
     });
   }, []);
@@ -42,15 +42,15 @@ export default function NowPlayingSettings() {
   const saveTimezone = async (tz: string) => { setTimezone(tz); await setStationTimezone(tz); };
 
   useEffect(() => {
-    import("@tauri-apps/plugin-autostart").then(({ isEnabled }) => {
+    (async () => { const isEnabled = () => (window as any).ether.autostart.isEnabled(); {
       isEnabled().then(setAutostart).catch(() => {});
     }).catch(() => {});
   }, []);
 
   const toggleAutostart = async () => {
     try {
-      if (autostart) { const { disable } = await import("@tauri-apps/plugin-autostart"); await disable(); setAutostart(false); }
-      else { const { enable } = await import("@tauri-apps/plugin-autostart"); await enable(); setAutostart(true); }
+      if (autostart) { await (window as any).ether.autostart.disable(); setAutostart(false); }
+      else { await (window as any).ether.autostart.enable(); setAutostart(true); }
     } catch (e) { console.error("Autostart error:", e); }
   };
 

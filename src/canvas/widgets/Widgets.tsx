@@ -91,10 +91,10 @@ export function LogoWidget({ instance }: BaseProps) {
 
   const handleUpload = async () => {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
+      const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
       const path = await open({ filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "svg", "webp"] }] });
       if (path && typeof path === "string") {
-        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const readFile = (p: string) => (window as any).ether.fs.readFile(p);
         const bytes = await readFile(path);
         const blob = new Blob([bytes]);
         const url = URL.createObjectURL(blob);

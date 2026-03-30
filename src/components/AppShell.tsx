@@ -2,12 +2,13 @@ import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import EtherLogo from "./components/EtherLogo";
 import { UserContext, AppUser, useRole } from "./UserContext";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const emit = (e: string, p?: any): Promise<void> => Promise.resolve((window as any).ether.emit(e, p));
+const listen = (e: string, cb: (ev: any) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readDir } from "@tauri-apps/plugin-fs";
+const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 import { engine, DeckState } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
@@ -2056,7 +2057,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
     await execute("DELETE FROM songs", []); setSelectedIds(new Set()); load();
   };
   const analyzeLufs = async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
+    const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
     const songs = await query<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50");
     if (songs.length === 0) { setStatus("All songs already analyzed"); setTimeout(() => setStatus(""), 3000); return; }
     setStatus("Analyzing... 0/" + songs.length); let done = 0;

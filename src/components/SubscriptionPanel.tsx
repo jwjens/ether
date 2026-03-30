@@ -66,7 +66,7 @@ export default function SubscriptionPanel() {
     setPendingPlan(plan);
     const url = plan === "pro" ? PAYMENT_LINK_PRO : PAYMENT_LINK_STATION;
     try {
-      const { invoke } = await import("@tauri-apps/api/core");
+      const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
       await invoke("open_url", { url });
     } catch {
       // fallback — copy to clipboard and show instructions

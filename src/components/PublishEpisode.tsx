@@ -28,8 +28,9 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 import { query, execute, queryOne } from "../db/client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -385,7 +386,7 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
       let feedXml = "";
       let feedExists = false;
       try {
-        const { readTextFile } = await import("@tauri-apps/plugin-fs");
+        const readTextFile = (p: string) => (window as any).ether.fs.readFile(p).then((r: any) => new TextDecoder().decode(new Uint8Array(r.data ?? r)));
         feedXml = await readTextFile(meta.feedPath);
         feedExists = true;
       } catch {
@@ -402,7 +403,7 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
       }
 
       // 5. Write feed
-      const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+      const writeTextFile = (p: string, data: string) => (window as any).ether.fs.writeFile(p, data);
       await writeTextFile(meta.feedPath, feedXml);
       log(`✅ Feed updated → ${meta.feedPath}`);
 

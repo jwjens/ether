@@ -1,0 +1,55 @@
+{
+  "appId": "com.ether.radio",
+  "productName": "Ether",
+  "copyright": "Copyright © 2026 Ether",
+  "directories": {
+    "output": "dist-electron",
+    "buildResources": "build-resources"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "native/**/*.node",
+    "node_modules/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "native",
+      "to": "native",
+      "filter": ["**/*.node"]
+    }
+  ],
+  "win": {
+    "target": [
+      { "target": "nsis", "arch": ["x64"] }
+    ],
+    "icon": "build-resources/icon.ico"
+  },
+  "mac": {
+    "target": [
+      { "target": "dmg", "arch": ["x64", "arm64"] }
+    ],
+    "icon": "build-resources/icon.icns",
+    "category": "public.app-category.music"
+  },
+  "linux": {
+    "target": [
+      { "target": "AppImage", "arch": ["x64"] },
+      { "target": "deb", "arch": ["x64"] }
+    ],
+    "icon": "build-resources/icon.png",
+    "category": "Audio"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "jwjens",
+    "repo": "ether"
+  }
+}

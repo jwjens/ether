@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { query } from "../db/client";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { LiveCaptionEngine, toSRT, toVTT, toPlainText, transcriptToCaptions, downloadCaption } from "../audio/CaptionEngine";
 const captionEngine = new LiveCaptionEngine();
 
@@ -388,11 +388,7 @@ export default function PodcastStudio() {
   // Listen for export progress from Rust
   useEffect(() => {
     let unlisten: any;
-    import("@tauri-apps/api/event").then(({listen}) => {
-      listen<any>("export-progress", (e) => {
-        setExportProgress(e.payload);
-      }).then(fn => { unlisten = fn; }).catch(()=>{});
-    });
+    (window as any).ether.on("export-progress", (p: any) => { setExportProgress(p); }); unlisten = () => (window as any).ether.off("export-progress");
     return () => { unlisten?.(); };
   }, []);
 

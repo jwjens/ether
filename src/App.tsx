@@ -2,12 +2,22 @@ import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import EtherLogo from "./components/EtherLogo";
 import { UserContext, AppUser, useRole } from "./UserContext";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+// Electron IPC bridge (replaces @tauri-apps imports)
+const invoke = (cmd: string, args?: Record<string, unknown>) =>
+  (window as any).ether.invoke(cmd, args);
+const emit = (event: string, payload?: unknown): Promise<void> =>
+  Promise.resolve((window as any).ether.emit(event, payload));
+const listen = (event: string, cb: (e: { payload: unknown }) => void): Promise<() => void> => {
+  // ether.on returns the raw ipcRenderer handler; store it so off() removes exactly that listener
+  const handler = (window as any).ether.on(event, (payload: unknown) => cb({ payload }));
+  return Promise.resolve(() => (window as any).ether.off(event, handler));
+};
+const open = (opts?: { directory?: boolean; title?: string; multiple?: boolean }) =>
+  opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+const readDir = (path: string) =>
+  (window as any).ether.fs.readDir(path);
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
-import { open } from "@tauri-apps/plugin-dialog";
-import { readDir } from "@tauri-apps/plugin-fs";
 import { engine, DeckState } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
@@ -332,29 +342,7 @@ export default function App() {
 
   const openDeskWindow = async () => {
     try {
-      const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-      const existing = await WebviewWindow.getByLabel("producer-desk").catch(() => null);
-      if (existing) {
-        // Bring existing window to front
-        await existing.show();
-        await existing.setFocus();
-        return;
-      }
-      const win = new WebviewWindow("producer-desk", {
-        url: "index.html#desk",
-        title: "Ether — Producer Desk",
-        width: 900,
-        height: 620,
-        minWidth: 600,
-        minHeight: 400,
-        resizable: true,
-        decorations: true,
-        center: false,
-        x: Math.round(window.screen.width * 0.55),
-        y: 80,
-        focus: true,
-      });
-      win.once("tauri://error", (e) => console.error("Desk window error:", e));
+      await (window as any).ether.invoke("open_desk_window");
     } catch (e) {
       // Fallback: show inline if window API unavailable (dev mode)
       setShowProducerDesk(p => !p);
@@ -1323,8 +1311,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item separator />
         <Item label="Remote Dashboard ↗"  onClick={async () => {
           try {
-            const { invoke: inv } = await import("@tauri-apps/api/core");
-            await inv("open_url", { url: "https://ether-backend-production.up.railway.app/dashboard" });
+            await (window as any).ether.invoke("open_url", { url: "https://ether-backend-production.up.railway.app/dashboard" });
           } catch { window.open("https://ether-backend-production.up.railway.app/dashboard", "_blank"); }
         }} />
         <Item label="System Health"        onClick={() => set("health")} />
@@ -2562,6 +2549,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void }) {
   const [showImport, setShowImport] = useState(false);
   const [showNexGen, setShowNexGen] = useState(false);
+  const [showCreateCat, setShowCreateCat] = useState(false);
+  const [newCatCode, setNewCatCode] = useState("");
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatColor, setNewCatColor] = useState("#38bdf8");
   const [catList, setCatList] = useState<{ id: number; code: string; color: string | null }[]>([]);
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2570,6 +2561,18 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   const [status, setStatus] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const { isStation } = usePlan();
+
+  const createCategory = async () => {
+    if (!newCatCode.trim() || !newCatName.trim()) return;
+    try {
+      await execute("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor]);
+      setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
+      setShowCreateCat(false);
+      load();
+      setStatus("Category created: " + newCatCode.trim().toUpperCase());
+      setTimeout(() => setStatus(""), 2000);
+    } catch(e) { setStatus("Error: " + e); }
+  };
 
   const load = async () => {
     try {
@@ -2595,7 +2598,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
     await execute("DELETE FROM songs", []); setSelectedIds(new Set()); load();
   };
   const analyzeLufs = async () => {
-    const { invoke } = await import("@tauri-apps/api/core");
     const songs = await query<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50");
     if (songs.length === 0) { setStatus("All songs already analyzed"); setTimeout(() => setStatus(""), 3000); return; }
     setStatus("Analyzing... 0/" + songs.length); let done = 0;
@@ -2647,7 +2649,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
             ? <button onClick={() => setShowNexGen(!showNexGen)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showNexGen ? "Cancel" : "NexGen / ENCO"}</button>
             : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Station plan required">🔒 NexGen / ENCO</button>
           }
-          <button onClick={() => setShowImport(!showImport)} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>
+          <button onClick={() => { setShowCreateCat(p => !p); setShowImport(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: showCreateCat ? "var(--accent-purple)" : "var(--bg-secondary)", color: showCreateCat ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showCreateCat ? "Cancel" : "+ Category"}</button>
+          <button onClick={() => { setShowImport(p => !p); setShowCreateCat(false); }} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>
         </div>
       </div>
 
@@ -2673,6 +2676,19 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
       </div>
 
       {status && <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 8, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
+      {showCreateCat && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" as any }}>New Category</span>
+          <input placeholder="Code (e.g. AC)" value={newCatCode} onChange={e => setNewCatCode(e.target.value.toUpperCase().slice(0,6))}
+            style={{ width: 80, padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          <input placeholder="Name (e.g. Adult Contemporary)" value={newCatName} onChange={e => setNewCatName(e.target.value)}
+            style={{ flex: 1, padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}
+            onKeyDown={e => { if (e.key === "Enter") createCategory(); }} />
+          <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)}
+            style={{ width: 36, height: 32, borderRadius: 6, border: "1px solid var(--border-primary)", cursor: "pointer", padding: 2, background: "var(--bg-tertiary)" }} />
+          <button onClick={createCategory} style={{ padding: "6px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Create</button>
+        </div>
+      )}
       {showImport && <ImportDialog onDone={() => { setShowImport(false); load(); }} />}
       {showNexGen && <NexGenImport onDone={() => { setShowNexGen(false); load(); }} />}
 

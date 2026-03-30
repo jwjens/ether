@@ -15,7 +15,7 @@ interface Props {
 
 async function openWindowsSoundSettings() {
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
+    const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
     // Open Windows sound settings
     await invoke("open_sound_settings").catch(() => {});
   } catch {}

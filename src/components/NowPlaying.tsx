@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { listen } from "@tauri-apps/api/event";
+const getCurrentWindow = () => ({ setTitle: (t: string) => document.title = t, close: () => window.close() });
+const listen = (e: string, cb: (ev: any) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
 import { query } from "../db/client";
 
 interface TrackInfo {
@@ -183,7 +183,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   }, []);
 
   useEffect(() => {
-    import("@tauri-apps/api/event").then(({ emit: e }) => { setTimeout(() => e("now-playing-request", {}).catch(() => {}), 500); });
+    setTimeout(() => (window as any).ether.emit("now-playing-request", {}), 500);
   }, []);
 
   useEffect(() => {

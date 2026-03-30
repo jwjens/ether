@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { query, execute, queryOne } from "../db/client";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const listen = (e: string, cb: (ev: any) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
 
 interface StreamSettings {
   server: string; port: number; mount: string; password: string;

@@ -247,7 +247,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       ].join("\n");
 
       // Write via Tauri
-      const { writeTextFile, BaseDirectory } = await import("@tauri-apps/plugin-fs");
+      const writeTextFile = (p: string, data: string) => (window as any).ether.fs.writeFile(p, data); const BaseDirectory = {};
       const filename = `ether_playlog_${new Date().toISOString().split("T")[0]}.csv`;
       await writeTextFile(filename, lines, { baseDir: BaseDirectory.Download });
       setExported(true);

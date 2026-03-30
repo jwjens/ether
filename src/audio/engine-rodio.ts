@@ -1,4 +1,23 @@
-import { invoke } from "@tauri-apps/api/core";
+// Electron IPC — all audio commands go through window.ether.audio.*
+async function invoke(cmd: string, args?: any): Promise<any> {
+  const e = (window as any).ether;
+  if (!e) { console.error("[ENGINE] window.ether not available — preload not loaded?"); return null; }
+  switch (cmd) {
+    case "audio_load":        return e.audio.load(args.deck, args.filePath, args.title, args.artist, args.gainDb);
+    case "audio_play":        return e.audio.play(args.deck);
+    case "audio_pause":       return e.audio.pause(args.deck);
+    case "audio_stop":        return e.audio.stop(args.deck);
+    case "audio_set_volume":  return e.audio.setVolume(args.deck, args.volume);
+    case "audio_get_state":   return e.audio.getState();
+    case "get_file_duration": return e.audio.getFileDuration(args.filePath);
+    case "get_levels":        return e.audio.getLevels();
+    case "watchdog_set":      return e.audio.watchdogSet(args.active, args.thresholdSec);
+    default:
+      console.warn("[ENGINE] Unknown audio command:", cmd);
+      return null;
+  }
+}
+
 
 export type DeckId = "A" | "B" | "C";
 export type DeckStatus = "idle" | "loading" | "playing" | "paused" | "ended" | "error";
@@ -63,7 +82,7 @@ export class AudioEngine {
 
   private async poll() {
     try {
-      const s = await invoke<any>("audio_get_state");
+      const s = await invoke("audio_get_state");
       const now = Date.now();
       const elapsed = (now - this.lastPollTime) / 1000;
       this.lastPollTime = now;
@@ -98,44 +117,25 @@ export class AudioEngine {
   }
 
   private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus) {
-    if (
-      prevStatus === "playing" &&
-      dur > 5 &&
-      pos > 0 &&
-      (dur - pos) < 0.3 &&
-      !this.endTriggered.has(deckId)
-    ) {
+    if (prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3 && !this.endTriggered.has(deckId)) {
       this.endTriggered.add(deckId);
-      console.log(`[ENGINE] ${deckId} near end (${pos.toFixed(1)}/${dur.toFixed(1)}) — rotating`);
-
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
-        if (this.stateB.filePath) {
-          this.handleRotate("A", "B");
-        } else if (this.autoAdvance) {
-          this.handleLoadNextToDeck("A");
-        }
+        if (this.stateB.filePath) { this.handleRotate("A", "B"); }
+        else if (this.autoAdvance) { this.handleLoadNextToDeck("A"); }
       } else if (deckId === "B") {
         this.stateB = { ...this.stateB, status: "ended" };
-        console.log(`[ENGINE] B ended — stateC.filePath: "${this.stateC.filePath}" | stateC.title: "${this.stateC.title}" | autoAdvance: ${this.autoAdvance}`);
-        if (this.stateC.filePath) {
-          console.log("[ENGINE] Rotating B→C:", this.stateC.title);
-          this.handleRotate("B", "C");
-        } else if (this.autoAdvance) {
-          console.log("[ENGINE] No C loaded — loading next to B from queue, queue len:", this.queue.length);
-          this.handleLoadNextToDeck("B");
-        }
+        if (this.stateC.filePath) { this.handleRotate("B", "C"); }
+        else if (this.autoAdvance) { this.handleLoadNextToDeck("B"); }
       } else if (deckId === "C") {
         this.stateC = { ...this.stateC, status: "ended" };
-        if (this.autoAdvance || this.queue.length > 0) {
-          this.handleRotateCtoA();
-        }
+        if (this.autoAdvance || this.queue.length > 0) { this.handleRotateCtoA(); }
       }
     }
   }
 
   private async handleRotate(fromId: DeckId, toId: DeckId) {
-    if (this.advancing) { console.warn("[ENGINE] handleRotate blocked"); return; }
+    if (this.advancing) return;
     this.advancing = true;
     try {
       await invoke("audio_play", { deck: toId });
@@ -143,30 +143,12 @@ export class AudioEngine {
       if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
       if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
       this.endTriggered.delete(toId);
-      this.listeners.forEach(l => l(toId, toId === "A" ? this.stateA : toId === "B" ? this.stateB : this.stateC));
-
-      // Dequeue the track toId just started playing — it was preloaded from queue[0]
       if (this.queue.length > 0) this.dequeue();
-
-      // Preload the right deck for the next step in rotation
-      if (toId === "B") {
-        // C already has queue[1] which is now queue[0] after dequeue — reload to be safe
-        setTimeout(() => this.preloadDeck("C", 0), 800);
-      } else if (toId === "C") {
-        // Next rotation is C→A, preload A
-        setTimeout(() => this.preloadDeck("A", 0), 800);
-      } else if (toId === "A") {
-        // Next rotation is A→B→C, preload both
-        setTimeout(async () => {
-          await this.preloadDeck("B", 0);
-          setTimeout(() => this.preloadDeck("C", 1), 400);
-        }, 800);
-      }
-    } catch (e) {
-      console.error("[ENGINE] handleRotate error:", e);
-    } finally {
-      this.advancing = false;
-    }
+      if (toId === "B") { setTimeout(() => this.preloadDeck("C", 0), 800); }
+      else if (toId === "C") { setTimeout(() => this.preloadDeck("A", 0), 800); }
+      else if (toId === "A") { setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
+    } catch (e) { console.error("[ENGINE] handleRotate error:", e); }
+    finally { this.advancing = false; }
   }
 
   private async handleRotateCtoA() {
@@ -180,16 +162,9 @@ export class AudioEngine {
       await invoke("audio_play", { deck: "A" });
       this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
       this.endTriggered.delete("A");
-      this.listeners.forEach(l => l("A", this.stateA));
-      setTimeout(async () => {
-        await this.preloadDeck("B", 0);
-        setTimeout(() => this.preloadDeck("C", 1), 400);
-      }, 800);
-    } catch (e) {
-      console.error("[ENGINE] handleRotateCtoA error:", e);
-    } finally {
-      this.advancing = false;
-    }
+      setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800);
+    } catch (e) { console.error("[ENGINE] handleRotateCtoA error:", e); }
+    finally { this.advancing = false; }
   }
 
   private async handleLoadNextToDeck(deckId: DeckId) {
@@ -204,11 +179,8 @@ export class AudioEngine {
       if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
       if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
       if (deckId === "C") { this.stateC = { ...this.stateC, status: "playing", positionSec: 0 }; this.endTriggered.delete("C"); }
-    } catch (e) {
-      console.error("[ENGINE] handleLoadNextToDeck error:", e);
-    } finally {
-      this.advancing = false;
-    }
+    } catch (e) { console.error("[ENGINE] handleLoadNextToDeck error:", e); }
+    finally { this.advancing = false; }
   }
 
   private async preloadDeck(deckId: DeckId, queueIndex = 0) {
@@ -217,9 +189,7 @@ export class AudioEngine {
     try {
       await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
       console.log(`[ENGINE] Preloaded ${deckId} (queue[${queueIndex}]):`, next.title);
-    } catch (e) {
-      console.error(`[ENGINE] Preload ${deckId} failed:`, e);
-    }
+    } catch (e) { console.error(`[ENGINE] Preload ${deckId} failed:`, e); }
   }
 
   private async refillIfNeeded() {
@@ -229,15 +199,13 @@ export class AudioEngine {
     }
   }
 
-  private dequeue(): { filePath: string; title: string; artist: string; gainDb?: number } {
+  private dequeue() {
     const idx = this.shuffle ? Math.floor(Math.random() * this.queue.length) : 0;
     return this.queue.splice(idx, 1)[0];
   }
 
   triggerPreload() {
-    this.preloadDeck("B", 0).then(() => {
-      setTimeout(() => this.preloadDeck("C", 1), 400);
-    });
+    this.preloadDeck("B", 0).then(() => { setTimeout(() => this.preloadDeck("C", 1), 400); });
   }
 
   on(fn: Listener): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
@@ -259,10 +227,7 @@ export class AudioEngine {
       },
       pause: () => invoke("audio_pause", { deck: deckId }),
       resume: () => invoke("audio_play", { deck: deckId }),
-      stop: () => {
-        this.endTriggered.delete(deckId);
-        return invoke("audio_stop", { deck: deckId });
-      },
+      stop: () => { this.endTriggered.delete(deckId); return invoke("audio_stop", { deck: deckId }); },
       setVolume: (v: number) => invoke("audio_set_volume", { deck: deckId, volume: v }),
       fadeTo: (vol: number, sec: number) => {
         const steps = 20;
@@ -286,7 +251,7 @@ export class AudioEngine {
     if (id === "B") this.stateB = { ...this.stateB, ...newState, id: "B" };
     if (id === "C") this.stateC = { ...this.stateC, ...newState, id: "C" };
     this.endTriggered.delete(id as DeckId);
-    invoke<number>("get_file_duration", { filePath }).then(dur => {
+    invoke("get_file_duration", { filePath }).then((dur: number) => {
       if (id === "A") this.stateA = { ...this.stateA, durationSec: dur };
       if (id === "B") this.stateB = { ...this.stateB, durationSec: dur };
       if (id === "C") this.stateC = { ...this.stateC, durationSec: dur };
@@ -302,7 +267,6 @@ export class AudioEngine {
   clearQueue() { this.queue = []; }
   getQueue() { return [...this.queue]; }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
-
   async setOutputDevice(_id: string) {}
 
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {

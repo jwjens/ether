@@ -9,8 +9,8 @@
 //   <TelemetryPillar />
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+const listen = (e: string, cb: (ev: any) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
 // ── Types ─────────────────────────────────────────────────────
 

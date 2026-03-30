@@ -24,7 +24,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { engine, DeckId } from "../audio/engine-rodio";
 
 // ─── Types ────────────────────────────────────────────────────
@@ -935,14 +935,14 @@ export default function PhoneDesk({ onClose }: Props) {
               <button
                 onClick={() => previewing ? stopPreview() : startPreview()}
                 style={{
-                  height: 40, padding: "0 20px", borderRadius: 10, border: "none",
+                  height: 40, padding: "0 20px", borderRadius: 10,
                   background: previewing ? "#34d399" : "var(--bg-tertiary)",
                   color: previewing ? "#000" : "var(--text-secondary)",
                   fontSize: 11, fontWeight: 700, cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 8,
                   boxShadow: previewing ? "0 0 20px rgba(52,211,153,0.4)" : "none",
                   transition: "all 0.15s",
-                  border: previewing ? "none" : "1px solid var(--border-primary)" as any,
+                  border: previewing ? "none" : "1px solid var(--border-primary)",
                 }}
               >
                 {previewing

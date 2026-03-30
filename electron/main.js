@@ -1,0 +1,400 @@
+// electron/main.js
+// Ether Electron main process
+// Replaces src-tauri entirely — Chromium rendering, Node.js backend, NAPI audio
+
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const Database = require("better-sqlite3");
+
+// ── Fix DPI scaling on Windows ────────────────────────────────
+app.commandLine.appendSwitch("high-dpi-support", "1");
+app.commandLine.appendSwitch("force-device-scale-factor", "1");
+
+// ── Environment ───────────────────────────────────────────────
+const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
+const VITE_DEV_URL = "http://127.0.0.1:1420";
+
+// ── Load native audio addon ───────────────────────────────────
+let audio;
+try {
+  audio = require("../native/ether-audio.node");
+  audio.initAudioEngine();
+  console.log("[AUDIO] Native engine initialized");
+} catch (e) {
+  console.error("[AUDIO] Failed to load native addon:", e.message);
+  // Fallback stub so app doesn't crash during development
+  audio = {
+    initAudioEngine: () => true,
+    audioLoad: () => true,
+    audioPlay: () => true,
+    audioPause: () => true,
+    audioStop: () => true,
+    audioSetVolume: () => true,
+    audioGetState: () => JSON.stringify({ deckA: {}, deckB: {}, deckC: {} }),
+    audioGetLevels: () => JSON.stringify({ a: 0, b: 0, c: 0 }),
+    getFileDuration: () => 0,
+    getLocalIp: () => "localhost",
+    analyzeFile: () => -14,
+    openUrl: () => true,
+    openSoundSettings: () => true,
+    watchdogSet: () => true,
+  };
+}
+
+// ── Database ──────────────────────────────────────────────────
+let db;
+
+function getDbPath() {
+  // Use same path as Tauri so existing databases are found
+  const appData = app.getPath("appData");
+  const etherDir = path.join(appData, "com.ether.radio");
+  require("fs").mkdirSync(etherDir, { recursive: true });
+  return path.join(etherDir, "openair.db");
+}
+
+function initDb() {
+  console.log("[DB] Path:", getDbPath());
+  // temp: log song count on startup
+  setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 2000);
+  const dbPath = getDbPath();
+  db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.pragma("foreign_keys = ON");
+  console.log("[DB] Connected:", dbPath);
+}
+
+// ── Window ────────────────────────────────────────────────────
+let mainWindow;
+let tray;
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    minWidth: 960,
+    minHeight: 600,
+    title: "Ether",
+    icon: path.join(__dirname, "../src-tauri/icons/icon.png"),
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false, // Allow localhost in dev
+    },
+    show: false,
+  });
+
+  // Allow localhost connections
+  mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        "Content-Security-Policy": ["default-src * 'unsafe-inline' 'unsafe-eval' data: blob:"]
+      }
+    });
+  });
+
+  // Load app with retry for dev server
+  if (isDev) {
+    const tryLoad = () => {
+      const net = require("net");
+      const client = new net.Socket();
+      client.setTimeout(1000);
+      client.connect(1420, "127.0.0.1", () => {
+        client.destroy();
+        mainWindow.loadURL(VITE_DEV_URL);
+        mainWindow.webContents.openDevTools();
+      });
+      client.on("error", () => {
+        client.destroy();
+        console.log("[ELECTRON] Vite not ready, retrying in 1s...");
+        setTimeout(tryLoad, 1000);
+      });
+      client.on("timeout", () => {
+        client.destroy();
+        setTimeout(tryLoad, 1000);
+      });
+    };
+    setTimeout(tryLoad, 500);
+  } else {
+    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+  }
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  // Hide instead of close (keeps app in tray)
+  mainWindow.on("close", (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
+
+  // Grant mic permission automatically — no dialog needed
+  mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (permission === "media" || permission === "microphone" || permission === "audioCapture") {
+      callback(true); // Always grant
+    } else {
+      callback(true);
+    }
+  });
+}
+
+function createTray() {
+  const iconPath = path.join(__dirname, "../src-tauri/icons/icon.png");
+  const icon = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  const menu = Menu.buildFromTemplate([
+    { label: "Show Ether", click: () => { mainWindow.show(); mainWindow.focus(); } },
+    { type: "separator" },
+    { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(menu);
+  tray.setToolTip("Ether — On Air");
+  tray.on("click", () => {
+    if (mainWindow.isVisible()) { mainWindow.hide(); }
+    else { mainWindow.show(); mainWindow.focus(); }
+  });
+}
+
+// ── App lifecycle ─────────────────────────────────────────────
+app.whenReady().then(() => {
+  initDb();
+  createWindow();
+  createTray();
+});
+
+app.on("window-all-closed", () => {
+  // Keep running on Windows/Linux (app lives in tray)
+  if (process.platform === "darwin") app.quit();
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  else mainWindow.show();
+});
+
+app.on("before-quit", () => {
+  app.isQuitting = true;
+});
+
+// ── IPC Handlers ──────────────────────────────────────────────
+// These replace all Tauri invoke() calls
+
+// Audio
+ipcMain.handle("audio:load", (_, deck, filePath, title, artist, gainDb) =>
+  audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0));
+
+ipcMain.handle("audio:play", (_, deck) => audio.audioPlay(deck));
+ipcMain.handle("audio:pause", (_, deck) => audio.audioPause(deck));
+ipcMain.handle("audio:stop", (_, deck) => audio.audioStop(deck));
+ipcMain.handle("audio:setVolume", (_, deck, volume) => audio.audioSetVolume(deck, volume));
+ipcMain.handle("audio:getState", () => JSON.parse(audio.audioGetState()));
+ipcMain.handle("audio:getLevels", () => JSON.parse(audio.audioGetLevels()));
+ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
+ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec) => audio.watchdogSet(active, thresholdSec));
+
+// Database
+ipcMain.handle("db:query", (_, sql, params) => {
+  try {
+    const stmt = db.prepare(sql);
+    return { data: stmt.all(...(params || [])), error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+});
+
+ipcMain.handle("db:execute", (_, sql, params) => {
+  try {
+    const stmt = db.prepare(sql);
+    const result = stmt.run(...(params || []));
+    return { data: result, error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+});
+
+// File system
+ipcMain.handle("fs:readFile", async (_, filePath) => {
+  try {
+    return { data: Array.from(fs.readFileSync(filePath)), error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+});
+
+ipcMain.handle("fs:exists", (_, filePath) => fs.existsSync(filePath));
+
+ipcMain.handle("fs:readDir", (_, dirPath) => {
+  try {
+    return fs.readdirSync(dirPath).map(name => ({
+      name,
+      path: path.join(dirPath, name),
+      isDir: fs.statSync(path.join(dirPath, name)).isDirectory(),
+    }));
+  } catch { return []; }
+});
+
+// Dialog
+ipcMain.handle("dialog:openFile", async (_, options) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ["openFile", ...(options?.multiple ? ["multiSelections"] : [])],
+    filters: options?.filters || [{ name: "Audio", extensions: ["mp3", "flac", "wav", "aac", "m4a", "ogg"] }],
+  });
+  return result.canceled ? null : result.filePaths;
+});
+
+ipcMain.handle("dialog:openDirectory", async () => {
+  console.log("[DIALOG] openDirectory called");
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ["openDirectory"] });
+  return result.canceled ? null : result.filePaths[0];
+});
+
+ipcMain.handle("dialog:saveFile", async (_, options) => {
+  const result = await dialog.showSaveDialog(mainWindow, options || {});
+  return result.canceled ? null : result.filePath;
+});
+
+// System
+ipcMain.handle("system:getLocalIp", () => audio.getLocalIp());
+ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
+ipcMain.handle("system:openSoundSettings", () => audio.openSoundSettings());
+ipcMain.handle("system:getAppDataDir", () => app.getPath("userData"));
+ipcMain.handle("system:getPlatform", () => process.platform);
+
+// Backup
+ipcMain.handle("db:backup", () => {
+  try {
+    const dbPath = getDbPath();
+    const backupDir = path.join(app.getPath("userData"), "backups");
+    fs.mkdirSync(backupDir, { recursive: true });
+    const timestamp = Math.floor(Date.now() / 1000);
+    const backupName = `openair-backup-${timestamp}.db`;
+    const backupPath = path.join(backupDir, backupName);
+    fs.copyFileSync(dbPath, backupPath);
+    // Delete backups older than 7 days
+    const cutoff = timestamp - 7 * 24 * 3600;
+    fs.readdirSync(backupDir).forEach(name => {
+      const match = name.match(/openair-backup-(\d+)\.db/);
+      if (match && parseInt(match[1]) < cutoff) {
+        fs.unlinkSync(path.join(backupDir, name));
+      }
+    });
+    return { data: backupPath, error: null };
+  } catch (e) { return { data: null, error: e.message }; }
+});
+
+ipcMain.handle("db:listBackups", () => {
+  try {
+    const backupDir = path.join(app.getPath("userData"), "backups");
+    if (!fs.existsSync(backupDir)) return [];
+    return fs.readdirSync(backupDir)
+      .filter(n => n.startsWith("openair-backup-"))
+      .sort().reverse();
+  } catch { return []; }
+});
+
+ipcMain.handle("db:restore", (_, backupName) => {
+  try {
+    const backupPath = path.join(app.getPath("userData"), "backups", backupName);
+    const dbPath = getDbPath();
+    if (!fs.existsSync(backupPath)) return { error: "Backup not found" };
+    // Close DB before restore
+    db.close();
+    fs.copyFileSync(backupPath, dbPath);
+    initDb(); // Reopen
+    return { data: "Restored successfully", error: null };
+  } catch (e) { return { data: null, error: e.message }; }
+});
+
+// Autostart
+ipcMain.handle("autostart:enable", () => app.setLoginItemSettings({ openAtLogin: true }));
+ipcMain.handle("autostart:disable", () => app.setLoginItemSettings({ openAtLogin: false }));
+ipcMain.handle("autostart:isEnabled", () => app.getLoginItemSettings().openAtLogin);
+
+// ── Generic invoke aliases (old Tauri command names) ─────────
+
+ipcMain.handle("watchdog_set", (_, args) => {
+  const { active, thresholdSec } = args || {};
+  return audio.watchdogSet(active ?? false, thresholdSec ?? 30);
+});
+
+ipcMain.handle("stream_start_if_configured", async () => {
+  try { return audio.streamStart ? audio.streamStart() : true; } catch { return true; }
+});
+
+ipcMain.handle("stream_stop", async () => {
+  try { return audio.streamStop ? audio.streamStop() : true; } catch { return true; }
+});
+
+ipcMain.handle("analyze_lufs", (_, args) => {
+  const filePath = args?.filePath ?? args;
+  try { return audio.analyzeFile(filePath); } catch { return -14; }
+});
+
+ipcMain.handle("open_url", (_, args) => {
+  const url = args?.url ?? args;
+  return shell.openExternal(url);
+});
+
+ipcMain.handle("open_desk_window", async () => {
+  const existing = BrowserWindow.getAllWindows().find(w => w.getTitle().includes("Producer Desk"));
+  if (existing) { existing.show(); existing.focus(); return; }
+  const { screen } = require("electron");
+  const desk = new BrowserWindow({
+    width: 900, height: 620, minWidth: 600, minHeight: 400,
+    title: "Ether — Producer Desk",
+    x: Math.round(screen.getPrimaryDisplay().workAreaSize.width * 0.55),
+    y: 80,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+  });
+  if (isDev) desk.loadURL(VITE_DEV_URL + "#desk");
+  else desk.loadFile(path.join(__dirname, "../dist/index.html"), { hash: "desk" });
+});
+
+// ── Event relay: ether.emit() in renderer → broadcast to all windows ──
+ipcMain.on("now-playing-update", (_, payload) => {
+  BrowserWindow.getAllWindows().forEach(w => w.webContents.send("now-playing-update", payload));
+});
+ipcMain.handle("set_now_playing", (_, args) => {
+  BrowserWindow.getAllWindows().forEach(w => w.webContents.send("now-playing-update", args));
+  return true;
+});
+
+// ── Additional fs handlers ───────────────────────────────────
+ipcMain.handle("fs:writeFile", (_, filePath, data) => {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    if (typeof data === "string") fs.writeFileSync(filePath, data, "utf8");
+    else fs.writeFileSync(filePath, Buffer.from(data));
+    return { data: true, error: null };
+  } catch (e) { return { data: null, error: e.message }; }
+});
+
+ipcMain.handle("fs:mkdir", (_, dirPath) => {
+  try { fs.mkdirSync(dirPath, { recursive: true }); return { data: true, error: null }; }
+  catch (e) { return { data: null, error: e.message }; }
+});
+
+ipcMain.handle("fs:copyFile", (_, src, dst) => {
+  try {
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+    return { data: true, error: null };
+  } catch (e) { return { data: null, error: e.message }; }
+});
+
+ipcMain.handle("relaunch", () => { app.relaunch(); app.exit(0); });
+
+ipcMain.on("desk-send-to-queue", (_, payload) => {
+  BrowserWindow.getAllWindows().forEach(w => w.webContents.send("desk-send-to-queue", payload));
+});

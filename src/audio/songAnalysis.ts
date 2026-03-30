@@ -10,7 +10,7 @@
 // This file is just a thin TypeScript wrapper around invoke() calls.
 // No Web Audio API, no fetch(), works from any window.
 
-import { invoke } from "@tauri-apps/api/core";
+const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { execute, query } from "../db/client";
 
 // ── Types (mirror Rust structs) ───────────────────────────────
