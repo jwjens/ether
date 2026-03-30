@@ -75,7 +75,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   useEffect(() => {
     if (!title) { setArtUrl(null); setArtReady(false); return; }
     // Cache key is artist — same artist = same photo regardless of track
-    const cacheKey = `ether_artist_photo_${(artist||"").toLowerCase().replace(/\s+/g,"_")}`;
+    const cacheKey = `ether_artist_photo_${(artist||"").toLowerCase().replace(/\s+/g,"_")}_${(title||"").toLowerCase().replace(/\s+/g,"_").slice(0,20)}`;
     if (artLoadedFor.current === (artist || title)) return;
     artLoadedFor.current = artist || title;
     setArtReady(false);

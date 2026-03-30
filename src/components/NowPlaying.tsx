@@ -25,7 +25,7 @@ function fmtDur(ms: number) {
 }
 
 async function fetchAlbumArt(artist: string, title: string): Promise<string | null> {
-  const cacheKey = `ether_art_${(artist || "").toLowerCase().replace(/\s+/g, "_")}`;
+  const cacheKey = `ether_art_${(artist || "").toLowerCase().replace(/\s+/g, "_")}_${(title || "").toLowerCase().replace(/\s+/g, "_").slice(0, 20)}`;
   const cached = sessionStorage.getItem(cacheKey);
   if (cached) return cached || null;
 
