@@ -19,3 +19,5 @@ fix-*.js
 *.exe
 *.msi
 fix-*.js
+
+.env

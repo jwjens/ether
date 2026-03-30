@@ -50,7 +50,9 @@ jobs:
 
       - name: Copy native addon (Mac/Linux)
         if: matrix.platform != 'win'
-        run: cp native/target/release/libether_audio.* native/ether-audio.node || cp native/target/release/libether_audio.dylib native/ether-audio.node || cp native/target/release/libether_audio.so native/ether-audio.node
+        run: |
+          cp native/target/release/libether_audio.dylib native/ether-audio.node 2>/dev/null || \
+          cp native/target/release/libether_audio.so native/ether-audio.node 2>/dev/null || true
         shell: bash
 
       - name: Install Node dependencies
@@ -59,31 +61,23 @@ jobs:
       - name: Build Vite
         run: npm run build
 
-      - name: Build Electron (Windows)
+      - name: Build and publish (Windows)
         if: matrix.platform == 'win'
         run: npm run electron:build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EP_DRAFT: true
 
-      - name: Build Electron (Mac)
+      - name: Build and publish (Mac)
         if: matrix.platform == 'mac'
         run: npm run electron:build:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EP_DRAFT: true
 
-      - name: Build Electron (Linux)
+      - name: Build and publish (Linux)
         if: matrix.platform == 'linux'
         run: npm run electron:build:linux
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ether-${{ matrix.platform }}
-          path: |
-            dist-electron/*.exe
-            dist-electron/*.dmg
-            dist-electron/*.AppImage
-            dist-electron/*.deb
-          if-no-files-found: ignore
+          EP_DRAFT: true

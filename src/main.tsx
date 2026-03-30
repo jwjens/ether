@@ -1,4 +1,12 @@
 import React from "react";
+import * as Sentry from "@sentry/electron/renderer";
+
+Sentry.init({
+  dsn: import.meta.env.VITE_SENTRY_DSN,
+  enabled: !import.meta.env.DEV,
+  release: "ether@" + (import.meta.env.VITE_APP_VERSION ?? "1.0.0"),
+  tracesSampleRate: 0.1,
+});
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import NowPlaying from "./components/NowPlaying";

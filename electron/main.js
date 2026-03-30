@@ -3,6 +3,19 @@
 // Replaces src-tauri entirely — Chromium rendering, Node.js backend, NAPI audio
 
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require("electron");
+
+// ── Sentry (main process) ─────────────────────────────────────
+try {
+  const Sentry = require("@sentry/electron/main");
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    enabled: app.isPackaged,
+    release: "ether@" + app.getVersion(),
+    tracesSampleRate: 0.1,
+  });
+} catch (e) {
+  console.log("[SENTRY] Not initialized:", e.message);
+}
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
