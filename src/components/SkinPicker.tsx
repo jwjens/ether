@@ -266,9 +266,17 @@ const DEFAULT_PRESET = PRESETS[0];
 // ─── Variable injection ────────────────────────────────────────
 
 function applyTheme(vars: ThemeVars) {
-  const root = document.documentElement;
-  for (const [k, v] of Object.entries(vars)) {
-    root.style.setProperty(k, v);
+  // Apply to both root and any theme class elements
+  const targets = [
+    document.documentElement,
+    document.querySelector(".dark-theme"),
+    document.querySelector(".light-theme"),
+    document.getElementById("root"),
+  ].filter(Boolean) as Element[];
+  for (const target of targets) {
+    for (const [k, v] of Object.entries(vars)) {
+      (target as HTMLElement).style.setProperty(k, v);
+    }
   }
 }
 
@@ -479,7 +487,7 @@ export function SkinPickerOverlay({
     await saveTheme(activePreset, vars);
     onSelect(activePreset);
     setSaved(true);
-    setTimeout(() => { window.location.reload(); }, 900);
+    // No reload needed — theme applied via CSS variables in real time
   };
 
   const handleExport = () => {

@@ -223,10 +223,22 @@ ipcMain.handle("db:query", (_, sql, params) => {
 
 ipcMain.handle("db:execute", (_, sql, params) => {
   try {
+    // Drop and recreate FTS triggers around deletes to avoid contentless table errors
+    if (sql.trim().toUpperCase().startsWith("DELETE FROM SONGS")) {
+      db.exec("DROP TRIGGER IF EXISTS trg_songs_fts_delete");
+      const stmt = db.prepare(sql);
+      const result = stmt.run(...(params || []));
+      db.exec(`CREATE TRIGGER IF NOT EXISTS trg_songs_fts_delete
+        AFTER DELETE ON songs BEGIN
+          DELETE FROM songs_fts WHERE rowid = OLD.id;
+        END`);
+      return { data: result, error: null };
+    }
     const stmt = db.prepare(sql);
     const result = stmt.run(...(params || []));
     return { data: result, error: null };
   } catch (e) {
+    console.error("[DB execute error]", sql.slice(0, 100), e.message);
     return { data: null, error: e.message };
   }
 });
@@ -234,7 +246,12 @@ ipcMain.handle("db:execute", (_, sql, params) => {
 // File system
 ipcMain.handle("fs:readFile", async (_, filePath) => {
   try {
-    return { data: Array.from(fs.readFileSync(filePath)), error: null };
+    const fd = fs.openSync(filePath, "r");
+    const size = Math.min(fs.fstatSync(fd).size, 256 * 1024);
+    const buf = Buffer.alloc(size);
+    fs.readSync(fd, buf, 0, size, 0);
+    fs.closeSync(fd);
+    return { data: Array.from(buf), error: null };
   } catch (e) {
     return { data: null, error: e.message };
   }
@@ -400,6 +417,16 @@ ipcMain.handle("open_desk_window", async () => {
 });
 
 // ── Event relay: ether.emit() in renderer → broadcast to all windows ──
+// Relay now-playing-request to main window so it responds with current state
+ipcMain.on("now-playing-request", (event) => {
+  const sender = event.sender;
+  BrowserWindow.getAllWindows().forEach(w => {
+    if (w.webContents.id !== sender.id) {
+      w.webContents.send("now-playing-request", {});
+    }
+  });
+});
+
 ipcMain.on("now-playing-update", (_, payload) => {
   BrowserWindow.getAllWindows().forEach(w => w.webContents.send("now-playing-update", payload));
 });
