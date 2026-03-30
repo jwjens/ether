@@ -1,6 +1,5 @@
 {
     "name":  "openair",
-    "version":  "0.1.0",
     "description":  "Free broadcast automation for internet streamers and small stations",
     "license":  "MIT",
     "scripts":  {
@@ -30,6 +29,7 @@
                          "@tauri-apps/plugin-updater":  "^2.10.0",
                          "better-sqlite3":  "^12.8.0",
                          "date-fns":  "^3.6.0",
+                         "electron-updater":  "^6.8.3",
                          "lamejs":  "^1.2.1",
                          "music-metadata":  "^11.12.3",
                          "react":  "^18.3.0",
@@ -57,5 +57,6 @@
                             "vite":  "^7.3.1",
                             "vitest":  "^4.0.18",
                             "wait-on":  "^9.0.4"
-                        }
+                        },
+    "version":  "1.0.0"
 }

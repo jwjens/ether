@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
-// Updater: use electron auto-updater via IPC
+
 const relaunch = () => (window as any).ether.invoke("relaunch");
+const checkForUpdates = () => (window as any).ether.invoke("updater:check");
+const downloadUpdate = () => (window as any).ether.invoke("updater:download");
+const quitAndInstall = () => (window as any).ether.invoke("updater:install");
 
 interface UpdateInfo {
   version: string;
@@ -22,19 +25,19 @@ export function useUpdater() {
 
   const checkForUpdate = useCallback(async () => {
     try {
-      const update = await check();
-      if (update?.available) {
+      const result = await checkForUpdates();
+      if (result?.available) {
         setState({
           phase: "available",
           info: {
-            version: update.version,
-            notes: update.body ?? null,
-            date: update.date ?? null,
+            version: result.version,
+            notes: result.notes ?? null,
+            date: result.date ?? null,
           },
         });
       }
     } catch {
-      // Silently fail — no network, no update server, doesn't matter
+      // Silently fail
     }
   }, []);
 
@@ -46,37 +49,23 @@ export function useUpdater() {
 
   const download = useCallback(async () => {
     try {
-      const update = await check();
-      if (!update?.available) return;
-
-      let total = 0;
-      let downloaded = 0;
-
       setState({ phase: "downloading", progress: 0, total: 0, downloaded: 0 });
-
-      await update.downloadAndInstall(event => {
-        switch (event.event) {
-          case "Started":
-            total = event.data.contentLength ?? 0;
-            setState({ phase: "downloading", progress: 0, total, downloaded: 0 });
-            break;
-          case "Progress":
-            downloaded += event.data.chunkLength;
-            const progress = total > 0 ? Math.round((downloaded / total) * 100) : 0;
-            setState({ phase: "downloading", progress, total, downloaded });
-            break;
-          case "Finished":
-            setState({ phase: "ready" });
-            break;
+      // Listen for progress events from main process
+      const handler = (window as any).ether.on("updater:progress", (data: any) => {
+        if (data.percent !== undefined) {
+          setState({ phase: "downloading", progress: Math.round(data.percent), total: data.total ?? 0, downloaded: data.transferred ?? 0 });
         }
       });
+      await downloadUpdate();
+      (window as any).ether.off("updater:progress", handler);
+      setState({ phase: "ready" });
     } catch (e) {
       setState({ phase: "error", message: String(e) });
     }
   }, []);
 
   const restart = useCallback(async () => {
-    await relaunch();
+    await quitAndInstall();
   }, []);
 
   const dismiss = useCallback(() => {

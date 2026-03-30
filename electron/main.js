@@ -370,31 +370,50 @@ ipcMain.handle("set_now_playing", (_, args) => {
   return true;
 });
 
-// ── Additional fs handlers ───────────────────────────────────
-ipcMain.handle("fs:writeFile", (_, filePath, data) => {
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    if (typeof data === "string") fs.writeFileSync(filePath, data, "utf8");
-    else fs.writeFileSync(filePath, Buffer.from(data));
-    return { data: true, error: null };
-  } catch (e) { return { data: null, error: e.message }; }
-});
-
-ipcMain.handle("fs:mkdir", (_, dirPath) => {
-  try { fs.mkdirSync(dirPath, { recursive: true }); return { data: true, error: null }; }
-  catch (e) { return { data: null, error: e.message }; }
-});
-
-ipcMain.handle("fs:copyFile", (_, src, dst) => {
-  try {
-    fs.mkdirSync(path.dirname(dst), { recursive: true });
-    fs.copyFileSync(src, dst);
-    return { data: true, error: null };
-  } catch (e) { return { data: null, error: e.message }; }
-});
-
-ipcMain.handle("relaunch", () => { app.relaunch(); app.exit(0); });
-
 ipcMain.on("desk-send-to-queue", (_, payload) => {
   BrowserWindow.getAllWindows().forEach(w => w.webContents.send("desk-send-to-queue", payload));
+});
+
+// ── Relaunch ──────────────────────────────────────────────────
+ipcMain.handle("relaunch", () => { app.relaunch(); app.exit(0); });
+
+// ── Auto-updater ──────────────────────────────────────────────
+let autoUpdater = null;
+try {
+  const { autoUpdater: au } = require("electron-updater");
+  autoUpdater = au;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null;
+} catch (e) {
+  console.log("[UPDATER] electron-updater not available:", e.message);
+}
+
+ipcMain.handle("updater:check", async () => {
+  if (!autoUpdater) return { available: false };
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result?.updateInfo) return { available: false };
+    const current = app.getVersion();
+    const latest = result.updateInfo.version;
+    return {
+      available: latest !== current,
+      version: latest,
+      notes: result.updateInfo.releaseNotes ?? null,
+      date: result.updateInfo.releaseDate ?? null,
+    };
+  } catch { return { available: false }; }
+});
+
+ipcMain.handle("updater:download", async () => {
+  if (!autoUpdater) return;
+  autoUpdater.on("download-progress", (progress) => {
+    BrowserWindow.getAllWindows().forEach(w => w.webContents.send("updater:progress", progress));
+  });
+  await autoUpdater.downloadUpdate();
+});
+
+ipcMain.handle("updater:install", () => {
+  if (!autoUpdater) { app.relaunch(); app.exit(0); return; }
+  autoUpdater.quitAndInstall();
 });
