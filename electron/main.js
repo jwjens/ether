@@ -336,6 +336,31 @@ ipcMain.handle("watchdog_set", (_, args) => {
   return audio.watchdogSet(active ?? false, thresholdSec ?? 30);
 });
 
+// -- Streaming stubs (Icecast client to be implemented) -------
+let streamActive = false;
+let streamStartTime = 0;
+
+ipcMain.handle("stream_status", () => streamActive);
+
+ipcMain.handle("stream_health", () => ({
+  status: streamActive ? "live" : "disconnected",
+  uptimeSecs: streamActive ? Math.floor((Date.now() - streamStartTime) / 1000) : 0,
+  dropCount: 0,
+  bufferSecs: 0,
+}));
+
+ipcMain.handle("stream_start", async (_, args) => {
+  console.log("[STREAM] Start requested:", args?.config);
+  streamActive = true;
+  streamStartTime = Date.now();
+  return true;
+});
+
+ipcMain.handle("stream_update_metadata", (_, args) => {
+  console.log("[STREAM] Metadata:", args?.title, "-", args?.artist);
+  return true;
+});
+
 ipcMain.handle("stream_start_if_configured", async () => {
   try { return audio.streamStart ? audio.streamStart() : true; } catch { return true; }
 });
