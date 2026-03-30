@@ -111,7 +111,7 @@ function MockAdRotator() {
 }
 
 export default function NowPlaying({ onExit }: { onExit?: () => void }) {
-  const [track, setTrack] = useState<TrackInfo>({ title: "Ether", artist: "", positionSec: 0, durationSec: 0, isPlaying: false });
+  const [track, setTrack] = useState<TrackInfo>({ title: "", artist: "", positionSec: 0, durationSec: 0, isPlaying: false });
   const [albumArt, setAlbumArt] = useState<string | null>(null);
   const [lastTrack, setLastTrack] = useState("");
   const [upcoming, setUpcoming] = useState<UpcomingSong[]>([]);
