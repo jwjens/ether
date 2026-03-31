@@ -175,10 +175,76 @@ function createTray() {
 }
 
 // ── App lifecycle ─────────────────────────────────────────────
+function buildMenu() {
+  const send = (cmd) => {
+    const win = BrowserWindow.getFocusedWindow() || mainWindow;
+    if (win) win.webContents.send("menu-action", cmd);
+  };
+  const template = [
+    { label: "File", submenu: [
+      { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
+      { label: "Save Layout", accelerator: "CmdOrCtrl+S", click: () => send("file:save") },
+      { type: "separator" },
+      { label: "Import Music...", click: () => send("file:import") },
+      { label: "Preferences", click: () => send("file:preferences") },
+      { type: "separator" },
+      { label: "Quit", accelerator: "CmdOrCtrl+Q", click: () => { app.isQuitting = true; app.quit(); } },
+    ]},
+    { label: "View", submenu: [
+      { label: "Play Queue", click: () => send("view:queue") },
+      { label: "Deck A", click: () => send("view:deckA") },
+      { label: "Deck B", click: () => send("view:deckB") },
+      { label: "Deck C", click: () => send("view:deckC") },
+      { label: "Mic Deck", click: () => send("view:mic") },
+      { type: "separator" },
+      { label: "Configure Decks...", click: () => send("view:configure-decks") },
+      { label: "Reset to Default", click: () => send("view:reset") },
+      { type: "separator" },
+      { label: "Reload", accelerator: "CmdOrCtrl+R", click: () => mainWindow?.webContents.reload() },
+      { label: "Toggle DevTools", accelerator: "F12", click: () => mainWindow?.webContents.toggleDevTools() },
+    ]},
+    { label: "Library", submenu: [
+      { label: "Song Library", click: () => send("nav:library") },
+      { label: "Spots & Promos", click: () => send("nav:spots") },
+      { label: "Voice Tracker", click: () => send("nav:voicetrack") },
+      { type: "separator" },
+      { label: "Import from Folder...", click: () => send("file:import") },
+      { label: "Cue Editor", click: () => send("nav:trackedit") },
+    ]},
+    { label: "Schedule", submenu: [
+      { label: "Format Clocks", click: () => send("nav:clocks") },
+      { label: "Program Log", click: () => send("nav:programlog") },
+      { label: "Play Log", click: () => send("nav:logs") },
+    ]},
+    { label: "Tools", submenu: [
+      { label: "Voice Tracker", click: () => send("nav:voicetrack") },
+      { label: "Studio Editor", click: () => send("nav:studio") },
+      { label: "Cue Editor", click: () => send("nav:trackedit") },
+      { type: "separator" },
+      { label: "Stream Manager", click: () => send("nav:streaming") },
+      { label: "Smart Scheduler", click: () => send("nav:smartschedule") },
+      { label: "Listener Analytics", click: () => send("nav:analytics") },
+      { label: "Audio Routing", click: () => send("nav:multioutput") },
+      { label: "Station Manager", click: () => send("nav:stationmanager") },
+      { type: "separator" },
+      { label: "System Health", click: () => send("nav:health") },
+    ]},
+    { label: "Help", submenu: [
+      { label: "Keyboard Shortcuts", click: () => send("help:shortcuts") },
+      { label: "Documentation", click: () => shell.openExternal("https://github.com/jwjens/ether") },
+      { type: "separator" },
+      { label: "Check for Updates", click: () => send("help:check-updates") },
+      { label: "About Ether", click: () => send("nav:about") },
+    ]},
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
   initDb();
   createWindow();
   createTray();
+  buildMenu();
 });
 
 app.on("window-all-closed", () => {

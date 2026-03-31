@@ -13,6 +13,8 @@ interface SongResult {
 interface Props {
   deckA: DeckState | null;
   deckB: DeckState | null;
+  externalSearch?: string;
+  onSearchChange?: (v: string) => void;
 }
 
 function fmtDur(ms: number): string {
@@ -21,8 +23,15 @@ function fmtDur(ms: number): string {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
-export default function JockStrip({ deckA, deckB, dropDown = false }: Props & { dropDown?: boolean }) {
+export default function JockStrip({ deckA, deckB, dropDown = false, externalSearch, onSearchChange }: Props & { dropDown?: boolean; externalSearch?: string; onSearchChange?: (v: string) => void }) {
   const [search, setSearch] = useState("");
+
+  // Sync external search (from header bar)
+  useEffect(() => {
+    if (externalSearch !== undefined && externalSearch !== search) {
+      setSearch(externalSearch);
+    }
+  }, [externalSearch]);
   const [results, setResults] = useState<SongResult[]>([]);
   const [showResults, setShowResults] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -71,7 +80,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false }: Props & { 
           type="text"
           placeholder="Quick search — type to find a song..."
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => { setSearch(e.target.value); onSearchChange?.(e.target.value); }}
           onFocus={() => { setFocused(true); if (results.length > 0) setShowResults(true); }}
           onBlur={() => { setFocused(false); setTimeout(() => setShowResults(false), 300); }}
           style={{
@@ -83,7 +92,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false }: Props & { 
         />
         {search && (
           <button
-            onMouseDown={e => { e.preventDefault(); setSearch(""); setShowResults(false); }}
+            onMouseDown={e => { e.preventDefault(); setSearch(""); setShowResults(false); onSearchChange?.(""); }}
             style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
           >×</button>
         )}

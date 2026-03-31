@@ -337,6 +337,7 @@ export default function App() {
   const [queueLen, setQueueLen] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
+  const [globalSearch, setGlobalSearch] = useState("");
   const [showDeckConfig, setShowDeckConfig] = useState(false);
   const [showProducerDesk, setShowProducerDesk] = useState(false);
 
@@ -370,6 +371,28 @@ export default function App() {
       } catch {}
       setFirstRunChecked(true);
     })();
+  }, []);
+
+  // Native menu IPC handler
+  useEffect(() => {
+    const handler = (window as any).ether.on("menu-action", (cmd: string) => {
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health" };
+      if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
+      if (cmd === "file:import") setPanel("library");
+      if (cmd === "file:preferences") setPanel("settings");
+      if (cmd === "file:save") canvasEngine.saveCurrentLayout(canvasEngine.activeLayoutName);
+      if (cmd === "file:new-session") { canvasEngine.resetLayout(); setPanel("live"); }
+      if (cmd === "view:configure-decks") setShowDeckConfig(true);
+      if (cmd === "view:reset") { setVisiblePanels({ queue:true,deckA:true,deckB:true,deckC:true,mic:true,clock:false,history:false,cartwall:false }); setPanel("live"); }
+      if (cmd === "view:queue") toggleVisible("queue");
+      if (cmd === "view:deckA") toggleVisible("deckA");
+      if (cmd === "view:deckB") toggleVisible("deckB");
+      if (cmd === "view:deckC") toggleVisible("deckC");
+      if (cmd === "view:mic") toggleVisible("mic");
+      if (cmd === "help:shortcuts") window.dispatchEvent(new KeyboardEvent("keydown",{code:"Slash",shiftKey:true}));
+      if (cmd === "help:check-updates") updater.checkForUpdate?.();
+    });
+    return () => (window as any).ether.off("menu-action", handler);
   }, []);
 
   // Allow any UpgradePrompt button anywhere in the app to open the subscription panel
@@ -760,29 +783,8 @@ export default function App() {
       {/* ── Header ── */}
       <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
-        {/* ── LEFT: Logo + Menu + Session ── */}
-        <div data-tour="logo" style={{ display: "flex", alignItems: "center", gap: 10, zIndex: 1 }}>
-          <MenuBar
-            active={panel} set={setPanel}
-            canvasEngine={canvasEngine}
-            darkMode={darkMode} setDarkMode={setDarkMode}
-            currentPlan={currentPlan} currentUser={currentUser}
-            setCurrentUser={setCurrentUser}
-            onSave={() => canvasEngine.saveCurrentLayout(canvasEngine.activeLayoutName)}
-            visiblePanels={visiblePanels}
-            toggleVisible={toggleVisible}
-            setVisiblePanels={setVisiblePanels}
-            setUseCanvas={setUseCanvas}
-            onConfigureDecks={() => setShowDeckConfig(true)}
-            onCheckForUpdates={() => updater.checkForUpdate?.()}
-            onReset={() => {
-              setVisiblePanels({ queue: true, deckA: true, deckB: true, deckC: true, mic: true, clock: false, history: false, cartwall: false });
-              setUseCanvas(false);
-              canvasEngine.renameActive("Live Assist");
-              setPanel("live");
-            }}
-          />
-          <div style={{ width: 1, height: 16, background: "var(--border-primary)" }} />
+                {/* LEFT: Live Assist + Session */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, zIndex: 1 }}>
           <SessionNameBar
             name={canvasEngine.activeLayoutName}
             onChange={canvasEngine.renameActive}
@@ -793,9 +795,8 @@ export default function App() {
           />
         </div>
 
-
-        {/* ── RIGHT: Status controls ── */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto", zIndex: 1 }}>
+        {/* CENTER: Schedule + Clock + Dark mode */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 auto", zIndex: 1 }}>
           {panel !== "live" && (
             <button
               onClick={() => setPanel("live")}
@@ -826,7 +827,11 @@ export default function App() {
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             )}
           </button>
-          <button onClick={openDeskWindow} title="Producer Desk — opens in its own window" style={{ height: 30, padding: "0 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
+        </div>
+
+        {/* RIGHT: Desk + Now Playing + Pro + Admin + ON AIR */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1 }}>
+          <button onClick={openDeskWindow} style={{ height: 30, padding: "0 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
             onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background="rgba(167,139,250,0.15)";(e.currentTarget as HTMLElement).style.color="#a78bfa";(e.currentTarget as HTMLElement).style.borderColor="rgba(167,139,250,0.3)";}}
             onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background="var(--bg-tertiary)";(e.currentTarget as HTMLElement).style.color="var(--text-secondary)";(e.currentTarget as HTMLElement).style.borderColor="var(--border-primary)";}}
           >
@@ -847,61 +852,31 @@ export default function App() {
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             {currentUser?.name}
           </button>
+          <HealthStatusDot onClick={() => setPanel("health")} />
+          <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />
           <button
             data-tour="onair-btn"
             onClick={async () => {
               if (onAir) {
-                // Going OFF AIR — stop stream but keep music playing
-                setOnAir(false);
-                setOnAirOverride(true);
-                onAirOverrideRef.current = true;
+                setOnAir(false); setOnAirOverride(true); onAirOverrideRef.current = true;
                 invoke("stream_stop").catch(() => {});
               } else {
-                // Going ON AIR — start music if nothing playing, then start stream
-                setOnAir(true);
-                setOnAirOverride(false);
-                onAirOverrideRef.current = false;
-                if (!anyDeckPlaying) {
-                  // Nothing playing — kick off auto-advance to start music
-                  if (!autoAdv) {
-                    await toggleAuto();
-                  } else {
-                    // Auto already on but nothing playing — load from queue
-                    const q = engine.getQueue();
-                    if (q.length > 0) {
-                      const next = q[0];
-                      engine.clearQueue();
-                      engine.addToQueue(q.slice(1));
-                      await engine.loadToDeck("A", next.filePath, next.title, next.artist);
-                      engine.getDeck("A")?.play();
-                      setTimeout(() => engine.triggerPreload(), 800);
-                    }
-                  }
-                }
-                invoke("stream_start_if_configured").catch(() => {});
+                setOnAir(true); setOnAirOverride(false); onAirOverrideRef.current = false;
               }
             }}
-            title={onAir ? "Go off air — stops the stream, music keeps playing" : "Go on air — starts music and your stream"}
             style={{
-              height: 30, padding: "0 12px", borderRadius: 8,
-              fontSize: 10, fontWeight: 800, letterSpacing: "0.12em",
-              display: "flex", alignItems: "center", gap: 5,
-              opacity: 1,
-              cursor: "pointer",
+              height: 32, padding: "0 16px", borderRadius: 8, border: "none", cursor: "pointer",
+              fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
               background: onAir ? "#ef4444" : "var(--bg-tertiary)",
               color: onAir ? "#fff" : "var(--text-tertiary)",
-              border: onAir ? "none" : "1px solid var(--border-primary)",
-              boxShadow: onAir ? "0 0 20px rgba(239,68,68,0.35)" : "none",
-              animation: onAir ? "on-air-breathe 2s ease-in-out infinite" : "none",
-              transition: "all 0.3s ease",
+              boxShadow: onAir ? "0 0 16px rgba(239,68,68,0.5)" : "none",
+              transition: "all 0.2s",
             }}
-            onMouseEnter={e => { if (!onAir) (e.currentTarget as HTMLElement).style.borderColor = "#ef4444"; }}
-            onMouseLeave={e => { if (!onAir) (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
           >
-            {onAir ? "ON AIR" : "OFF AIR"}
+            {onAir ? "● ON AIR" : "OFF AIR"}
           </button>
         </div>
-      </header>
+</header>
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
@@ -2098,7 +2073,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -2181,7 +2156,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // Always derive deck order directly from deckConfigs — no separate state needed
   const DEFAULT_DECK_ORDER: DeckSlot[] = ["A", "B", "C", "mic"];
   const activeDeckOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0
-    ? deckConfigs.filter(c => c.enabled).map(c => c.slot as DeckSlot)
+    ? [...deckConfigs.filter(c => c.enabled).map(c => c.slot as DeckSlot), ...(!deckConfigs.some(c => c.slot === "mic" && c.enabled) ? ["mic" as DeckSlot] : [])]
     : DEFAULT_DECK_ORDER;
   // Keep deckOrder in sync for drag-drop resize (still needed for deckWidths key)
   const [deckOrder, setDeckOrder] = useState<DeckSlot[]>(activeDeckOrder);
@@ -2481,7 +2456,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         </div>
         <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
         <div style={{ flex: 1, minWidth: 0, position: "relative" as const }}>
-          {!showCarts && <JockStrip deckA={deckA} deckB={deckB} dropDown />}
+          {!showCarts && <JockStrip deckA={deckA} deckB={deckB} dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />}
         </div>
         <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
         <button
