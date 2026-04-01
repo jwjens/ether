@@ -43,23 +43,27 @@ const NOTE_COLORS: Record<NoteColor, { bg: string; border: string; text: string 
   white:  { bg: "var(--bg-secondary)", border: "var(--border-primary)", text: "var(--text-primary)" },
 };
 
-// ── AI call ───────────────────────────────────────────────────
+// ── AI call — routed through Electron main process ────────────
 async function askAI(messages: Message[]): Promise<string> {
   try {
+    const ether = (window as any).ether;
+    if (ether?.invoke) {
+      return await ether.invoke("ai:ask", messages);
+    }
+    // Fallback for plain browser dev mode
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-api-key": "", "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: "claude-sonnet-4-20250514",
         max_tokens: 1000,
-        system: "You are a creative producer assistant helping with podcast and broadcast ideas. Be concise, creative, and practical. Use short paragraphs.",
         messages: messages.map(m => ({ role: m.role, content: m.content })),
       }),
     });
     const d = await r.json();
     return d.content?.[0]?.text || "No response";
-  } catch {
-    return "Couldn't reach AI right now. Check your connection.";
+  } catch (e: any) {
+    return `Couldn't reach AI: ${e.message}`;
   }
 }
 
@@ -68,9 +72,10 @@ async function askAI(messages: Message[]): Promise<string> {
 interface Props {
   onClose: () => void;
   episodeTitle?: string;
+  nowPlaying?: string;
 }
 
-export default function ProducerDesk({ onClose, episodeTitle }: Props) {
+export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Props) {
   // Window position/size
   const [minimized, setMinimized] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -112,6 +117,7 @@ export default function ProducerDesk({ onClose, episodeTitle }: Props) {
   const [input, setInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
+  const [aiKeyConfigured, setAiKeyConfigured] = useState<boolean | null>(null);
 
   // ── Save ─────────────────────────────────────────────────────
   const saveDesk = () => {
@@ -249,6 +255,15 @@ export default function ProducerDesk({ onClose, episodeTitle }: Props) {
     reader.readAsDataURL(file);
   };
 
+  // ── AI key check ─────────────────────────────────────────────
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.invoke) { setAiKeyConfigured(true); return; }
+    Promise.all([ether.invoke("ai:getKeyStatus"), ether.invoke("ai:getProvider")])
+      .then(([status, provider]: any[]) => setAiKeyConfigured(!!(status?.[provider])))
+      .catch(() => setAiKeyConfigured(true));
+  }, []);
+
   // ── AI chat ──────────────────────────────────────────────────
   const sendMessage = async () => {
     if (!input.trim() || aiLoading) return;
@@ -260,6 +275,43 @@ export default function ProducerDesk({ onClose, episodeTitle }: Props) {
     setMessages(p => [...p, { role: "assistant", content: reply }]);
     setAiLoading(false);
   };
+
+  const sendQuick = async (prompt: string) => {
+    if (aiLoading) return;
+    const userMsg: Message = { role: "user", content: prompt };
+    setMessages(p => [...p, userMsg]);
+    setAiLoading(true);
+    const reply = await askAI([...messages, userMsg]);
+    if (reply === "__NO_KEY__") {
+      setAiKeyConfigured(false);
+      setMessages(p => p.slice(0, -1)); // remove the user message
+    } else {
+      setMessages(p => [...p, { role: "assistant", content: reply }]);
+    }
+    setAiLoading(false);
+  };
+
+  const sendWeather = async () => {
+    if (aiLoading) return;
+    const ether = (window as any).ether;
+    let weatherCtx = "";
+    if (ether?.invoke) {
+      const data = await ether.invoke("weather:getLasVegas").catch(() => null);
+      if (data) weatherCtx = `Current Las Vegas conditions: ${data.temp}°F (feels like ${data.feels_like}°F), ${data.description}, humidity ${data.humidity}%, wind ${data.wind_speed} mph. `;
+    }
+    const prompt = weatherCtx
+      ? `${weatherCtx}Give me a brief, broadcast-ready weather report for Las Vegas.`
+      : "What's the current weather in Las Vegas? Give me a quick on-air-ready summary.";
+    sendQuick(prompt);
+  };
+
+  const quickButtons: { label: string; action: () => void }[] = [
+    { label: "Weather", action: sendWeather },
+    { label: "News",    action: () => sendQuick("What are the top news stories right now? Summarize the 3 most interesting ones briefly.") },
+    { label: "Now Playing", action: () => sendQuick(nowPlaying ? `Tell me something interesting about "${nowPlaying}" I can say on air — fun facts, artist background, why this song matters.` : "What's a good way to introduce the current song on air?") },
+    { label: "Break Idea",  action: () => sendQuick("Give me a creative, engaging break idea I can do right now in a live radio show.") },
+    { label: "Show Notes",  action: () => sendQuick("Write brief, punchy show notes for this segment of the show.") },
+  ];
 
   // Pin AI response to board
   const pinToBoard = (content: string) => {
@@ -495,6 +547,13 @@ export default function ProducerDesk({ onClose, episodeTitle }: Props) {
       {/* ── AI TAB ── */}
       {!minimized && tab === "ai" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
+          {/* No-key disclaimer */}
+          {aiKeyConfigured === false && (
+            <div style={{ margin: "16px 18px", padding: "12px 16px", borderRadius: 10, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "rgba(251,191,36,0.9)", lineHeight: 1.6 }}>
+              AI features require your own API key — add yours in{" "}
+              <span style={{ fontWeight: 700 }}>Settings → AI &amp; Integrations</span>.
+            </div>
+          )}
           {/* Messages */}
           <div ref={chatRef} style={{ flex: 1, overflowY: "auto" as const, padding: "16px 18px", display: "flex", flexDirection: "column" as const, gap: 12 }}>
             {messages.map((msg, i) => (
@@ -539,26 +598,20 @@ export default function ProducerDesk({ onClose, episodeTitle }: Props) {
             )}
           </div>
 
-          {/* Quick prompts */}
+          {/* Quick-tap buttons */}
           <div style={{ padding: "8px 16px 6px", display: "flex", gap: 5, flexWrap: "wrap" as const, flexShrink: 0, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-            {[
-              "5 episode title ideas",
-              "Interview questions",
-              "Segment structure",
-              "Trending podcast topics",
-              "Write episode description",
-            ].map(prompt => (
-              <button key={prompt} onClick={() => setInput(prompt)} style={{
-                padding: "3px 9px", borderRadius: 20,
+            {quickButtons.map(({ label, action }) => (
+              <button key={label} onClick={action} disabled={aiLoading} style={{
+                padding: "4px 11px", borderRadius: 20,
                 border: "1px solid rgba(255,255,255,0.08)",
                 background: "rgba(255,255,255,0.03)",
-                color: "rgba(255,255,255,0.35)",
-                fontSize: 10, cursor: "pointer", transition: "all 0.12s",
-                whiteSpace: "nowrap" as const, letterSpacing: "0.01em",
+                color: aiLoading ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.55)",
+                fontSize: 10, cursor: aiLoading ? "default" : "pointer", transition: "all 0.12s",
+                whiteSpace: "nowrap" as const, letterSpacing: "0.01em", fontWeight: 600,
               }}
-                onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(167,139,250,0.3)"; el.style.color = "rgba(167,139,250,0.8)"; el.style.background = "rgba(167,139,250,0.07)"; }}
-                onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.08)"; el.style.color = "rgba(255,255,255,0.35)"; el.style.background = "rgba(255,255,255,0.03)"; }}
-              >{prompt}</button>
+                onMouseEnter={e => { if (!aiLoading) { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(167,139,250,0.4)"; el.style.color = "#a78bfa"; el.style.background = "rgba(167,139,250,0.1)"; } }}
+                onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor = "rgba(255,255,255,0.08)"; el.style.color = aiLoading ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.55)"; el.style.background = "rgba(255,255,255,0.03)"; }}
+              >{label}</button>
             ))}
           </div>
 
@@ -638,6 +691,34 @@ const DARK_NOTE: Record<NoteColor, { bg: string; border: string; text: string; s
 
 function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChange, onDelete, onPin }: CardProps) {
   const dn = item.color ? DARK_NOTE[item.color] : DARK_NOTE.white;
+  const [isResizing, setIsResizing] = useState(false);
+  const cardResizeData = useRef({ mx: 0, my: 0, ow: 0, oh: 0, ox: 0, oy: 0, dir: "se" as "se" | "sw" | "ne" | "nw" });
+
+  const startCardResize = useCallback((e: React.MouseEvent, dir: "se" | "sw" | "ne" | "nw") => {
+    e.preventDefault();
+    e.stopPropagation();
+    cardResizeData.current = { mx: e.clientX, my: e.clientY, ow: item.w, oh: item.h, ox: item.x, oy: item.y, dir };
+    setIsResizing(true);
+  }, [item.w, item.h, item.x, item.y]);
+
+  useEffect(() => {
+    if (!isResizing) return;
+    const onMove = (e: MouseEvent) => {
+      const { mx, my, ow, oh, ox, oy, dir } = cardResizeData.current;
+      const dx = e.clientX - mx;
+      const dy = e.clientY - my;
+      const newW = Math.max(120, (dir === "se" || dir === "ne") ? ow + dx : ow - dx);
+      const newH = Math.max(80, (dir === "se" || dir === "sw") ? oh + dy : oh - dy);
+      const updates: Partial<BoardItem> = { w: newW, h: newH };
+      if (dir === "sw" || dir === "nw") updates.x = Math.max(0, ox + ow - newW);
+      if (dir === "ne" || dir === "nw") updates.y = Math.max(0, oy + oh - newH);
+      onChange(item.id, updates);
+    };
+    const onUp = () => setIsResizing(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [isResizing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -659,14 +740,14 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
   if (item.type === "note") {
     return (
       <div
-        style={{ ...baseStyle, background: dn.bg, border: `1px solid ${dn.border}` }}
-        onMouseDown={e => { onSelect(item.id); onDragStart(e, item.id); }}
+        style={{ ...baseStyle, background: dn.bg, border: `1px solid ${dn.border}`, minHeight: undefined, height: item.h, display: "flex", flexDirection: "column" }}
+        onMouseDown={e => { if (isResizing) return; onSelect(item.id); onDragStart(e, item.id); }}
         onClick={e => { e.stopPropagation(); onSelect(item.id); }}
       >
         {/* Top accent line */}
         <div style={{ height: 2, background: `linear-gradient(90deg, ${dn.border}, transparent)`, flexShrink: 0 }} />
         {/* Header — font controls + delete */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 8px 0", opacity: selected ? 1 : 0.4, transition: "opacity 0.15s" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 8px 0", opacity: selected ? 1 : 0.4, transition: "opacity 0.15s", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }} onMouseDown={e => e.stopPropagation()}>
             {/* Bold toggle */}
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontBold: !item.fontBold }); }}
@@ -692,16 +773,29 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
           onMouseDown={e => e.stopPropagation()}
           placeholder="Type your note..."
           style={{
-            width: "100%", background: "none", border: "none", outline: "none",
+            flex: 1, width: "100%", background: "none", border: "none", outline: "none",
             padding: "4px 13px 13px",
             fontSize: item.fontSize || 12, lineHeight: 1.75, color: dn.text,
             fontFamily: "'Inter', system-ui, sans-serif",
             fontWeight: item.fontBold ? 700 : 400,
-            resize: "none", minHeight: item.h - 32,
+            resize: "none",
             cursor: "text", boxSizing: "border-box",
             opacity: 0.9,
           }}
         />
+        {/* 4-corner resize handles */}
+        {(["se", "sw", "ne", "nw"] as const).map(dir => (
+          <div key={dir} onMouseDown={e => startCardResize(e, dir)} style={{
+            position: "absolute",
+            bottom: dir === "se" || dir === "sw" ? 0 : undefined,
+            top: dir === "ne" || dir === "nw" ? 0 : undefined,
+            right: dir === "se" || dir === "ne" ? 0 : undefined,
+            left: dir === "sw" || dir === "nw" ? 0 : undefined,
+            width: 16, height: 16,
+            cursor: `${dir}-resize`,
+            zIndex: 10,
+          }} />
+        ))}
       </div>
     );
   }
@@ -744,4 +838,215 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
   }
 
   return null;
+}
+
+
+// ── Inline Producer Desk (for deck slot rendering) ────────────
+export function InlineProducerDesk({ episodeTitle, nowPlaying }: { episodeTitle?: string; nowPlaying?: string }) {
+  const [items, setItems] = useState<BoardItem[]>(() => {
+    try { return JSON.parse(localStorage.getItem("ether_desk_items_inline") || "[]"); } catch { return []; }
+  });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [draggingItem, setDraggingItem] = useState<string | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Message[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [inlineAiKeyConfigured, setInlineAiKeyConfigured] = useState<boolean | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ id: string; startX: number; startY: number; origX: number; origY: number } | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem("ether_desk_items_inline", JSON.stringify(items));
+  }, [items]);
+
+  // Drag implementation for inline board items
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const { id, startX, startY, origX, origY } = dragRef.current;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      setItems(p => p.map(i => i.id === id ? { ...i, x: Math.max(0, origX + dx), y: Math.max(0, origY + dy) } : i));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      setDraggingItem(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, []);
+
+  const handleItemDragStart = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    dragRef.current = { id, startX: e.clientX, startY: e.clientY, origX: item.x, origY: item.y };
+    setDraggingItem(id);
+    setSelectedId(id);
+  };
+
+  const addNote = (color: NoteColor = "yellow") => {
+    const id = Math.random().toString(36).slice(2);
+    setItems(p => [...p, { id, type: "note", x: 20 + Math.random() * 60, y: 60 + Math.random() * 80, w: 180, h: 140, text: "", color, fontSize: 12, fontBold: false }]);
+    setSelectedId(id);
+  };
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, chatLoading]);
+
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.invoke) { setInlineAiKeyConfigured(true); return; }
+    Promise.all([ether.invoke("ai:getKeyStatus"), ether.invoke("ai:getProvider")])
+      .then(([status, provider]: any[]) => setInlineAiKeyConfigured(!!(status?.[provider])))
+      .catch(() => setInlineAiKeyConfigured(true));
+  }, []);
+
+  const sendChat = async (text?: string) => {
+    const content = text ?? chatInput.trim();
+    if (!content || chatLoading) return;
+    const userMsg: Message = { role: "user", content };
+    const next = [...chatMessages, userMsg];
+    setChatMessages(next);
+    if (!text) setChatInput("");
+    setChatLoading(true);
+    try {
+      const reply = await askAI(next);
+      if (reply === "__NO_KEY__") {
+        setInlineAiKeyConfigured(false);
+        setChatMessages(m => m.slice(0, -1));
+      } else {
+        setChatMessages(m => [...m, { role: "assistant", content: reply }]);
+      }
+    } catch { setChatMessages(m => [...m, { role: "assistant", content: "Error connecting to AI." }]); }
+    setChatLoading(false);
+  };
+
+  const sendWeatherInline = async () => {
+    const ether = (window as any).ether;
+    let weatherCtx = "";
+    if (ether?.invoke) {
+      const data = await ether.invoke("weather:getLasVegas").catch(() => null);
+      if (data) weatherCtx = `Current Las Vegas: ${data.temp}°F (feels ${data.feels_like}°F), ${data.description}, humidity ${data.humidity}%, wind ${data.wind_speed} mph. `;
+    }
+    sendChat((weatherCtx ? `${weatherCtx}Give me a brief broadcast-ready weather report.` : "What's the current weather in Las Vegas? Give me an on-air-ready summary."));
+  };
+
+  const inlineQuickButtons: { label: string; action: () => void }[] = [
+    { label: "Weather",     action: sendWeatherInline },
+    { label: "News",        action: () => sendChat("What are the top news stories right now? Summarize the 3 most interesting ones briefly.") },
+    { label: "Now Playing", action: () => sendChat(nowPlaying ? `Tell me something interesting about "${nowPlaying}" I can say on air.` : "What's a good way to introduce the current song on air?") },
+    { label: "Break Idea",  action: () => sendChat("Give me a creative, engaging break idea for a live radio show right now.") },
+    { label: "Show Notes",  action: () => sendChat("Write brief, punchy show notes for this segment of the show.") },
+  ];
+
+  return (
+    /* position:relative so the floating AI panel anchors to this component */
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "linear-gradient(160deg, rgba(18,18,26,0.97) 0%, rgba(12,12,20,0.98) 100%)", position: "relative", fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)", flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.85)", letterSpacing: "0.04em", textTransform: "uppercase", fontFamily: "'Syne', sans-serif" }}>DESK</span>
+        {episodeTitle && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{episodeTitle}</span>}
+        <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+          {(["yellow","pink","cyan","green","purple"] as NoteColor[]).map(c => (
+            <button key={c} onClick={() => addNote(c)} style={{ width: 14, height: 14, borderRadius: "50%", background: NOTE_COLORS[c].border, border: "none", cursor: "pointer", flexShrink: 0 }} title={`Add ${c} note`} />
+          ))}
+          <button onClick={() => setChatOpen(o => !o)} style={{ marginLeft: 4, padding: "3px 8px", borderRadius: 6, background: chatOpen ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.07)", border: "1px solid rgba(139,92,246,0.4)", color: "#a78bfa", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✦ AI</button>
+        </div>
+      </div>
+
+      {/* Board — always full remaining height, never affected by AI panel */}
+      <div ref={boardRef} onClick={() => setSelectedId(null)} style={{ flex: 1, position: "relative", overflow: "hidden", backgroundImage: "radial-gradient(rgba(255,255,255,0.03) 1px, transparent 1px)", backgroundSize: "20px 20px" }}>
+        {items.length === 0 && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <span style={{ fontSize: 24 }}>📋</span>
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)" }}>Click a color to add a note</span>
+          </div>
+        )}
+        {items.map(item => (
+          <BoardItemCard
+            key={item.id}
+            item={item}
+            selected={selectedId === item.id}
+            dragging={draggingItem === item.id}
+            onSelect={() => setSelectedId(item.id)}
+            onDragStart={(e: React.MouseEvent, id: string) => handleItemDragStart(e, id)}
+            onChange={(id, updates) => setItems(p => p.map(i => i.id === id ? { ...i, ...updates } : i))}
+            onDelete={() => { setItems(p => p.filter(i => i.id !== item.id)); setSelectedId(null); }}
+            onPin={() => {}}
+          />
+        ))}
+      </div>
+
+      {/* AI floating overlay — sibling of board, never affects layout */}
+      {chatOpen && (
+        <div style={{
+          position: "absolute", bottom: 10, right: 10,
+          width: 320, height: 420,
+          background: "rgba(10,10,18,0.97)",
+          border: "1px solid rgba(139,92,246,0.3)",
+          borderRadius: 14,
+          display: "flex", flexDirection: "column",
+          overflow: "hidden",
+          boxShadow: "0 12px 48px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(139,92,246,0.15)",
+          zIndex: 50,
+        }}>
+          {/* Panel header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#a78bfa", letterSpacing: "0.06em", textTransform: "uppercase" }}>✦ AI Assistant</span>
+            <button onClick={() => setChatOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 16, lineHeight: 1, padding: "0 2px" }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.8)"}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "rgba(255,255,255,0.3)"}
+            >×</button>
+          </div>
+
+          {/* No-key disclaimer */}
+          {inlineAiKeyConfigured === false && (
+            <div style={{ padding: "8px 12px", fontSize: 10, color: "rgba(251,191,36,0.85)", background: "rgba(251,191,36,0.07)", borderBottom: "1px solid rgba(251,191,36,0.15)", lineHeight: 1.5, flexShrink: 0 }}>
+              AI features require an API key — add yours in <strong>Settings → AI &amp; Integrations</strong>.
+            </div>
+          )}
+
+          {/* Messages */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {chatMessages.length === 0 && inlineAiKeyConfigured !== false && (
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", textAlign: "center", padding: "20px 0" }}>
+                Tap a button or ask anything
+              </div>
+            )}
+            {chatMessages.map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+                <div style={{ maxWidth: "88%", padding: "7px 10px", borderRadius: m.role === "user" ? "10px 10px 3px 10px" : "3px 10px 10px 10px", background: m.role === "user" ? "rgba(139,92,246,0.25)" : "rgba(255,255,255,0.06)", border: m.role === "user" ? "1px solid rgba(139,92,246,0.3)" : "1px solid rgba(255,255,255,0.07)", fontSize: 11, color: "rgba(255,255,255,0.85)", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{m.content}</div>
+              </div>
+            ))}
+            {chatLoading && (
+              <div style={{ display: "flex", gap: 4, padding: "6px 2px" }}>
+                {[0,1,2].map(i => <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "#a78bfa", animation: `bounce 1.2s ease-in-out ${i*0.15}s infinite` }} />)}
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </div>
+
+          {/* Quick-tap buttons */}
+          <div style={{ display: "flex", gap: 4, padding: "6px 10px", flexWrap: "wrap" as const, borderTop: "1px solid rgba(255,255,255,0.05)", flexShrink: 0 }}>
+            {inlineQuickButtons.map(({ label, action }) => (
+              <button key={label} onClick={action} disabled={chatLoading} style={{ padding: "3px 9px", borderRadius: 20, border: "1px solid rgba(139,92,246,0.25)", background: "rgba(139,92,246,0.07)", color: chatLoading ? "rgba(255,255,255,0.2)" : "rgba(167,139,250,0.8)", fontSize: 10, fontWeight: 600, cursor: chatLoading ? "default" : "pointer", whiteSpace: "nowrap" as const }}>{label}</button>
+            ))}
+          </div>
+
+          {/* Input */}
+          <div style={{ display: "flex", gap: 6, padding: "6px 10px 8px", flexShrink: 0 }}>
+            <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") sendChat(); }} placeholder="Ask anything..." style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "5px 10px", fontSize: 11, color: "rgba(255,255,255,0.85)", outline: "none" }} />
+            <button onClick={() => sendChat()} disabled={chatLoading || !chatInput.trim()} style={{ padding: "5px 12px", borderRadius: 8, background: chatInput.trim() && !chatLoading ? "#7c3aed" : "rgba(255,255,255,0.05)", border: "none", color: chatInput.trim() && !chatLoading ? "#fff" : "rgba(255,255,255,0.2)", fontSize: 11, fontWeight: 700, cursor: chatInput.trim() && !chatLoading ? "pointer" : "default" }}>Send</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

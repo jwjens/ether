@@ -71,6 +71,8 @@ function CodeBox({ value }: { value: string }) {
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel() {
+  const [tab, setTab] = useState<"general" | "ai">("general");
+
   // Station
   const [timezone, setTimezone] = useState("");
   const [autostart, setAutostart] = useState(false);
@@ -95,9 +97,19 @@ export default function SettingsPanel() {
   const [backupStatus, setBackupStatus] = useState("");
   const [backupLoading, setBackupLoading] = useState(false);
 
-  // AI / Voice Assistant
+  // AI / Voice Assistant (legacy)
   const [anthropicKey, setAnthropicKey] = useState("");
   const [anthropicKeySaved, setAnthropicKeySaved] = useState(false);
+
+  // AI & Integrations tab
+  const [aiProvider, setAiProviderState] = useState<"anthropic" | "openai" | "google">("anthropic");
+  const [aiProviderSaved, setAiProviderSaved] = useState(false);
+  const [keyStatus, setKeyStatus] = useState({ anthropic: false, openai: false, google: false, weather: false });
+  const [anthropicInput, setAnthropicInput] = useState("");
+  const [openaiInput, setOpenaiInput] = useState("");
+  const [googleInput, setGoogleInput] = useState("");
+  const [weatherInput, setWeatherInput] = useState("");
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
 
   // Processing
   const [processingStats, setProcessingStats] = useState<any>(null);
@@ -136,6 +148,10 @@ export default function SettingsPanel() {
         if (r.key === "anthropic_api_key") { setAnthropicKey(r.value); (window as any).__ANTHROPIC_API_KEY__ = r.value; }
       }
     }).catch(() => {});
+
+    // AI key status + provider
+    invoke("ai:getKeyStatus").then((s: any) => setKeyStatus(s)).catch(() => {});
+    invoke("ai:getProvider").then((p: any) => setAiProviderState(p)).catch(() => {});
 
     // Backups
     invoke<string[]>("list_backups").then(setBackups).catch(() => {});
@@ -250,9 +266,50 @@ export default function SettingsPanel() {
     setTimeout(() => setAnthropicKeySaved(false), 2000);
   };
 
+  const connectProvider = async (provider: string, key: string) => {
+    if (!key.trim()) return;
+    setConnectingProvider(provider);
+    await invoke("ai:setKey", { provider, key: key.trim() }).catch(() => {});
+    const s: any = await invoke("ai:getKeyStatus").catch(() => keyStatus);
+    setKeyStatus(s);
+    setConnectingProvider(null);
+    if (provider === "anthropic") setAnthropicInput("");
+    if (provider === "openai") setOpenaiInput("");
+    if (provider === "google") setGoogleInput("");
+    if (provider === "weather") setWeatherInput("");
+  };
+
+  const disconnectProvider = async (provider: string) => {
+    await invoke("ai:setKey", { provider, key: "" }).catch(() => {});
+    const s: any = await invoke("ai:getKeyStatus").catch(() => keyStatus);
+    setKeyStatus(s);
+  };
+
+  const saveProvider = async (provider: "anthropic" | "openai" | "google") => {
+    setAiProviderState(provider);
+    await invoke("ai:setProvider", provider).catch(() => {});
+    setAiProviderSaved(true);
+    setTimeout(() => setAiProviderSaved(false), 1500);
+  };
+
+  const tabStyle = (t: string): React.CSSProperties => ({
+    padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "none",
+    background: tab === t ? "var(--accent-blue)" : "transparent",
+    color: tab === t ? "#fff" : "var(--text-secondary)",
+    transition: "all 0.15s",
+  });
+
   return (
     <div style={{ maxWidth: 800, margin: "0 auto", padding: "4px 0 40px", fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 20, fontFamily: "'Syne', sans-serif" }}>Settings</h1>
+      <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 16, fontFamily: "'Syne', sans-serif" }}>Settings</h1>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, padding: "4px", background: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-primary)", width: "fit-content" }}>
+        <button style={tabStyle("general")} onClick={() => setTab("general")}>General</button>
+        <button style={tabStyle("ai")} onClick={() => setTab("ai")}>AI &amp; Integrations</button>
+      </div>
+
+      {tab === "general" && <>
 
       {/* ── Station ── */}
       <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>} title="Your Station" description="Basic information about your station">
@@ -487,49 +544,159 @@ export default function SettingsPanel() {
         {backups.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>No backups yet — click "Back up now" to create your first one</div>}
       </Section>
 
-      {/* ── AI Voice Assistant ── */}
-      <Section
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>}
-        title="AI Voice Assistant"
-        description="Power the Ether AI voice commands — say 'Hey Ether' or press Ctrl+Space to control your station hands-free"
-      >
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
-          Get your free API key from <span style={{ color: "var(--accent-cyan)" }}>console.anthropic.com</span> → API Keys → Create Key. Starts with <code style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 4 }}>sk-ant-</code>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            type="password"
-            value={anthropicKey}
-            onChange={e => setAnthropicKey(e.target.value)}
-            placeholder="sk-ant-..."
-            style={{
-              flex: 1, padding: "9px 12px", borderRadius: 8, fontSize: 13,
-              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-              color: "var(--text-primary)", outline: "none",
-              fontFamily: "'DM Mono', monospace",
-            }}
-          />
-          <button
-            onClick={saveAnthropicKey}
-            disabled={!anthropicKey.startsWith("sk-ant-")}
-            style={{
-              padding: "9px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-              background: anthropicKeySaved ? "var(--accent-green)" : anthropicKey.startsWith("sk-ant-") ? "var(--accent-blue)" : "var(--bg-tertiary)",
-              color: anthropicKey.startsWith("sk-ant-") || anthropicKeySaved ? "#fff" : "var(--text-tertiary)",
-              border: "none", cursor: anthropicKey.startsWith("sk-ant-") ? "pointer" : "default",
-              transition: "all 0.2s",
-            }}
-          >
-            {anthropicKeySaved ? "✓ Saved!" : "Save"}
-          </button>
-        </div>
-        {anthropicKey && !anthropicKey.startsWith("sk-ant-") && (
-          <div style={{ fontSize: 11, color: "var(--accent-amber)", marginTop: 6 }}>Key should start with sk-ant-</div>
-        )}
-        {anthropicKey.startsWith("sk-ant-") && (
-          <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 6 }}>✓ Key looks valid — voice commands are ready</div>
-        )}
-      </Section>
+      </> /* end tab === "general" */}
+
+      {tab === "ai" && <>
+        {/* ── Active AI Provider ── */}
+        <Section
+          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>}
+          title="Active AI Provider"
+          description="Choose which AI powers the DeskProducer assistant"
+        >
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+            {(["anthropic", "openai", "google"] as const).map(p => {
+              const labels = { anthropic: "Claude (Anthropic)", openai: "ChatGPT (OpenAI)", google: "Gemini (Google)" };
+              const active = aiProvider === p;
+              const hasKey = keyStatus[p];
+              return (
+                <button key={p} onClick={() => saveProvider(p)} style={{
+                  padding: "9px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  border: `1px solid ${active ? "var(--accent-blue)" : "var(--border-primary)"}`,
+                  background: active ? "var(--accent-blue)" : "var(--bg-tertiary)",
+                  color: active ? "#fff" : hasKey ? "var(--text-primary)" : "var(--text-tertiary)",
+                  transition: "all 0.15s", display: "flex", alignItems: "center", gap: 6,
+                }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: hasKey ? "var(--accent-green)" : "var(--text-tertiary)", flexShrink: 0, display: "inline-block" }} />
+                  {labels[p]}
+                </button>
+              );
+            })}
+          </div>
+          {aiProviderSaved && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>✓ Saved</div>}
+        </Section>
+
+        {/* ── Provider Cards ── */}
+        {([
+          {
+            id: "anthropic",
+            name: "Anthropic (Claude)",
+            placeholder: "sk-ant-...",
+            keyUrl: "https://console.anthropic.com/settings/keys",
+            keyUrlLabel: "console.anthropic.com/settings/keys",
+            hint: "Starts with sk-ant-",
+            value: anthropicInput,
+            set: setAnthropicInput,
+            color: "#d4770a",
+          },
+          {
+            id: "openai",
+            name: "OpenAI (ChatGPT)",
+            placeholder: "sk-...",
+            keyUrl: "https://platform.openai.com/api-keys",
+            keyUrlLabel: "platform.openai.com/api-keys",
+            hint: "Starts with sk-",
+            value: openaiInput,
+            set: setOpenaiInput,
+            color: "#10a37f",
+          },
+          {
+            id: "google",
+            name: "Google (Gemini)",
+            placeholder: "AIza...",
+            keyUrl: "https://aistudio.google.com/apikey",
+            keyUrlLabel: "aistudio.google.com/apikey",
+            hint: "Starts with AIza",
+            value: googleInput,
+            set: setGoogleInput,
+            color: "#4285f4",
+          },
+        ] as const).map(card => {
+          const connected = (keyStatus as any)[card.id];
+          const busy = connectingProvider === card.id;
+          return (
+            <div key={card.id} style={{ background: "var(--bg-secondary)", border: `1px solid ${connected ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
+              <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: card.color, flexShrink: 0 }} />
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>{card.name}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: connected ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+                  {connected ? "Connected" : "Not connected"}
+                </div>
+              </div>
+              <div style={{ padding: "14px 20px" }}>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+                  Get your API key at{" "}
+                  <a href={card.keyUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl(card.keyUrl); }}>
+                    {card.keyUrlLabel}
+                  </a>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <input
+                    type="password"
+                    value={card.value}
+                    onChange={e => card.set(e.target.value as any)}
+                    placeholder={connected ? "••••••••••••••••" : card.placeholder}
+                    style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+                  />
+                  <button
+                    onClick={() => connectProvider(card.id, card.value)}
+                    disabled={!card.value.trim() || busy}
+                    style={{ padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "none", cursor: card.value.trim() && !busy ? "pointer" : "default", background: card.value.trim() && !busy ? "var(--accent-blue)" : "var(--bg-tertiary)", color: card.value.trim() && !busy ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
+                    {busy ? "Saving..." : "Connect"}
+                  </button>
+                  {connected && (
+                    <button onClick={() => disconnectProvider(card.id)} style={{ padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
+                      Disconnect
+                    </button>
+                  )}
+                </div>
+                {card.value && <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6 }}>{card.hint}</div>}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* ── Weather (OpenWeatherMap) ── */}
+        <Section
+          icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>}
+          title="Weather — OpenWeatherMap"
+          description="Powers the Weather button in DeskProducer with real Las Vegas conditions"
+        >
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+            Free API key at{" "}
+            <a href="https://openweathermap.org/api" target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl("https://openweathermap.org/api"); }}>
+              openweathermap.org/api
+            </a>
+            {" "}— sign up, then copy the key from your dashboard. You can also set <code style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 4 }}>OPENWEATHERMAP_API_KEY</code> in your .env file.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="password"
+              value={weatherInput}
+              onChange={e => setWeatherInput(e.target.value)}
+              placeholder={keyStatus.weather ? "••••••••••••••••" : "Paste API key..."}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+            />
+            <button
+              onClick={() => connectProvider("weather", weatherInput)}
+              disabled={!weatherInput.trim() || connectingProvider === "weather"}
+              style={{ padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "none", cursor: weatherInput.trim() ? "pointer" : "default", background: weatherInput.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)", color: weatherInput.trim() ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s" }}>
+              {connectingProvider === "weather" ? "Saving..." : "Connect"}
+            </button>
+            {keyStatus.weather && (
+              <button onClick={() => disconnectProvider("weather")} style={{ padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)" }}>
+                Disconnect
+              </button>
+            )}
+          </div>
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: keyStatus.weather ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: keyStatus.weather ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+            {keyStatus.weather ? "Connected — Weather button is live" : "Not connected — Weather button will show a placeholder"}
+          </div>
+        </Section>
+      </> /* end tab === "ai" */}
 
     </div>
   );

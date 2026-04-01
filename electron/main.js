@@ -2,7 +2,7 @@
 // Ether Electron main process
 // Replaces src-tauri entirely — Chromium rendering, Node.js backend, NAPI audio
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage } = require("electron");
 
 // ── Sentry (main process) ─────────────────────────────────────
 try {
@@ -19,6 +19,9 @@ try {
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
+
+// ── Load .env (API keys etc.) ─────────────────────────────────
+try { require("dotenv").config(); } catch (e) { /* dotenv optional */ }
 
 // ── Fix DPI scaling on Windows ────────────────────────────────
 app.commandLine.appendSwitch("high-dpi-support", "1");
@@ -568,4 +571,142 @@ ipcMain.handle("updater:download", async () => {
 ipcMain.handle("updater:install", () => {
   if (!autoUpdater) { app.relaunch(); app.exit(0); return; }
   autoUpdater.quitAndInstall();
+});
+
+// ── AI key storage (safeStorage) ─────────────────────────────
+function getAiConfigPath() {
+  return path.join(app.getPath("userData"), "ai-config.json");
+}
+function readAiConfig() {
+  try { return JSON.parse(fs.readFileSync(getAiConfigPath(), "utf8")); }
+  catch { return { provider: "anthropic", keys: {} }; }
+}
+function writeAiConfig(cfg) {
+  fs.writeFileSync(getAiConfigPath(), JSON.stringify(cfg, null, 2));
+}
+function encryptKey(key) {
+  if (safeStorage.isEncryptionAvailable()) {
+    return safeStorage.encryptString(key).toString("base64");
+  }
+  return Buffer.from(key).toString("base64") + ":plain";
+}
+function decryptKey(stored) {
+  if (!stored) return null;
+  if (stored.endsWith(":plain")) {
+    return Buffer.from(stored.slice(0, -6), "base64").toString("utf8");
+  }
+  try { return safeStorage.decryptString(Buffer.from(stored, "base64")); }
+  catch { return null; }
+}
+
+ipcMain.handle("ai:setKey", (_, { provider, key }) => {
+  const cfg = readAiConfig();
+  if (!cfg.keys) cfg.keys = {};
+  if (key) cfg.keys[provider] = encryptKey(key);
+  else delete cfg.keys[provider];
+  writeAiConfig(cfg);
+  return true;
+});
+
+ipcMain.handle("ai:getKeyStatus", () => {
+  const cfg = readAiConfig();
+  return {
+    anthropic: !!(cfg.keys?.anthropic),
+    openai:    !!(cfg.keys?.openai),
+    google:    !!(cfg.keys?.google),
+    weather:   !!(cfg.keys?.weather) || !!(process.env.OPENWEATHERMAP_API_KEY),
+  };
+});
+
+ipcMain.handle("ai:setProvider", (_, provider) => {
+  const cfg = readAiConfig();
+  cfg.provider = provider;
+  writeAiConfig(cfg);
+  return true;
+});
+
+ipcMain.handle("ai:getProvider", () => readAiConfig().provider || "anthropic");
+
+// ── AI assistant — multi-provider ─────────────────────────────
+ipcMain.handle("ai:ask", async (_, messages) => {
+  const cfg = readAiConfig();
+  const provider = cfg.provider || "anthropic";
+  let apiKey = decryptKey(cfg.keys?.[provider]);
+  if (!apiKey && provider === "anthropic") apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return "__NO_KEY__";
+
+  const system = "You are a show producer AI assistant for a live radio/podcast broadcast. Be concise, practical, and creative. Keep responses short and scannable — use bullet points when listing ideas.";
+
+  try {
+    if (provider === "anthropic") {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system,
+          tools: [{ type: "web_search_20250305", name: "web_search" }],
+          messages: messages.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return `API error ${res.status}: ${data.error?.message || JSON.stringify(data)}`;
+      return (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim() || "No response.";
+
+    } else if (provider === "openai") {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          max_tokens: 1000,
+          messages: [{ role: "system", content: system }, ...messages.map(m => ({ role: m.role, content: m.content }))],
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return `API error ${res.status}: ${data.error?.message || JSON.stringify(data)}`;
+      return data.choices?.[0]?.message?.content?.trim() || "No response.";
+
+    } else if (provider === "google") {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: system }] },
+          contents: messages.map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: m.content }] })),
+          generationConfig: { maxOutputTokens: 1000 },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) return `API error ${res.status}: ${data.error?.message || JSON.stringify(data)}`;
+      return data.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") || "No response.";
+    }
+    return "Unknown provider.";
+  } catch (e) {
+    return `Request failed: ${e.message}`;
+  }
+});
+
+// ── Weather — OpenWeatherMap (Las Vegas) ──────────────────────
+ipcMain.handle("weather:getLasVegas", async () => {
+  const cfg = readAiConfig();
+  const apiKey = decryptKey(cfg.keys?.weather) || process.env.OPENWEATHERMAP_API_KEY;
+  if (!apiKey) return null;
+  try {
+    const res = await fetch(`https://api.openweathermap.org/data/2.5/weather?q=Las+Vegas,US&appid=${apiKey}&units=imperial`);
+    const data = await res.json();
+    if (!res.ok) return null;
+    return {
+      temp:        Math.round(data.main.temp),
+      feels_like:  Math.round(data.main.feels_like),
+      description: data.weather?.[0]?.description || "",
+      humidity:    data.main.humidity,
+      wind_speed:  Math.round(data.wind?.speed || 0),
+    };
+  } catch { return null; }
 });

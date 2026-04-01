@@ -4,7 +4,7 @@ import { query } from "../db/client";
 
 // ── Types ─────────────────────────────────────────────────────
 
-export type DeckType = "music" | "mic" | "guest" | "cart";
+export type DeckType = "music" | "mic" | "guest" | "cart" | "desk";
 
 export interface DeckConfig {
   slot: string;       // "A" | "B" | "C" | "D" | "E" | "F"
@@ -28,6 +28,7 @@ const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; 
   mic:    { label: "Mic",      icon: "🎙",  color: "#ef4444", desc: "Live microphone input channel" },
   guest:  { label: "Guest",    icon: "👤",  color: "#38bdf8", desc: "Remote guest audio (WebRTC)" },
   cart:   { label: "Cart",     icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
+  desk:   { label: "Desk",     icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
 };
 
 const DEFAULT_CONFIGS: DeckConfig[] = [
@@ -45,7 +46,11 @@ export function useDeckConfig() {
   const [configs, setConfigs] = useState<DeckConfig[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : DEFAULT_CONFIGS;
+      if (!saved) return DEFAULT_CONFIGS;
+      const parsed: DeckConfig[] = JSON.parse(saved);
+      // Merge in any missing slots from DEFAULT_CONFIGS
+      const merged = DEFAULT_CONFIGS.map(def => parsed.find(p => p.slot === def.slot) || def);
+      return merged;
     } catch { return DEFAULT_CONFIGS; }
   });
 
@@ -78,6 +83,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
   const micCount = enabled.filter(c => c.type === "mic").length;
   const guestCount = enabled.filter(c => c.type === "guest").length;
   const cartCount = enabled.filter(c => c.type === "cart").length;
+  const deskCount = enabled.filter(c => c.type === "desk").length;
 
   const toggle = (slot: string) => {
     setConfigs(p => p.map(c => {
@@ -92,7 +98,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
     setConfigs(p => p.map(c => c.slot === slot ? {
       ...c, type,
       color: TYPE_META[type].color,
-      label: type === "mic" ? "Mic" : type === "guest" ? `Guest ${p.filter(x => x.type === "guest" && x.slot !== slot).length + 1}` : `Deck ${slot}`,
+      label: type === "mic" ? "Mic" : type === "guest" ? `Guest ${p.filter(x => x.type === "guest" && x.slot !== slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${slot}`,
     } : c));
   };
 
@@ -124,7 +130,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
 
         {/* Summary pills */}
         <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border-primary)", display: "flex", gap: 8, flexShrink: 0 }}>
-          {([["music", musicCount], ["mic", micCount], ["guest", guestCount], ["cart", cartCount]] as [DeckType, number][]).map(([type, count]) => (
+          {([["music", musicCount], ["mic", micCount], ["guest", guestCount], ["cart", cartCount], ["desk", deskCount]] as [DeckType, number][]).map(([type, count]) => (
             <div key={type} style={{
               display: "flex", alignItems: "center", gap: 5,
               padding: "4px 10px", borderRadius: 20,
@@ -148,19 +154,19 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
             {configs.map(c => (
               <div key={c.slot} style={{
-                borderRadius: 12, border: `1px solid ${c.enabled ? c.color + "40" : "var(--border-primary)"}`,
-                background: c.enabled ? `${c.color}08` : "var(--bg-tertiary)",
+                borderRadius: 12, border: `1px solid ${c.color}40`,
+                background: `${c.color}08`,
                 overflow: "hidden", transition: "all 0.2s",
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}>
                   {/* Slot badge */}
                   <div style={{
                     width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-                    background: c.enabled ? c.color : "var(--bg-secondary)",
-                    border: `1px solid ${c.enabled ? c.color : "var(--border-primary)"}`,
+                    background: c.color,
+                    border: `1px solid ${c.color}`,
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 800,
-                    color: c.enabled ? "#000" : "var(--text-tertiary)",
+                    color: "#000",
                     transition: "all 0.2s",
                   }}>{c.slot}</div>
 
@@ -180,7 +186,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                               enabled: true,
                               type,
                               color: TYPE_META[type].color,
-                              label: type === "mic" ? "Mic" : type === "guest" ? `Guest ${p.filter(g => g.type === "guest" && g.slot !== c.slot).length + 1}` : type === "cart" ? `Cart ${p.filter(g => g.type === "cart" && g.slot !== c.slot).length + 1}` : `Deck ${x.slot}`,
+                              label: type === "mic" ? "Mic" : type === "guest" ? `Guest ${p.filter(g => g.type === "guest" && g.slot !== c.slot).length + 1}` : type === "cart" ? `Cart ${p.filter(g => g.type === "cart" && g.slot !== c.slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${x.slot}`,
                             } : x);
                           });
                         }}
@@ -188,9 +194,9 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                         style={{
                           display: "flex", alignItems: "center", gap: 4,
                           padding: "5px 10px", borderRadius: 8,
-                          background: c.type === type && c.enabled ? `${TYPE_META[type].color}20` : "var(--bg-secondary)",
-                          border: `1px solid ${c.type === type && c.enabled ? TYPE_META[type].color + "50" : "var(--border-primary)"}`,
-                          color: c.type === type && c.enabled ? TYPE_META[type].color : "var(--text-tertiary)",
+                          background: c.type === type ? `${TYPE_META[type].color}20` : "var(--bg-secondary)",
+                          border: `1px solid ${c.type === type ? TYPE_META[type].color + "50" : "var(--border-primary)"}`,
+                          color: c.type === type ? TYPE_META[type].color : "var(--text-tertiary)",
                           fontSize: 11, fontWeight: c.type === type ? 700 : 400,
                           cursor: "pointer", transition: "all 0.15s", opacity: !c.enabled && enabled.length >= 6 ? 0.4 : 1,
                         }}
@@ -225,14 +231,12 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                 </div>
 
                 {/* Type description */}
-                {c.enabled && (
-                  <div style={{ padding: "0 14px 10px", paddingLeft: 58 }}>
+                <div style={{ padding: "0 14px 10px", paddingLeft: 58 }}>
                     <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{TYPE_META[c.type].desc}</span>
                     {c.type === "music" && (
                       <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}> · Uses queue or standalone playlist</span>
                     )}
-                  </div>
-                )}
+                </div>
               </div>
             ))}
           </div>

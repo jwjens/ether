@@ -1,0 +1,1 @@
+const fs = require("fs"); let c = fs.readFileSync("C:/openair/src/App.tsx", "utf8"); c = c.replace(": deckType === \"desk\"\n                ? { width: 280, flexShrink: 0 }", ": deckType === \"desk\"\n                ? { flex: 1, minWidth: 220 }"); fs.writeFileSync("C:/openair/src/App.tsx", c); console.log("Done");

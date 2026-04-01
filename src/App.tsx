@@ -26,7 +26,7 @@ import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
 import CartWall from "./components/CartWall";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
-import ProducerDesk from "./components/ProducerDesk";
+import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
 import SmartScheduler from "./components/SmartScheduler";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
@@ -93,7 +93,7 @@ function ToolbarBtn({ label, active, onClick, color }: { label: string; active: 
     <button
       onClick={onClick}
       style={{
-        height: 32, padding: "0 14px", borderRadius: 8,
+        height: 32, padding: "0 14px", borderRadius: 0,
         fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
         cursor: "pointer", fontFamily: "'Inter', sans-serif",
         transition: "all 0.15s ease",
@@ -721,7 +721,11 @@ export default function App() {
 
   const resetLayout = () => { window.location.reload(); };
 
-  const nowPlayingTitle = [deckA, deckB, deckC].find(d => d?.status === "playing")?.title || "";
+  const nowPlayingDeck = [deckA, deckB, deckC].find(d => d?.status === "playing");
+  const nowPlayingTitle = nowPlayingDeck?.title || "";
+  const nowPlayingStr = nowPlayingDeck
+    ? `${nowPlayingDeck.title}${nowPlayingDeck.artist ? ` by ${nowPlayingDeck.artist}` : ""}`
+    : "";
   const anyDeckPlaying = [deckA, deckB, deckC].some(d => d?.status === "playing");
 
   // Expose now-playing state for mobile companion via backend API
@@ -909,6 +913,7 @@ export default function App() {
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
                   xfadeDuration={xfadeDuration}
                   setXfadeDuration={setXfadeDuration}
+                  nowPlaying={nowPlayingStr || undefined}
                 />
               )}
             </div>
@@ -1092,6 +1097,7 @@ export default function App() {
         <ProducerDesk
           onClose={() => setShowProducerDesk(false)}
           episodeTitle={nowPlayingTitle || undefined}
+          nowPlaying={nowPlayingStr || undefined}
         />
       )}
       {showDeckConfig && (
@@ -2002,16 +2008,16 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
 
         {/* Transport controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => playIdx(Math.max(0, (currentIdx ?? 1) - 1))} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14 }}>⏮</button>
+          <button onClick={() => playIdx(Math.max(0, (currentIdx ?? 1) - 1))} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14 }}>⏮</button>
           <button
             onClick={() => { if (playing) { engine.getDeck(deckSlot)?.pause(); setPlaying(false); } else if (currentIdx !== null) { engine.getDeck(deckSlot)?.play(); setPlaying(true); } else if (tracks.length > 0) playIdx(0); }}
-            style={{ width: 44, height: 32, borderRadius: 8, background: "#34d399", border: "none", color: "#000", cursor: "pointer", fontSize: 16, fontWeight: 700 }}
+            style={{ width: 44, height: 32, borderRadius: 0, background: "#34d399", border: "none", color: "#000", cursor: "pointer", fontSize: 16, fontWeight: 700 }}
           >{playing ? "⏸" : "▶"}</button>
-          <button onClick={next} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14 }}>⏭</button>
-          <button onClick={() => setShuffle(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 8, background: shuffle ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${shuffle ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: shuffle ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>SHUFFLE</button>
-          <button onClick={() => setRepeat(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 8, background: repeat ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${repeat ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: repeat ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>REPEAT</button>
-          <button onClick={() => setTracks([])} style={{ height: 32, padding: "0 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, marginLeft: "auto" }}>Clear All</button>
-          <button onClick={() => setShowLib(p => !p)} style={{ height: 32, padding: "0 14px", borderRadius: 8, background: showLib ? "var(--accent-cyan)" : "var(--bg-tertiary)", border: "none", color: showLib ? "#000" : "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+          <button onClick={next} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14 }}>⏭</button>
+          <button onClick={() => setShuffle(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: shuffle ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${shuffle ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: shuffle ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>SHUFFLE</button>
+          <button onClick={() => setRepeat(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: repeat ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${repeat ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: repeat ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>REPEAT</button>
+          <button onClick={() => setTracks([])} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, marginLeft: "auto" }}>Clear All</button>
+          <button onClick={() => setShowLib(p => !p)} style={{ height: 32, padding: "0 14px", borderRadius: 0, background: showLib ? "var(--accent-cyan)" : "var(--bg-tertiary)", border: "none", color: showLib ? "#000" : "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
             {showLib ? "Hide Library" : "Browse Library"}
           </button>
         </div>
@@ -2073,7 +2079,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -2086,6 +2092,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   setAutoSilenceTrim?: (v: boolean) => void;
   xfadeDuration: number;
   setXfadeDuration: (v: number) => void;
+  nowPlaying?: string;
 }) {
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const [autoXfade, setAutoXfade] = useState(true);
@@ -2116,7 +2123,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   };
 
   // Deck column widths — resizable. null = flex (auto). number = fixed px.
-  const [deckWidths, setDeckWidths] = useState<Record<string, number | null>>({ A: null, B: null, C: null, mic: null });
+  const [deckWidths, setDeckWidths] = useState<Record<string, number | null>>({ A: null, B: null, C: null, mic: null, D: null, E: null, F: null });
 
   const startResizeDeck = (leftSlot: string) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -2156,7 +2163,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // Always derive deck order directly from deckConfigs — no separate state needed
   const DEFAULT_DECK_ORDER: DeckSlot[] = ["A", "B", "C", "mic"];
   const activeDeckOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0
-    ? [...deckConfigs.filter(c => c.enabled).map(c => c.slot as DeckSlot), ...(!deckConfigs.some(c => c.slot === "mic" && c.enabled) ? ["mic" as DeckSlot] : [])]
+    ? deckConfigs.filter(c => c.enabled).map(c => c.slot as DeckSlot)
     : DEFAULT_DECK_ORDER;
   // Keep deckOrder in sync for drag-drop resize (still needed for deckWidths key)
   const [deckOrder, setDeckOrder] = useState<DeckSlot[]>(activeDeckOrder);
@@ -2359,12 +2366,14 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           const vol     = (v: number) => engine.getDeck(slot)?.setVolume(v);
 
           const sizeStyle: React.CSSProperties = compact
-            ? { flex: 1, minWidth: 75, maxWidth: 200 }   // all strips share space equally
+            ? deckType === "desk" ? { flex: 1, minWidth: 220 } : { flex: 1, minWidth: 75, maxWidth: 200 }   // all strips share space equally
             : fixedW !== null
               ? { width: fixedW, flexShrink: 0 }
               : slot === "mic"
                 ? { width: 185, flexShrink: 0 }
-                : { flex: isActive ? 2.2 : 1, transition: "flex 0.5s cubic-bezier(0.4,0,0.2,1)" };
+                : deckType === "desk"
+                ? { flex: 1, minWidth: 220 }
+                : { flex: slot === "A" ? (isActive ? 3 : 1.5) : (slot === "B" || slot === "C") ? 0.75 : 1, transition: "flex 0.5s cubic-bezier(0.4,0,0.2,1)", minWidth: (slot === "B" || slot === "C") ? 120 : 180 };
 
           return (
             <React.Fragment key={slot}>
@@ -2375,13 +2384,15 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   ...sizeStyle, display: "flex", flexDirection: "column", minWidth: 0,
                   opacity: isDragging ? 0.45 : 1,
                   outline: isDropTarget ? "2px solid #38bdf8" : "none",
-                  outlineOffset: 2, borderRadius: compact ? 10 : 18,
+                  outlineOffset: 2, borderRadius: 0,
                 }}
               >
                 {deckType === "cart" ? (
-                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: compact ? 10 : 18, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                     <BoutiqueCartWall deckSlot={slot} compact={compact} />
                   </div>
+                ) : deckType === "desk" && compact ? (
+                  <InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} />
                 ) : compact ? (
                   <ChannelStrip
                     label={config?.label || slot}
@@ -2397,8 +2408,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   />
                 ) : deckType === "mic" || slot === "mic" ? (
                   <MicDeck inputDeviceId={inputDevice || undefined} onDragStart={startDeckDrag(slot as DeckSlot)} />
+                ) : deckType === "desk" ? (
+                  <InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} />
                 ) : !["A","B","C"].includes(slot) ? (
-                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 18, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                     <PlaylistPlayer deckSlot={slot} color={config?.color || "#34d399"} />
                   </div>
                 ) : (
@@ -2413,7 +2426,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 
       {/* Cart wall — shown when CARTS active or when a deck is configured as cart */}
       {showCarts && !deckConfigs?.some(d => d.type === "cart" && d.enabled) && (
-        <div style={{ flexShrink: 0, background: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-primary)", height: 200 }}>
+        <div style={{ flexShrink: 0, background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", height: 200 }}>
           <BoutiqueCartWall deckSlot="C" />
         </div>
       )}
@@ -2430,20 +2443,15 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         display: "flex", alignItems: "center", flexShrink: 0, gap: 4,
         background: "var(--bg-secondary)",
         border: "1px solid var(--border-primary)",
-        borderRadius: 12,
+        borderRadius: 0,
         padding: "4px 8px",
       }}>
-        <div style={{ display: "flex", gap: 2 }}>
-          <ToolbarBtn label="SHUFFLE" active={shuffle} onClick={toggleShuffle} color="#fbbf24" />
-          <ToolbarBtn label="TRIM" active={autoSilenceTrim??true} onClick={() => setAutoSilenceTrim?.(!autoSilenceTrim)} color="#34d399" />
-        </div>
-        <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
         <div style={{ display: "flex", gap: 2 }}>
           <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
           <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#a78bfa" />
           <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
           {/* Crossfade duration control */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 6px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", height: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 6px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", height: 28 }}>
             <span style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>XF</span>
             <select
               value={xfadeDuration}
@@ -2464,7 +2472,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           title="Configure deck layout"
           style={{
             display: "flex", alignItems: "center", gap: 5,
-            padding: "5px 11px", borderRadius: 8, border: "none",
+            padding: "5px 11px", borderRadius: 0, border: "none",
             background: "var(--bg-tertiary)", color: "var(--text-secondary)",
             fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
             cursor: "pointer", fontFamily: "'Syne', sans-serif",
