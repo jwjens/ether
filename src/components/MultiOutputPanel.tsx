@@ -67,7 +67,7 @@ function DeviceSelector({
         value={value ?? "__default__"}
         onChange={e => onChange(e.target.value === "__default__" ? null : e.target.value)}
         style={{
-          width: "100%", padding: "9px 12px", borderRadius: 9,
+          width: "100%", padding: "9px 12px", borderRadius: 0,
           fontSize: 12, fontWeight: 600,
           background: "#1a1a2e",
           border: `1px solid ${value ? color + "55" : "rgba(255,255,255,0.12)"}`,
@@ -90,7 +90,7 @@ function DeviceSelector({
           {(() => {
             const badge = hostBadgeColor(selected.host);
             return (
-              <span style={{ fontSize: 8, fontWeight: 800, padding: "2px 7px", borderRadius: 4, background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, letterSpacing: "0.1em" }}>
+              <span style={{ fontSize: 8, fontWeight: 800, padding: "2px 7px", borderRadius: 0, background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, letterSpacing: "0.1em" }}>
                 {selected.host}
               </span>
             );
@@ -214,14 +214,14 @@ export default function MultiOutputPanel() {
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>Assign each deck to a different physical audio output</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={rescanDevices} disabled={scanning} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+            <button onClick={rescanDevices} disabled={scanning} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
               {scanning ? "Scanning..." : "↻ Rescan"}
             </button>
-            <button onClick={resetToDefault} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+            <button onClick={resetToDefault} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
               Reset
             </button>
             <button onClick={saveRouting} disabled={saving} style={{
-              padding: "7px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+              padding: "7px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700,
               background: saved ? "var(--accent-green)" : "var(--accent-cyan)",
               color: "#000", border: "none", cursor: "pointer",
               boxShadow: saved ? "0 0 16px rgba(52,211,153,0.3)" : "0 0 16px rgba(56,189,248,0.3)",
@@ -234,7 +234,7 @@ export default function MultiOutputPanel() {
       </div>
 
       {error && (
-        <div style={{ margin: "12px 24px 0", padding: "10px 14px", borderRadius: 8, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12, color: "#f87171", display: "flex", justifyContent: "space-between" }}>
+        <div style={{ margin: "12px 24px 0", padding: "10px 14px", borderRadius: 0, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12, color: "#f87171", display: "flex", justifyContent: "space-between" }}>
           <span>{error}</span>
           <button onClick={() => setError(null)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}>✕</button>
         </div>
@@ -244,7 +244,7 @@ export default function MultiOutputPanel() {
 
         {/* ASIO notice */}
         {asioDevices.length === 0 && (
-          <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(167,139,250,0.06)", border: "1px solid rgba(167,139,250,0.15)", display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ padding: "12px 16px", borderRadius: 0, background: "rgba(167,139,250,0.06)", border: "1px solid rgba(167,139,250,0.15)", display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontSize: 16 }}>⚡</span>
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa", marginBottom: 2 }}>No ASIO drivers detected</div>
@@ -268,12 +268,12 @@ export default function MultiOutputPanel() {
             return (
               <div key={deckKey} style={{
                 background: "var(--bg-secondary)", border: `1px solid ${value ? meta.color + "35" : "var(--border-primary)"}`,
-                borderRadius: 14, padding: "16px 18px",
+                borderRadius: 0, padding: "16px 18px",
                 gridColumn: deckKey === "MASTER" ? "2" : undefined,
               }}>
                 {/* Deck header */}
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <div style={{ width: 34, height: 34, borderRadius: 9, background: meta.color + "18", border: `1px solid ${meta.color}30`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 0, background: meta.color + "18", border: `1px solid ${meta.color}30`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>
                     {meta.emoji}
                   </div>
                   <div>
@@ -298,7 +298,7 @@ export default function MultiOutputPanel() {
 
                 {/* Active device info */}
                 {selectedDevice && (
-                  <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: meta.color + "08", border: `1px solid ${meta.color}20`, display: "flex", align: "center", gap: 8 }}>
+                  <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 0, background: meta.color + "08", border: `1px solid ${meta.color}20`, display: "flex", align: "center", gap: 8 }}>
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={meta.color} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><polyline points="20 6 9 17 4 12"/></svg>
                     <span style={{ fontSize: 10, color: meta.color, fontWeight: 600 }}>
                       Routing to: {selectedDevice.name}
@@ -311,7 +311,7 @@ export default function MultiOutputPanel() {
         </div>
 
         {/* Device inventory */}
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <div style={{ padding: "12px 16px", background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
               Available Devices ({devices.length})
@@ -329,7 +329,7 @@ export default function MultiOutputPanel() {
                       {device.name}
                     </div>
                     <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
-                      <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 6px", borderRadius: 3, background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, letterSpacing: "0.08em" }}>
+                      <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 6px", borderRadius: 0, background: badge.bg, color: badge.color, border: `1px solid ${badge.border}`, letterSpacing: "0.08em" }}>
                         {device.host}
                       </span>
                       <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>
@@ -338,7 +338,7 @@ export default function MultiOutputPanel() {
                     </div>
                   </div>
                   {isUsed && (
-                    <span style={{ fontSize: 8, fontWeight: 700, color: "var(--accent-cyan)", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 4, padding: "1px 6px", flexShrink: 0 }}>IN USE</span>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: "var(--accent-cyan)", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, padding: "1px 6px", flexShrink: 0 }}>IN USE</span>
                   )}
                 </div>
               );
@@ -352,7 +352,7 @@ export default function MultiOutputPanel() {
         </div>
 
         {/* Help */}
-        <div style={{ padding: "14px 18px", borderRadius: 12, background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.7 }}>
+        <div style={{ padding: "14px 18px", borderRadius: 0, background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.7 }}>
           <strong style={{ color: "var(--text-secondary)" }}>How routing works:</strong> Each deck plays audio through its assigned output device independently.
           Changes take effect on the <em>next track load</em> — currently playing tracks will finish on their current device.
           ASIO devices provide the lowest latency but require dedicated drivers. WASAPI works on all Windows systems.

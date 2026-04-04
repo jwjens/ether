@@ -118,7 +118,7 @@ function StatCard({ label, value, sub, color = "var(--accent-cyan)" }: {
 }) {
   return (
     <div style={{
-      padding: "14px 16px", borderRadius: 12,
+      padding: "14px 16px", borderRadius: 0,
       background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
       display: "flex", flexDirection: "column", gap: 4,
     }}>
@@ -307,10 +307,10 @@ export default function ListenerAnalytics({ onClose }: Props) {
         </div>
 
         {/* Range selector */}
-        <div style={{ display: "flex", gap: 3, background: "var(--bg-tertiary)", borderRadius: 9, padding: 3, border: "1px solid var(--border-primary)", marginLeft: 16 }}>
+        <div style={{ display: "flex", gap: 3, background: "var(--bg-tertiary)", borderRadius: 0, padding: 3, border: "1px solid var(--border-primary)", marginLeft: 16 }}>
           {RANGES.map(r => (
             <button key={r.id} onClick={() => setRange(r.id)} style={{
-              padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+              padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700,
               border: "none", cursor: "pointer", transition: "all 0.12s",
               background: range === r.id ? "var(--accent-cyan)" : "transparent",
               color: range === r.id ? "#000" : "var(--text-tertiary)",
@@ -324,7 +324,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
           <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid var(--border-primary)", borderTopColor: "var(--accent-cyan)", animation: "spin 0.7s linear infinite" }} />
         )}
         {onClose && (
-          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(239,68,68,0.1)"; (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
           >✕</button>
@@ -335,7 +335,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
       <div style={{ display: "flex", gap: 2, padding: "8px 16px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0 }}>
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding: "6px 16px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+            padding: "6px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             border: "none", cursor: "pointer", transition: "all 0.12s",
             background: tab === t.id ? "rgba(34,211,238,0.12)" : "transparent",
             color: tab === t.id ? "var(--accent-cyan)" : "var(--text-tertiary)",
@@ -359,7 +359,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
             </div>
 
             {/* Daily trend */}
-            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
               <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 14 }}>Daily Play Volume</div>
               <BarChart
                 data={dailyTrend.map((d, i) => ({
@@ -372,7 +372,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
             </div>
 
             {/* Hourly heatmap */}
-            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
               <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 14 }}>Plays by Hour of Day</div>
               <BarChart
                 data={hourly.map(h => ({ label: h.hour % 6 === 0 ? fmtHour(h.hour) : "", value: h.play_count }))}
@@ -383,7 +383,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
             {/* Category breakdown */}
             {categories.length > 0 && (
-              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
                 <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 14 }}>Category Breakdown</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {categories.map(cat => {
@@ -394,10 +394,10 @@ export default function ListenerAnalytics({ onClose }: Props) {
                     return (
                       <div key={cat.category_code} style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ width: 36, flexShrink: 0 }}>
-                          <span style={{ fontSize: 10, fontWeight: 800, color, background: color + "20", borderRadius: 4, padding: "2px 6px" }}>{cat.category_code}</span>
+                          <span style={{ fontSize: 10, fontWeight: 800, color, background: color + "20", borderRadius: 0, padding: "2px 6px" }}>{cat.category_code}</span>
                         </div>
-                        <div style={{ flex: 1, height: 8, background: "var(--bg-tertiary)", borderRadius: 4, overflow: "hidden" }}>
-                          <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: 4, transition: "width 0.5s ease" }} />
+                        <div style={{ flex: 1, height: 8, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: 0, transition: "width 0.5s ease" }} />
                         </div>
                         <div style={{ width: 32, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{pct}%</div>
                         <div style={{ width: 60, fontSize: 9, color: "var(--text-tertiary)", textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{cat.play_count} plays</div>
@@ -410,14 +410,14 @@ export default function ListenerAnalytics({ onClose }: Props) {
             )}
 
             {/* Recent plays */}
-            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden" }}>
+            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>Recent Plays</div>
               {recentPlays.length === 0 ? (
                 <div style={{ padding: "32px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>No play history yet — plays are logged when tracks air on any deck.</div>
               ) : (
                 recentPlays.map((p, i) => (
                   <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < recentPlays.length - 1 ? "1px solid var(--border-primary)" : "none", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
-                    <div style={{ width: 22, height: 22, borderRadius: 6, background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{i + 1}</div>
+                    <div style={{ width: 22, height: 22, borderRadius: 0, background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{i + 1}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
                       <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{p.artist || "Unknown Artist"}</div>
@@ -433,7 +433,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
         {/* ══ TOP SONGS ══ */}
         {tab === "songs" && (
-          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
             <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 120px 60px 60px 60px 80px", padding: "8px 16px", background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
               <span>#</span><span>Song</span><span>Category</span><span>Plays</span><span>BPM</span><span>LUFS</span><span>Last Played</span>
             </div>
@@ -449,7 +449,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
                     <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.artist || "Unknown"}</div>
                   </div>
                   <span>
-                    {s.category_code && <span style={{ fontSize: 9, fontWeight: 800, color, background: color + "20", borderRadius: 4, padding: "2px 6px" }}>{s.category_code}</span>}
+                    {s.category_code && <span style={{ fontSize: 9, fontWeight: 800, color, background: color + "20", borderRadius: 0, padding: "2px 6px" }}>{s.category_code}</span>}
                   </span>
                   <span style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", fontFamily: "'DM Mono', monospace" }}>{s.play_count}</span>
                   <span style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "'DM Mono', monospace" }}>{s.bpm ? Math.round(s.bpm) : "—"}</span>
@@ -463,7 +463,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
         {/* ══ TOP ARTISTS ══ */}
         {tab === "artists" && (
-          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
             <div style={{ display: "grid", gridTemplateColumns: "32px 1fr 80px 100px 100px", padding: "8px 16px", background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
               <span>#</span><span>Artist</span><span>Plays</span><span>Unique Songs</span><span>Last Played</span>
             </div>
@@ -473,7 +473,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
               <div key={i} style={{ display: "grid", gridTemplateColumns: "32px 1fr 80px 100px 100px", padding: "10px 16px", borderBottom: i < topArtists.length - 1 ? "1px solid var(--border-primary)" : "none", alignItems: "center", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: i < 3 ? "var(--accent-cyan)" : "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</span>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", flexShrink: 0 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", flexShrink: 0 }}>
                     {a.artist.charAt(0).toUpperCase()}
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.artist}</span>
@@ -490,7 +490,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
         {tab === "schedule" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Hourly play distribution */}
-            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+            <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
               <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>Peak Broadcast Hours</div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 16 }}>Which hours of day have the most music activity</div>
               <BarChart
@@ -504,7 +504,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
                   .sort((a, b) => b.play_count - a.play_count)
                   .slice(0, 5)
                   .map(h => (
-                    <div key={h.hour} style={{ padding: "4px 10px", borderRadius: 6, background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.25)", fontSize: 10, fontWeight: 700, color: "#34d399" }}>
+                    <div key={h.hour} style={{ padding: "4px 10px", borderRadius: 0, background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.25)", fontSize: 10, fontWeight: 700, color: "#34d399" }}>
                       {fmtHour(h.hour)} · {h.play_count} plays
                     </div>
                   ))}
@@ -513,7 +513,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
             {/* Category time-on-air */}
             {categories.length > 0 && (
-              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
                 <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 14 }}>Time on Air by Category</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   {categories.map(cat => {
@@ -523,9 +523,9 @@ export default function ListenerAnalytics({ onClose }: Props) {
                     const pct = maxHrs > 0 ? (hrs / maxHrs) * 100 : 0;
                     return (
                       <div key={cat.category_code} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 10, fontWeight: 800, color, background: color + "20", borderRadius: 4, padding: "2px 6px", width: 36, textAlign: "center", flexShrink: 0 }}>{cat.category_code}</span>
-                        <div style={{ flex: 1, height: 10, background: "var(--bg-tertiary)", borderRadius: 5, overflow: "hidden" }}>
-                          <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: 5, transition: "width 0.5s ease" }} />
+                        <span style={{ fontSize: 10, fontWeight: 800, color, background: color + "20", borderRadius: 0, padding: "2px 6px", width: 36, textAlign: "center", flexShrink: 0 }}>{cat.category_code}</span>
+                        <div style={{ flex: 1, height: 10, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: pct + "%", background: color, borderRadius: 0, transition: "width 0.5s ease" }} />
                         </div>
                         <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", fontFamily: "'DM Mono', monospace", width: 52, textAlign: "right", flexShrink: 0 }}>
                           {hrs.toFixed(1)}h

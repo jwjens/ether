@@ -285,7 +285,7 @@ export default function OnboardingTour({ onDone }: Props) {
           left: rect.left - SPOTLIGHT_PAD,
           width: rect.width + SPOTLIGHT_PAD * 2,
           height: rect.height + SPOTLIGHT_PAD * 2,
-          borderRadius: 10,
+          borderRadius: 0,
           boxShadow: "0 0 0 3px var(--accent-cyan)",
           animation: "tour-pulse 1.6s ease-in-out infinite",
           pointerEvents: "none",
@@ -302,7 +302,7 @@ export default function OnboardingTour({ onDone }: Props) {
           width: BOX_W,
           background: "var(--bg-elevated)",
           border: "1px solid var(--border-secondary)",
-          borderRadius: 16,
+          borderRadius: 0,
           padding: "20px 22px 16px",
           boxShadow: "0 24px 64px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.3)",
           fontFamily: "'Inter', system-ui, sans-serif",
@@ -322,7 +322,7 @@ export default function OnboardingTour({ onDone }: Props) {
               <div key={i} style={{
                 width: i === stepIdx ? 18 : 6,
                 height: 6,
-                borderRadius: 3,
+                borderRadius: 0,
                 background: i === stepIdx ? "var(--accent-cyan)" : i < stepIdx ? "var(--accent-cyan)" : "var(--border-secondary)",
                 transition: "all 0.3s ease",
                 opacity: i < stepIdx ? 0.4 : 1,
@@ -331,7 +331,7 @@ export default function OnboardingTour({ onDone }: Props) {
           </div>
           <button
             onClick={finish}
-            style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 6px", borderRadius: 5, letterSpacing: "0.04em" }}
+            style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 6px", borderRadius: 0, letterSpacing: "0.04em" }}
             onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
           >
@@ -349,7 +349,7 @@ export default function OnboardingTour({ onDone }: Props) {
 
         {/* Waiting for action hint */}
         {waitingForAction && step.waitForEvent && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "6px 10px", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "6px 10px", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", borderRadius: 0 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)", animation: "tour-pulse 1.2s ease-in-out infinite", flexShrink: 0 }} />
             <span style={{ fontSize: 11, color: "var(--accent-cyan)", fontWeight: 600 }}>
               Waiting for you to {step.actionLabel?.replace(" →", "").toLowerCase() || "complete this step"}...
@@ -362,7 +362,7 @@ export default function OnboardingTour({ onDone }: Props) {
           {stepIdx > 0 && (
             <button
               onClick={back}
-              style={{ height: 34, padding: "0 14px", borderRadius: 9, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}
+              style={{ height: 34, padding: "0 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}
             >
               ← Back
             </button>
@@ -370,7 +370,7 @@ export default function OnboardingTour({ onDone }: Props) {
           <button
             onClick={advance}
             style={{
-              flex: 1, height: 34, borderRadius: 9, fontSize: 12, fontWeight: 700,
+              flex: 1, height: 34, borderRadius: 0, fontSize: 12, fontWeight: 700,
               background: isLast ? "var(--accent-green)" : "var(--accent-cyan)",
               border: "none", color: "#000", cursor: "pointer",
               letterSpacing: "0.02em",

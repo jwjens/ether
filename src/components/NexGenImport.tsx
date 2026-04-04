@@ -137,11 +137,11 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
     <div style={{ maxWidth: 600 }}>
       <h2 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 16 }}>Import from NexGen / ENCO / CSV</h2>
 
-      <div style={{ background: "var(--bg-secondary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+      <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 10 }}>Format</div>
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
           {(['nexgen','enco','csv'] as const).map(f => (
-            <button key={f} onClick={() => setFormat(f)} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: format === f ? "var(--accent-blue)" : "var(--bg-tertiary)", color: format === f ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>
+            <button key={f} onClick={() => setFormat(f)} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: format === f ? "var(--accent-blue)" : "var(--bg-tertiary)", color: format === f ? "#fff" : "var(--text-secondary)", border: "none", cursor: "pointer" }}>
               {f === 'nexgen' ? 'NexGen' : f === 'enco' ? 'ENCO DAD' : 'Generic CSV'}
             </button>
           ))}
@@ -159,7 +159,7 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
       </div>
 
       {preview.length > 0 && (
-        <div style={{ background: "var(--bg-secondary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8 }}>Preview (first 5 rows)</div>
           <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
             <thead>
@@ -185,7 +185,7 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
       )}
 
       {result && (
-        <div style={{ background: result.errors.length > 0 ? "rgba(239,68,68,0.1)" : "rgba(34,197,94,0.1)", borderRadius: 10, padding: 16, border: "1px solid " + (result.errors.length > 0 ? "#ef4444" : "#22c55e"), marginBottom: 16 }}>
+        <div style={{ background: result.errors.length > 0 ? "rgba(239,68,68,0.1)" : "rgba(34,197,94,0.1)", borderRadius: 0, padding: 16, border: "1px solid " + (result.errors.length > 0 ? "#ef4444" : "#22c55e"), marginBottom: 16 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: result.errors.length > 0 ? "#ef4444" : "#22c55e", marginBottom: 8 }}>
             Import Complete
           </div>
@@ -206,10 +206,10 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
 
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={runImport} disabled={!fileContent || importing}
-          style={{ padding: "10px 24px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: fileContent ? "var(--accent-blue)" : "var(--bg-tertiary)", color: fileContent ? "#fff" : "var(--text-tertiary)", border: "none", cursor: fileContent ? "pointer" : "default" }}>
+          style={{ padding: "10px 24px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: fileContent ? "var(--accent-blue)" : "var(--bg-tertiary)", color: fileContent ? "#fff" : "var(--text-tertiary)", border: "none", cursor: fileContent ? "pointer" : "default" }}>
           {importing ? "Importing..." : "Import"}
         </button>
-        <button onClick={onDone} style={{ padding: "10px 16px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "none", cursor: "pointer" }}>
+        <button onClick={onDone} style={{ padding: "10px 16px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "none", cursor: "pointer" }}>
           Done
         </button>
       </div>

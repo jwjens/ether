@@ -70,7 +70,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
         padding: "10px 16px",
         background: focused ? "var(--bg-secondary)" : "var(--bg-tertiary)",
         transition: "background 0.15s ease",
-        borderRadius: 12,
+        borderRadius: 0,
       }}>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, opacity: 0.35, color: "var(--text-primary)" }}>
           <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
@@ -106,7 +106,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
           left: 0, right: 0,
           background: "var(--bg-secondary)",
           border: "1px solid var(--border-secondary)",
-          borderRadius: 12,
+          borderRadius: 0,
           boxShadow: dropDown ? "0 8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-primary)" : "0 -8px 32px rgba(0,0,0,0.12), 0 0 0 1px var(--border-primary)",
           zIndex: 9999,
           maxHeight: 340,
@@ -191,9 +191,9 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
                 <span style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", flexShrink: 0 }}>{fmtDur(r.duration_ms)}</span>
               )}
               <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-                <button onMouseDown={e => { e.preventDefault(); addToQueue(r); }} style={{ padding: "4px 9px", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer" }}>Q</button>
-                <button onMouseDown={e => { e.preventDefault(); loadToDeckA(r); }} style={{ padding: "4px 9px", background: "#38bdf8", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>A</button>
-                <button onMouseDown={e => { e.preventDefault(); loadToDeckB(r); }} style={{ padding: "4px 9px", background: "#34d399", border: "none", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>B</button>
+                <button onMouseDown={e => { e.preventDefault(); addToQueue(r); }} style={{ padding: "4px 9px", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer" }}>Q</button>
+                <button onMouseDown={e => { e.preventDefault(); loadToDeckA(r); }} style={{ padding: "4px 9px", background: "#38bdf8", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>A</button>
+                <button onMouseDown={e => { e.preventDefault(); loadToDeckB(r); }} style={{ padding: "4px 9px", background: "#34d399", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>B</button>
               </div>
             </div>
           ))}

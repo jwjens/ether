@@ -204,7 +204,7 @@ export function ControllerPanel() {
 
   return (
     <div style={{
-      padding: "16px", borderRadius: 10,
+      padding: "16px", borderRadius: 0,
       background: "var(--bg-secondary)",
       border: "1px solid var(--border-primary)",
       fontFamily: "'Inter', system-ui, sans-serif",
@@ -233,7 +233,7 @@ export function ControllerPanel() {
         style={{
           width: "100%", fontSize: 11,
           background: "var(--bg-tertiary)", color: "var(--text-primary)",
-          border: "1px solid var(--border-primary)", borderRadius: 6,
+          border: "1px solid var(--border-primary)", borderRadius: 0,
           padding: "5px 8px", marginBottom: 10, outline: "none",
           opacity: connected ? 0.5 : 1,
         }}
@@ -252,7 +252,7 @@ export function ControllerPanel() {
         onClick={connected ? disconnect : connect}
         disabled={devices.length === 0}
         style={{
-          width: "100%", padding: "7px", borderRadius: 7,
+          width: "100%", padding: "7px", borderRadius: 0,
           fontSize: 11, fontWeight: 700, cursor: "pointer",
           background: connected ? "rgba(239,68,68,0.12)" : "rgba(52,211,153,0.12)",
           color: connected ? "#ef4444" : "#34d399",
@@ -264,7 +264,7 @@ export function ControllerPanel() {
 
       {/* Roadmap note */}
       <div style={{
-        marginTop: 12, padding: "8px 10px", borderRadius: 7,
+        marginTop: 12, padding: "8px 10px", borderRadius: 0,
         background: "rgba(167,139,250,0.07)", border: "1px solid rgba(167,139,250,0.2)",
         fontSize: 9, color: "rgba(167,139,250,0.7)", lineHeight: 1.5,
       }}>

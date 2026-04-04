@@ -70,7 +70,7 @@ function VUMeter({ level, peak, recording }: { level: number; peak: number; reco
   const active = Math.min(BARS, Math.round(level * BARS * 10));
   const peakBar = Math.min(BARS - 1, Math.round(peak * BARS * 10));
   return (
-    <div style={{ padding: "10px 14px", background: "rgba(0,0,0,0.35)", borderRadius: 12, border: "1px solid rgba(255,255,255,0.05)" }}>
+    <div style={{ padding: "10px 14px", background: "rgba(0,0,0,0.35)", borderRadius: 0, border: "1px solid rgba(255,255,255,0.05)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
         <span style={{ fontSize: 8, fontWeight: 700, color: "rgba(255,255,255,0.2)", letterSpacing: "0.15em", textTransform: "uppercase" }}>INPUT LEVEL</span>
         <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", color: !recording ? "rgba(255,255,255,0.15)" : level > 0.7 ? "#f87171" : level > 0.35 ? "#fbbf24" : "#34d399" }}>
@@ -86,8 +86,8 @@ function VUMeter({ level, peak, recording }: { level: number; peak: number; reco
           const isPeak = i === peakBar && recording && peakBar > 0;
           return (
             <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", gap: 2 }}>
-              {isPeak && <div style={{ width: "100%", height: 2, borderRadius: 1, background: color, boxShadow: `0 0 6px ${color}` }} />}
-              <div style={{ width: "100%", height: barH, borderRadius: 1.5, background: isActive ? color : "rgba(255,255,255,0.04)", boxShadow: isActive ? `0 0 6px ${color}50` : "none", transition: "background 0.04s" }} />
+              {isPeak && <div style={{ width: "100%", height: 2, borderRadius: 0, background: color, boxShadow: `0 0 6px ${color}` }} />}
+              <div style={{ width: "100%", height: barH, borderRadius: 0.5, background: isActive ? color : "rgba(255,255,255,0.04)", boxShadow: isActive ? `0 0 6px ${color}50` : "none", transition: "background 0.04s" }} />
             </div>
           );
         })}
@@ -140,7 +140,7 @@ function SlotRow({
       onClick={() => { if (canReceive) onAssign(slot.id, selectedTrackId!); }}
       style={{
         display: "flex", alignItems: "center", gap: 10,
-        padding: "10px 14px", borderRadius: 10,
+        padding: "10px 14px", borderRadius: 0,
         border: canReceive
           ? `2px dashed ${color}`
           : assigned
@@ -158,13 +158,13 @@ function SlotRow({
       }}
     >
       {/* Position number */}
-      <div style={{ width: 24, height: 24, borderRadius: 6, background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <div style={{ width: 24, height: 24, borderRadius: 0, background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <span style={{ fontSize: 9, fontWeight: 800, color }}>{slot.position + 1}</span>
       </div>
 
       {/* TALK badge */}
       <div style={{ flexShrink: 0 }}>
-        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color, background: color + "20", borderRadius: 4, padding: "2px 6px", display: "inline-block" }}>
+        <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color, background: color + "20", borderRadius: 0, padding: "2px 6px", display: "inline-block" }}>
           {isTalk ? "TALK" : slot.slot_type.toUpperCase().slice(0, 5)}
         </div>
       </div>
@@ -184,7 +184,7 @@ function SlotRow({
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
           {assigned ? (
             // ── Assigned: show actual length + diff from target ──
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: color + "15", border: `1px solid ${color}40`, borderRadius: 8, padding: "5px 10px", flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: color + "15", border: `1px solid ${color}40`, borderRadius: 0, padding: "5px 10px", flex: 1 }}>
               <button
                 onClick={e => { e.stopPropagation(); onPlay(assigned); }}
                 style={{ width: 22, height: 22, borderRadius: "50%", border: "none", background: isPlaying ? color : color + "30", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: isPlaying ? "#000" : color, flexShrink: 0 }}
@@ -201,7 +201,7 @@ function SlotRow({
                     {fmtMs(actualMs)} actual
                   </span>
                   {diffLabel && (
-                    <span style={{ fontSize: 8, fontWeight: 700, color: diffColor, background: diffColor + "18", borderRadius: 3, padding: "1px 4px" }}>
+                    <span style={{ fontSize: 8, fontWeight: 700, color: diffColor, background: diffColor + "18", borderRadius: 0, padding: "1px 4px" }}>
                       {diffLabel}
                     </span>
                   )}
@@ -209,14 +209,14 @@ function SlotRow({
               </div>
               <button
                 onClick={e => { e.stopPropagation(); onUnassign(slot.id); }}
-                style={{ flexShrink: 0, fontSize: 11, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", borderRadius: 4 }}
+                style={{ flexShrink: 0, fontSize: 11, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", borderRadius: 0 }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
               >✕</button>
             </div>
           ) : canReceive ? (
             // ── A track is selected — ready to assign ──
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: color + "20", border: `1px solid ${color}60`, cursor: "pointer" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 0, background: color + "20", border: `1px solid ${color}60`, cursor: "pointer" }}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ color }}><polyline points="20 6 9 17 4 12"/></svg>
               <span style={{ fontSize: 11, fontWeight: 700, color }}>Click to assign</span>
             </div>
@@ -226,7 +226,7 @@ function SlotRow({
               <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic", opacity: 0.5 }}>— empty —</span>
               <button
                 onClick={e => { e.stopPropagation(); onRecordFor(slot); }}
-                style={{ fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 6, background: color + "15", border: `1px solid ${color}35`, color, cursor: "pointer", letterSpacing: "0.04em" }}
+                style={{ fontSize: 9, fontWeight: 700, padding: "3px 9px", borderRadius: 0, background: color + "15", border: `1px solid ${color}35`, color, cursor: "pointer", letterSpacing: "0.04em" }}
                 onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = color + "25"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = color + "15"; }}
               >
@@ -261,7 +261,7 @@ function TrackCard({
     <div
       onClick={() => onSelect(selected ? null : track.id)}
       style={{
-        padding: "10px 14px", borderRadius: 10, cursor: "pointer",
+        padding: "10px 14px", borderRadius: 0, cursor: "pointer",
         background: selected
           ? "rgba(167,139,250,0.12)"
           : isPlaying ? "rgba(52,211,153,0.06)" : "var(--bg-tertiary)",
@@ -274,7 +274,7 @@ function TrackCard({
       }}
     >
       {/* Selection indicator / drag handle */}
-      <div style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, border: `1.5px solid ${selected ? "#a78bfa" : "var(--border-secondary)"}`, background: selected ? "#a78bfa" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.1s" }}>
+      <div style={{ width: 20, height: 20, borderRadius: 0, flexShrink: 0, border: `1.5px solid ${selected ? "#a78bfa" : "var(--border-secondary)"}`, background: selected ? "#a78bfa" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.1s" }}>
         {selected
           ? <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><polyline points="1,3.5 3.5,6 8,1" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
           : <svg width="8" height="10" viewBox="0 0 8 10" fill="var(--text-tertiary)" style={{ opacity: 0.3 }}><circle cx="2.5" cy="2" r="1"/><circle cx="5.5" cy="2" r="1"/><circle cx="2.5" cy="5" r="1"/><circle cx="5.5" cy="5" r="1"/><circle cx="2.5" cy="8" r="1"/><circle cx="5.5" cy="8" r="1"/></svg>
@@ -298,20 +298,20 @@ function TrackCard({
           <span style={{ fontSize: 12, fontWeight: 600, color: selected ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.title}</span>
           <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", marginLeft: "auto", flexShrink: 0 }}>{fmtMs(track.duration_ms)}</span>
         </div>
-        <div style={{ height: 2, background: "var(--bg-secondary)", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: (progress * 100) + "%", background: "var(--accent-green)", borderRadius: 2 }} />
+        <div style={{ height: 2, background: "var(--bg-secondary)", borderRadius: 0, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: (progress * 100) + "%", background: "var(--accent-green)", borderRadius: 0 }} />
         </div>
         <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>{fmtDate(track.recorded_at)}</span>
           {track.clock_slot_id
-            ? <span style={{ fontSize: 8, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "#34d399", borderRadius: 4, padding: "1px 5px" }}>✓ ASSIGNED</span>
+            ? <span style={{ fontSize: 8, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "#34d399", borderRadius: 0, padding: "1px 5px" }}>✓ ASSIGNED</span>
             : <span style={{ fontSize: 8, color: "var(--text-tertiary)", opacity: 0.5 }}>unassigned</span>
           }
         </div>
       </div>
 
       {/* Actions */}
-      <button onClick={e => { e.stopPropagation(); onQueue(track); }} style={{ padding: "3px 8px", borderRadius: 5, fontSize: 9, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>Q</button>
+      <button onClick={e => { e.stopPropagation(); onQueue(track); }} style={{ padding: "3px 8px", borderRadius: 0, fontSize: 9, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>Q</button>
       <button onClick={e => { e.stopPropagation(); onDelete(track.id); }} style={{ fontSize: 11, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "4px", flexShrink: 0 }}
         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
@@ -673,7 +673,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
       <div style={{
         width: 460, flexShrink: 0,
         background: "linear-gradient(160deg, #0f0f1a 0%, #13131f 60%, #0a0a14 100%)",
-        borderRadius: 20,
+        borderRadius: 0,
         border: `1px solid ${recording ? "rgba(248,113,113,0.3)" : "rgba(255,255,255,0.08)"}`,
         boxShadow: recording ? "0 0 60px rgba(248,113,113,0.2), inset 0 0 80px rgba(248,113,113,0.03)" : "0 8px 40px rgba(0,0,0,0.4)",
         display: "flex", flexDirection: "column", overflow: "hidden",
@@ -697,8 +697,8 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
                 {/* Progress bar toward target */}
                 {targetMs > 0 && (
                   <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
-                    <div style={{ width: 80, height: 3, borderRadius: 2, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: (pct * 100) + "%", borderRadius: 2, background: over ? "#f87171" : pct > 0.85 ? "#fbbf24" : "#34d399", transition: "width 0.1s, background 0.3s" }} />
+                    <div style={{ width: 80, height: 3, borderRadius: 0, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: (pct * 100) + "%", borderRadius: 0, background: over ? "#f87171" : pct > 0.85 ? "#fbbf24" : "#34d399", transition: "width 0.1s, background 0.3s" }} />
                     </div>
                     <span style={{ fontSize: 8, fontFamily: "'DM Mono', monospace", color: over ? "#f87171" : "rgba(255,255,255,0.25)", letterSpacing: "0.06em" }}>
                       {over ? `+${fmtMsFull(recordTime - targetMs)} over` : `target ${fmtDuration(recordingForSlot!.duration_min)}`}
@@ -724,7 +724,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
               value={selectedHour}
               onChange={e => setSelectedHour(parseInt(e.target.value))}
               disabled={recording}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 9, fontSize: 13, fontWeight: 700, background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", outline: "none", cursor: "pointer", fontFamily: "'DM Mono', monospace", colorScheme: "dark" }}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", outline: "none", cursor: "pointer", fontFamily: "'DM Mono', monospace", colorScheme: "dark" }}
             >
               {Array.from({ length: 24 }, (_, h) => {
                 const show = shows.find(s => {
@@ -741,7 +741,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
             {/* Clock badge */}
             {matchedClock && (
-              <div style={{ padding: "6px 10px", borderRadius: 8, background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.25)", flexShrink: 0 }}>
+              <div style={{ padding: "6px 10px", borderRadius: 0, background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.25)", flexShrink: 0 }}>
                 <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(167,139,250,0.7)", textTransform: "uppercase", marginBottom: 1 }}>Clock</div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa" }}>{matchedClock.name}</div>
               </div>
@@ -778,19 +778,19 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
               placeholder="Your name"
               value={djName}
               onChange={e => setDjName(e.target.value)}
-              style={{ width: 130, padding: "8px 12px", borderRadius: 9, fontSize: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", outline: "none" }}
+              style={{ width: 130, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", outline: "none" }}
             />
             <input
               placeholder="Break title — Morning opener..."
               value={trackTitle}
               onChange={e => setTrackTitle(e.target.value)}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 9, fontSize: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", outline: "none" }}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", outline: "none" }}
             />
           </div>
         </div>
 
         {/* Waveform monitor */}
-        <div style={{ margin: "0 20px", flex: 1, minHeight: 120, background: "rgba(0,0,0,0.5)", borderRadius: 14, border: "1px solid rgba(255,255,255,0.05)", position: "relative", overflow: "hidden" }}>
+        <div style={{ margin: "0 20px", flex: 1, minHeight: 120, background: "rgba(0,0,0,0.5)", borderRadius: 0, border: "1px solid rgba(255,255,255,0.05)", position: "relative", overflow: "hidden" }}>
           {!recording && wavePointsRef.current.length === 0 && (
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="1.5" strokeLinecap="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
@@ -813,7 +813,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             </button>
           ) : (
             <button onClick={stopRecording} style={{ width: 60, height: 60, borderRadius: "50%", flexShrink: 0, background: "#0a0a14", border: "4px solid #f87171", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 28px rgba(248,113,113,0.35)" }}>
-              <div style={{ width: 16, height: 16, borderRadius: 3, background: "#f87171" }} />
+              <div style={{ width: 16, height: 16, borderRadius: 0, background: "#f87171" }} />
             </button>
           )}
           <div>
@@ -853,13 +853,13 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
                   </button>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, fontWeight: 500, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</div>
-                    <div style={{ height: 2, background: "rgba(255,255,255,0.07)", borderRadius: 1, marginTop: 3, overflow: "hidden" }}>
+                    <div style={{ height: 2, background: "rgba(255,255,255,0.07)", borderRadius: 0, marginTop: 3, overflow: "hidden" }}>
                       <div style={{ height: "100%", width: (progress * 100) + "%", background: "#34d399" }} />
                     </div>
                   </div>
                   <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "rgba(255,255,255,0.3)", flexShrink: 0 }}>{fmtMs(t.duration_ms)}</span>
                   {t.clock_slot_id && <span style={{ fontSize: 8, color: "#a78bfa", flexShrink: 0 }}>●</span>}
-                  <button onClick={() => queueTrack(t)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, fontWeight: 700, background: "rgba(56,189,248,0.12)", color: "#38bdf8", border: "none", cursor: "pointer" }}>Q</button>
+                  <button onClick={() => queueTrack(t)} style={{ padding: "2px 7px", borderRadius: 0, fontSize: 9, fontWeight: 700, background: "rgba(56,189,248,0.12)", color: "#38bdf8", border: "none", cursor: "pointer" }}>Q</button>
                   <button onClick={() => deleteTrack(t.id)} style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", background: "none", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               );
@@ -892,7 +892,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
           {/* ── CLOCK SLOTS — always shown ── */}
           {!selectedClock ? (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 40, background: "var(--bg-secondary)", borderRadius: 16, border: "1px solid var(--border-primary)" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 40, background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" style={{ opacity: 0.4 }}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
               <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>No format clock for {fmtHour(selectedHour)}</div>
               <div style={{ fontSize: 12, color: "var(--text-tertiary)", textAlign: "center", maxWidth: 300, lineHeight: 1.6 }}>
@@ -903,7 +903,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
                   : <>No show covers {fmtHour(selectedHour)}. Go to <strong style={{ color: "var(--accent-cyan)" }}>Schedule → Show Scheduler → Shows & Dayparts</strong> to set up your dayparts.</>
                 }
               </div>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-tertiary)", borderRadius: 8, padding: "8px 14px", border: "1px solid var(--border-primary)" }}>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-tertiary)", borderRadius: 0, padding: "8px 14px", border: "1px solid var(--border-primary)" }}>
                 💡 You can still record breaks now — assign them to slots once the clock is set up
               </div>
             </div>
@@ -911,31 +911,31 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             <>
               {/* Fill progress */}
               {talkSlots.length > 0 && (
-                <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, padding: "12px 16px", flexShrink: 0 }}>
+                <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "12px 16px", flexShrink: 0 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                     <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" }}>Talk Breaks — drag your recorded breaks onto the slots below</span>
                     <span style={{ fontSize: 12, fontFamily: "'DM Mono', monospace", fontWeight: 700, color: filled === talkSlots.length ? "var(--accent-green)" : "var(--accent-red)" }}>
                       {filled} / {talkSlots.length}
                     </span>
                   </div>
-                  <div style={{ height: 5, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: ((filled / Math.max(talkSlots.length, 1)) * 100) + "%", background: filled === talkSlots.length ? "var(--accent-green)" : "linear-gradient(90deg, var(--accent-red), var(--accent-amber))", borderRadius: 3, transition: "width 0.4s" }} />
+                  <div style={{ height: 5, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: ((filled / Math.max(talkSlots.length, 1)) * 100) + "%", background: filled === talkSlots.length ? "var(--accent-green)" : "linear-gradient(90deg, var(--accent-red), var(--accent-amber))", borderRadius: 0, transition: "width 0.4s" }} />
                   </div>
                 </div>
               )}
 
               {/* Talk slots */}
               {talkSlots.length > 0 && (
-                <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden", flexShrink: 0 }}>
+                <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", flexShrink: 0 }}>
                   <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: 2, background: "#a78bfa" }} />
+                    <div style={{ width: 8, height: 8, borderRadius: 0, background: "#a78bfa" }} />
                     <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>Talk Break Slots</span>
                     {selectedTrackId
                       ? <span style={{ fontSize: 10, color: "#a78bfa", fontWeight: 700 }}>← click a slot to assign "{tracks.find(t => t.id === selectedTrackId)?.title}"</span>
                       : <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>select a recorded break below, then click a slot</span>
                     }
                     {selectedTrackId && (
-                      <button onClick={() => setSelectedTrackId(null)} style={{ marginLeft: "auto", fontSize: 9, padding: "2px 8px", borderRadius: 4, background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", cursor: "pointer" }}>cancel</button>
+                      <button onClick={() => setSelectedTrackId(null)} style={{ marginLeft: "auto", fontSize: 9, padding: "2px 8px", borderRadius: 0, background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", cursor: "pointer" }}>cancel</button>
                     )}
                   </div>
                   <div style={{ padding: "8px 10px", display: "flex", flexDirection: "column", gap: 5 }}>
@@ -962,7 +962,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
           )}
 
           {/* ── LIBRARY — collapsible, always available for dragging ── */}
-          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden", flexShrink: 0 }}>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", flexShrink: 0 }}>
             <button
               onClick={() => setLibExpanded(p => !p)}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "12px 16px", background: "var(--bg-tertiary)", border: "none", cursor: "pointer", textAlign: "left" }}

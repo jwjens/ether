@@ -99,13 +99,13 @@ function MockAdRotator() {
   return (
     <div style={{ width: "100%", height: "100%", background: ad.bg, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", padding: 48, textAlign: "center" as const, opacity: fade ? 1 : 0, transition: "opacity 0.4s ease", position: "relative" as const }}>
       <div style={{ position: "absolute" as const, bottom: 18, display: "flex", gap: 6 }}>
-        {MOCK_ADS.map((_, i) => <div key={i} style={{ width: i === idx ? 18 : 6, height: 6, borderRadius: 3, background: i === idx ? ad.accent : "rgba(255,255,255,0.2)", transition: "all 0.3s" }} />)}
+        {MOCK_ADS.map((_, i) => <div key={i} style={{ width: i === idx ? 18 : 6, height: 6, borderRadius: 0, background: i === idx ? ad.accent : "rgba(255,255,255,0.2)", transition: "all 0.3s" }} />)}
       </div>
       <div style={{ fontSize: 56, marginBottom: 16 }}>{ad.logo}</div>
       <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.2em", color: ad.accent, marginBottom: 12, textTransform: "uppercase" as const }}>{ad.tag}</div>
       <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.02em", color: "#f0f0f8", marginBottom: 12, lineHeight: 1.1 }}>{ad.headline}</div>
       <div style={{ fontSize: 16, color: "rgba(255,255,255,0.5)", marginBottom: 24, lineHeight: 1.6 }}>{ad.sub}</div>
-      <div style={{ padding: "8px 20px", borderRadius: 20, border: `1px solid ${ad.accent}50`, fontSize: 11, color: ad.accent, fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>{ad.url}</div>
+      <div style={{ padding: "8px 20px", borderRadius: 0, border: `1px solid ${ad.accent}50`, fontSize: 11, color: ad.accent, fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>{ad.url}</div>
     </div>
   );
 }
@@ -245,7 +245,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 32px 14px", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <svg width="42" height="42" viewBox="0 0 512 512" style={{ borderRadius: 10, flexShrink: 0 }}>
+            <svg width="42" height="42" viewBox="0 0 512 512" style={{ borderRadius: 0, flexShrink: 0 }}>
               <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#06b6d4"/><stop offset="100%" stopColor="#8b5cf6"/></linearGradient></defs>
               <rect width="512" height="512" rx="112" fill="url(#lg)"/>
               <rect x="128" y="136" width="256" height="56" rx="16" fill="#0a0a18"/>
@@ -257,7 +257,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{stationName}</div>
               <div style={{ fontSize: 8, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const, marginTop: 2 }}>Powered by Ether</div>
             </div>
-            {isPlaying && <span style={{ padding: "4px 12px", background: "#dc2626", borderRadius: 6, fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", boxShadow: "0 0 16px rgba(220,38,38,0.5)", marginLeft: 4 }}>ON AIR</span>}
+            {isPlaying && <span style={{ padding: "4px 12px", background: "#dc2626", borderRadius: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", boxShadow: "0 0 16px rgba(220,38,38,0.5)", marginLeft: 4 }}>ON AIR</span>}
           </div>
           <div style={{ textAlign: "right" }}>
             <div ref={clockRef} style={{ fontFamily: "'DM Mono', monospace", fontSize: 40, fontWeight: 300, lineHeight: 1, letterSpacing: "-0.02em" }}>{now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
@@ -269,14 +269,14 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
         <div style={{ flex: 1, display: "flex", gap: 16, padding: "0 32px", minHeight: 0 }}>
 
           {/* Left: Upcoming */}
-          <div style={{ width: 320, flexShrink: 0, background: "rgba(0,0,0,0.45)", borderRadius: 18, border: "1px solid rgba(255,255,255,0.07)", padding: "18px 18px", display: "flex", flexDirection: "column", backdropFilter: "blur(20px)" }}>
+          <div style={{ width: 320, flexShrink: 0, background: "rgba(0,0,0,0.45)", borderRadius: 0, border: "1px solid rgba(255,255,255,0.07)", padding: "18px 18px", display: "flex", flexDirection: "column", backdropFilter: "blur(20px)" }}>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.24em", color: "rgba(255,255,255,0.22)", textTransform: "uppercase" as const, marginBottom: 12 }}>Up Next</div>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, overflow: "hidden" }}>
               {upcoming.length === 0
                 ? <div style={{ color: "rgba(255,255,255,0.15)", fontSize: 13, marginTop: 32, textAlign: "center" as const }}>Queue is empty</div>
                 : upcoming.map((s, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: 11, background: i === 0 ? "rgba(34,211,238,0.09)" : "rgba(255,255,255,0.025)", border: `1px solid ${i === 0 ? "rgba(34,211,238,0.2)" : "rgba(255,255,255,0.035)"}` }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, background: i === 0 ? "rgba(34,211,238,0.18)" : "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: i === 0 ? "#22d3ee" : "rgba(255,255,255,0.22)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</div>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: 0, background: i === 0 ? "rgba(34,211,238,0.09)" : "rgba(255,255,255,0.025)", border: `1px solid ${i === 0 ? "rgba(34,211,238,0.2)" : "rgba(255,255,255,0.035)"}` }}>
+                    <div style={{ width: 26, height: 26, borderRadius: 0, flexShrink: 0, background: i === 0 ? "rgba(34,211,238,0.18)" : "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: i === 0 ? "#22d3ee" : "rgba(255,255,255,0.22)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? "#f0f0f8" : "rgba(255,255,255,0.6)", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</div>
                       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 1, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{s.artist_name || "Unknown Artist"}</div>
@@ -288,7 +288,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
           </div>
 
           {/* Right: Big widget */}
-          <div style={{ flex: 1, borderRadius: 18, overflow: "hidden", background: "rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.07)", position: "relative", backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ flex: 1, borderRadius: 0, overflow: "hidden", background: "rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.07)", position: "relative", backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {widgetType === "sponsor" && adImages.length > 0 && <img src={adImages[adIndex]} alt="Sponsor" style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
             {widgetType === "sponsor" && adImages.length === 0 && (
               <MockAdRotator />
@@ -323,11 +323,11 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
 
         {/* Bottom: album art + info */}
         <div style={{ padding: "14px 32px 22px", flexShrink: 0 }}>
-          <div style={{ background: "rgba(0,0,0,0.7)", borderRadius: 18, padding: "16px 22px", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: 20 }}>
+          <div style={{ background: "rgba(0,0,0,0.7)", borderRadius: 0, padding: "16px 22px", backdropFilter: "blur(24px)", border: "1px solid rgba(255,255,255,0.1)", display: "flex", alignItems: "center", gap: 20 }}>
             <div style={{ flexShrink: 0 }}>
               {albumArt
-                ? <img src={albumArt} alt="Art" style={{ width: 100, height: 100, borderRadius: 14, objectFit: "cover", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }} />
-                : <div style={{ width: 100, height: 100, borderRadius: 14, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.2 }}>
+                ? <img src={albumArt} alt="Art" style={{ width: 100, height: 100, borderRadius: 0, objectFit: "cover", boxShadow: "0 8px 32px rgba(0,0,0,0.7)" }} />
+                : <div style={{ width: 100, height: 100, borderRadius: 0, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", opacity: 0.2 }}>
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
                   </div>}
             </div>
@@ -337,8 +337,8 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
               {artist && <div style={{ fontSize: 17, color: "rgba(255,255,255,0.45)", marginTop: 4, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{artist}</div>}
               {dur > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 2, overflow: "hidden", marginBottom: 5 }}>
-                    <div ref={progressRef} style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#22d3ee,#8b5cf6)", borderRadius: 2, transition: "width 0.5s linear" }} />
+                  <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 0, overflow: "hidden", marginBottom: 5 }}>
+                    <div ref={progressRef} style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#22d3ee,#8b5cf6)", borderRadius: 0, transition: "width 0.5s linear" }} />
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: "'DM Mono', monospace", color: "rgba(255,255,255,0.28)" }}>
                     <span ref={posSpanRef}>{fmtTime(pos)}</span>
@@ -347,7 +347,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
                 </div>
               )}
             </div>
-            <button onClick={handleClose} style={{ flexShrink: 0, padding: "10px 20px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 12, color: "rgba(255,255,255,0.4)", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", cursor: "pointer", textTransform: "uppercase" as const }}>CLOSE</button>
+            <button onClick={handleClose} style={{ flexShrink: 0, padding: "10px 20px", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 0, color: "rgba(255,255,255,0.4)", fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", cursor: "pointer", textTransform: "uppercase" as const }}>CLOSE</button>
           </div>
         </div>
       </div>

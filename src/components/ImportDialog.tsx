@@ -154,7 +154,7 @@ export default function ImportDialog({ onDone }: Props) {
               onClick={() => setSelectedCat(null)}
               style={{
                 padding: "6px 14px",
-                borderRadius: 6,
+                borderRadius: 0,
                 fontSize: 12,
                 fontWeight: selectedCat === null ? 600 : 400,
                 background: selectedCat === null ? "var(--accent-blue)" : "var(--bg-tertiary)",
@@ -169,7 +169,7 @@ export default function ImportDialog({ onDone }: Props) {
                 onClick={() => setSelectedCat(c.id)}
                 style={{
                   padding: "6px 14px",
-                  borderRadius: 6,
+                  borderRadius: 0,
                   fontSize: 12,
                   fontWeight: selectedCat === c.id ? 600 : 400,
                   background: selectedCat === c.id ? (c.color || "var(--accent-blue)") : "var(--bg-tertiary)",
@@ -187,17 +187,17 @@ export default function ImportDialog({ onDone }: Props) {
               placeholder="Code (e.g. XMAS)"
               value={newCatCode}
               onChange={e => setNewCatCode(e.target.value)}
-              style={{ width: 90, padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
+              style={{ width: 90, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
             />
             <input
               placeholder="Name (e.g. Christmas)"
               value={newCatName}
               onChange={e => setNewCatName(e.target.value)}
-              style={{ flex: 1, padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
+              style={{ flex: 1, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}
             />
             <button
               onClick={createCategory}
-              style={{ padding: "6px 14px", borderRadius: 6, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}
+              style={{ padding: "6px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}
             >+ New</button>
           </div>
 
@@ -207,7 +207,7 @@ export default function ImportDialog({ onDone }: Props) {
               onClick={startImport}
               style={{
                 padding: "10px 24px",
-                borderRadius: 8,
+                borderRadius: 0,
                 fontSize: 13,
                 fontWeight: 600,
                 background: "var(--accent-blue)",
@@ -220,7 +220,7 @@ export default function ImportDialog({ onDone }: Props) {
               onClick={onDone}
               style={{
                 padding: "10px 16px",
-                borderRadius: 8,
+                borderRadius: 0,
                 fontSize: 13,
                 fontWeight: 400,
                 background: "var(--bg-tertiary)",
@@ -239,8 +239,8 @@ export default function ImportDialog({ onDone }: Props) {
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 8 }}>{progress.current}</div>
           <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 8 }}>{progress.done} / {progress.total}</div>
           {progress.total > 0 && (
-            <div style={{ height: 4, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: (progress.done / progress.total * 100) + "%", background: "var(--accent-blue)", borderRadius: 2, transition: "width 0.2s" }}></div>
+            <div style={{ height: 4, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: (progress.done / progress.total * 100) + "%", background: "var(--accent-blue)", borderRadius: 0, transition: "width 0.2s" }}></div>
             </div>
           )}
         </div>
@@ -254,7 +254,7 @@ export default function ImportDialog({ onDone }: Props) {
             onClick={onDone}
             style={{
               padding: "8px 20px",
-              borderRadius: 6,
+              borderRadius: 0,
               fontSize: 12,
               fontWeight: 600,
               background: "var(--accent-blue)",

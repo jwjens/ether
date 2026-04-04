@@ -41,7 +41,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           gap: 16,
         }}>
           {/* Logo */}
-          <div style={{ width: 48, height: 48, borderRadius: 14, background: "linear-gradient(135deg, #38bdf8, #6d28d9)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 0, background: "linear-gradient(135deg, #38bdf8, #6d28d9)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
               <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
             </svg>
@@ -57,7 +57,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           </div>
 
           {/* Error detail */}
-          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "10px 16px", maxWidth: 480, width: "90%" }}>
+          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 0, padding: "10px 16px", maxWidth: 480, width: "90%" }}>
             <code style={{ fontSize: 10, color: "rgba(255,100,100,0.8)", fontFamily: "'DM Mono', monospace", display: "block", wordBreak: "break-all" as const }}>
               {this.state.error?.message}
             </code>
@@ -66,13 +66,13 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           <div style={{ display: "flex", gap: 10 }}>
             <button
               onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-              style={{ padding: "10px 24px", borderRadius: 10, background: "#38bdf8", border: "none", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              style={{ padding: "10px 24px", borderRadius: 0, background: "#38bdf8", border: "none", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
             >
               Restart Interface
             </button>
             <button
               onClick={() => this.setState({ hasError: false, error: null })}
-              style={{ padding: "10px 24px", borderRadius: 10, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+              style={{ padding: "10px 24px", borderRadius: 0, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
             >
               Try to Continue
             </button>
@@ -114,7 +114,7 @@ export function SessionRestoreToast({ info, onDismiss }: { info: RestoreInfo; on
       zIndex: 9999,
       background: "var(--bg-secondary)",
       border: "1px solid var(--accent-green)",
-      borderRadius: 12, padding: "10px 16px",
+      borderRadius: 0, padding: "10px 16px",
       boxShadow: "0 4px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(52,211,153,0.2)",
       display: "flex", alignItems: "center", gap: 10,
       fontFamily: "'Inter', sans-serif",
@@ -306,7 +306,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
         {/* Last error if any */}
         {health?.lastError && (
-          <div style={{ margin: "8px 0 16px", padding: "10px 12px", borderRadius: 8, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)" }}>
+          <div style={{ margin: "8px 0 16px", padding: "10px 12px", borderRadius: 0, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)" }}>
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--accent-red)", marginBottom: 4, textTransform: "uppercase" as const }}>Last Error</div>
             <div style={{ fontSize: 10, color: "rgba(248,113,113,0.8)", fontFamily: "'DM Mono', monospace" }}>{health.lastError}</div>
             <button
@@ -327,7 +327,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               onClick={exportPlayLog}
               disabled={exporting}
               style={{
-                flex: 1, padding: "10px 16px", borderRadius: 10,
+                flex: 1, padding: "10px 16px", borderRadius: 0,
                 background: exported ? "var(--accent-green)" : "var(--bg-secondary)",
                 border: `1px solid ${exported ? "var(--accent-green)" : "var(--border-primary)"}`,
                 color: exported ? "#000" : "var(--text-primary)",
@@ -351,7 +351,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Infrastructure badge */}
-        <div style={{ padding: "12px 14px", borderRadius: 10, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ padding: "12px 14px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 16 }}>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 8, textTransform: "uppercase" as const }}>Ether Infrastructure</div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
             {[

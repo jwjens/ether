@@ -102,7 +102,7 @@ export function UpdateBanner({
       width: 340,
       background: "var(--bg-secondary)",
       border: "1px solid var(--border-secondary)",
-      borderRadius: 14,
+      borderRadius: 0,
       boxShadow: "0 8px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04)",
       overflow: "hidden",
       fontFamily: "'Inter', system-ui, sans-serif",
@@ -115,7 +115,7 @@ export function UpdateBanner({
           <div style={{ padding: "14px 16px 12px" }}>
             <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <div style={{ width: 28, height: 28, borderRadius: 0, background: "linear-gradient(135deg, var(--accent-cyan), var(--accent-purple))", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round">
                     <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
                   </svg>
@@ -136,7 +136,7 @@ export function UpdateBanner({
             {state.info.notes && (
               <div style={{
                 fontSize: 11, color: "var(--text-secondary)",
-                background: "var(--bg-tertiary)", borderRadius: 8,
+                background: "var(--bg-tertiary)", borderRadius: 0,
                 padding: "8px 10px", marginBottom: 10,
                 maxHeight: 80, overflowY: "auto" as const,
                 lineHeight: 1.5,
@@ -150,7 +150,7 @@ export function UpdateBanner({
               <button
                 onClick={onDownload}
                 style={{
-                  flex: 1, padding: "9px 0", borderRadius: 9,
+                  flex: 1, padding: "9px 0", borderRadius: 0,
                   background: "var(--accent-cyan)", border: "none",
                   color: "#000", fontSize: 12, fontWeight: 700,
                   cursor: "pointer", letterSpacing: "0.02em",
@@ -161,7 +161,7 @@ export function UpdateBanner({
               <button
                 onClick={onDismiss}
                 style={{
-                  padding: "9px 14px", borderRadius: 9,
+                  padding: "9px 14px", borderRadius: 0,
                   background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                   color: "var(--text-secondary)", fontSize: 12, cursor: "pointer",
                 }}
@@ -183,9 +183,9 @@ export function UpdateBanner({
               {state.progress}%
             </span>
           </div>
-          <div style={{ height: 4, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", marginBottom: 6 }}>
+          <div style={{ height: 4, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 6 }}>
             <div style={{
-              height: "100%", borderRadius: 2,
+              height: "100%", borderRadius: 0,
               background: "linear-gradient(90deg, var(--accent-cyan), var(--accent-purple))",
               width: state.progress + "%",
               transition: "width 0.3s ease",
@@ -214,7 +214,7 @@ export function UpdateBanner({
           <button
             onClick={onRestart}
             style={{
-              width: "100%", padding: "9px 0", borderRadius: 9,
+              width: "100%", padding: "9px 0", borderRadius: 0,
               background: "var(--accent-green)", border: "none",
               color: "#000", fontSize: 12, fontWeight: 700,
               cursor: "pointer", letterSpacing: "0.02em",
@@ -230,7 +230,7 @@ export function UpdateBanner({
         <div style={{ padding: "14px 16px" }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--accent-red)", marginBottom: 6 }}>Update failed</div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 10, lineHeight: 1.5 }}>{state.message}</div>
-          <button onClick={onDismiss} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>
+          <button onClick={onDismiss} style={{ padding: "7px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>
             Dismiss
           </button>
         </div>

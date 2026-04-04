@@ -281,7 +281,7 @@ export default function TelemetryPillar({
               padding: "6px 8px",
               background: "rgba(239,68,68,0.1)",
               border: "1px solid rgba(239,68,68,0.3)",
-              borderRadius: 6,
+              borderRadius: 0,
               fontSize: 9,
               color: "#ef4444",
               fontFamily: "'DM Mono', monospace",

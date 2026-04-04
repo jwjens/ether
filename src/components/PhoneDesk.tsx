@@ -107,12 +107,12 @@ function LevelMeter({ level, peak }: { level: number; peak: number }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%" }}>
       <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-tertiary)" }}>LEVEL</div>
-      <div style={{ position: "relative", height: 10, borderRadius: 5, background: "var(--bg-tertiary)", overflow: "hidden", border: "1px solid var(--border-primary)" }}>
+      <div style={{ position: "relative", height: 10, borderRadius: 0, background: "var(--bg-tertiary)", overflow: "hidden", border: "1px solid var(--border-primary)" }}>
         <div style={{
           position: "absolute", left: 0, top: 0, bottom: 0,
           width: pct(db) + "%",
           background: `linear-gradient(90deg, #22d3ee, ${color})`,
-          borderRadius: 5,
+          borderRadius: 0,
           transition: "width 0.05s linear",
         }} />
         {/* Peak hold tick */}
@@ -684,7 +684,7 @@ export default function PhoneDesk({ onClose }: Props) {
 
         {onClose && (
           <button onClick={onClose} style={{
-            width: 28, height: 28, borderRadius: 7, border: "1px solid var(--border-primary)",
+            width: 28, height: 28, borderRadius: 0, border: "1px solid var(--border-primary)",
             background: "transparent", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 13,
             display: "flex", alignItems: "center", justifyContent: "center",
           }}
@@ -708,7 +708,7 @@ export default function PhoneDesk({ onClose }: Props) {
           {/* Input mode toggle */}
           <div style={{ padding: "16px 16px 0" }}>
             <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-tertiary)", marginBottom: 8 }}>INPUT SOURCE</div>
-            <div style={{ display: "flex", gap: 4, background: "var(--bg-tertiary)", borderRadius: 9, padding: 3, border: "1px solid var(--border-primary)" }}>
+            <div style={{ display: "flex", gap: 4, background: "var(--bg-tertiary)", borderRadius: 0, padding: 3, border: "1px solid var(--border-primary)" }}>
               {([
                 { id: "device", label: "Audio Interface" },
                 { id: "webrtc", label: "Softphone / SIP" },
@@ -716,7 +716,7 @@ export default function PhoneDesk({ onClose }: Props) {
                 <button key={id} onClick={() => setInputMode(id)}
                   disabled={isRecording || isArmed}
                   style={{
-                    flex: 1, height: 30, borderRadius: 7, border: "none", cursor: "pointer",
+                    flex: 1, height: 30, borderRadius: 0, border: "none", cursor: "pointer",
                     fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
                     transition: "all 0.15s",
                     background: inputMode === id ? "var(--accent-blue)" : "transparent",
@@ -738,7 +738,7 @@ export default function PhoneDesk({ onClose }: Props) {
                   onChange={e => setSelectedDevice(e.target.value)}
                   disabled={isRecording || isArmed}
                   style={{
-                    width: "100%", padding: "8px 10px", borderRadius: 8,
+                    width: "100%", padding: "8px 10px", borderRadius: 0,
                     background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                     color: "var(--text-primary)", fontSize: 11, outline: "none", cursor: "pointer",
                     fontFamily: "'IBM Plex Mono', monospace",
@@ -761,7 +761,7 @@ export default function PhoneDesk({ onClose }: Props) {
                   onChange={e => setWebrtcUrl(e.target.value)}
                   disabled={isRecording || isArmed}
                   style={{
-                    width: "100%", padding: "8px 10px", borderRadius: 8,
+                    width: "100%", padding: "8px 10px", borderRadius: 0,
                     background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                     color: "var(--text-primary)", fontSize: 11, outline: "none",
                     fontFamily: "'IBM Plex Mono', monospace", boxSizing: "border-box",
@@ -817,7 +817,7 @@ export default function PhoneDesk({ onClose }: Props) {
 
           {/* Clip info */}
           {hasClip && (
-            <div style={{ margin: "0 16px 16px", padding: "12px 14px", borderRadius: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+            <div style={{ margin: "0 16px 16px", padding: "12px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
               <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-tertiary)", marginBottom: 8 }}>RECORDED CLIP</div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>Total</span>
@@ -875,7 +875,7 @@ export default function PhoneDesk({ onClose }: Props) {
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, padding: "0 24px" }}>
                 {Array.from({ length: 80 }).map((_, i) => (
                   <div key={i} style={{
-                    flex: 1, borderRadius: 2,
+                    flex: 1, borderRadius: 0,
                     background: "#ef4444",
                     opacity: Math.random() * 0.6 + 0.1,
                     height: `${(liveWaveRef.current[liveWaveRef.current.length - 80 + i] ?? Math.random() * 0.3) * 80 + 4}%`,
@@ -921,7 +921,7 @@ export default function PhoneDesk({ onClose }: Props) {
                     { label: "▶▶", d:  1    },
                   ].map(({ label, d }) => (
                     <button key={label} onClick={() => setCueIn(v => Math.max(0, Math.min(v + d, cueOutRef.current - 0.1)))}
-                      style={{ width: 26, height: 24, borderRadius: 5, border: "1px solid #22d3ee30", background: "#22d3ee10", color: "#22d3ee", fontSize: 9, cursor: "pointer", fontWeight: 700 }}>
+                      style={{ width: 26, height: 24, borderRadius: 0, border: "1px solid #22d3ee30", background: "#22d3ee10", color: "#22d3ee", fontSize: 9, cursor: "pointer", fontWeight: 700 }}>
                       {label}
                     </button>
                   ))}
@@ -935,7 +935,7 @@ export default function PhoneDesk({ onClose }: Props) {
               <button
                 onClick={() => previewing ? stopPreview() : startPreview()}
                 style={{
-                  height: 40, padding: "0 20px", borderRadius: 10,
+                  height: 40, padding: "0 20px", borderRadius: 0,
                   background: previewing ? "#34d399" : "var(--bg-tertiary)",
                   color: previewing ? "#000" : "var(--text-secondary)",
                   fontSize: 11, fontWeight: 700, cursor: "pointer",
@@ -964,7 +964,7 @@ export default function PhoneDesk({ onClose }: Props) {
                     { label: "▶▶", d:  1    },
                   ].map(({ label, d }) => (
                     <button key={label} onClick={() => setCueOut(v => Math.max(cueInRef.current + 0.1, Math.min(v + d, clipDuration)))}
-                      style={{ width: 26, height: 24, borderRadius: 5, border: "1px solid #f8717130", background: "#f8717110", color: "#f87171", fontSize: 9, cursor: "pointer", fontWeight: 700 }}>
+                      style={{ width: 26, height: 24, borderRadius: 0, border: "1px solid #f8717130", background: "#f8717110", color: "#f87171", fontSize: 9, cursor: "pointer", fontWeight: 700 }}>
                       {label}
                     </button>
                   ))}
@@ -976,7 +976,7 @@ export default function PhoneDesk({ onClose }: Props) {
 
               {/* Reset cues */}
               <button onClick={() => { setCueIn(0); setCueOut(clipDuration); }}
-                style={{ height: 30, padding: "0 12px", borderRadius: 7, border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-tertiary)", fontSize: 10, cursor: "pointer", fontWeight: 700, letterSpacing: "0.06em" }}>
+                style={{ height: 30, padding: "0 12px", borderRadius: 0, border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-tertiary)", fontSize: 10, cursor: "pointer", fontWeight: 700, letterSpacing: "0.06em" }}>
                 RESET
               </button>
 
@@ -988,7 +988,7 @@ export default function PhoneDesk({ onClose }: Props) {
                 {(["A", "B", "C", "cart"] as SendTarget[]).map(t => (
                   <button key={t} onClick={() => setSendTarget(t)}
                     style={{
-                      height: 32, padding: "0 12px", borderRadius: 7,
+                      height: 32, padding: "0 12px", borderRadius: 0,
                       border: sendTarget === t ? "none" : "1px solid var(--border-primary)",
                       background: sendTarget === t
                         ? t === "A" ? "var(--accent-blue)"
@@ -1008,7 +1008,7 @@ export default function PhoneDesk({ onClose }: Props) {
                   onClick={sendClip}
                   disabled={sending || !hasClip}
                   style={{
-                    height: 40, padding: "0 24px", borderRadius: 10, border: "none",
+                    height: 40, padding: "0 24px", borderRadius: 0, border: "none",
                     background: sent ? "#34d399" : sending ? "#27272a" : "#ef4444",
                     color: sent ? "#000" : "#fff",
                     fontSize: 11, fontWeight: 800, letterSpacing: "0.06em",

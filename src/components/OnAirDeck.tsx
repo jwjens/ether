@@ -246,7 +246,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       background: cardBg,
       backdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
       WebkitBackdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
-      borderRadius: 18,
+      borderRadius: 0,
       border: `1px solid ${cardBorder}`,
       boxShadow: cardShadow,
       display: "flex",
@@ -280,7 +280,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             <div
               onMouseDown={onDragStart}
               title="Drag to reorder"
-              style={{ cursor: "grab", padding: "2px 3px", borderRadius: 4, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.5 }}
+              style={{ cursor: "grab", padding: "2px 3px", borderRadius: 0, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.5 }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; }}
             >
@@ -292,7 +292,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             </div>
           )}
           <div style={{
-            width: 28, height: 28, borderRadius: 8,
+            width: 28, height: 28, borderRadius: 0,
             background: deckHueBg,
             border: `1px solid ${deckHueBorder}`,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -316,7 +316,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         <div style={{
           display: "flex", alignItems: "center", gap: 5,
           padding: "3px 10px",
-          borderRadius: 20,
+          borderRadius: 0,
           background: isPlaying ? `${accent}14` : "var(--bg-tertiary)",
           border: `1px solid ${isPlaying ? accent + "30" : "var(--border-primary)"}`,
         }}>
@@ -434,7 +434,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         margin: "0 16px 10px",
         height: 3,
         background: "var(--bg-tertiary)",
-        borderRadius: 2,
+        borderRadius: 0,
         overflow: "hidden",
         flexShrink: 0,
       }}>
@@ -442,7 +442,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           height: "100%",
           width: dur > 0 ? pct + "%" : "0%",
           background: accent,
-          borderRadius: 2,
+          borderRadius: 0,
           transition: "width 0.15s linear, background 0.3s ease",
           boxShadow: isPlaying ? `0 0 6px ${accent}` : "none",
         }} />
@@ -454,7 +454,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         flex: 1,
         minHeight: 44,
         position: "relative",
-        borderRadius: 10,
+        borderRadius: 0,
         overflow: "hidden",
         background: "var(--bg-tertiary)",
       }}>
@@ -498,7 +498,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         {/* Countdown overlay — background fades letting waveform show through, text fully opaque */}
         {showOverlay && (
           <div style={{
-            position: "absolute", inset: 0, borderRadius: 10,
+            position: "absolute", inset: 0, borderRadius: 0,
             overflow: "hidden",
             display: "flex", flexDirection: "column",
             alignItems: "center", justifyContent: "center",
@@ -542,7 +542,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             ) : (
               /* Non-intro overlay — OUTRO/CRITICAL, no art */
               <div style={{
-                position: "absolute", inset: 0, borderRadius: 10,
+                position: "absolute", inset: 0, borderRadius: 0,
                 background: "var(--bg-secondary)",
                 opacity: 0.92,
                 backdropFilter: "blur(2px)",
@@ -589,7 +589,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           onClick={onStop}
           style={{
             width: 36, height: 36,
-            borderRadius: 10,
+            borderRadius: 0,
             background: "var(--bg-secondary)",
             border: "1px solid var(--border-secondary)",
             color: "var(--text-tertiary)",
@@ -612,7 +612,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           style={{
             flex: 1,
             height: 36,
-            borderRadius: 10,
+            borderRadius: 0,
             background: playBtnBg,
             border: "none",
             color: isPlaying ? "#fff" : "#000",

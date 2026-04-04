@@ -181,9 +181,15 @@ export default function ProgramLog({ onClose }: Props) {
         if (r.length) rules = { ...rules, ...r[0] };
       } catch {}
 
+      // Read content filter — same localStorage key used by the auto-play queue (loggen.ts)
+      let blockExplicit = false;
+      try { blockExplicit = JSON.parse(localStorage.getItem("ether_content_filter") || "{}").blockExplicit === true; } catch {}
+
       const hourStartTs = new Date(`${date}T${String(hour).padStart(2,"0")}:00:00`).getTime() / 1000;
       const usedSongIds = new Set<number>();
       const usedArtistIds = new Set<number>();
+
+      console.log(`[schedule] Scheduling ${date} hour=${hour} | blockExplicit=${blockExplicit} | artistSep=${rules.artist_sep_min}min | songRepeat=${rules.song_repeat_min}min`);
 
       await execute("DELETE FROM scheduled_log WHERE log_date=? AND hour=?", [date, hour]);
 
@@ -197,12 +203,26 @@ export default function ProgramLog({ onClose }: Props) {
           continue;
         }
 
+        // ── Candidate query — enforces ALL rotation rules ────────────────
+        // 1. rotation_status != 'inactive'  — never schedule pulled/retired songs
+        // 2. daypart_mask bit for this hour  — respects per-song daypart restrictions
+        // 3. is_explicit = 0                 — when content filter is active
+        // 4. category_id = slot's category   — format clock category filter
+        const explicitClause = blockExplicit ? "AND (s.is_explicit IS NULL OR s.is_explicit = 0)" : "";
         const candidates = await query<Song>(
           `SELECT s.id, s.title, a.name as artist_name, s.artist_id, s.category_id, s.duration_ms, s.last_played_at
            FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-           WHERE s.category_id = ? ORDER BY COALESCE(s.last_played_at, 0) ASC`,
-          [slot.category_id]
+           WHERE s.category_id = ?
+             AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+             AND ((s.daypart_mask >> ?) & 1) = 1
+             ${explicitClause}
+           ORDER BY COALESCE(s.last_played_at, 0) ASC`,
+          [slot.category_id, hour]
         );
+
+        if (candidates.length === 0) {
+          console.warn(`[schedule] RULE BLOCK: no eligible songs in category ${slot.category_code || slot.category_id} at hour ${hour} — rotation_status/daypart_mask/explicit filters removed all candidates`);
+        }
 
         let picked: Song | null = null;
         let softFallback: Song | null = null;
@@ -210,8 +230,14 @@ export default function ProgramLog({ onClose }: Props) {
         for (const song of candidates) {
           if (usedSongIds.has(song.id)) continue;
           const timeSince = song.last_played_at ? hourStartTs - song.last_played_at : 999999;
-          if (rules.song_repeat_strict && timeSince < rules.song_repeat_min * 60) continue;
-          if (rules.artist_sep_strict && song.artist_id && usedArtistIds.has(song.artist_id)) continue;
+          if (rules.song_repeat_strict && timeSince < rules.song_repeat_min * 60) {
+            console.log(`[schedule] SKIP: "${song.title}" — played ${Math.round(timeSince/60)}min ago (min: ${rules.song_repeat_min}min)`);
+            continue;
+          }
+          if (rules.artist_sep_strict && song.artist_id && usedArtistIds.has(song.artist_id)) {
+            console.log(`[schedule] SKIP: "${song.title}" by "${song.artist_name}" — artist already used this hour`);
+            continue;
+          }
           const passesAll = timeSince >= rules.title_sep_min * 60 && (!song.artist_id || !usedArtistIds.has(song.artist_id));
           if (passesAll) { picked = song; break; }
           else if (!softFallback) softFallback = song;
@@ -220,6 +246,7 @@ export default function ProgramLog({ onClose }: Props) {
 
         // All songs exhausted — cycle back from the beginning ignoring usedSongIds
         if (!picked && candidates.length > 0) {
+          console.warn(`[schedule] All preferred candidates exhausted for category ${slot.category_code || slot.category_id} — cycling from least-recently-played`);
           for (const song of candidates) {
             const timeSince = song.last_played_at ? hourStartTs - song.last_played_at : 999999;
             // Only skip strict artist repeat within this hour
@@ -234,6 +261,7 @@ export default function ProgramLog({ onClose }: Props) {
         if (picked) {
           usedSongIds.add(picked.id);
           if (picked.artist_id) usedArtistIds.add(picked.artist_id);
+          console.log(`[schedule] QUEUED: "${picked.title}" by "${picked.artist_name}" → slot ${slot.position} (cat: ${slot.category_code})`);
           await execute(
             `INSERT INTO scheduled_log (log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -241,6 +269,7 @@ export default function ProgramLog({ onClose }: Props) {
           );
           await execute("UPDATE songs SET last_played_at=? WHERE id=?", [hourStartTs+slot.position, picked.id]);
         } else {
+          console.warn(`[schedule] UNFILLED: slot ${slot.position} (cat: ${slot.category_code}) — no eligible songs remain after all rotation rules`);
           await execute(
             `INSERT INTO scheduled_log (log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -264,12 +293,16 @@ export default function ProgramLog({ onClose }: Props) {
         // Find the last music slot's category to match
         const lastMusicSlot = [...clockSlots].reverse().find(s => s.slot_type === "music" && s.category_id);
         if (lastMusicSlot?.category_id) {
+          const overflowExplicitClause = blockExplicit ? "AND (s.is_explicit IS NULL OR s.is_explicit = 0)" : "";
           const overflowCandidates = await query<Song>(
             `SELECT s.id, s.title, a.name as artist_name, s.artist_id, s.category_id, s.duration_ms, s.last_played_at
              FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
              WHERE s.category_id = ? AND s.duration_ms > ?
+               AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+               AND ((s.daypart_mask >> ?) & 1) = 1
+               ${overflowExplicitClause}
              ORDER BY COALESCE(s.last_played_at, 0) ASC LIMIT 20`,
-            [lastMusicSlot.category_id, remainMs] // song must be longer than remaining time
+            [lastMusicSlot.category_id, remainMs, hour]
           );
 
           // Pick one not used this hour
@@ -735,7 +768,7 @@ export default function ProgramLog({ onClose }: Props) {
               const isToday = ds === todayStr();
               return (
                 <button key={i} onClick={() => setSelectedDate(ds)} style={{
-                  padding: "3px 0", borderRadius: 4, border: isToday ? "1px solid var(--accent-blue)" : "1px solid transparent",
+                  padding: "3px 0", borderRadius: 0, border: isToday ? "1px solid var(--accent-blue)" : "1px solid transparent",
                   background: isSelected ? "var(--accent-blue)" : "transparent",
                   color: isSelected ? "#fff" : isToday ? "var(--accent-blue)" : "var(--text-secondary)",
                   cursor: "pointer", fontSize: 10, fontWeight: isSelected ? 700 : 400,
@@ -777,7 +810,7 @@ export default function ProgramLog({ onClose }: Props) {
           {/* All shows button */}
           <button onClick={() => setSelectedShowId(null)} style={{
             width: "100%", display: "flex", alignItems: "center", gap: 6,
-            padding: "4px 6px", borderRadius: 5, marginBottom: 2, cursor: "pointer",
+            padding: "4px 6px", borderRadius: 0, marginBottom: 2, cursor: "pointer",
             background: selectedShowId === null ? "rgba(56,189,248,0.1)" : "rgba(255,255,255,0.02)",
             border: `1px solid ${selectedShowId === null ? "rgba(56,189,248,0.3)" : "var(--border-primary)"}`,
             textAlign: "left" as const,
@@ -795,7 +828,7 @@ export default function ProgramLog({ onClose }: Props) {
             return (
               <button key={s.id} onClick={() => setSelectedShowId(isActive ? null : s.id)} style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 6,
-                padding: "5px 6px", borderRadius: 5, marginBottom: 2, cursor: "pointer",
+                padding: "5px 6px", borderRadius: 0, marginBottom: 2, cursor: "pointer",
                 background: isActive ? (s.color || "#3b82f6") + "18" : "rgba(255,255,255,0.02)",
                 border: `1px solid ${isActive ? (s.color || "#3b82f6") + "50" : "var(--border-primary)"}`,
                 textAlign: "left" as const, transition: "all 0.12s",
@@ -820,16 +853,16 @@ export default function ProgramLog({ onClose }: Props) {
         {/* Action buttons */}
         <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column" as const, gap: 6 }}>
           <button onClick={fillDay} disabled={filling}
-            style={{ padding: "8px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
+            style={{ padding: "8px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
             {filling ? "⏳ Scheduling..." : "⚡ Fill Day"}
           </button>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             <button onClick={exportCSV}
-              style={{ padding: "6px 4px", borderRadius: 7, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(56,189,248,0.1)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.25)" }}>
+              style={{ padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(56,189,248,0.1)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.25)" }}>
               ⬇ CSV
             </button>
             <button onClick={exportPrint}
-              style={{ padding: "6px 4px", borderRadius: 7, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(251,191,36,0.1)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.25)" }}>
+              style={{ padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(251,191,36,0.1)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.25)" }}>
               🖨 Print
             </button>
           </div>
@@ -837,7 +870,7 @@ export default function ProgramLog({ onClose }: Props) {
             onClick={isPro ? exportPDF : () => window.dispatchEvent(new CustomEvent("ether:open-subscription"))}
             title={isPro ? "Export professional PDF traffic report" : "Pro plan required"}
             style={{
-              padding: "6px 4px", borderRadius: 7, fontSize: 10, fontWeight: 700,
+              padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700,
               cursor: "pointer",
               background: isPro ? "rgba(167,139,250,0.12)" : "rgba(167,139,250,0.06)",
               color: isPro ? "#a78bfa" : "#a78bfa88",
@@ -847,7 +880,7 @@ export default function ProgramLog({ onClose }: Props) {
             {isPro ? "📄 PDF Report" : "🔒 PDF Report"}
           </button>
           <button onClick={clearDay}
-            style={{ padding: "6px", borderRadius: 7, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>
+            style={{ padding: "6px", borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>
             Clear Day
           </button>
         </div>
@@ -875,15 +908,15 @@ export default function ProgramLog({ onClose }: Props) {
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button
               onClick={() => setAssignModal({ hour: -1, showName: null })}
-              style={{ padding: "5px 12px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa" }}>
+              style={{ padding: "5px 12px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa" }}>
               ⚙ Shows & Dayparts
             </button>
             <button onClick={() => setExpandedHours(new Set(hourBlocks.map(b => b.hour)))}
-              style={{ padding: "5px 10px", borderRadius: 6, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
+              style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
               Expand All
             </button>
             <button onClick={() => setExpandedHours(new Set())}
-              style={{ padding: "5px 10px", borderRadius: 6, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
+              style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
               Collapse All
             </button>
           </div>
@@ -916,7 +949,7 @@ export default function ProgramLog({ onClose }: Props) {
               <div key={block.hour} style={{
                 border: `1px solid ${isScheduled ? "var(--border-primary)" : "rgba(255,255,255,0.04)"}`,
                 borderLeft: `3px solid ${isScheduled ? (unfilledInHour > 0 ? "#ef4444" : "#34d399") : "rgba(255,255,255,0.08)"}`,
-                borderRadius: 8, overflow: "hidden", background: "var(--bg-secondary)",
+                borderRadius: 0, overflow: "hidden", background: "var(--bg-secondary)",
               }}>
 
                 {/* Hour header row */}
@@ -972,7 +1005,7 @@ export default function ProgramLog({ onClose }: Props) {
                     }}
                     disabled={block.generating}
                     style={{
-                      padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700,
+                      padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700,
                       cursor: block.generating ? "default" : "pointer",
                       background: isScheduled ? "rgba(56,189,248,0.08)" : "rgba(52,211,153,0.12)",
                       color: isScheduled ? "#38bdf8" : "#34d399",
@@ -988,7 +1021,7 @@ export default function ProgramLog({ onClose }: Props) {
                     <button
                       onClick={e => { e.stopPropagation(); setHourModal({ hour: block.hour, block }); }}
                       style={{
-                        padding: "3px 10px", borderRadius: 5, fontSize: 10, fontWeight: 700,
+                        padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700,
                         cursor: "pointer", background: "rgba(167,139,250,0.1)",
                         color: "#a78bfa", border: "1px solid rgba(167,139,250,0.3)", flexShrink: 0,
                       }}
@@ -1001,7 +1034,7 @@ export default function ProgramLog({ onClose }: Props) {
                   {isScheduled && (
                     <button
                       onClick={e => { e.stopPropagation(); clearHour(block.hour); }}
-                      style={{ padding: "3px 6px", borderRadius: 5, fontSize: 10, cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)", flexShrink: 0 }}
+                      style={{ padding: "3px 6px", borderRadius: 0, fontSize: 10, cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)", flexShrink: 0 }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                     >✕</button>
@@ -1035,7 +1068,7 @@ export default function ProgramLog({ onClose }: Props) {
                           borderLeft: isOverflow ? "3px solid rgba(167,139,250,0.5)" : "3px solid transparent",
                         }}>
                           <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{i+1}</span>
-                          <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 3, background: isOverflow ? "rgba(167,139,250,0.2)" : color+"20", color: isOverflow ? "#a78bfa" : color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
+                          <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: isOverflow ? "rgba(167,139,250,0.2)" : color+"20", color: isOverflow ? "#a78bfa" : color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
                             {isOverflow ? "XFADE" : entry.category_code || entry.slot_type.toUpperCase()}
                           </span>
                           <div style={{ minWidth: 0, paddingRight: 8 }}>
@@ -1195,7 +1228,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
       <div onClick={e => e.stopPropagation()} style={{
         width: "min(900px, 95vw)", maxHeight: "85vh", display: "flex", flexDirection: "column" as const,
         background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
-        borderRadius: 14, overflow: "hidden",
+        borderRadius: 0, overflow: "hidden",
         boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
       }}>
 
@@ -1217,7 +1250,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
             <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
               Click a row to swap its song
             </div>
-            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
+            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
           </div>
         </div>
 
@@ -1269,7 +1302,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                     <circle cx="2" cy="8" r="1"/><circle cx="6" cy="8" r="1"/>
                   </svg>
 
-                  <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 3, background: color+"20", color, letterSpacing: "0.06em" }}>
+                  <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: color+"20", color, letterSpacing: "0.06em" }}>
                     {entry.category_code || entry.slot_type.toUpperCase()}
                   </span>
 
@@ -1307,7 +1340,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                   value={songSearch}
                   onChange={e => setSongSearch(e.target.value)}
                   style={{
-                    width: "100%", padding: "6px 10px", borderRadius: 7, fontSize: 11,
+                    width: "100%", padding: "6px 10px", borderRadius: 0, fontSize: 11,
                     background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                     color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const,
                   }}
@@ -1365,7 +1398,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
               {fmtMs(totalMs)} total
             </span>
             <button onClick={onSaved} style={{
-              padding: "5px 16px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+              padding: "5px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
               background: "rgba(52,211,153,0.15)", color: "#34d399",
               border: "1px solid rgba(52,211,153,0.3)", cursor: "pointer",
             }}>
@@ -1442,7 +1475,7 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
       <div onClick={e => e.stopPropagation()} style={{
         width: "min(780px, 95vw)", maxHeight: "88vh", display: "flex",
         flexDirection: "column" as const, background: "var(--bg-secondary)",
-        border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden",
+        border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden",
         boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
       }}>
 
@@ -1466,7 +1499,7 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
                 ⚠ Assign a clock to {fmtHourLocal(hour)} to enable Generate
               </span>
             )}
-            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
+            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
           </div>
         </div>
 
@@ -1474,9 +1507,9 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
         <div style={{ flex: 1, overflowY: "auto" as const, padding: "16px 18px" }}>
 
           {/* 24-hour timeline */}
-          <div style={{ marginBottom: 14, padding: "10px 12px", background: "var(--bg-tertiary)", borderRadius: 9, border: "1px solid var(--border-primary)" }}>
+          <div style={{ marginBottom: 14, padding: "10px 12px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
             <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 6 }}>24-HOUR TIMELINE</div>
-            <div style={{ position: "relative" as const, height: 32, background: "rgba(255,255,255,0.04)", borderRadius: 5, overflow: "hidden" }}>
+            <div style={{ position: "relative" as const, height: 32, background: "rgba(255,255,255,0.04)", borderRadius: 0, overflow: "hidden" }}>
               {HOURS_LIST.map(h => (
                 <div key={h} style={{
                   position: "absolute" as const, top: 0, bottom: 0,
@@ -1515,33 +1548,33 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)" }}>Shows & Dayparts</div>
             <button onClick={() => setEditing({ name: "", start_hour: 0, end_hour: 6, color: "#3b82f6" })}
-              style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgba(56,189,248,0.12)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.3)" }}>
+              style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgba(56,189,248,0.12)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.3)" }}>
               + New Show
             </button>
           </div>
 
           {/* Edit form */}
           {editing && (
-            <div style={{ padding: "12px", background: "var(--bg-tertiary)", borderRadius: 9, border: "1px solid var(--border-primary)", marginBottom: 10 }}>
+            <div style={{ padding: "12px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)", marginBottom: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 100px", gap: 6, marginBottom: 6 }}>
                 <input placeholder="Show name" value={editing.name||""} onChange={e => setEditing({...editing, name: e.target.value})}
-                  style={{ padding: "6px 10px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
                 <input placeholder="Description" value={editing.description||""} onChange={e => setEditing({...editing, description: e.target.value})}
-                  style={{ padding: "6px 10px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
                 <select value={editing.start_hour||0} onChange={e => setEditing({...editing, start_hour: +e.target.value})}
-                  style={{ padding: "6px 8px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+                  style={{ padding: "6px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
                   {HOURS_LIST.map(h => <option key={h} value={h}>{fmtHourLocal(h)}</option>)}
                 </select>
                 <select value={editing.end_hour||0} onChange={e => setEditing({...editing, end_hour: +e.target.value})}
-                  style={{ padding: "6px 8px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+                  style={{ padding: "6px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
                   {HOURS_LIST.map(h => <option key={h} value={h}>{fmtHourLocal(h)}</option>)}
                 </select>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input type="color" value={editing.color||"#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})}
-                  style={{ width: 32, height: 28, borderRadius: 6, border: "1px solid var(--border-primary)", cursor: "pointer", background: "none" }} />
-                <button onClick={save} style={{ padding: "5px 14px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgba(56,189,248,0.12)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.3)" }}>Save</button>
-                <button onClick={() => setEditing(null)} style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Cancel</button>
+                  style={{ width: 32, height: 28, borderRadius: 0, border: "1px solid var(--border-primary)", cursor: "pointer", background: "none" }} />
+                <button onClick={save} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgba(56,189,248,0.12)", color: "#38bdf8", border: "1px solid rgba(56,189,248,0.3)" }}>Save</button>
+                <button onClick={() => setEditing(null)} style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Cancel</button>
               </div>
             </div>
           )}
@@ -1556,7 +1589,7 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
             const isTarget = s.start_hour <= hour && s.end_hour > hour;
             return (
               <div key={s.id} style={{
-                padding: "12px 14px", borderRadius: 9, marginBottom: 6,
+                padding: "12px 14px", borderRadius: 0, marginBottom: 6,
                 background: isTarget ? "rgba(167,139,250,0.06)" : "var(--bg-tertiary)",
                 border: `1px solid ${isTarget ? "rgba(167,139,250,0.25)" : "var(--border-primary)"}`,
               }}>
@@ -1564,14 +1597,14 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
                   <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.color || "#94a3b8", flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: isTarget ? "#a78bfa" : "var(--text-primary)" }}>
-                      {s.name} {isTarget && <span style={{ fontSize: 9, background: "rgba(167,139,250,0.2)", color: "#a78bfa", padding: "1px 5px", borderRadius: 3, marginLeft: 4 }}>TARGET HOUR</span>}
+                      {s.name} {isTarget && <span style={{ fontSize: 9, background: "rgba(167,139,250,0.2)", color: "#a78bfa", padding: "1px 5px", borderRadius: 0, marginLeft: 4 }}>TARGET HOUR</span>}
                     </div>
                     <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
                       {fmtHourLocal(s.start_hour)} – {fmtHourLocal(s.end_hour)}{s.description ? " · " + s.description : ""}
                     </div>
                   </div>
-                  <button onClick={() => setEditing(s)} style={{ padding: "3px 10px", borderRadius: 6, fontSize: 10, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Edit</button>
-                  <button onClick={() => removeShow(s.id)} style={{ padding: "3px 8px", borderRadius: 6, fontSize: 10, cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)" }}
+                  <button onClick={() => setEditing(s)} style={{ padding: "3px 10px", borderRadius: 0, fontSize: 10, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Edit</button>
+                  <button onClick={() => removeShow(s.id)} style={{ padding: "3px 8px", borderRadius: 0, fontSize: 10, cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)" }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                   >✕</button>
@@ -1582,7 +1615,7 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
                   <span style={{ fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0 }}>Format Clock:</span>
                   <select value={s.clock_id||""} onChange={e => assignClock(s.id, e.target.value ? +e.target.value : null)}
                     style={{
-                      flex: 1, padding: "5px 10px", borderRadius: 7, fontSize: 11,
+                      flex: 1, padding: "5px 10px", borderRadius: 0, fontSize: 11,
                       background: "var(--bg-secondary)", border: `1px solid ${s.clock_id ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`,
                       color: "var(--text-primary)", outline: "none", cursor: "pointer",
                     }}>
@@ -1609,7 +1642,7 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
               ? `Ready — ${fmtHourLocal(hour)} will use "${targetShow?.clock_name}"`
               : `Assign a clock to the show covering ${fmtHourLocal(hour)}`}
           </span>
-          <button onClick={onClose} style={{ padding: "7px 14px", borderRadius: 7, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
+          <button onClick={onClose} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
             {hasTargetHour ? "Close" : "Done"}
           </button>
           {hasTargetHour && (
@@ -1617,7 +1650,7 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
               onClick={onDone}
               disabled={!canGenerate}
               style={{
-                padding: "7px 20px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+                padding: "7px 20px", borderRadius: 0, fontSize: 11, fontWeight: 700,
                 cursor: canGenerate ? "pointer" : "default",
                 background: canGenerate ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.04)",
                 color: canGenerate ? "#34d399" : "var(--text-tertiary)",

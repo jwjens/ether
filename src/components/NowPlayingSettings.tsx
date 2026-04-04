@@ -86,42 +86,42 @@ export default function NowPlayingSettings() {
   return (
     <div style={{ padding: "0 0 20px" }}>
 
-      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>
           Mobile Dashboard</div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Open on any phone or tablet on the same WiFi to remotely control playback:</div>
-        {dashboardUrl && <div style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "10px 14px", fontFamily: "monospace", fontSize: 14, color: "var(--accent-blue)", letterSpacing: "0.02em", wordBreak: "break-all" as any }}>{dashboardUrl}</div>}
+        {dashboardUrl && <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: "10px 14px", fontFamily: "monospace", fontSize: 14, color: "var(--accent-blue)", letterSpacing: "0.02em", wordBreak: "break-all" as any }}>{dashboardUrl}</div>}
       </div>
 
-      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           Public Now Playing Endpoint</div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Your station website can poll this URL to show what's playing:</div>
-        {dashboardUrl && <div style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: "var(--accent-green)", letterSpacing: "0.02em" }}>{dashboardUrl}/now-playing.json</div>}
+        {dashboardUrl && <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: "10px 14px", fontFamily: "monospace", fontSize: 13, color: "var(--accent-green)", letterSpacing: "0.02em" }}>{dashboardUrl}/now-playing.json</div>}
         <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: title, artist, is_playing, updated_at — CORS enabled</div>
       </div>
 
-      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           Launch on Windows Startup</div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>Automatically start Ether when Windows boots. Recommended for 24/7 stations.</div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div onClick={toggleAutostart} style={{ width: 36, height: 20, borderRadius: 10, cursor: "pointer", transition: "background 0.2s", background: autostart ? "var(--accent-blue)" : "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative", flexShrink: 0 }}>
-            <div style={{ position: "absolute", top: 2, left: autostart ? 18 : 2, width: 14, height: 14, borderRadius: 7, background: "#fff", transition: "left 0.2s" }} />
+          <div onClick={toggleAutostart} style={{ width: 36, height: 20, borderRadius: 0, cursor: "pointer", transition: "background 0.2s", background: autostart ? "var(--accent-blue)" : "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative", flexShrink: 0 }}>
+            <div style={{ position: "absolute", top: 2, left: autostart ? 18 : 2, width: 14, height: 14, borderRadius: 0, background: "#fff", transition: "left 0.2s" }} />
           </div>
           <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{autostart ? "Ether will launch on startup" : "Launch on startup disabled"}</span>
         </div>
       </div>
 
-      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 24 }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 24 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           Station Timezone</div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Used for schedule times, DST handling, and play log timestamps.</div>
-        <select value={timezone} onChange={e => saveTimezone(e.target.value)} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}>
+        <select value={timezone} onChange={e => saveTimezone(e.target.value)} style={{ width: "100%", padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}>
           {COMMON_TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label} — {tz.value}</option>)}
         </select>
         <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>
@@ -134,12 +134,12 @@ export default function NowPlayingSettings() {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
         {WIDGETS.map(w => (
           <div key={w.id} onClick={() => setWidgetType(w.id)} style={{
-            padding: "14px 16px", borderRadius: 12, cursor: "pointer", position: "relative" as const,
+            padding: "14px 16px", borderRadius: 0, cursor: "pointer", position: "relative" as const,
             background: widgetType === w.id ? "rgba(34,211,238,0.08)" : "var(--bg-tertiary)",
             border: `1px solid ${widgetType === w.id ? "rgba(34,211,238,0.35)" : "var(--border-primary)"}`,
             transition: "all 0.15s ease",
           }}>
-            {w.badge && <div style={{ position: "absolute" as const, top: 8, right: 8, fontSize: 8, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", padding: "2px 6px", borderRadius: 4 }}>{w.badge}</div>}
+            {w.badge && <div style={{ position: "absolute" as const, top: 8, right: 8, fontSize: 8, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", padding: "2px 6px", borderRadius: 0 }}>{w.badge}</div>}
             <div style={{ marginBottom: 6, color: widgetType === w.id ? "var(--accent-blue)" : "var(--text-tertiary)" }}>{WIDGET_ICONS[w.id]}</div>
             <div style={{ fontSize: 12, fontWeight: 600, color: widgetType === w.id ? "var(--accent-blue)" : "var(--text-primary)", marginBottom: 2 }}>{w.label}</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{w.desc}</div>
@@ -148,12 +148,12 @@ export default function NowPlayingSettings() {
       </div>
 
       {widgetType === "instagram" && (
-        <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", marginBottom: 8 }}>Instagram Handle</div>
-          <input value={igHandle} onChange={e => setIgHandle(e.target.value)} placeholder="@yourstation or #yourhashtag" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", marginBottom: 10, boxSizing: "border-box" as const }} />
+          <input value={igHandle} onChange={e => setIgHandle(e.target.value)} placeholder="@yourstation or #yourhashtag" style={{ width: "100%", padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", marginBottom: 10, boxSizing: "border-box" as const }} />
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div onClick={() => setIgEnabled(!igEnabled)} style={{ width: 36, height: 20, borderRadius: 10, cursor: "pointer", transition: "background 0.2s", background: igEnabled ? "var(--accent-blue)" : "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" }}>
-              <div style={{ position: "absolute", top: 2, left: igEnabled ? 18 : 2, width: 14, height: 14, borderRadius: 7, background: "#fff", transition: "left 0.2s" }} />
+            <div onClick={() => setIgEnabled(!igEnabled)} style={{ width: 36, height: 20, borderRadius: 0, cursor: "pointer", transition: "background 0.2s", background: igEnabled ? "var(--accent-blue)" : "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" }}>
+              <div style={{ position: "absolute", top: 2, left: igEnabled ? 18 : 2, width: 14, height: 14, borderRadius: 0, background: "#fff", transition: "left 0.2s" }} />
             </div>
             <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Enable Instagram feed</span>
           </div>
@@ -161,20 +161,20 @@ export default function NowPlayingSettings() {
       )}
 
       {widgetType === "weather" && (
-        <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+        <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: "var(--text-secondary)", marginBottom: 12 }}>Weather Location</div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
-            <input value={weatherCity} onChange={e => setWeatherCity(e.target.value)} placeholder="City name" style={{ padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+            <input value={weatherCity} onChange={e => setWeatherCity(e.target.value)} placeholder="City name" style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
             <div style={{ display: "flex", gap: 8 }}>
-              <input value={weatherLat} onChange={e => setWeatherLat(e.target.value)} placeholder="Latitude" style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
-              <input value={weatherLon} onChange={e => setWeatherLon(e.target.value)} placeholder="Longitude" style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+              <input value={weatherLat} onChange={e => setWeatherLat(e.target.value)} placeholder="Latitude" style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+              <input value={weatherLon} onChange={e => setWeatherLon(e.target.value)} placeholder="Longitude" style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
             </div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>Las Vegas default: 36.1699, -115.1398 · Powered by Open-Meteo (free, no API key needed)</div>
           </div>
         </div>
       )}
 
-      <button onClick={save} style={{ padding: "10px 24px", borderRadius: 10, fontSize: 12, fontWeight: 600, background: saved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", transition: "background 0.3s" }}>
+      <button onClick={save} style={{ padding: "10px 24px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: saved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", transition: "background 0.3s" }}>
         {saved ? "✓ Saved!" : "Save Settings"}
       </button>
     </div>

@@ -106,7 +106,7 @@ export default function SelfHealingClock({ logRemainingMs, compact = false }: Pr
           <span style={{
             fontSize: 9, color: colors.text,
             background: colors.bg, border: `1px solid ${colors.border}`,
-            padding: "1px 5px", borderRadius: 4, letterSpacing: "0.04em",
+            padding: "1px 5px", borderRadius: 0, letterSpacing: "0.04em",
           }}>
             {String(syncMins).padStart(2, "0")}:{String(syncSecs).padStart(2, "0")} to sync
           </span>
@@ -128,7 +128,7 @@ export default function SelfHealingClock({ logRemainingMs, compact = false }: Pr
     <div style={{
       background: "var(--bg-panel, rgba(12,12,20,0.95))",
       border: `1px solid ${colors.border}`,
-      borderRadius: 12,
+      borderRadius: 0,
       padding: "12px 16px",
       fontFamily: "'DM Mono', monospace",
       transition: "border-color 0.4s",
@@ -160,7 +160,7 @@ export default function SelfHealingClock({ logRemainingMs, compact = false }: Pr
         <>
           <div style={{ marginBottom: 6 }}>
             <div style={{
-              height: 4, borderRadius: 2,
+              height: 4, borderRadius: 0,
               background: "rgba(255,255,255,0.08)",
               overflow: "hidden",
             }}>
@@ -168,7 +168,7 @@ export default function SelfHealingClock({ logRemainingMs, compact = false }: Pr
                 height: "100%",
                 width: `${driftPct}%`,
                 background: colors.dot,
-                borderRadius: 2,
+                borderRadius: 0,
                 transition: "width 0.8s ease, background 0.4s",
               }} />
             </div>
@@ -196,7 +196,7 @@ export default function SelfHealingClock({ logRemainingMs, compact = false }: Pr
               padding: "3px 7px",
               background: "rgba(139,92,246,0.1)",
               border: "1px solid rgba(139,92,246,0.25)",
-              borderRadius: 5,
+              borderRadius: 0,
               fontSize: 9, color: "#a78bfa",
               letterSpacing: "0.06em",
             }}>
@@ -211,7 +211,7 @@ export default function SelfHealingClock({ logRemainingMs, compact = false }: Pr
               padding: "5px 8px",
               background: "rgba(251,191,36,0.07)",
               border: "1px solid rgba(251,191,36,0.2)",
-              borderRadius: 6,
+              borderRadius: 0,
               fontSize: 9, color: "#fbbf24",
               cursor: "pointer",
             }}>

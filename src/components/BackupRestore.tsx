@@ -48,14 +48,14 @@ export default function BackupRestore() {
     <div style={{ padding: "0 0 20px" }}>
       <h3 style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 16, textTransform: "uppercase", letterSpacing: "0.06em" }}>Database Backup</h3>
 
-      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)" }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)" }}>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
           Backup your entire library, schedule, and settings. Backups older than 7 days are automatically deleted.
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
           <button onClick={backup} disabled={loading}
-            style={{ padding: "8px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+            style={{ padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
             {loading ? "Backing up..." : "Backup Now"}
           </button>
           {status && <span style={{ fontSize: 12, color: status.startsWith("✓") ? "var(--accent-green)" : "#ef4444" }}>{status}</span>}
@@ -66,10 +66,10 @@ export default function BackupRestore() {
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Saved Backups</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {backups.map(name => (
-                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-secondary)", borderRadius: 8, padding: "8px 12px", border: "1px solid var(--border-primary)" }}>
+                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-secondary)", borderRadius: 0, padding: "8px 12px", border: "1px solid var(--border-primary)" }}>
                   <span style={{ fontSize: 12, color: "var(--text-primary)" }}>{formatBackupName(name)}</span>
                   <button onClick={() => restore(name)}
-                    style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                    style={{ padding: "4px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
                     Restore
                   </button>
                 </div>

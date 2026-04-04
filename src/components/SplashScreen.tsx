@@ -65,7 +65,7 @@ export default function SplashScreen({ onDone }: Props) {
       <div style={{ position: "relative", marginBottom: 32 }}>
         {/* Gradient circle icon */}
         <div style={{
-          width: 80, height: 80, borderRadius: 22,
+          width: 80, height: 80, borderRadius: 0,
           background: "linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%)",
           display: "flex", alignItems: "center", justifyContent: "center",
           boxShadow: "0 0 40px rgba(34,211,238,0.35), 0 0 80px rgba(167,139,250,0.2)",
@@ -100,13 +100,13 @@ export default function SplashScreen({ onDone }: Props) {
         {/* Bar track */}
         <div style={{
           height: 2, background: "rgba(255,255,255,0.06)",
-          borderRadius: 1, overflow: "hidden", marginBottom: 12,
+          borderRadius: 0, overflow: "hidden", marginBottom: 12,
         }}>
           <div style={{
             height: "100%",
             width: progress + "%",
             background: "linear-gradient(90deg, #22d3ee, #a78bfa)",
-            borderRadius: 1,
+            borderRadius: 0,
             transition: "width 0.1s linear",
             boxShadow: "0 0 8px rgba(34,211,238,0.5)",
           }} />

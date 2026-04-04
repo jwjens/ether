@@ -62,7 +62,7 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
 
   return (
     <div className="space-y-4">
-      <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 14, border: "1px solid var(--border-primary)" }}>
+      <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 14, border: "1px solid var(--border-primary)" }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
           Audio Output Device</div>
@@ -70,7 +70,7 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
           Ether uses the Windows default audio device. To change output, set your preferred device as default in Windows Sound Settings.
         </div>
         <button onClick={openWindowsSoundSettings}
-          style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+          style={{ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
           Open Windows Sound Settings ↗
         </button>
       </div>
@@ -79,7 +79,7 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
 
       <div className="grid grid-cols-2 gap-4">
         {/* Output */}
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
+        <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3 space-y-2">
           <div className="text-xs font-bold text-zinc-300 uppercase">Output Device (Speakers / Board)</div>
           <div className="text-[10px] text-zinc-500">Where music plays. Select your Wheatstone, Focusrite, or studio monitors.</div>
           <div className="space-y-1">
@@ -101,7 +101,7 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
         </div>
 
         {/* Input */}
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
+        <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3 space-y-2">
           <div className="text-xs font-bold text-zinc-300 uppercase">Input Device (Microphone)</div>
           <div className="text-[10px] text-zinc-500">For voice tracking and live mic. Select your Focusrite, USB mic, or board return.</div>
           <div className="space-y-1">

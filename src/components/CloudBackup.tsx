@@ -315,14 +315,14 @@ export default function CloudBackup() {
 
         {/* Status banner */}
         {status && (
-          <div style={{ padding: "10px 14px", borderRadius: 9, background: statusColor + "12", border: `1px solid ${statusColor}35`, fontSize: 12, color: statusColor, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ padding: "10px 14px", borderRadius: 0, background: statusColor + "12", border: `1px solid ${statusColor}35`, fontSize: 12, color: statusColor, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span>{status.msg}</span>
             <button onClick={() => setStatus(null)} style={{ background: "none", border: "none", color: statusColor, cursor: "pointer", fontSize: 14 }}>✕</button>
           </div>
         )}
 
         {/* Credentials */}
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 12 }}>Connection</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <div>
@@ -331,7 +331,7 @@ export default function CloudBackup() {
                 type="password" value={licenseKey}
                 onChange={e => setLicenseKey(e.target.value)}
                 placeholder="ETH-PRO-XXXX-XXXX-XXXX"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }}
               />
             </div>
             <div>
@@ -340,30 +340,30 @@ export default function CloudBackup() {
                 type="text" value={stationId}
                 onChange={e => setStationId(e.target.value)}
                 placeholder="you@station.com"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }}
               />
             </div>
           </div>
-          <button onClick={loadBackups} disabled={loading || !licenseKey || !stationId} style={{ marginTop: 10, padding: "7px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: "rgba(34,211,238,0.12)", color: "var(--accent-cyan)", border: "1px solid rgba(34,211,238,0.25)", cursor: "pointer", opacity: (!licenseKey || !stationId) ? 0.5 : 1 }}>
+          <button onClick={loadBackups} disabled={loading || !licenseKey || !stationId} style={{ marginTop: 10, padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgba(34,211,238,0.12)", color: "var(--accent-cyan)", border: "1px solid rgba(34,211,238,0.25)", cursor: "pointer", opacity: (!licenseKey || !stationId) ? 0.5 : 1 }}>
             {loading ? "Loading..." : "Connect"}
           </button>
         </div>
 
         {/* Create backup */}
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "16px 18px" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
           <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 12 }}>Create Backup</div>
           <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
             <input
               type="text" value={description}
               onChange={e => setDescription(e.target.value)}
               placeholder="Description (optional) — e.g. 'Before format change'"
-              style={{ flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}
+              style={{ flex: 1, padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}
             />
             <button
               onClick={createBackup}
               disabled={backing || !licenseKey || !stationId}
               style={{
-                padding: "8px 20px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700,
                 background: backing ? "var(--bg-tertiary)" : "var(--accent-green)",
                 color: backing ? "var(--text-tertiary)" : "#000",
                 border: "none", cursor: (!licenseKey || !stationId || backing) ? "default" : "pointer",
@@ -378,7 +378,7 @@ export default function CloudBackup() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               onClick={toggleAutoBackup}
-              style={{ width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer", position: "relative", background: autoBackup ? "var(--accent-green)" : "var(--bg-tertiary)", transition: "background 0.2s", flexShrink: 0 }}
+              style={{ width: 36, height: 20, borderRadius: 0, border: "none", cursor: "pointer", position: "relative", background: autoBackup ? "var(--accent-green)" : "var(--bg-tertiary)", transition: "background 0.2s", flexShrink: 0 }}
             >
               <div style={{ position: "absolute", top: 2, left: autoBackup ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
             </button>
@@ -393,7 +393,7 @@ export default function CloudBackup() {
         </div>
 
         {/* Backup list */}
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
               Saved Backups {backups.length > 0 && `(${backups.length})`}
@@ -422,7 +422,7 @@ export default function CloudBackup() {
                 background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
               }}>
                 {/* Icon */}
-                <div style={{ width: 36, height: 36, borderRadius: 9, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>☁</div>
+                <div style={{ width: 36, height: 36, borderRadius: 0, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>☁</div>
 
                 {/* Info */}
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -439,14 +439,14 @@ export default function CloudBackup() {
                 <button
                   onClick={() => restoreBackup(b)}
                   disabled={restoring === b.id}
-                  style={{ padding: "5px 12px", borderRadius: 7, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)", cursor: "pointer", flexShrink: 0 }}
+                  style={{ padding: "5px 12px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.1)", color: "#34d399", border: "1px solid rgba(52,211,153,0.25)", cursor: "pointer", flexShrink: 0 }}
                 >
                   {restoring === b.id ? "Restoring..." : "↩ Restore"}
                 </button>
                 <button
                   onClick={() => deleteBackup(b)}
                   disabled={deleting === b.id}
-                  style={{ padding: "5px 8px", borderRadius: 7, fontSize: 11, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer", flexShrink: 0 }}
+                  style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer", flexShrink: 0 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                 >✕</button>

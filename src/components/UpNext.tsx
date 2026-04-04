@@ -225,7 +225,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>Up Next ({queueLen})</span>
             {totalDuration > 0 && (
-              <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", background: "var(--bg-tertiary)", padding: "2px 7px", borderRadius: 6, border: "1px solid var(--border-primary)" }}>
+              <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", background: "var(--bg-tertiary)", padding: "2px 7px", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
                 {Math.floor(totalDuration / 3600000) > 0
                   ? `${Math.floor(totalDuration / 3600000)}h ${Math.floor((totalDuration % 3600000) / 60000)}m`
                   : `${Math.floor(totalDuration / 60000)}m ${Math.floor((totalDuration % 60000) / 1000)}s`}
@@ -288,7 +288,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 16, flexShrink: 0, textAlign: "right" as any, pointerEvents: "none", fontFamily: "'DM Mono', monospace", opacity: 0.5 }}>{i + 1}</span>
 
               {/* Artwork thumbnail */}
-              <div style={{ width: 32, height: 32, borderRadius: 6, flexShrink: 0, overflow: "hidden", background: `${color}18`, border: `1px solid ${color}30`, pointerEvents: "none" }}>
+              <div style={{ width: 32, height: 32, borderRadius: 0, flexShrink: 0, overflow: "hidden", background: `${color}18`, border: `1px solid ${color}30`, pointerEvents: "none" }}>
                 {artUrls[`${item.title}::${item.artist}`] ? (
                   <img src={artUrls[`${item.title}::${item.artist}`]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 ) : (
@@ -298,7 +298,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
               {/* Category badge */}
               {catLabel && (
-                <span style={{ fontSize: 7, fontWeight: 800, color: "#fff", background: color, padding: "2px 5px", borderRadius: 4, letterSpacing: "0.06em", flexShrink: 0, pointerEvents: "none" }}>{catLabel}</span>
+                <span style={{ fontSize: 7, fontWeight: 800, color: "#fff", background: color, padding: "2px 5px", borderRadius: 0, letterSpacing: "0.06em", flexShrink: 0, pointerEvents: "none" }}>{catLabel}</span>
               )}
 
               {/* Title + artist */}

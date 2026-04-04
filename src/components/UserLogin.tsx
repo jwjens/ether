@@ -79,7 +79,7 @@ export default function UserLogin({ onLogin }: Props) {
 
       {/* Logo */}
       <div style={{ marginBottom: 40, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
-        <svg width="72" height="72" viewBox="0 0 512 512" style={{ borderRadius: 16 }}>
+        <svg width="72" height="72" viewBox="0 0 512 512" style={{ borderRadius: 0 }}>
           <defs>
             <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%" stopColor="#06b6d4"/>
@@ -109,7 +109,7 @@ export default function UserLogin({ onLogin }: Props) {
                 onClick={() => selectUser(user)}
                 style={{
                   display: "flex", alignItems: "center", gap: 16,
-                  padding: "16px 20px", borderRadius: 16,
+                  padding: "16px 20px", borderRadius: 0,
                   background: "rgba(255,255,255,0.04)",
                   border: `1px solid rgba(255,255,255,0.08)`,
                   cursor: "pointer", textAlign: "left" as const,
@@ -127,7 +127,7 @@ export default function UserLogin({ onLogin }: Props) {
               >
                 {/* Avatar */}
                 <div style={{
-                  width: 44, height: 44, borderRadius: 12, flexShrink: 0,
+                  width: 44, height: 44, borderRadius: 0, flexShrink: 0,
                   background: `${ROLE_COLORS[user.role]}20`,
                   border: `1px solid ${ROLE_COLORS[user.role]}40`,
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -163,7 +163,7 @@ export default function UserLogin({ onLogin }: Props) {
         }}>
           <div style={{ textAlign: "center" as const, marginBottom: 28 }}>
             <div style={{
-              width: 56, height: 56, borderRadius: 14, margin: "0 auto 12px",
+              width: 56, height: 56, borderRadius: 0, margin: "0 auto 12px",
               background: `${accentColor}20`, border: `1px solid ${accentColor}40`,
               display: "flex", alignItems: "center", justifyContent: "center",
               fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800,
@@ -207,7 +207,7 @@ export default function UserLogin({ onLogin }: Props) {
                   }
                 }
               }} style={{
-                height: 52, borderRadius: 12,
+                height: 52, borderRadius: 0,
                 background: k ? "rgba(255,255,255,0.05)" : "transparent",
                 border: k ? "1px solid rgba(255,255,255,0.08)" : "none",
                 color: "#f0f0f8", fontSize: k === "⌫" ? 18 : 20,
@@ -224,7 +224,7 @@ export default function UserLogin({ onLogin }: Props) {
           {error && <div style={{ textAlign: "center" as const, fontSize: 12, color: "#f87171", marginBottom: 12 }}>{error}</div>}
 
           <button onClick={() => { setSelected(null); setPin(""); setError(""); }} style={{
-            width: "100%", padding: "10px 0", borderRadius: 10,
+            width: "100%", padding: "10px 0", borderRadius: 0,
             background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
             color: "rgba(255,255,255,0.35)", fontSize: 12, cursor: "pointer",
           }}>

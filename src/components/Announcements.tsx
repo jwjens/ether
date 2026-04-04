@@ -68,8 +68,8 @@ export function stopAnnouncementEngine() {
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <div onClick={() => onChange(!value)} style={{ width: 36, height: 20, borderRadius: 10, cursor: "pointer", background: value ? "var(--accent-blue)" : "var(--bg-tertiary)", border: "1px solid " + (value ? "var(--accent-blue)" : "var(--border-secondary)"), position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-        <div style={{ position: "absolute", top: 3, left: value ? 18 : 3, width: 12, height: 12, borderRadius: 6, background: "#fff", transition: "left 0.2s" }} />
+      <div onClick={() => onChange(!value)} style={{ width: 36, height: 20, borderRadius: 0, cursor: "pointer", background: value ? "var(--accent-blue)" : "var(--bg-tertiary)", border: "1px solid " + (value ? "var(--accent-blue)" : "var(--border-secondary)"), position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+        <div style={{ position: "absolute", top: 3, left: value ? 18 : 3, width: 12, height: 12, borderRadius: 0, background: "#fff", transition: "left 0.2s" }} />
       </div>
       <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{label}</span>
     </div>
@@ -136,14 +136,14 @@ export default function Announcements() {
           <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Scheduled Announcements</h1>
           <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Auto-play audio at specific times — music ducks, announcement plays, music resumes</p>
         </div>
-        <button onClick={addNew} style={{ padding: "8px 16px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>
+        <button onClick={addNew} style={{ padding: "8px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>
           ＋ Add Announcement
         </button>
       </div>
 
       {/* Edit panel */}
       {editing && (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: 20 }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 16, fontFamily: "'Syne', sans-serif" }}>
             {editing.id ? "Edit" : "New"} Announcement
           </div>
@@ -152,12 +152,12 @@ export default function Announcements() {
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Title</div>
               <input value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
             </div>
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Trigger Time</div>
               <input type="time" value={editing.trigger_time || "17:30"} onChange={e => setEditing({...editing, trigger_time: e.target.value})}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
             </div>
           </div>
 
@@ -169,7 +169,7 @@ export default function Announcements() {
                 const active = (editing.days || "").includes(String(i));
                 return (
                   <button key={i} onClick={() => toggleDay(String(i))} style={{
-                    padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
                     background: active ? "var(--accent-blue)" : "var(--bg-tertiary)",
                     color: active ? "#fff" : "var(--text-tertiary)",
                     border: active ? "none" : "1px solid var(--border-primary)",
@@ -180,7 +180,7 @@ export default function Announcements() {
           </div>
 
           {/* Duck settings */}
-          <div style={{ display: "flex", gap: 20, alignItems: "center", marginBottom: 14, padding: "12px 14px", background: "var(--bg-tertiary)", borderRadius: 10, border: "1px solid var(--border-primary)" }}>
+          <div style={{ display: "flex", gap: 20, alignItems: "center", marginBottom: 14, padding: "12px 14px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
             <Toggle value={!!editing.duck_music} onChange={v => setEditing({...editing, duck_music: v ? 1 : 0})} label="Duck music while playing" />
             {!!editing.duck_music && (
               <>
@@ -199,15 +199,15 @@ export default function Announcements() {
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={save} style={{ padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
-            <button onClick={() => setEditing(null)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+            <button onClick={save} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+            <button onClick={() => setEditing(null)} style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
           </div>
         </div>
       )}
 
       {/* List */}
       {list.length === 0 ? (
-        <div style={{ textAlign: "center" as any, padding: "56px 24px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 16 }}>
+        <div style={{ textAlign: "center" as any, padding: "56px 24px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0 }}>
           <div style={{ fontSize: 36, marginBottom: 12, display: "flex", justifyContent: "center" }}>
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.4 }}><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
           </div>
@@ -215,12 +215,12 @@ export default function Announcements() {
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20, maxWidth: 400, margin: "0 auto 20px" }}>
             Add closing announcements, park alerts, legal station IDs, or any timed audio
           </div>
-          <button onClick={addNew} style={{ padding: "9px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+          <button onClick={addNew} style={{ padding: "9px 20px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
             ＋ Add First Announcement
           </button>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
@@ -244,7 +244,7 @@ export default function Announcements() {
                         const on = a.days.includes(String(j));
                         return (
                           <span key={j} style={{
-                            fontSize: 9, fontWeight: 700, padding: "2px 5px", borderRadius: 5,
+                            fontSize: 9, fontWeight: 700, padding: "2px 5px", borderRadius: 0,
                             background: on ? "rgba(56,189,248,0.15)" : "var(--bg-tertiary)",
                             color: on ? "var(--accent-blue)" : "var(--text-tertiary)",
                           }}>{name[0]}</span>
@@ -257,16 +257,16 @@ export default function Announcements() {
                   </td>
                   <td style={{ padding: "12px 14px" }}>
                     <button onClick={async () => { await execute("UPDATE announcements SET is_active=? WHERE id=?", [a.is_active ? 0 : 1, a.id]); load(); }} style={{
-                      padding: "4px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
+                      padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
                       background: a.is_active ? "rgba(52,211,153,0.15)" : "var(--bg-tertiary)",
                       color: a.is_active ? "var(--accent-green)" : "var(--text-tertiary)",
                     }}>{a.is_active ? "ON" : "OFF"}</button>
                   </td>
                   <td style={{ padding: "12px 14px" }}>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button onClick={() => testPlay(a)} style={{ padding: "5px 10px", borderRadius: 7, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.12)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Test</button>
-                      <button onClick={() => setEditing(a)} style={{ padding: "5px 10px", borderRadius: 7, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
-                      <button onClick={() => remove(a.id)} style={{ padding: "5px 8px", borderRadius: 7, fontSize: 10, color: "var(--text-tertiary)", background: "transparent", border: "none", cursor: "pointer" }}>✕</button>
+                      <button onClick={() => testPlay(a)} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.12)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Test</button>
+                      <button onClick={() => setEditing(a)} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
+                      <button onClick={() => remove(a.id)} style={{ padding: "5px 8px", borderRadius: 0, fontSize: 10, color: "var(--text-tertiary)", background: "transparent", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
                   </td>
                 </tr>
@@ -277,7 +277,7 @@ export default function Announcements() {
       )}
 
       {/* Tips card */}
-      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: "14px 18px" }}>
+      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "14px 18px" }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 10 }}>Common setups</div>
         <div style={{ display: "flex", flexDirection: "column" as any, gap: 6 }}>
           {[

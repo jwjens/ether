@@ -167,7 +167,7 @@ function Field({
     width: "100%", padding: "10px 13px",
     background: "var(--bg-tertiary)",
     border: "1px solid var(--border-primary)",
-    borderRadius: 10, color: "var(--text-primary)",
+    borderRadius: 0, color: "var(--text-primary)",
     fontSize: 13, outline: "none", resize: "none",
     fontFamily: "'Inter', system-ui, sans-serif",
     transition: "border-color 0.2s",
@@ -487,7 +487,7 @@ ${item}
   const modal: React.CSSProperties = {
     background: "var(--bg-primary)",
     border: "1px solid var(--border-secondary)",
-    borderRadius: 20,
+    borderRadius: 0,
     width: "100%", maxWidth: 680,
     maxHeight: "90vh",
     display: "flex", flexDirection: "column",
@@ -497,7 +497,7 @@ ${item}
   };
 
   const btnPrimary: React.CSSProperties = {
-    height: 40, padding: "0 24px", borderRadius: 10,
+    height: 40, padding: "0 24px", borderRadius: 0,
     background: "var(--accent-cyan)", border: "none",
     color: "#000", fontSize: 12, fontWeight: 800,
     letterSpacing: "0.06em", cursor: "pointer",
@@ -506,7 +506,7 @@ ${item}
   };
 
   const btnSecondary: React.CSSProperties = {
-    height: 40, padding: "0 20px", borderRadius: 10,
+    height: 40, padding: "0 20px", borderRadius: 0,
     background: "var(--bg-tertiary)",
     border: "1px solid var(--border-primary)",
     color: "var(--text-secondary)", fontSize: 12,
@@ -528,7 +528,7 @@ ${item}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{
-                width: 36, height: 36, borderRadius: 10,
+                width: 36, height: 36, borderRadius: 0,
                 background: "linear-gradient(135deg, rgba(56,189,248,0.2), rgba(167,139,250,0.2))",
                 border: "1px solid rgba(56,189,248,0.3)",
                 display: "flex", alignItems: "center", justifyContent: "center",
@@ -549,7 +549,7 @@ ${item}
             </div>
             <button
               onClick={onClose}
-              style={{ width: 32, height: 32, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+              style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
             >×</button>
           </div>
           <StepBar current={step} />
@@ -573,7 +573,7 @@ ${item}
                 <button
                   onClick={pickAudio}
                   style={{
-                    width: "100%", padding: "18px 16px", borderRadius: 12,
+                    width: "100%", padding: "18px 16px", borderRadius: 0,
                     background: meta.audioPath ? "rgba(56,189,248,0.06)" : "var(--bg-tertiary)",
                     border: `2px dashed ${meta.audioPath ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`,
                     color: meta.audioPath ? "var(--accent-cyan)" : "var(--text-tertiary)",
@@ -583,7 +583,7 @@ ${item}
                   }}
                 >
                   <div style={{
-                    width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                    width: 40, height: 40, borderRadius: 0, flexShrink: 0,
                     background: meta.audioPath ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)",
                     display: "flex", alignItems: "center", justifyContent: "center",
                   }}>
@@ -631,7 +631,7 @@ ${item}
                     type="number" min="1" value={meta.seasonNumber}
                     onChange={e => set("seasonNumber", e.target.value)}
                     placeholder="—"
-                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, color: "var(--text-primary)", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, color: "var(--text-primary)", fontSize: 13, outline: "none", boxSizing: "border-box" }}
                   />
                 </div>
                 <div>
@@ -640,7 +640,7 @@ ${item}
                     type="number" min="1" value={meta.episodeNumber}
                     onChange={e => set("episodeNumber", e.target.value)}
                     placeholder="—"
-                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, color: "var(--text-primary)", fontSize: 13, outline: "none", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, color: "var(--text-primary)", fontSize: 13, outline: "none", boxSizing: "border-box" }}
                   />
                 </div>
                 <div>
@@ -648,7 +648,7 @@ ${item}
                   <select
                     value={meta.episodeType}
                     onChange={e => set("episodeType", e.target.value as any)}
-                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, color: "var(--text-primary)", fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, color: "var(--text-primary)", fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}
                   >
                     <option value="full">Full</option>
                     <option value="trailer">Trailer</option>
@@ -715,7 +715,7 @@ ${item}
                   <select
                     value={meta.category}
                     onChange={e => set("category", e.target.value)}
-                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, color: "var(--text-primary)", fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, color: "var(--text-primary)", fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}
                   >
                     {["Music","Arts","Comedy","Education","News","Sports","Technology","Business","Health & Fitness","Society & Culture","True Crime","Religion & Spirituality"].map(c => (
                       <option key={c} value={c}>{c}</option>
@@ -727,7 +727,7 @@ ${item}
                   <select
                     value={meta.language}
                     onChange={e => set("language", e.target.value)}
-                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, color: "var(--text-primary)", fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}
+                    style={{ width: "100%", padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, color: "var(--text-primary)", fontSize: 13, outline: "none", cursor: "pointer", boxSizing: "border-box" }}
                   >
                     {[["en","English"],["es","Spanish"],["fr","French"],["de","German"],["pt","Portuguese"],["ja","Japanese"],["ko","Korean"],["zh","Chinese"]].map(([code, name]) => (
                       <option key={code} value={code}>{name}</option>
@@ -742,7 +742,7 @@ ${item}
                 <button
                   onClick={pickCoverArt}
                   style={{
-                    width: "100%", padding: "14px 16px", borderRadius: 10,
+                    width: "100%", padding: "14px 16px", borderRadius: 0,
                     background: meta.coverArtPath ? "rgba(52,211,153,0.06)" : "var(--bg-tertiary)",
                     border: `1px dashed ${meta.coverArtPath ? "rgba(52,211,153,0.4)" : "var(--border-primary)"}`,
                     color: meta.coverArtPath ? "var(--accent-green)" : "var(--text-tertiary)",
@@ -770,13 +770,13 @@ ${item}
                     value={meta.feedPath}
                     onChange={e => set("feedPath", e.target.value)}
                     placeholder="C:\mystation\feed.xml"
-                    style={{ flex: 1, padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "monospace" }}
+                    style={{ flex: 1, padding: "10px 13px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "monospace" }}
                     onFocus={e => (e.target.style.borderColor = "var(--accent-cyan)")}
                     onBlur={e => (e.target.style.borderColor = "var(--border-primary)")}
                   />
                   <button
                     onClick={pickFeedPath}
-                    style={{ height: 42, padding: "0 16px", borderRadius: 10, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}
+                    style={{ height: 42, padding: "0 16px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}
                   >Browse...</button>
                 </div>
                 <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 5 }}>
@@ -791,7 +791,7 @@ ${item}
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               {/* Summary card */}
               <div style={{
-                background: "var(--bg-secondary)", borderRadius: 14,
+                background: "var(--bg-secondary)", borderRadius: 0,
                 border: "1px solid var(--border-primary)", overflow: "hidden",
               }}>
                 <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 10 }}>
@@ -820,20 +820,20 @@ ${item}
               </div>
 
               {/* Audio path */}
-              <div style={{ background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.15)", borderRadius: 10, padding: "12px 16px" }}>
+              <div style={{ background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.15)", borderRadius: 0, padding: "12px 16px" }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 4 }}>Audio</div>
                 <div style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "monospace", wordBreak: "break-all" }}>{meta.audioPath}</div>
               </div>
 
               {/* Feed path */}
-              <div style={{ background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.15)", borderRadius: 10, padding: "12px 16px" }}>
+              <div style={{ background: "rgba(52,211,153,0.05)", border: "1px solid rgba(52,211,153,0.15)", borderRadius: 0, padding: "12px 16px" }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--accent-green)", textTransform: "uppercase", marginBottom: 4 }}>RSS Feed</div>
                 <div style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "monospace", wordBreak: "break-all" }}>{meta.feedPath}</div>
               </div>
 
               {/* Publish log */}
               {publishLog.length > 0 && (
-                <div style={{ background: "var(--bg-secondary)", borderRadius: 10, border: "1px solid var(--border-primary)", padding: "12px 16px" }}>
+                <div style={{ background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", padding: "12px 16px" }}>
                   {publishLog.map((line, i) => (
                     <div key={i} style={{ fontSize: 11, color: line.startsWith("❌") ? "var(--accent-red)" : line.startsWith("✅") ? "var(--accent-green)" : "var(--text-secondary)", padding: "2px 0", fontFamily: "monospace" }}>{line}</div>
                   ))}
@@ -847,7 +847,7 @@ ${item}
               )}
 
               {err && (
-                <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 8, fontSize: 12, color: "var(--accent-red)" }}>
+                <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-red)" }}>
                   {err}
                 </div>
               )}
@@ -883,7 +883,7 @@ ${item}
               {/* Feed path copyable */}
               <div style={{
                 width: "100%", background: "var(--bg-secondary)",
-                border: "1px solid var(--border-primary)", borderRadius: 12,
+                border: "1px solid var(--border-primary)", borderRadius: 0,
                 padding: "14px 18px",
               }}>
                 <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 }}>RSS Feed Location</div>
@@ -893,7 +893,7 @@ ${item}
                   </div>
                   <button
                     onClick={copyFeedPath}
-                    style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 7, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}
+                    style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}
                   >Copy</button>
                 </div>
               </div>
@@ -904,7 +904,7 @@ ${item}
                   <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>
                     Published Episodes ({history.length})
                   </div>
-                  <div style={{ background: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                  <div style={{ background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                     {history.slice(0, 8).map((ep, i) => (
                       <div key={ep.id} style={{
                         padding: "10px 16px",

@@ -103,7 +103,7 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
       width: minimized ? 280 : size.w,
       height: minimized ? "auto" : size.h,
       zIndex: 11500,
-      borderRadius: 16,
+      borderRadius: 0,
       background: "linear-gradient(160deg, rgba(14,14,22,0.97) 0%, rgba(8,8,14,0.98) 100%)",
       border: "1px solid rgba(255,255,255,0.07)",
       boxShadow: "0 24px 80px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.05)",
@@ -126,7 +126,7 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.8)", letterSpacing: "0.04em", textTransform: "uppercase" as const, fontFamily: "'Syne', sans-serif" }}>Guests</span>
             {connected.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "1px 7px", borderRadius: 10, background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.2)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "1px 7px", borderRadius: 0, background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.2)" }}>
                 <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#34d399", animation: "guestBlink 2s ease-in-out infinite" }} />
                 <span style={{ fontSize: 9, fontWeight: 800, color: "#34d399", letterSpacing: "0.08em" }}>{connected.length} LIVE</span>
               </div>
@@ -148,7 +148,7 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
         <div style={{ flex: 1, padding: 10, display: "flex", flexDirection: "column" as const, gap: 8, overflow: "hidden", minHeight: 0 }}>
           {guests.length === 0 ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 14, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👥</div>
+              <div style={{ width: 44, height: 44, borderRadius: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👥</div>
               <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.3)" }}>No guests yet</div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.15)", textAlign: "center" as const }}>Invite guests from the Guests tab in Podcast Studio</div>
             </div>
@@ -205,7 +205,7 @@ function GuestTile({ guest, onMute, onHide }: { guest: GuestVideoState; onMute: 
       onMouseEnter={() => setShowControls(true)}
       onMouseLeave={() => setShowControls(false)}
       style={{
-        borderRadius: 12, overflow: "hidden", position: "relative" as const,
+        borderRadius: 0, overflow: "hidden", position: "relative" as const,
         background: isConnecting ? "rgba(251,191,36,0.05)" : "rgba(255,255,255,0.04)",
         border: `1px solid ${isConnecting ? "rgba(251,191,36,0.2)" : guest.status === "connected" ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.07)"}`,
         transition: "border-color 0.3s",
@@ -242,7 +242,7 @@ function GuestTile({ guest, onMute, onHide }: { guest: GuestVideoState; onMute: 
                   const lit = !guest.muted && guest.level > threshold;
                   const color = i >= NUM_BARS - 2 ? "#ef4444" : i >= NUM_BARS - 5 ? "#fbbf24" : "#34d399";
                   const h = i < 5 ? 6 : i < 10 ? 10 : 16;
-                  return <div key={i} style={{ width: 3, height: h, borderRadius: 1.5, background: lit ? color : "rgba(255,255,255,0.06)", transition: "background 0.04s" }} />;
+                  return <div key={i} style={{ width: 3, height: h, borderRadius: 0.5, background: lit ? color : "rgba(255,255,255,0.06)", transition: "background 0.04s" }} />;
                 })}
               </div>
             </>
@@ -260,11 +260,11 @@ function GuestTile({ guest, onMute, onHide }: { guest: GuestVideoState; onMute: 
 
         {/* Controls — show on hover */}
         <div style={{ display: "flex", gap: 4, opacity: showControls && guest.status === "connected" ? 1 : 0, transition: "opacity 0.15s" }}>
-          <button onClick={onMute} title={guest.muted ? "Unmute" : "Mute"} style={{ width: 22, height: 22, borderRadius: 6, background: guest.muted ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.06)", border: "none", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", color: guest.muted ? "#ef4444" : "rgba(255,255,255,0.5)" }}>
+          <button onClick={onMute} title={guest.muted ? "Unmute" : "Mute"} style={{ width: 22, height: 22, borderRadius: 0, background: guest.muted ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.06)", border: "none", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center", color: guest.muted ? "#ef4444" : "rgba(255,255,255,0.5)" }}>
             {guest.muted ? "🔇" : "🎤"}
           </button>
           {guest.hasVideo && (
-            <button onClick={onHide} title={guest.hidden ? "Show video" : "Hide video"} style={{ width: 22, height: 22, borderRadius: 6, background: guest.hidden ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.06)", border: "none", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button onClick={onHide} title={guest.hidden ? "Show video" : "Hide video"} style={{ width: 22, height: 22, borderRadius: 0, background: guest.hidden ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.06)", border: "none", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
               {guest.hidden ? "👁" : "📷"}
             </button>
           )}

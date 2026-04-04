@@ -270,7 +270,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
           style={{
             fontSize: 13, fontWeight: 700, color: "var(--text-primary)",
             background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-            borderRadius: 7, padding: "4px 10px", outline: "none", minWidth: 160,
+            borderRadius: 0, padding: "4px 10px", outline: "none", minWidth: 160,
           }}
         />
 
@@ -281,7 +281,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
           style={{
             fontSize: 11, color: "var(--text-secondary)",
             background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-            borderRadius: 7, padding: "4px 8px", outline: "none", cursor: "pointer",
+            borderRadius: 0, padding: "4px 8px", outline: "none", cursor: "pointer",
           }}
         >
           {DAYPARTS.map(d => <option key={d} value={d}>{d}</option>)}
@@ -310,7 +310,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
           )}
 
           <button onClick={saveClock} disabled={saving} style={{
-            padding: "6px 16px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+            padding: "6px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             background: "rgba(52,211,153,0.15)", color: "#34d399",
             border: "1px solid rgba(52,211,153,0.4)", cursor: "pointer",
           }}>
@@ -319,7 +319,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
 
           {onClose && (
             <button onClick={onClose} style={{
-              width: 28, height: 28, borderRadius: 7, fontSize: 14,
+              width: 28, height: 28, borderRadius: 0, fontSize: 14,
               background: "var(--bg-tertiary)", color: "var(--text-tertiary)",
               border: "1px solid var(--border-primary)", cursor: "pointer",
             }}>✕</button>
@@ -356,7 +356,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                 onClick={() => addSlot(type)}
                 style={{
                   display: "flex", alignItems: "center", gap: 8,
-                  padding: "7px 10px", borderRadius: 7,
+                  padding: "7px 10px", borderRadius: 0,
                   background: draggingType === type ? m.bg : "var(--bg-tertiary)",
                   border: `1px solid ${draggingType === type ? m.border : "var(--border-primary)"}`,
                   cursor: "grab", transition: "all 0.12s",
@@ -365,7 +365,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                 onMouseLeave={e => { if (draggingType !== type) { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; } }}
               >
                 <div style={{
-                  width: 22, height: 22, borderRadius: 5,
+                  width: 22, height: 22, borderRadius: 0,
                   background: m.bg, border: `1px solid ${m.border}`,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: 10, color: m.color, fontWeight: 800, flexShrink: 0,
@@ -396,7 +396,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
             {clocks.map(c => (
               <div key={c.id} style={{
                 fontSize: 10, color: "var(--text-secondary)", padding: "4px 6px",
-                borderRadius: 5, cursor: "pointer",
+                borderRadius: 0, cursor: "pointer",
                 background: clock.id === c.id ? "rgba(255,255,255,0.05)" : "transparent",
               }}>
                 {c.name}
@@ -459,7 +459,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
             {/* Empty state */}
             {clock.slots.length === 0 && (
               <div style={{
-                border: "2px dashed var(--border-primary)", borderRadius: 12,
+                border: "2px dashed var(--border-primary)", borderRadius: 0,
                 padding: "48px 24px", textAlign: "center" as const,
                 color: "var(--text-tertiary)", fontSize: 13,
               }}>
@@ -479,7 +479,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                   {/* Drop indicator */}
                   {dropIndex === idx && (
                     <div style={{
-                      height: 3, borderRadius: 2, margin: "2px 0",
+                      height: 3, borderRadius: 0, margin: "2px 0",
                       background: "#a78bfa", boxShadow: "0 0 8px rgba(167,139,250,0.6)",
                     }} />
                   )}
@@ -496,7 +496,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                     onClick={() => setSelectedSlotId(isSelected ? null : slot.id)}
                     style={{
                       display: "flex", alignItems: "center", gap: 10,
-                      padding: "8px 12px", marginBottom: 4, borderRadius: 8,
+                      padding: "8px 12px", marginBottom: 4, borderRadius: 0,
                       background: isSelected ? m.bg : "var(--bg-secondary)",
                       border: `1px solid ${isSelected ? m.border : "var(--border-primary)"}`,
                       cursor: "grab", transition: "all 0.12s",
@@ -505,7 +505,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                   >
                     {/* Position number */}
                     <div style={{
-                      width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+                      width: 20, height: 20, borderRadius: 0, flexShrink: 0,
                       background: "rgba(255,255,255,0.05)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 9, color: "var(--text-tertiary)", fontWeight: 700,
@@ -515,7 +515,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
 
                     {/* Color chip */}
                     <div style={{
-                      width: 10, height: 32, borderRadius: 3, flexShrink: 0,
+                      width: 10, height: 32, borderRadius: 0, flexShrink: 0,
                       background: m.color, opacity: 0.8,
                     }} />
 
@@ -528,7 +528,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                         {slot.requiresVoiceTrack && (
                           <span style={{
                             fontSize: 8, fontWeight: 700, letterSpacing: "0.08em",
-                            padding: "1px 5px", borderRadius: 3,
+                            padding: "1px 5px", borderRadius: 0,
                             background: "rgba(248,113,113,0.15)", color: "#f87171",
                             border: "1px solid rgba(248,113,113,0.3)",
                           }}>
@@ -537,10 +537,10 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
                         )}
                       </div>
                       {/* Timeline bar */}
-                      <div style={{ marginTop: 4, height: 4, background: "rgba(255,255,255,0.07)", borderRadius: 2, overflow: "hidden" }}>
+                      <div style={{ marginTop: 4, height: 4, background: "rgba(255,255,255,0.07)", borderRadius: 0, overflow: "hidden" }}>
                         <div style={{
                           height: "100%", width: `${Math.min(100, pct * 6)}%`,
-                          background: m.color, borderRadius: 2, opacity: 0.7,
+                          background: m.color, borderRadius: 0, opacity: 0.7,
                           transition: "width 0.2s",
                         }} />
                       </div>
@@ -581,7 +581,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
             {/* Drop indicator at end */}
             {dropIndex === clock.slots.length && clock.slots.length > 0 && (
               <div style={{
-                height: 3, borderRadius: 2, margin: "2px 0",
+                height: 3, borderRadius: 0, margin: "2px 0",
                 background: "#a78bfa", boxShadow: "0 0 8px rgba(167,139,250,0.6)",
               }} />
             )}
@@ -589,7 +589,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
             {/* Clock summary */}
             {clock.slots.length > 0 && (
               <div style={{
-                marginTop: 16, padding: "12px 16px", borderRadius: 10,
+                marginTop: 16, padding: "12px 16px", borderRadius: 0,
                 background: overrun
                   ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.03)",
                 border: `1px solid ${overrun ? "rgba(239,68,68,0.2)" : "var(--border-primary)"}`,
@@ -691,7 +691,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
               <button
                 onClick={() => removeSlot(selectedSlot.id)}
                 style={{
-                  width: "100%", padding: "6px", marginTop: 8, borderRadius: 7,
+                  width: "100%", padding: "6px", marginTop: 8, borderRadius: 0,
                   background: "rgba(239,68,68,0.08)", color: "#ef4444",
                   border: "1px solid rgba(239,68,68,0.2)",
                   fontSize: 11, fontWeight: 600, cursor: "pointer",
@@ -744,7 +744,7 @@ function Stat({ label, value, color }: { label: string; value: string; color: st
 }
 
 const miniBtn: React.CSSProperties = {
-  width: 20, height: 20, borderRadius: 4, fontSize: 12, fontWeight: 700,
+  width: 20, height: 20, borderRadius: 0, fontSize: 12, fontWeight: 700,
   background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)",
   cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
   padding: 0, lineHeight: 1,
@@ -753,6 +753,6 @@ const miniBtn: React.CSSProperties = {
 const inputStyle: React.CSSProperties = {
   width: "100%", fontSize: 11, color: "var(--text-primary)",
   background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-  borderRadius: 6, padding: "5px 8px", outline: "none",
+  borderRadius: 0, padding: "5px 8px", outline: "none",
   marginBottom: 10, boxSizing: "border-box" as const,
 };

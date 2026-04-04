@@ -69,7 +69,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           {PRESET_NAMES.map(name => (
             <button key={name} onClick={() => applyPreset(name)} style={{
-              padding: "3px 9px", borderRadius: 20, border: "none",
+              padding: "3px 9px", borderRadius: 0, border: "none",
               background: activePreset === name ? (name === "Off" ? "var(--bg-tertiary)" : "rgba(56,189,248,0.15)") : "var(--bg-tertiary)",
               color: activePreset === name ? (name === "Off" ? "var(--text-secondary)" : "var(--accent-cyan)") : "var(--text-tertiary)",
               fontSize: 10, fontWeight: activePreset === name ? 700 : 400,
@@ -79,7 +79,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
           ))}
         </div>
         {/* Auto-Level (AGC) toggle — prominent, one-click */}
-      <div style={{ padding: "10px 12px", borderRadius: 10, background: settings.autoLevelEnabled ? "rgba(52,211,153,0.08)" : "var(--bg-tertiary)", border: `1px solid ${settings.autoLevelEnabled ? "rgba(52,211,153,0.25)" : "var(--border-primary)"}`, transition: "all 0.2s" }}>
+      <div style={{ padding: "10px 12px", borderRadius: 0, background: settings.autoLevelEnabled ? "rgba(52,211,153,0.08)" : "var(--bg-tertiary)", border: `1px solid ${settings.autoLevelEnabled ? "rgba(52,211,153,0.25)" : "var(--border-primary)"}`, transition: "all 0.2s" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: settings.autoLevelEnabled ? "var(--accent-green)" : "var(--text-primary)" }}>
@@ -92,7 +92,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
             </div>
           </div>
           <button onClick={() => updateSetting("autoLevelEnabled", !settings.autoLevelEnabled)} style={{
-            width: 44, height: 24, borderRadius: 12, border: "none",
+            width: 44, height: 24, borderRadius: 0, border: "none",
             background: settings.autoLevelEnabled ? "var(--accent-green)" : "var(--bg-secondary)",
             cursor: "pointer", position: "relative" as const, transition: "background 0.2s", flexShrink: 0,
           }}>
@@ -116,7 +116,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
             {/* AGC gain meter */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
               <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 64, flexShrink: 0 }}>AGC gain</span>
-              <div style={{ flex: 1, height: 4, borderRadius: 2, background: "var(--bg-secondary)", overflow: "hidden", position: "relative" as const }}>
+              <div style={{ flex: 1, height: 4, borderRadius: 0, background: "var(--bg-secondary)", overflow: "hidden", position: "relative" as const }}>
                 {/* Center line */}
                 <div style={{ position: "absolute" as const, left: "50%", top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.15)" }} />
                 {/* Gain bar from center */}
@@ -141,9 +141,9 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
         {settings.compEnabled && activePreset !== "Off" && (
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 20, textAlign: "right" as const }}>GR</span>
-            <div style={{ flex: 1, height: 3, borderRadius: 2, background: "var(--bg-tertiary)", overflow: "hidden" }}>
+            <div style={{ flex: 1, height: 3, borderRadius: 0, background: "var(--bg-tertiary)", overflow: "hidden" }}>
               <div style={{
-                height: "100%", borderRadius: 2,
+                height: "100%", borderRadius: 0,
                 width: `${Math.min(100, Math.abs(gainReduction) * 4)}%`,
                 background: Math.abs(gainReduction) > 10 ? "#ef4444" : Math.abs(gainReduction) > 6 ? "#fbbf24" : "#34d399",
                 transition: "width 0.1s, background 0.2s",
@@ -180,7 +180,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
         <div style={{ display: "flex", gap: 6 }}>
           {PRESET_NAMES.map(name => (
             <button key={name} onClick={() => applyPreset(name)} style={{
-              flex: 1, padding: "8px 4px", borderRadius: 9,
+              flex: 1, padding: "8px 4px", borderRadius: 0,
               background: activePreset === name
                 ? name === "Off" ? "var(--bg-tertiary)" : "rgba(56,189,248,0.12)"
                 : "var(--bg-tertiary)",
@@ -198,7 +198,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
       </div>
 
       {/* Auto-Level (AGC) toggle — prominent, one-click */}
-      <div style={{ padding: "10px 12px", borderRadius: 10, background: settings.autoLevelEnabled ? "rgba(52,211,153,0.08)" : "var(--bg-tertiary)", border: `1px solid ${settings.autoLevelEnabled ? "rgba(52,211,153,0.25)" : "var(--border-primary)"}`, transition: "all 0.2s" }}>
+      <div style={{ padding: "10px 12px", borderRadius: 0, background: settings.autoLevelEnabled ? "rgba(52,211,153,0.08)" : "var(--bg-tertiary)", border: `1px solid ${settings.autoLevelEnabled ? "rgba(52,211,153,0.25)" : "var(--border-primary)"}`, transition: "all 0.2s" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: 12, fontWeight: 700, color: settings.autoLevelEnabled ? "var(--accent-green)" : "var(--text-primary)" }}>
@@ -211,7 +211,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
             </div>
           </div>
           <button onClick={() => updateSetting("autoLevelEnabled", !settings.autoLevelEnabled)} style={{
-            width: 44, height: 24, borderRadius: 12, border: "none",
+            width: 44, height: 24, borderRadius: 0, border: "none",
             background: settings.autoLevelEnabled ? "var(--accent-green)" : "var(--bg-secondary)",
             cursor: "pointer", position: "relative" as const, transition: "background 0.2s", flexShrink: 0,
           }}>
@@ -235,7 +235,7 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
             {/* AGC gain meter */}
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
               <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 64, flexShrink: 0 }}>AGC gain</span>
-              <div style={{ flex: 1, height: 4, borderRadius: 2, background: "var(--bg-secondary)", overflow: "hidden", position: "relative" as const }}>
+              <div style={{ flex: 1, height: 4, borderRadius: 0, background: "var(--bg-secondary)", overflow: "hidden", position: "relative" as const }}>
                 {/* Center line */}
                 <div style={{ position: "absolute" as const, left: "50%", top: 0, bottom: 0, width: 1, background: "rgba(255,255,255,0.15)" }} />
                 {/* Gain bar from center */}
@@ -264,9 +264,9 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
             {gainReduction < 0 ? `${gainReduction.toFixed(1)} dB` : "0.0 dB"}
           </span>
         </div>
-        <div style={{ height: 6, borderRadius: 3, background: "var(--bg-tertiary)", overflow: "hidden" }}>
+        <div style={{ height: 6, borderRadius: 0, background: "var(--bg-tertiary)", overflow: "hidden" }}>
           <div style={{
-            height: "100%", borderRadius: 3,
+            height: "100%", borderRadius: 0,
             width: `${Math.min(100, Math.abs(gainReduction) * 4)}%`,
             background: Math.abs(gainReduction) > 10 ? "#ef4444" : Math.abs(gainReduction) > 6 ? "#fbbf24" : "#34d399",
             transition: "width 0.08s linear",
@@ -326,12 +326,12 @@ function Section({ label, enabled, onToggle, alwaysOn, children }: {
   label: string; enabled: boolean; onToggle?: (v: boolean) => void; alwaysOn?: boolean; children: React.ReactNode;
 }) {
   return (
-    <div style={{ padding: "10px 12px", borderRadius: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", opacity: !enabled && !alwaysOn ? 0.5 : 1, transition: "opacity 0.2s" }}>
+    <div style={{ padding: "10px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", opacity: !enabled && !alwaysOn ? 0.5 : 1, transition: "opacity 0.2s" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: enabled || alwaysOn ? 10 : 0 }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "0.02em" }}>{label}</span>
         {!alwaysOn && onToggle && (
           <button onClick={() => onToggle(!enabled)} style={{
-            width: 32, height: 18, borderRadius: 9, border: "none",
+            width: 32, height: 18, borderRadius: 0, border: "none",
             background: enabled ? "var(--accent-cyan)" : "var(--bg-secondary)",
             cursor: "pointer", position: "relative" as const, transition: "background 0.2s",
             flexShrink: 0,

@@ -665,7 +665,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
                     onMouseDown={e => e.stopPropagation()}
                     onClick={e => { e.stopPropagation(); setTracks(p => p.map(tr => tr.id === t.id ? { ...tr, muted: !tr.muted } : tr)); }}
                     style={{
-                      fontSize: 7, padding: "1px 4px", borderRadius: 3, border: "none",
+                      fontSize: 7, padding: "1px 4px", borderRadius: 0, border: "none",
                       background: t.muted ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.06)",
                       color: t.muted ? "#ef4444" : "rgba(255,255,255,0.3)",
                       cursor: "pointer", fontWeight: 700,
@@ -684,7 +684,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
                       position: "absolute" as const, left: LABEL_W, top: 0, right: 0, height: TRACK_H,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       border: `1px dashed ${c.border}`,
-                      borderRadius: 6, margin: "0 8px",
+                      borderRadius: 0, margin: "0 8px",
                       background: c.dim,
                       opacity: 0.5,
                     }}
@@ -703,7 +703,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
                       position: "absolute" as const,
                       left: leftPx, top: 4,
                       width: widthPx, height: TRACK_H - 8,
-                      borderRadius: 5,
+                      borderRadius: 0,
                       border: `1px solid ${c.border}`,
                       background: c.dim,
                       cursor: dragState?.trackId === t.id ? "grabbing" : "grab",
@@ -815,7 +815,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
               color: "#ef4444", fontFamily: "monospace",
               whiteSpace: "nowrap" as const,
               background: "rgba(8,8,14,0.8)",
-              padding: "1px 3px", borderRadius: 2,
+              padding: "1px 3px", borderRadius: 0,
             }}>
               {fmtMs(playheadMs)}
             </div>
@@ -858,7 +858,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
 // ── Shared button style ────────────────────────────────────────
 
 const btnStyle: React.CSSProperties = {
-  padding: "5px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600,
+  padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600,
   background: "var(--bg-tertiary)", color: "var(--text-secondary)",
   border: "1px solid var(--border-primary)", cursor: "pointer",
   display: "flex", alignItems: "center", gap: 4,

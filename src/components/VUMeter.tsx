@@ -269,8 +269,8 @@ export default function VUMeter({
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", borderRadius: 8 }}>
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", borderRadius: 8 }} />
+    <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", borderRadius: 0 }}>
+      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", borderRadius: 0 }} />
     </div>
   );
 }

@@ -28,7 +28,7 @@ export default function DMCANotice() {
       display: "flex", alignItems: "center", justifyContent: "center", padding: 20
     }}>
       <div style={{
-        background: "var(--bg-secondary)", borderRadius: 16, padding: 32, maxWidth: 540,
+        background: "var(--bg-secondary)", borderRadius: 0, padding: 32, maxWidth: 540,
         border: "1px solid var(--border-primary)", boxShadow: "0 24px 60px rgba(0,0,0,0.5)"
       }}>
         <div style={{ marginBottom: 12, display: "flex" }}>
@@ -40,7 +40,7 @@ export default function DMCANotice() {
         <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 16 }}>
           If you broadcast music publicly — over the internet or on-air — you are required by law to obtain performance licenses from the relevant PROs (Performing Rights Organizations).
         </p>
-        <div style={{ background: "var(--bg-tertiary)", borderRadius: 10, padding: 14, marginBottom: 16, border: "1px solid var(--border-primary)" }}>
+        <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: 14, marginBottom: 16, border: "1px solid var(--border-primary)" }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Required licenses for US broadcasters:</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {[
@@ -61,11 +61,11 @@ export default function DMCANotice() {
         </p>
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={acknowledge} style={{
-            flex: 1, padding: "10px", borderRadius: 8, fontSize: 13, fontWeight: 600,
+            flex: 1, padding: "10px", borderRadius: 0, fontSize: 13, fontWeight: 600,
             background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer"
           }}>I Understand</button>
           <a href="https://www.ascap.com/music-users/music-license" target="_blank" rel="noopener noreferrer"
-            style={{ padding: "10px 16px", borderRadius: 8, fontSize: 13, fontWeight: 400,
+            style={{ padding: "10px 16px", borderRadius: 0, fontSize: 13, fontWeight: 400,
               background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)",
               cursor: "pointer", textDecoration: "none" }}>Learn More ↗</a>
         </div>

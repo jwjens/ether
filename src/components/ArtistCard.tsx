@@ -100,7 +100,7 @@ export default function ArtistCard({
           position: "absolute",
           top: 8, left: 8,
           padding: "2px 8px",
-          borderRadius: 20,
+          borderRadius: 0,
           background: "rgba(0,0,0,0.2)",
           backdropFilter: "blur(8px)",
           fontSize: 8,

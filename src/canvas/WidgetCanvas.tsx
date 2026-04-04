@@ -176,7 +176,7 @@ function WidgetShell({ instance, engine, deckStates, audioEngine, selected, onSe
         height: `${(instance.h / GRID_ROWS) * 100}%`,
         boxSizing: "border-box" as const,
         border: "none",
-        borderRadius: 14,
+        borderRadius: 0,
         overflow: "hidden",
         zIndex: selected ? 10 : 1,
         background: "var(--bg-primary)",
@@ -189,7 +189,7 @@ function WidgetShell({ instance, engine, deckStates, audioEngine, selected, onSe
           onMouseDown={e => { e.stopPropagation(); handleDragStart(e); }}
           style={{
             position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)",
-            zIndex: 20, padding: "3px 8px", borderRadius: 6,
+            zIndex: 20, padding: "3px 8px", borderRadius: 0,
             background: "rgba(0,0,0,0.5)", backdropFilter: "blur(8px)",
             cursor: "grab", display: "flex", alignItems: "center", gap: 1,
             opacity: 0.7, transition: "opacity 0.15s",
@@ -271,7 +271,7 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
           onKeyDown={e => e.key === "Enter" && handleSave()}
           placeholder="Layout name..."
           style={{
-            padding: "4px 8px", borderRadius: 7, fontSize: 11, fontWeight: 600,
+            padding: "4px 8px", borderRadius: 0, fontSize: 11, fontWeight: 600,
             background: "rgba(255,255,255,0.1)",
             border: "1px solid rgba(255,255,255,0.15)",
             color: "rgba(255,255,255,0.9)",
@@ -283,7 +283,7 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
       <button
         onClick={handleSave}
         style={{
-          padding: "4px 10px", borderRadius: 7,
+          padding: "4px 10px", borderRadius: 0,
           background: saving ? "var(--accent-green)" : "rgba(56,189,248,0.25)",
           border: "1px solid rgba(56,189,248,0.4)",
           color: saving ? "#000" : "var(--accent-cyan)",
@@ -295,14 +295,14 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
       {engine.layouts.length > 0 && (
         <button
           onClick={() => setShowLayouts(p => !p)}
-          style={{ padding: "4px 8px", borderRadius: 7, background: "rgba(255,255,255,0.08)", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 10, cursor: "pointer" }}
+          style={{ padding: "4px 8px", borderRadius: 0, background: "rgba(255,255,255,0.08)", border: "none", color: "rgba(255,255,255,0.5)", fontSize: 10, cursor: "pointer" }}
         >▾</button>
       )}
       {showLayouts && (
         <div style={{
           position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 999,
           background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
-          borderRadius: 10, padding: 6, minWidth: 200,
+          borderRadius: 0, padding: 6, minWidth: 200,
           boxShadow: "0 8px 24px rgba(0,0,0,0.4)",
         }}>
           <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-tertiary)", padding: "4px 8px 6px", textTransform: "uppercase" as const }}>Saved Layouts</div>
@@ -311,7 +311,7 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
               <button
                 onClick={() => { engine.loadLayout(l.id); setShowLayouts(false); }}
                 style={{
-                  flex: 1, textAlign: "left" as const, padding: "6px 8px", borderRadius: 7,
+                  flex: 1, textAlign: "left" as const, padding: "6px 8px", borderRadius: 0,
                   background: l.name === engine.activeLayoutName ? "rgba(56,189,248,0.12)" : "none",
                   border: "none", color: l.name === engine.activeLayoutName ? "var(--accent-cyan)" : "var(--text-primary)",
                   fontSize: 12, fontWeight: l.name === engine.activeLayoutName ? 700 : 400, cursor: "pointer",
@@ -319,7 +319,7 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
               >{l.name}</button>
               <button
                 onClick={() => engine.deleteLayout(l.id)}
-                style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12, padding: "4px 6px", borderRadius: 5 }}
+                style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12, padding: "4px 6px", borderRadius: 0 }}
                 onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "var(--accent-red)"}
                 onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
               >✕</button>
@@ -370,7 +370,7 @@ function WidgetPicker({ engine, onClose }: { engine: CanvasEngineState; onClose:
                     disabled={!canAdd}
                     style={{
                       display: "flex", alignItems: "center", gap: 10,
-                      padding: "10px 12px", borderRadius: 10,
+                      padding: "10px 12px", borderRadius: 0,
                       background: canAdd ? "var(--bg-tertiary)" : "transparent",
                       border: `1px solid ${canAdd ? "var(--border-primary)" : "transparent"}`,
                       color: canAdd ? "var(--text-primary)" : "var(--text-tertiary)",
@@ -382,7 +382,7 @@ function WidgetPicker({ engine, onClose }: { engine: CanvasEngineState; onClose:
                     onMouseEnter={e => canAdd && ((e.currentTarget as HTMLElement).style.background = "var(--bg-hover)")}
                     onMouseLeave={e => canAdd && ((e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)")}
                   >
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: canAdd ? "var(--accent-cyan)" + "20" : "var(--bg-secondary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 0, background: canAdd ? "var(--accent-cyan)" + "20" : "var(--bg-secondary)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={canAdd ? "var(--accent-cyan)" : "var(--text-tertiary)"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d={def.icon} />
                       </svg>
@@ -392,7 +392,7 @@ function WidgetPicker({ engine, onClose }: { engine: CanvasEngineState; onClose:
                       <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{def.description}</div>
                     </div>
                     {def.proOnly && (
-                      <span style={{ fontSize: 7, fontWeight: 800, color: "#a78bfa", background: "rgba(167,139,250,0.15)", padding: "2px 5px", borderRadius: 4, letterSpacing: "0.08em", flexShrink: 0 }}>PRO</span>
+                      <span style={{ fontSize: 7, fontWeight: 800, color: "#a78bfa", background: "rgba(167,139,250,0.15)", padding: "2px 5px", borderRadius: 0, letterSpacing: "0.08em", flexShrink: 0 }}>PRO</span>
                     )}
                     {!canAdd && (
                       <span style={{ fontSize: 7, color: "var(--text-tertiary)", flexShrink: 0 }}>Added</span>
@@ -487,7 +487,7 @@ export default function WidgetCanvas({ canvasEngine, deckStates, audioEngine }: 
             <div style={{ fontSize: 12, color: "var(--text-tertiary)", opacity: 0.6 }}>Click the settings icon to add widgets</div>
             <button
               onClick={() => { setEditMode(true); setShowPicker(true); }}
-              style={{ padding: "8px 20px", borderRadius: 10, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginTop: 4 }}
+              style={{ padding: "8px 20px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginTop: 4 }}
             >+ Add your first widget</button>
           </div>
         )}

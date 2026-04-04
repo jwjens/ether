@@ -101,7 +101,7 @@ export function UpgradePrompt({ feature, required, compact = false, onUpgrade }:
           fontSize: 9, fontWeight: 800, letterSpacing: "0.1em",
           color, background: color + "18",
           border: `1px solid ${color}35`,
-          borderRadius: 5, padding: "2px 7px",
+          borderRadius: 0, padding: "2px 7px",
           cursor: "pointer",
         }} onClick={handleUpgrade}>
           {label.toUpperCase()} FEATURE
@@ -117,12 +117,12 @@ export function UpgradePrompt({ feature, required, compact = false, onUpgrade }:
       padding: "40px 32px", gap: 16,
       background: "var(--bg-secondary)",
       border: `1px solid ${color}25`,
-      borderRadius: 16,
+      borderRadius: 0,
       textAlign: "center" as const,
     }}>
       {/* Lock icon */}
       <div style={{
-        width: 52, height: 52, borderRadius: 14,
+        width: 52, height: 52, borderRadius: 0,
         background: color + "15",
         border: `1px solid ${color}30`,
         display: "flex", alignItems: "center", justifyContent: "center",
@@ -145,7 +145,7 @@ export function UpgradePrompt({ feature, required, compact = false, onUpgrade }:
       <button
         onClick={handleUpgrade}
         style={{
-          padding: "9px 24px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+          padding: "9px 24px", borderRadius: 0, fontSize: 12, fontWeight: 700,
           background: color, color: required === "pro" ? "#000" : "#fff",
           border: "none", cursor: "pointer",
           boxShadow: `0 0 20px ${color}40`,

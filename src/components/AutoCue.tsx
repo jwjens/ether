@@ -335,7 +335,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
           { label: "Already Cued", value: cued, color: "var(--accent-green)" },
           { label: "Need Cues", value: uncued, color: "var(--accent-amber)" },
         ].map(s => (
-          <div key={s.label} style={{ flex: 1, padding: "10px 14px", borderRadius: 10, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+          <div key={s.label} style={{ flex: 1, padding: "10px 14px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
             <div style={{ fontSize: 22, fontWeight: 800, color: s.color, fontFamily: "'DM Mono', monospace" }}>{s.value}</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{s.label}</div>
           </div>
@@ -352,7 +352,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
               ["id3-only", "Read ID3 tags only (no analysis)", "Best for Promo Only libraries"],
               ["analyze-all", "Analyze all songs with audio AI", `${songs.length} songs — thorough but slow`],
             ] as const).map(([val, label, sub]) => (
-              <label key={val} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${mode === val ? "var(--accent-cyan)" : "var(--border-primary)"}`, background: mode === val ? "rgba(56,189,248,0.06)" : "var(--bg-secondary)", cursor: "pointer" }}>
+              <label key={val} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 0, border: `1px solid ${mode === val ? "var(--accent-cyan)" : "var(--border-primary)"}`, background: mode === val ? "rgba(56,189,248,0.06)" : "var(--bg-secondary)", cursor: "pointer" }}>
                 <input type="radio" name="mode" value={val} checked={mode === val} onChange={() => setMode(val)} style={{ marginTop: 2, accentColor: "var(--accent-cyan)" }} />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{label}</div>
@@ -362,17 +362,17 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
             ))}
           </div>
 
-          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.2)" }}>
+          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 0, background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.2)" }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: "var(--accent-cyan)", marginBottom: 4, letterSpacing: "0.08em" }}>PROMO ONLY USERS</div>
             <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-              Promo Only files embed <code style={{ background: "var(--bg-tertiary)", padding: "1px 4px", borderRadius: 3, fontSize: 10 }}>TXXX:Intro</code> and <code style={{ background: "var(--bg-tertiary)", padding: "1px 4px", borderRadius: 3, fontSize: 10 }}>TXXX:Outro</code> ID3 tags with exact timing.
+              Promo Only files embed <code style={{ background: "var(--bg-tertiary)", padding: "1px 4px", borderRadius: 0, fontSize: 10 }}>TXXX:Intro</code> and <code style={{ background: "var(--bg-tertiary)", padding: "1px 4px", borderRadius: 0, fontSize: 10 }}>TXXX:Outro</code> ID3 tags with exact timing.
               Use <strong>"Read ID3 tags only"</strong> for instant cue detection with zero audio processing.
             </div>
           </div>
 
           <button
             onClick={run}
-            style={{ width: "100%", marginTop: 14, padding: "12px", borderRadius: 10, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", letterSpacing: "0.02em" }}
+            style={{ width: "100%", marginTop: 14, padding: "12px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", letterSpacing: "0.02em" }}
           >
             ▶ Start Auto-Cue
           </button>
@@ -386,8 +386,8 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
             <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>Processing...</span>
             <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{progress}%</span>
           </div>
-          <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{ height: "100%", width: progress + "%", background: "var(--accent-cyan)", borderRadius: 3, transition: "width 0.3s" }} />
+          <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ height: "100%", width: progress + "%", background: "var(--accent-cyan)", borderRadius: 0, transition: "width 0.3s" }} />
           </div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{current}</div>
         </div>
@@ -397,12 +397,12 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
       {status === "done" && (
         <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            {promoCount > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6, background: "rgba(52,211,153,0.15)", color: "#34d399" }}>✓ {promoCount} Promo Only tags</span>}
-            {id3Count > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6, background: "rgba(56,189,248,0.15)", color: "var(--accent-cyan)" }}>✓ {id3Count} ID3 tags</span>}
-            {analyzedCount > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 6, background: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>✓ {analyzedCount} analyzed</span>}
+            {promoCount > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(52,211,153,0.15)", color: "#34d399" }}>✓ {promoCount} Promo Only tags</span>}
+            {id3Count > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(56,189,248,0.15)", color: "var(--accent-cyan)" }}>✓ {id3Count} ID3 tags</span>}
+            {analyzedCount > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>✓ {analyzedCount} analyzed</span>}
           </div>
           <button onClick={() => { setStatus("idle"); setResults([]); setProgress(0); }}
-            style={{ padding: "8px 16px", borderRadius: 8, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>
+            style={{ padding: "8px 16px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>
             Run Again
           </button>
         </div>
@@ -416,7 +416,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
               const sl = sourceLabel(r.source);
               return (
                 <div key={r.songId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: "1px solid var(--border-primary)" }}>
-                  <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: sl.color + "20", color: sl.color, flexShrink: 0, letterSpacing: "0.06em" }}>{sl.label}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 0, background: sl.color + "20", color: sl.color, flexShrink: 0, letterSpacing: "0.06em" }}>{sl.label}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{r.title}</div>
                   </div>

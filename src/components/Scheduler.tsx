@@ -96,7 +96,7 @@ function ShowsTab() {
       </div>
 
       {/* Timeline */}
-      <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
+      <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3">
         <div className="text-[10px] text-zinc-500 uppercase mb-1">24-Hour Timeline</div>
         <div className="relative h-10 bg-zinc-800 rounded overflow-hidden flex">
           {HOURS.map(h => (
@@ -116,7 +116,7 @@ function ShowsTab() {
 
       {/* Edit form */}
       {editing && (
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
+        <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3 space-y-2">
           <div className="grid grid-cols-4 gap-2">
             <input className="col-span-2 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Show name" value={editing.name || ""} onChange={e => setEditing({...editing, name: e.target.value})} />
             <select className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editing.start_hour || 0} onChange={e => setEditing({...editing, start_hour: parseInt(e.target.value)})}>
@@ -140,7 +140,7 @@ function ShowsTab() {
       {/* Show list with clock dropdowns */}
       <div className="space-y-1.5">
         {shows.map(s => (
-          <div key={s.id} className="bg-zinc-900 rounded-lg border border-zinc-800 p-3">
+          <div key={s.id} className="bg-zinc-900 rounded-none border border-zinc-800 p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: s.color || "#444" }}></div>
@@ -239,7 +239,7 @@ function CategoriesTab() {
           <button
             onClick={scanDurations}
             disabled={scanning}
-            style={{ padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: scanning ? "default" : "pointer", background: "rgba(251,191,36,0.12)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.3)", opacity: scanning ? 0.6 : 1 }}
+            style={{ padding: "4px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: scanning ? "default" : "pointer", background: "rgba(251,191,36,0.12)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.3)", opacity: scanning ? 0.6 : 1 }}
           >
             {scanning ? "Scanning..." : "⏱ Scan Durations"}
           </button>
@@ -250,7 +250,7 @@ function CategoriesTab() {
         <strong>How rotation works:</strong> A = Power Current (heavy rotation, newest hits). B = Secondary (medium rotation). C = Recurrent (familiar favorites). D = Gold (classic library).
       </div>
       {editing && (
-        <div className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 space-y-2">
+        <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3 space-y-2">
           <div className="grid grid-cols-5 gap-2">
             <input className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Code (A)" value={editing.code || ""} onChange={e => setEditing({...editing, code: e.target.value})} />
             <input className="col-span-2 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Name" value={editing.name || ""} onChange={e => setEditing({...editing, name: e.target.value})} />
@@ -263,7 +263,7 @@ function CategoriesTab() {
           </div>
         </div>
       )}
-      <div className="bg-zinc-900 rounded-lg border border-zinc-800 overflow-hidden">
+      <div className="bg-zinc-900 rounded-none border border-zinc-800 overflow-hidden">
         <table className="w-full text-xs">
           <thead><tr className="text-left text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
             <th className="px-3 py-2 w-8">Color</th>
@@ -461,7 +461,7 @@ function TalkPicker({ onAdd, onBack }: {
           { l: "2:00", m: 2 },   { l: "3:00", m: 3 },
         ].map(({ l, m }) => (
           <button key={l} onClick={() => fire(m, l + " talk")} style={{
-            flex: 1, padding: "8px 4px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+            flex: 1, padding: "8px 4px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             cursor: "pointer", background: "rgba(124,58,237,0.2)",
             border: "1px solid rgba(124,58,237,0.4)", color: "#c4b5fd",
             transition: "all 0.1s",
@@ -473,13 +473,13 @@ function TalkPicker({ onAdd, onBack }: {
       </div>
 
       {/* Custom duration row */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 8, background: "rgba(167,139,250,0.06)", border: "1px solid rgba(167,139,250,0.2)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 0, background: "rgba(167,139,250,0.06)", border: "1px solid rgba(167,139,250,0.2)" }}>
         <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(167,139,250,0.7)", letterSpacing: "0.08em", flexShrink: 0 }}>CUSTOM</span>
         <input
           type="number" min="0" max="59" placeholder="0"
           value={customMin}
           onChange={e => setCustomMin(e.target.value)}
-          style={{ width: 44, padding: "5px 8px", borderRadius: 6, fontSize: 13, fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+          style={{ width: 44, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
         />
         <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 700 }}>m</span>
         <input
@@ -487,13 +487,13 @@ function TalkPicker({ onAdd, onBack }: {
           value={customSec}
           onChange={e => setCustomSec(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") fireCustom(); }}
-          style={{ width: 44, padding: "5px 8px", borderRadius: 6, fontSize: 13, fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+          style={{ width: 44, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
         />
         <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 700 }}>s</span>
         <button
           onClick={fireCustom}
           disabled={!customMin && !customSec}
-          style={{ marginLeft: 4, padding: "5px 14px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "#a78bfa", border: "none", color: "#000", opacity: (!customMin && !customSec) ? 0.4 : 1, transition: "opacity 0.1s" }}
+          style={{ marginLeft: 4, padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "#a78bfa", border: "none", color: "#000", opacity: (!customMin && !customSec) ? 0.4 : 1, transition: "opacity 0.1s" }}
         >Add</button>
       </div>
 
@@ -514,7 +514,7 @@ function SegmentPicker({ cats, onAdd, onClose }: {
     <div style={{
       position: "absolute" as const, bottom: "calc(100% + 8px)", left: 0, right: 0,
       zIndex: 100, background: "var(--bg-secondary)",
-      border: "1px solid var(--border-primary)", borderRadius: 10,
+      border: "1px solid var(--border-primary)", borderRadius: 0,
       padding: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
@@ -532,7 +532,7 @@ function SegmentPicker({ cats, onAdd, onClose }: {
             { label: "Talk Break", color: "#a78bfa", next: "talk" as const },
           ].map(b => (
             <button key={b.label} onClick={() => setStep(b.next)} style={{
-              flex: 1, padding: "10px 6px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+              flex: 1, padding: "10px 6px", borderRadius: 0, fontSize: 12, fontWeight: 700,
               cursor: "pointer", background: b.color + "18", border: "1px solid " + b.color + "40", color: b.color,
             }}>{b.label}</button>
           ))}
@@ -544,7 +544,7 @@ function SegmentPicker({ cats, onAdd, onClose }: {
           <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5, marginBottom: 8 }}>
             {cats.map(c => (
               <button key={c.id} onClick={() => onAdd("music", c.id, 3.5, c.name || c.code)} style={{
-                padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
                 background: (c.color || "#444") + "25", border: "1px solid " + (c.color || "#444") + "55",
                 color: "#fff",
               }}>
@@ -562,7 +562,7 @@ function SegmentPicker({ cats, onAdd, onClose }: {
           <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
             {[{l:":30",m:0.5},{l:"1:00",m:1},{l:"2:00",m:2},{l:"3:00",m:3}].map(({l,m}) => (
               <button key={l} onClick={() => onAdd("spot_break", null, m, l + " break")} style={{
-                flex: 1, padding: "8px 4px", borderRadius: 7, fontSize: 12, fontWeight: 700,
+                flex: 1, padding: "8px 4px", borderRadius: 0, fontSize: 12, fontWeight: 700,
                 cursor: "pointer", background: "rgba(185,28,28,0.2)", border: "1px solid rgba(185,28,28,0.4)", color: "#fca5a5",
               }}>{l}</button>
             ))}
@@ -787,9 +787,9 @@ function ClocksTab() {
           <input placeholder="New clock name..." value={newName}
             onChange={e => setNewName(e.target.value)}
             onKeyDown={e => e.key === "Enter" && createClock()}
-            style={{ padding: "7px 12px", borderRadius: 9, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: 160 }}
+            style={{ padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: 160 }}
           />
-          <button onClick={createClock} style={{ padding: "7px 14px", borderRadius: 9, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+          <button onClick={createClock} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
             Create
           </button>
         </div>
@@ -805,7 +805,7 @@ function ClocksTab() {
               <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 3 }}>
                 {confirmDelete === c.id ? (
                   // Inline confirm row
-                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 7, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)" }}>
+                  <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 0, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)" }}>
                     <span style={{ fontSize: 10, color: "#ef4444", flex: 1 }}>Delete?</span>
                     <button onClick={() => deleteClock(c.id)} style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", background: "none", border: "none", cursor: "pointer", padding: "1px 4px" }}>Yes</button>
                     <button onClick={() => setConfirmDelete(null)} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "1px 4px" }}>No</button>
@@ -813,7 +813,7 @@ function ClocksTab() {
                 ) : (
                   <>
                     <button onClick={() => setSelected(c.id)} style={{
-                      flex: 1, padding: "7px 10px", borderRadius: 7, fontSize: 12,
+                      flex: 1, padding: "7px 10px", borderRadius: 0, fontSize: 12,
                       fontWeight: selected === c.id ? 700 : 400, textAlign: "left" as const, cursor: "pointer",
                       background: selected === c.id ? "rgba(56,189,248,0.12)" : "var(--bg-secondary)",
                       border: selected === c.id ? "1px solid rgba(56,189,248,0.3)" : "1px solid var(--border-primary)",
@@ -836,9 +836,9 @@ function ClocksTab() {
           <div style={{ flex: 1, minWidth: 0 }}>
 
             {/* Time bar */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "7px 12px", background: "var(--bg-secondary)", borderRadius: 8, border: "1px solid var(--border-primary)" }}>
-              <div style={{ flex: 1, height: 5, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: Math.min(totalMin/60*100, 100)+"%", background: overrun ? "#ef4444" : totalMin >= 55 ? "#34d399" : "var(--accent-blue)", borderRadius: 3, transition: "width 0.2s" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "7px 12px", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
+              <div style={{ flex: 1, height: 5, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: Math.min(totalMin/60*100, 100)+"%", background: overrun ? "#ef4444" : totalMin >= 55 ? "#34d399" : "var(--accent-blue)", borderRadius: 0, transition: "width 0.2s" }} />
               </div>
               <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'DM Mono', monospace", whiteSpace: "nowrap" as const }}>
                 {totalMin.toFixed(1)} / 60 min
@@ -854,7 +854,7 @@ function ClocksTab() {
             </div>
 
             {/* ── Spreadsheet table ── */}
-            <div style={{ border: "1px solid var(--border-primary)", borderRadius: 8, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", marginBottom: 8 }}>
 
               {/* Column headers */}
               <div style={{
@@ -939,7 +939,7 @@ function ClocksTab() {
                     {/* Type badge */}
                     <span style={{
                       fontSize: 9, fontWeight: 800, letterSpacing: "0.07em",
-                      padding: "2px 5px", borderRadius: 3,
+                      padding: "2px 5px", borderRadius: 0,
                       background: slotColor(s) + "20", color: slotColor(s),
                       whiteSpace: "nowrap" as const,
                     }}>
@@ -969,7 +969,7 @@ function ClocksTab() {
                             (e.target as HTMLInputElement).blur();
                           }
                         }}
-                        style={{ width: 48, padding: "2px 5px", borderRadius: 5, fontSize: 11, textAlign: "right" as const, background: "var(--bg-tertiary)", border: "1px solid #a78bfa", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}
+                        style={{ width: 48, padding: "2px 5px", borderRadius: 0, fontSize: 11, textAlign: "right" as const, background: "var(--bg-tertiary)", border: "1px solid #a78bfa", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}
                       />
                     ) : (
                       <span style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", fontWeight: 600, color: "var(--text-secondary)", textAlign: "right" as const }}>
@@ -1033,7 +1033,7 @@ function ClocksTab() {
                     onClick={() => handleAdd("music", cat.id, 3.5, cat.name || cat.code)}
                     title={cat.name}
                     style={{
-                      padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800,
+                      padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800,
                       cursor: "pointer", letterSpacing: "0.05em",
                       background: (cat.color || "#444") + "22",
                       border: "1px solid " + (cat.color || "#444") + "55",
@@ -1054,19 +1054,19 @@ function ClocksTab() {
                 ))}
                 <button
                   onClick={() => handleAdd("spot_break", null, 2, "2:00 break")}
-                  style={{ padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "#ef4444" }}
+                  style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "#ef4444" }}
                 >
                   BRK
                 </button>
                 <div style={{ position: "relative" as const }}>
                   <button
                     onClick={() => { setShowTalkPicker(p => !p); setShowPicker(false); }}
-                    style={{ padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 800, cursor: "pointer", background: showTalkPicker ? "rgba(167,139,250,0.3)" : "rgba(167,139,250,0.12)", border: `1px solid ${showTalkPicker ? "rgba(167,139,250,0.6)" : "rgba(167,139,250,0.3)"}`, color: "#a78bfa" }}
+                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: showTalkPicker ? "rgba(167,139,250,0.3)" : "rgba(167,139,250,0.12)", border: `1px solid ${showTalkPicker ? "rgba(167,139,250,0.6)" : "rgba(167,139,250,0.3)"}`, color: "#a78bfa" }}
                   >
                     TALK
                   </button>
                   {showTalkPicker && (
-                    <div style={{ position: "absolute" as const, bottom: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: 12, minWidth: 320, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                    <div style={{ position: "absolute" as const, bottom: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 320, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
                       <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>TALK BREAK DURATION</div>
                       <TalkPicker
                         onAdd={(type, catId, dur, label) => { handleAdd(type, catId, dur, label); setShowTalkPicker(false); }}
@@ -1086,7 +1086,7 @@ function ClocksTab() {
               <button
                 onClick={() => { setShowPicker(p => !p); if (!showPicker) loadAll(); }}
                 style={{
-                  width: "100%", padding: "9px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  width: "100%", padding: "9px", borderRadius: 0, fontSize: 12, fontWeight: 700,
                   background: showPicker ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)",
                   border: "1px dashed " + (showPicker ? "var(--accent-blue)" : "var(--border-secondary)"),
                   color: showPicker ? "var(--accent-blue)" : "var(--text-tertiary)", cursor: "pointer",

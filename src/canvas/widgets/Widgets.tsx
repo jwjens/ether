@@ -13,7 +13,7 @@ interface DeckProps extends BaseProps { deckStates: Record<string, DeckState | n
 
 export function QueueWidget({ instance, engine }: EngineProps) {
   return (
-    <div style={{ height: "100%", overflow: "hidden", background: "var(--bg-secondary)", borderRadius: 14, border: "1px solid var(--border-primary)" }}>
+    <div style={{ height: "100%", overflow: "hidden", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
       <UpNext queueLen={engine?.getQueue?.()?.length || 0} onQueueChange={() => {}} />
     </div>
   );
@@ -33,7 +33,7 @@ export function ClockWidget({ instance }: BaseProps) {
   return (
     <div style={{
       height: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-      background: "var(--bg-secondary)", borderRadius: 14, border: "1px solid var(--border-primary)",
+      background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)",
     }}>
       <LiveHourClock />
     </div>
@@ -52,7 +52,7 @@ export function NowPlayingWidget({ instance, deckStates }: DeckProps) {
   return (
     <div style={{
       height: "100%", padding: "14px 16px",
-      background: "var(--bg-secondary)", borderRadius: 14,
+      background: "var(--bg-secondary)", borderRadius: 0,
       border: "1px solid var(--border-primary)",
       display: "flex", flexDirection: "column" as const, justifyContent: "center", gap: 6,
       fontFamily: "'Inter', sans-serif",
@@ -61,8 +61,8 @@ export function NowPlayingWidget({ instance, deckStates }: DeckProps) {
       <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{title}</div>
       {artist && <div style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{artist}</div>}
       {dur > 0 && (
-        <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: pct + "%", background: "var(--accent-cyan)", borderRadius: 2, transition: "width 1s linear" }} />
+        <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: pct + "%", background: "var(--accent-cyan)", borderRadius: 0, transition: "width 1s linear" }} />
         </div>
       )}
     </div>
@@ -76,7 +76,7 @@ export function HistoryWidget({ instance }: BaseProps) {
       height: "100%", overflow: "hidden",
       display: "flex", alignItems: "center",
       background: "var(--bg-secondary)",
-      borderRadius: 14,
+      borderRadius: 0,
       border: "1px solid var(--border-primary)",
     }}>
       <SongHistoryStrip />
@@ -107,7 +107,7 @@ export function LogoWidget({ instance }: BaseProps) {
     <div style={{
       height: "100%",
       background: "var(--bg-secondary)",
-      borderRadius: 14,
+      borderRadius: 0,
       border: "1px solid var(--border-primary)",
       display: "flex", flexDirection: "column" as const,
       alignItems: "center", justifyContent: "center", gap: 8,
@@ -158,14 +158,14 @@ export function LibraryWidget({ instance, engine }: EngineProps) {
   const filtered = search ? songs.filter(s => s.title?.toLowerCase().includes(search.toLowerCase()) || s.artist_name?.toLowerCase().includes(search.toLowerCase())) : songs;
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" as const, background: "var(--bg-secondary)", borderRadius: 14, border: "1px solid var(--border-primary)", overflow: "hidden", fontFamily: "'Inter', sans-serif" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" as const, background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden", fontFamily: "'Inter', sans-serif" }}>
       {/* Search */}
       <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
           placeholder="Search songs..."
-          style={{ width: "100%", padding: "6px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }}
+          style={{ width: "100%", padding: "6px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }}
         />
       </div>
       {/* Song list */}
@@ -181,7 +181,7 @@ export function LibraryWidget({ instance, engine }: EngineProps) {
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.artist_name || "—"}</div>
             </div>
             <button onClick={e => { e.stopPropagation(); engine?.getDeck?.("A") && engine.loadToDeck?.("A", s.file_path, s.title, s.artist_name || ""); }}
-              style={{ padding: "3px 7px", borderRadius: 5, background: "rgba(56,189,248,0.15)", color: "var(--accent-cyan)", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>A</button>
+              style={{ padding: "3px 7px", borderRadius: 0, background: "rgba(56,189,248,0.15)", color: "var(--accent-cyan)", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>A</button>
           </div>
         ))}
       </div>

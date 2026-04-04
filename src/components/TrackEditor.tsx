@@ -13,6 +13,7 @@ interface Song {
   cue_out?: number;     // seconds
   intro_end?: number;   // seconds
   outro_start?: number; // seconds
+  is_explicit?: number; // 1 = explicit, 0 = clean
 }
 
 interface Props {
@@ -195,7 +196,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
           style={{
-            borderRadius: 16,
+            borderRadius: 0,
             border: `2px dashed ${dragOver ? "var(--accent-cyan)" : "var(--border-primary)"}`,
             background: dragOver ? "rgba(34,211,238,0.04)" : "var(--bg-secondary)",
             padding: "48px 32px",
@@ -210,8 +211,8 @@ function ImportPanel({ onImported }: ImportPanelProps) {
               <div style={{ width: 40, height: 40, borderRadius: "50%", border: "3px solid var(--accent-cyan)", borderTopColor: "transparent", animation: "spin 0.8s linear infinite" }} />
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{progress.file}</div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{progress.done + 1} of {progress.total}</div>
-              <div style={{ width: 200, height: 4, borderRadius: 2, background: "var(--bg-tertiary)", overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${((progress.done + 1) / progress.total) * 100}%`, background: "var(--accent-cyan)", borderRadius: 2, transition: "width 0.3s" }} />
+              <div style={{ width: 200, height: 4, borderRadius: 0, background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${((progress.done + 1) / progress.total) * 100}%`, background: "var(--accent-cyan)", borderRadius: 0, transition: "width 0.3s" }} />
               </div>
             </div>
           ) : (
@@ -225,13 +226,13 @@ function ImportPanel({ onImported }: ImportPanelProps) {
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
                 <button onClick={handleBrowse} style={{
-                  padding: "9px 22px", borderRadius: 10,
+                  padding: "9px 22px", borderRadius: 0,
                   background: "var(--accent-cyan)", border: "none",
                   color: "#000", fontSize: 12, fontWeight: 700,
                   cursor: "pointer", letterSpacing: "0.02em",
                 }}>Browse Files</button>
                 <button onClick={handleFolderScan} style={{
-                  padding: "9px 22px", borderRadius: 10,
+                  padding: "9px 22px", borderRadius: 0,
                   background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                   color: "var(--text-secondary)", fontSize: 12, fontWeight: 600,
                   cursor: "pointer",
@@ -243,7 +244,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
 
         {/* Error */}
         {error && (
-          <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12, color: "#ef4444" }}>
+          <div style={{ padding: "12px 16px", borderRadius: 0, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", fontSize: 12, color: "#ef4444" }}>
             {error}
           </div>
         )}
@@ -258,14 +259,14 @@ function ImportPanel({ onImported }: ImportPanelProps) {
               {imported.map(s => (
                 <div key={s.id} onClick={() => onImported(s)} style={{
                   display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 14px", borderRadius: 10,
+                  padding: "10px 14px", borderRadius: 0,
                   background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
                   cursor: "pointer", transition: "all 0.12s",
                 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-cyan)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
                 >
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: "var(--accent-cyan)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14 }}>🎵</div>
+                  <div style={{ width: 32, height: 32, borderRadius: 0, background: "var(--accent-cyan)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 14 }}>🎵</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
                     <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{s.artist_name}</div>
@@ -285,7 +286,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
               { icon: "🎙", label: "Intro End", desc: "When the vocals kick in — for voice-over timing" },
               { icon: "🎵", label: "Outro Start", desc: "When to start fading or crossfading to next track" },
             ].map(item => (
-              <div key={item.label} style={{ padding: "14px 16px", borderRadius: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+              <div key={item.label} style={{ padding: "14px 16px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
                 <div style={{ fontSize: 20, marginBottom: 8 }}>{item.icon}</div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{item.label}</div>
                 <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>{item.desc}</div>
@@ -309,7 +310,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
       const fallback: Song = { id: 0, title: filePathProp.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Unknown", artist_name: "", file_path: filePathProp, duration_ms: 0 };
       Promise.race([
         query<Song>(
-          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? LIMIT 1",
+          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? LIMIT 1",
           [filePathProp]
         ),
         new Promise<Song[]>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))
@@ -389,6 +390,8 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
     setDragging(val);
   };
   const [saved, setSaved] = useState(false);
+  const [isExplicit, setIsExplicit] = useState(0);
+  const [mbStatus, setMbStatus] = useState<string | null>(null);
   const [waveformData, setWaveformData] = useState<Float32Array | null>(null);
   const [dragRegionGL, setDragRegionGL] = useState<{ start: number; end: number; type: "intro" | "outro" } | null>(null);
   const [hoverSec, setHoverSec] = useState<number | null>(null);
@@ -441,6 +444,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
     setCueOut(song.cue_out || 0);
     setIntroEnd(song.intro_end || 0);
     setOutroStart(song.outro_start || 0);
+    setIsExplicit(song.is_explicit || 0);
 
     const load = async () => {
       try {
@@ -746,13 +750,48 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
     if (!song) return;
     try {
       await execute(
-        "UPDATE songs SET cue_in=?, cue_out=?, intro_end=?, outro_start=? WHERE id=?",
-        [cueIn, cueOut, introEnd, outroStart, song.id]
+        "UPDATE songs SET cue_in=?, cue_out=?, intro_end=?, outro_start=?, is_explicit=? WHERE id=?",
+        [cueIn, cueOut, introEnd, outroStart, isExplicit, song.id]
       );
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
-      onSaved?.({ ...song, cue_in: cueIn, cue_out: cueOut, intro_end: introEnd, outro_start: outroStart });
+      onSaved?.({ ...song, cue_in: cueIn, cue_out: cueOut, intro_end: introEnd, outro_start: outroStart, is_explicit: isExplicit });
     } catch (e) { console.error("Save cue points:", e); }
+  };
+
+  // ── MusicBrainz per-song lookup ───────────────────────────────
+  const lookupMusicBrainz = async () => {
+    if (!song) return;
+    setMbStatus("Searching MusicBrainz…");
+    try {
+      const title = encodeURIComponent(`"${song.title}"`);
+      const artist = song.artist_name ? encodeURIComponent(`"${song.artist_name}"`) : "";
+      const q = artist ? `recording:${title} AND artist:${artist}` : `recording:${title}`;
+      const res = await fetch(
+        `https://musicbrainz.org/ws/2/recording?query=${q}&inc=tags&fmt=json&limit=5`,
+        { headers: { "User-Agent": "OpenAir/1.0 (radio automation)" } }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const rec = (data.recordings || []).find((r: any) => r.score >= 85);
+      if (!rec) {
+        setMbStatus("No match found (score < 85)");
+        setTimeout(() => setMbStatus(null), 4000);
+        return;
+      }
+      const tags: string[] = (rec.tags || []).map((t: any) => (t.name || "").toLowerCase());
+      const explicit = tags.some(t => t === "explicit" || t === "explicit content" || t === "parental advisory") ? 1 : 0;
+      setIsExplicit(explicit);
+      await execute("UPDATE songs SET is_explicit=? WHERE id=?", [explicit, song.id]);
+      const label = explicit ? "Marked EXPLICIT" : "Marked clean";
+      setMbStatus(`${label} (score: ${rec.score}, tags: ${tags.length ? tags.join(", ") : "none"})`);
+      console.log(`[mb] "${song.title}": ${label} — tags: [${tags.join(", ")}]`);
+      setTimeout(() => setMbStatus(null), 6000);
+    } catch (e) {
+      setMbStatus(`Lookup failed: ${String(e)}`);
+      console.warn("[mb] lookup error:", e);
+      setTimeout(() => setMbStatus(null), 5000);
+    }
   };
 
   const reset = () => {
@@ -765,7 +804,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
 
   if (!song) return (
     <ImportPanel onImported={(s) => {
-      queryOne<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`, [s.id])
+      queryOne<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`, [s.id])
         .then(full => { if (full && onSaved) onSaved(full); })
         .catch(() => {});
     }} />
@@ -792,7 +831,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
       title={title}
       style={{
         display: "flex", alignItems: "center", gap: 5,
-        height: 34, padding: "0 14px", borderRadius: 8,
+        height: 34, padding: "0 14px", borderRadius: 0,
         fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
         cursor: "pointer", flexShrink: 0, position: "relative" as const,
         transition: "all 0.12s",
@@ -852,7 +891,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
             <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "#22d3ee", opacity: 0.8 }}>🎧</span>
             <select value={cueDeviceId} onChange={e => setCueDeviceId(e.target.value)} style={{
-              padding: "4px 8px", borderRadius: 6, fontSize: 10,
+              padding: "4px 8px", borderRadius: 0, fontSize: 10,
               background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
               color: "var(--text-secondary)", cursor: "pointer", outline: "none", maxWidth: 160,
             }}>
@@ -862,11 +901,41 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           </div>
         )}
 
+        {/* Explicit toggle */}
+        <button
+          onClick={() => setIsExplicit(v => v ? 0 : 1)}
+          title="Toggle explicit flag — affects content filtering and rotation rules"
+          style={{
+            height: 34, padding: "0 12px", borderRadius: 0, fontSize: 10, fontWeight: 800,
+            letterSpacing: "0.08em", cursor: "pointer", flexShrink: 0,
+            background: isExplicit ? "rgba(239,68,68,0.15)" : "var(--bg-tertiary)",
+            color: isExplicit ? "#ef4444" : "var(--text-tertiary)",
+            border: isExplicit ? "1.5px solid rgba(239,68,68,0.4)" : "1px solid var(--border-primary)",
+            transition: "all 0.15s",
+          }}
+        >
+          {isExplicit ? "🔞 EXPLICIT" : "E"}
+        </button>
+
+        {/* MusicBrainz per-song lookup */}
+        <button
+          onClick={lookupMusicBrainz}
+          title="Look up this song on MusicBrainz and auto-detect explicit tag"
+          style={{
+            height: 34, padding: "0 12px", borderRadius: 0, fontSize: 10, fontWeight: 700,
+            cursor: "pointer", flexShrink: 0,
+            background: "var(--bg-tertiary)", color: "var(--text-tertiary)",
+            border: "1px solid var(--border-primary)", transition: "all 0.12s",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-cyan)"; (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+        >MB Lookup</button>
+
         <Btn onClick={reset} title="Reset all cue points">Reset</Btn>
         <button
           onClick={save}
           style={{
-            height: 34, padding: "0 18px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+            height: 34, padding: "0 18px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             background: saved ? "#34d399" : "var(--accent-blue)",
             color: "#fff", border: "none", cursor: "pointer", flexShrink: 0,
             boxShadow: saved ? "0 0 16px rgba(52,211,153,0.4)" : "0 2px 12px rgba(14,165,233,0.35)",
@@ -880,7 +949,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         </button>
         {onClose && (
           <button onClick={onClose} style={{
-            width: 30, height: 30, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center",
+            width: 30, height: 30, borderRadius: 0, display: "flex", alignItems: "center", justifyContent: "center",
             background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)",
             cursor: "pointer", fontSize: 14, flexShrink: 0, transition: "all 0.1s",
           }}
@@ -889,6 +958,13 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           >✕</button>
         )}
       </div>
+
+      {/* ── MusicBrainz status bar ── */}
+      {mbStatus && (
+        <div style={{ padding: "6px 20px", background: "rgba(56,189,248,0.06)", borderBottom: "1px solid rgba(56,189,248,0.15)", fontSize: 11, color: "var(--accent-cyan)", flexShrink: 0 }}>
+          {mbStatus}
+        </div>
+      )}
 
       {/* ── Cue points strip ── */}
       <div style={{ display: "flex", background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
@@ -920,7 +996,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
               {fmtSmpte(value)}
             </div>
             <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 3 }}>{desc}</div>
-            <div style={{ position: "absolute" as const, bottom: 0, left: 0, right: 0, height: 2, background: color + "50", borderRadius: 2 }} />
+            <div style={{ position: "absolute" as const, bottom: 0, left: 0, right: 0, height: 2, background: color + "50", borderRadius: 0,} />
           </div>
         ))}
 
@@ -971,7 +1047,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
             position: "absolute" as const, top: 10, left: "50%", transform: "translateX(-50%)",
             zIndex: 10, pointerEvents: "none",
             background: activeMode === "intro" ? "rgba(34,211,238,0.9)" : "rgba(251,146,60,0.9)",
-            borderRadius: 20, padding: "4px 16px",
+            borderRadius: 0, padding: "4px 16px",
             fontSize: 10, fontWeight: 800, letterSpacing: "0.1em", color: "#000",
           }}>
             ● DRAG TO MARK {activeMode.toUpperCase()}
@@ -1019,7 +1095,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         <button
           onClick={togglePlay}
           style={{
-            width: 42, height: 42, borderRadius: 21, flexShrink: 0,
+            width: 42, height: 42, borderRadius: 0, flexShrink: 0,
             background: playing ? "#34d399" : "var(--accent-blue)",
             border: "none", color: "#000", cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -1046,7 +1122,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           onClick={() => setActiveModeSync(activeModeRef.current === "intro" ? null : "intro")}
           title="Paint intro region — click then drag on waveform"
           style={{
-            height: 34, padding: "0 14px", borderRadius: 8,
+            height: 34, padding: "0 14px", borderRadius: 0,
             fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
             cursor: "pointer", flexShrink: 0, transition: "all 0.12s",
             background: activeMode === "intro" ? "#22d3ee" : "#22d3ee18",
@@ -1061,7 +1137,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           onClick={() => setActiveModeSync(activeModeRef.current === "outro" ? null : "outro")}
           title="Paint outro region — click then drag on waveform"
           style={{
-            height: 34, padding: "0 14px", borderRadius: 8,
+            height: 34, padding: "0 14px", borderRadius: 0,
             fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
             cursor: "pointer", flexShrink: 0, transition: "all 0.12s",
             background: activeMode === "outro" ? "#fb923c" : "#fb923c18",
@@ -1087,7 +1163,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
               title={title}
               onClick={() => applyZoom(targetZoomRef.current * factor, 0.5)}
               style={{
-                width: label.length > 1 ? 30 : 26, height: 26, borderRadius: 6,
+                width: label.length > 1 ? 30 : 26, height: 26, borderRadius: 0,
                 background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                 color: "var(--text-secondary)", cursor: "pointer", fontSize: label.length > 1 ? 9 : 14,
                 fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
@@ -1104,7 +1180,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
             onClick={() => applyZoom(1, 0.5)}
             title="Fit entire track"
             style={{
-              height: 26, padding: "0 10px", borderRadius: 6,
+              height: 26, padding: "0 10px", borderRadius: 0,
               background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
               color: "var(--text-tertiary)", cursor: "pointer", fontSize: 9,
               fontWeight: 800, letterSpacing: "0.06em", transition: "all 0.1s",

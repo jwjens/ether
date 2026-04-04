@@ -115,7 +115,7 @@ export default function Logs() {
 
   const filterBtn = (id: typeof filter, label: string) => (
     <button onClick={() => setFilter(id)} style={{
-      padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+      padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
       background: filter === id ? "var(--accent-blue)" : "var(--bg-secondary)",
       color: filter === id ? "#fff" : "var(--text-tertiary)",
       border: filter === id ? "none" : "1px solid var(--border-primary)",
@@ -140,18 +140,18 @@ export default function Logs() {
           {/* Date range */}
           <div style={{ width: 1, height: 20, background: "var(--border-primary)", margin: "0 2px" }} />
           <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setFilter("all"); }}
-            style={{ padding: "5px 8px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>→</span>
           <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setFilter("all"); }}
-            style={{ padding: "5px 8px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
 
           {/* Export buttons */}
           <div style={{ width: 1, height: 20, background: "var(--border-primary)", margin: "0 2px" }} />
-          <button onClick={() => exportCSV("standard")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>Export CSV</button>
-          <button onClick={() => exportCSV("bmi")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>BMI</button>
-          <button onClick={() => exportCSV("ascap")} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>ASCAP</button>
-          <button onClick={exportPDF} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>PDF</button>
-          <button onClick={clearLog} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--accent-red)", cursor: "pointer" }}>Clear</button>
+          <button onClick={() => exportCSV("standard")} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>Export CSV</button>
+          <button onClick={() => exportCSV("bmi")} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>BMI</button>
+          <button onClick={() => exportCSV("ascap")} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>ASCAP</button>
+          <button onClick={exportPDF} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>PDF</button>
+          <button onClick={clearLog} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--accent-red)", cursor: "pointer" }}>Clear</button>
         </div>
       </div>
 
@@ -162,7 +162,7 @@ export default function Logs() {
           { label: "Unique Artists", value: uniqueArtists },
           { label: "Unique Songs", value: uniqueSongs },
         ].map(s => (
-          <div key={s.label} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, padding: "16px", textAlign: "center" as any }}>
+          <div key={s.label} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px", textAlign: "center" as any }}>
             <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.04em", color: "var(--text-primary)" }}>{s.value}</div>
             <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginTop: 4 }}>{s.label}</div>
           </div>
@@ -177,7 +177,7 @@ export default function Logs() {
           <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Start playing music and it will appear here automatically</div>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
@@ -200,7 +200,7 @@ export default function Logs() {
                   <td style={{ padding: "10px 14px", color: "var(--text-tertiary)", fontSize: 11, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{e.show_name || "—"}</td>
                   <td style={{ padding: "10px 14px" }}>
                     {e.deck ? (
-                      <span style={{ fontSize: 10, fontWeight: 700, color: DECK_COLORS[e.deck] || "var(--text-tertiary)", background: (DECK_COLORS[e.deck] || "var(--text-tertiary)") + "20", padding: "2px 7px", borderRadius: 5 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: DECK_COLORS[e.deck] || "var(--text-tertiary)", background: (DECK_COLORS[e.deck] || "var(--text-tertiary)") + "20", padding: "2px 7px", borderRadius: 0 }}>
                         {e.deck}
                       </span>
                     ) : "—"}

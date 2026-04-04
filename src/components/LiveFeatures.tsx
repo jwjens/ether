@@ -144,7 +144,7 @@ export function SongHistoryStrip() {
       display: "flex", alignItems: "center", gap: 0,
       background: "var(--bg-secondary)",
       border: "1px solid var(--border-primary)",
-      borderRadius: 10, overflow: "hidden",
+      borderRadius: 0, overflow: "hidden",
       flexShrink: 0,
     }}>
       <div style={{ padding: "5px 10px", borderRight: "1px solid var(--border-primary)", flexShrink: 0 }}>
@@ -158,7 +158,7 @@ export function SongHistoryStrip() {
           opacity: 1 - i * 0.15,
           minWidth: 0,
         }}>
-          <div style={{ width: 2, height: 20, borderRadius: 1, background: deckColor(song.deck), flexShrink: 0 }} />
+          <div style={{ width: 2, height: 20, borderRadius: 0, background: deckColor(song.deck), flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{song.title}</div>
             <div style={{ fontSize: 8, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 4 }}>
@@ -264,7 +264,7 @@ export function CrossfadeVisualizer({ active, fromDeck, toDeck }: XfadeProps) {
       marginBottom: 8,
       background: "var(--bg-secondary)",
       border: "1px solid var(--border-secondary)",
-      borderRadius: 10, overflow: "hidden",
+      borderRadius: 0, overflow: "hidden",
       boxShadow: "0 4px 20px rgba(0,0,0,0.3)",
       zIndex: 100,
     }}>

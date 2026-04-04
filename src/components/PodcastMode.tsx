@@ -60,7 +60,7 @@ export function AutoDuckToggle({ hook }: { hook: ReturnType<typeof useAutoDuck> 
     <button
       onClick={() => hook.setEnabled(e => !e)}
       style={{
-        padding: "4px 10px", borderRadius: 7, fontSize: 9, fontWeight: 700,
+        padding: "4px 10px", borderRadius: 0, fontSize: 9, fontWeight: 700,
         letterSpacing: "0.08em", textTransform: "uppercase" as const,
         background: hook.enabled ? "rgba(239,68,68,0.15)" : "var(--bg-tertiary)",
         border: `1px solid ${hook.enabled ? "rgba(239,68,68,0.4)" : "var(--border-primary)"}`,
@@ -166,7 +166,7 @@ export function EpisodeMode({ onClose }: EpisodeModeProps) {
   return (
     <div style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
-      background: "var(--bg-secondary)", borderRadius: 14,
+      background: "var(--bg-secondary)", borderRadius: 0,
       border: "1px solid var(--border-primary)",
       fontFamily: "'Inter', system-ui, sans-serif",
       overflow: "hidden",
@@ -185,8 +185,8 @@ export function EpisodeMode({ onClose }: EpisodeModeProps) {
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
         </div>
         {/* Episode progress bar */}
-        <div style={{ height: 4, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: pct + "%", background: "var(--accent-green)", borderRadius: 2, transition: "width 0.5s" }} />
+        <div style={{ height: 4, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: pct + "%", background: "var(--accent-green)", borderRadius: 0, transition: "width 0.5s" }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 3 }}>
           <span style={{ fontSize: 8, color: "var(--text-tertiary)" }}>{fmtMin(completedMin)} done</span>
@@ -209,17 +209,17 @@ export function EpisodeMode({ onClose }: EpisodeModeProps) {
             {overrun && <span style={{ fontSize: 12, color: "#ef4444", marginLeft: 8 }}>+{fmtMin(elapsedMin - active.targetMin)} over</span>}
           </div>
           {/* Segment progress */}
-          <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", marginBottom: 8 }}>
-            <div style={{ height: "100%", width: Math.min(segPct, 100) + "%", background: overrun ? "#ef4444" : SEG_COLORS[active.type], borderRadius: 2, transition: "width 0.5s" }} />
+          <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ height: "100%", width: Math.min(segPct, 100) + "%", background: overrun ? "#ef4444" : SEG_COLORS[active.type], borderRadius: 0, transition: "width 0.5s" }} />
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <button
               onClick={() => setRunning(r => !r)}
-              style={{ flex: 1, padding: "7px", borderRadius: 8, background: running ? "#fbbf24" : "var(--accent-green)", border: "none", color: "#000", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              style={{ flex: 1, padding: "7px", borderRadius: 0, background: running ? "#fbbf24" : "var(--accent-green)", border: "none", color: "#000", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
             >{running ? "⏸ Pause" : "▶ Start"}</button>
             <button
               onClick={markDone}
-              style={{ padding: "7px 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+              style={{ padding: "7px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
             >✓ Next</button>
           </div>
         </div>
@@ -233,13 +233,13 @@ export function EpisodeMode({ onClose }: EpisodeModeProps) {
             onClick={() => !seg.done && setActiveIdx(i)}
             style={{
               display: "flex", alignItems: "center", gap: 8, padding: "7px 8px",
-              borderRadius: 8, marginBottom: 2, cursor: seg.done ? "default" : "pointer",
+              borderRadius: 0, marginBottom: 2, cursor: seg.done ? "default" : "pointer",
               background: i === activeIdx ? `${SEG_COLORS[seg.type]}12` : "transparent",
               opacity: seg.done ? 0.5 : 1,
               border: i === activeIdx ? `1px solid ${SEG_COLORS[seg.type]}30` : "1px solid transparent",
             }}
           >
-            <div style={{ width: 4, height: 28, borderRadius: 2, background: SEG_COLORS[seg.type], flexShrink: 0 }} />
+            <div style={{ width: 4, height: 28, borderRadius: 0, background: SEG_COLORS[seg.type], flexShrink: 0 }} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: seg.done ? "var(--text-tertiary)" : "var(--text-primary)", display: "flex", alignItems: "center", gap: 5 }}>
                 {seg.done && <span style={{ color: "var(--accent-green)" }}>✓</span>}
@@ -254,7 +254,7 @@ export function EpisodeMode({ onClose }: EpisodeModeProps) {
         ))}
         <button
           onClick={addSegment}
-          style={{ width: "100%", padding: "7px", borderRadius: 8, background: "none", border: "1px dashed var(--border-secondary)", color: "var(--text-tertiary)", fontSize: 11, cursor: "pointer", marginTop: 4 }}
+          style={{ width: "100%", padding: "7px", borderRadius: 0, background: "none", border: "1px dashed var(--border-secondary)", color: "var(--text-tertiary)", fontSize: 11, cursor: "pointer", marginTop: 4 }}
         >+ Add Segment</button>
       </div>
     </div>
@@ -294,7 +294,7 @@ export function RemoteGuestWidget() {
   return (
     <div style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
-      background: "var(--bg-secondary)", borderRadius: 14,
+      background: "var(--bg-secondary)", borderRadius: 0,
       border: "1px solid var(--border-primary)", padding: 14,
       fontFamily: "'Inter', system-ui, sans-serif", gap: 10,
     }}>
@@ -321,13 +321,13 @@ export function RemoteGuestWidget() {
               value={guestName}
               onChange={e => setGuestName(e.target.value)}
               placeholder="e.g. John Smith"
-              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }}
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }}
             />
           </div>
           <button
             onClick={generateLink}
             disabled={generating}
-            style={{ padding: "10px", borderRadius: 10, background: "var(--accent-purple)", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            style={{ padding: "10px", borderRadius: 0, background: "var(--accent-purple)", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
           >{generating ? "Generating..." : "🔗 Generate Guest Link"}</button>
           <div style={{ fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as const, lineHeight: 1.5 }}>
             Guest clicks the link in any browser.<br/>No app, no download, no setup.
@@ -335,22 +335,22 @@ export function RemoteGuestWidget() {
         </>
       ) : (
         <>
-          <div style={{ background: "var(--bg-tertiary)", borderRadius: 8, padding: "8px 10px", border: "1px solid var(--border-primary)" }}>
+          <div style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: "8px 10px", border: "1px solid var(--border-primary)" }}>
             <div style={{ fontSize: 8, color: "var(--text-tertiary)", marginBottom: 4, fontWeight: 600, letterSpacing: "0.1em" }}>SHARE THIS LINK WITH {guestName.toUpperCase()}</div>
             <div style={{ fontSize: 10, color: "var(--accent-cyan)", wordBreak: "break-all" as const, lineHeight: 1.4 }}>{guestUrl}</div>
           </div>
           <button
             onClick={copyLink}
-            style={{ padding: "8px", borderRadius: 8, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+            style={{ padding: "8px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
           >📋 Copy Link</button>
           <div style={{ display: "flex", gap: 6 }}>
-            <div style={{ flex: 1, padding: "8px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", textAlign: "center" as const }}>
+            <div style={{ flex: 1, padding: "8px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", textAlign: "center" as const }}>
               <div style={{ fontSize: 8, color: "var(--text-tertiary)", marginBottom: 2 }}>ROUTING TO</div>
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-green)" }}>Deck B</div>
             </div>
             <button
               onClick={() => { setGuestUrl(null); setConnected(false); }}
-              style={{ padding: "8px 12px", borderRadius: 8, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 10, cursor: "pointer" }}
+              style={{ padding: "8px 12px", borderRadius: 0, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 10, cursor: "pointer" }}
             >End</button>
           </div>
         </>
@@ -441,7 +441,7 @@ export function OneClickExport() {
   return (
     <div style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
-      background: "var(--bg-secondary)", borderRadius: 14,
+      background: "var(--bg-secondary)", borderRadius: 0,
       border: "1px solid var(--border-primary)", padding: 14,
       fontFamily: "'Inter', system-ui, sans-serif", gap: 10, overflow: "hidden",
     }}>
@@ -461,7 +461,7 @@ export function OneClickExport() {
             <input
               value={episodeName}
               onChange={e => setEpisodeName(e.target.value)}
-              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }}
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }}
             />
           </div>
           <div>
@@ -472,7 +472,7 @@ export function OneClickExport() {
                   key={s.id}
                   onClick={() => setSelectedSession(s.id)}
                   style={{
-                    padding: "7px 10px", borderRadius: 8, textAlign: "left" as const,
+                    padding: "7px 10px", borderRadius: 0, textAlign: "left" as const,
                     background: selectedSession === s.id ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)",
                     border: `1px solid ${selectedSession === s.id ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`,
                     color: selectedSession === s.id ? "var(--accent-green)" : "var(--text-secondary)",
@@ -490,14 +490,14 @@ export function OneClickExport() {
           <button
             onClick={startExport}
             disabled={!selectedSession || status === "scanning"}
-            style={{ padding: "10px", borderRadius: 10, background: selectedSession ? "var(--accent-green)" : "var(--bg-tertiary)", border: "none", color: selectedSession ? "#000" : "var(--text-tertiary)", fontSize: 12, fontWeight: 700, cursor: selectedSession ? "pointer" : "not-allowed", marginTop: "auto" as const }}
+            style={{ padding: "10px", borderRadius: 0, background: selectedSession ? "var(--accent-green)" : "var(--bg-tertiary)", border: "none", color: selectedSession ? "#000" : "var(--text-tertiary)", fontSize: 12, fontWeight: 700, cursor: selectedSession ? "pointer" : "not-allowed", marginTop: "auto" as const }}
           >⬇ Export to MP3</button>
         </>
       ) : status === "exporting" ? (
         <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 12 }}>
           <div style={{ fontSize: 12, color: "var(--text-primary)", fontWeight: 600 }}>Mixing down...</div>
-          <div style={{ width: "100%", height: 6, background: "var(--bg-tertiary)", borderRadius: 3, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: progress + "%", background: "var(--accent-green)", borderRadius: 3, transition: "width 0.1s" }} />
+          <div style={{ width: "100%", height: 6, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: progress + "%", background: "var(--accent-green)", borderRadius: 0, transition: "width 0.1s" }} />
           </div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{progress}%</div>
         </div>
@@ -506,13 +506,13 @@ export function OneClickExport() {
           <div style={{ fontSize: 28 }}>✅</div>
           <div style={{ fontSize: 12, fontWeight: 700, color: "var(--accent-green)" }}>Export Complete!</div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const }}>{outputPath}</div>
-          <button onClick={() => setStatus("idle")} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>Export Another</button>
+          <button onClick={() => setStatus("idle")} style={{ padding: "7px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>Export Another</button>
         </div>
       ) : (
         <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 8 }}>
           <div style={{ fontSize: 24 }}>⚠️</div>
           <div style={{ fontSize: 11, color: "#ef4444" }}>Export failed</div>
-          <button onClick={() => setStatus("idle")} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>Try Again</button>
+          <button onClick={() => setStatus("idle")} style={{ padding: "7px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>Try Again</button>
         </div>
       )}
     </div>
@@ -588,7 +588,7 @@ Keep it warm, professional, and under 300 words. Format with clear sections.`;
   return (
     <div style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
-      background: "var(--bg-secondary)", borderRadius: 14,
+      background: "var(--bg-secondary)", borderRadius: 0,
       border: "1px solid var(--border-primary)", padding: 14,
       fontFamily: "'Inter', system-ui, sans-serif", gap: 10, overflow: "hidden",
     }}>
@@ -597,7 +597,7 @@ Keep it warm, professional, and under 300 words. Format with clear sections.`;
           <path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 8v4l3 3"/><path d="M18 2l4 4-4 4"/><path d="M22 6H18"/>
         </svg>
         <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)" }}>AI Show Notes</span>
-        <span style={{ marginLeft: "auto", fontSize: 8, color: "#a78bfa", background: "rgba(167,139,250,0.15)", padding: "2px 6px", borderRadius: 4, fontWeight: 700, letterSpacing: "0.08em" }}>AI</span>
+        <span style={{ marginLeft: "auto", fontSize: 8, color: "#a78bfa", background: "rgba(167,139,250,0.15)", padding: "2px 6px", borderRadius: 0, fontWeight: 700, letterSpacing: "0.08em" }}>AI</span>
       </div>
 
       {status === "idle" && (
@@ -605,12 +605,12 @@ Keep it warm, professional, and under 300 words. Format with clear sections.`;
           <div>
             <label style={{ fontSize: 9, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as const, display: "block", marginBottom: 5 }}>Episode Title</label>
             <input value={episodeTitle} onChange={e => setEpisodeTitle(e.target.value)} placeholder="e.g. Episode 47 — Summer Vibes"
-              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const, marginBottom: 8 }} />
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const, marginBottom: 8 }} />
             <label style={{ fontSize: 9, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as const, display: "block", marginBottom: 5 }}>Host(s)</label>
             <input value={hosts} onChange={e => setHosts(e.target.value)} placeholder="Your name"
-              style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }} />
+              style={{ width: "100%", padding: "7px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }} />
           </div>
-          <button onClick={generate} style={{ padding: "10px", borderRadius: 10, background: "linear-gradient(135deg, #7c3aed, #a78bfa)", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          <button onClick={generate} style={{ padding: "10px", borderRadius: 0, background: "linear-gradient(135deg, #7c3aed, #a78bfa)", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
             ✨ Generate Show Notes
           </button>
           <div style={{ fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as const, lineHeight: 1.5 }}>
@@ -628,14 +628,14 @@ Keep it warm, professional, and under 300 words. Format with clear sections.`;
 
       {status === "done" && (
         <>
-          <div style={{ flex: 1, overflowY: "auto" as const, background: "var(--bg-tertiary)", borderRadius: 8, padding: "10px 12px", border: "1px solid var(--border-primary)" }}>
+          <div style={{ flex: 1, overflowY: "auto" as const, background: "var(--bg-tertiary)", borderRadius: 0, padding: "10px 12px", border: "1px solid var(--border-primary)" }}>
             <pre style={{ margin: 0, fontFamily: "'Inter', sans-serif", fontSize: 11, color: "var(--text-primary)", whiteSpace: "pre-wrap" as const, lineHeight: 1.6 }}>{notes}</pre>
           </div>
           <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-            <button onClick={copy} style={{ flex: 1, padding: "8px", borderRadius: 8, background: copied ? "var(--accent-green)" : "var(--accent-purple)", border: "none", color: copied ? "#000" : "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+            <button onClick={copy} style={{ flex: 1, padding: "8px", borderRadius: 0, background: copied ? "var(--accent-green)" : "var(--accent-purple)", border: "none", color: copied ? "#000" : "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
               {copied ? "✓ Copied!" : "📋 Copy to Clipboard"}
             </button>
-            <button onClick={() => setStatus("idle")} style={{ padding: "8px 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 11, cursor: "pointer" }}>
+            <button onClick={() => setStatus("idle")} style={{ padding: "8px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 11, cursor: "pointer" }}>
               Redo
             </button>
           </div>
@@ -646,7 +646,7 @@ Keep it warm, professional, and under 300 words. Format with clear sections.`;
         <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 8 }}>
           <div style={{ fontSize: 24 }}>⚠️</div>
           <div style={{ fontSize: 11, color: "#ef4444" }}>Generation failed</div>
-          <button onClick={() => setStatus("idle")} style={{ padding: "7px 14px", borderRadius: 8, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>Try Again</button>
+          <button onClick={() => setStatus("idle")} style={{ padding: "7px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", fontSize: 11, cursor: "pointer" }}>Try Again</button>
         </div>
       )}
     </div>

@@ -84,7 +84,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
     <div style={{
       background: "var(--bg-secondary)",
       border: `1px solid ${playing ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`,
-      borderRadius: 14,
+      borderRadius: 0,
       overflow: "hidden",
       boxShadow: playing ? "0 0 20px rgba(52,211,153,0.08)" : "var(--shadow-sm)",
       transition: "border-color 0.3s, box-shadow 0.3s",
@@ -107,7 +107,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
             {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
           </span>
           <button onClick={onGoLive} style={{
-            padding: "3px 10px", borderRadius: 6,
+            padding: "3px 10px", borderRadius: 0,
             fontSize: 9, fontWeight: 800, letterSpacing: "0.1em",
             background: "var(--accent-cyan)", color: "#000",
             border: "none", cursor: "pointer",
@@ -127,8 +127,8 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
               {playing.artist}
             </div>
             {/* Progress */}
-            <div style={{ marginTop: 8, height: 3, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: pct + "%", background: remaining < 15000 ? "#f87171" : "#34d399", borderRadius: 2, transition: "width 0.5s linear, background 0.3s" }} />
+            <div style={{ marginTop: 8, height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: pct + "%", background: remaining < 15000 ? "#f87171" : "#34d399", borderRadius: 0, transition: "width 0.5s linear, background 0.3s" }} />
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
               <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
@@ -157,7 +157,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
             return (
               <div key={id} style={{
                 padding: "10px 12px",
-                borderRadius: 10,
+                borderRadius: 0,
                 background: isOn ? color + "18" : "var(--bg-tertiary)",
                 border: `1px solid ${isOn ? color + (isCritical ? "80" : "50") : "var(--border-primary)"}`,
                 boxShadow: isOn ? `0 0 16px ${color}25` : "none",
@@ -174,7 +174,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {/* Deck badge */}
                   <div style={{
-                    width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                    width: 22, height: 22, borderRadius: 0, flexShrink: 0,
                     background: isOn ? color : color + "20",
                     display: "flex", alignItems: "center", justifyContent: "center",
                   }}>
@@ -223,7 +223,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
         </div>
         <button onClick={toggleMic} style={{
           width: "100%", padding: "8px",
-          borderRadius: 9, fontSize: 11, fontWeight: 700,
+          borderRadius: 0, fontSize: 11, fontWeight: 700,
           cursor: "pointer", border: "none",
           background: micActive ? "#ef4444" : "var(--bg-tertiary)",
           color: micActive ? "#fff" : "var(--text-tertiary)",
@@ -284,34 +284,34 @@ function LinerCards() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>Liner Cards</span>
-        <button onClick={() => setEditing({ category: "Station ID", color: "#38bdf8" })} style={{ padding: "4px 10px", borderRadius: 7, fontSize: 10, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>＋ New</button>
+        <button onClick={() => setEditing({ category: "Station ID", color: "#38bdf8" })} style={{ padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>＋ New</button>
       </div>
 
       {/* Category filter */}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as any, flexShrink: 0 }}>
-        <button onClick={() => setFilterCat("all")} style={{ padding: "3px 9px", borderRadius: 20, fontSize: 9, fontWeight: 700, cursor: "pointer", background: filterCat === "all" ? "var(--text-primary)" : "var(--bg-tertiary)", color: filterCat === "all" ? "var(--bg-primary)" : "var(--text-tertiary)", border: "none" }}>ALL</button>
+        <button onClick={() => setFilterCat("all")} style={{ padding: "3px 9px", borderRadius: 0, fontSize: 9, fontWeight: 700, cursor: "pointer", background: filterCat === "all" ? "var(--text-primary)" : "var(--bg-tertiary)", color: filterCat === "all" ? "var(--bg-primary)" : "var(--text-tertiary)", border: "none" }}>ALL</button>
         {[...new Set(cards.map(c => c.category))].map(cat => (
-          <button key={cat} onClick={() => setFilterCat(cat)} style={{ padding: "3px 9px", borderRadius: 20, fontSize: 9, fontWeight: 700, cursor: "pointer", background: filterCat === cat ? LINER_COLORS[cat] || "#94a3b8" : "var(--bg-tertiary)", color: filterCat === cat ? "#000" : "var(--text-tertiary)", border: "none" }}>{cat}</button>
+          <button key={cat} onClick={() => setFilterCat(cat)} style={{ padding: "3px 9px", borderRadius: 0, fontSize: 9, fontWeight: 700, cursor: "pointer", background: filterCat === cat ? LINER_COLORS[cat] || "#94a3b8" : "var(--bg-tertiary)", color: filterCat === cat ? "#000" : "var(--text-tertiary)", border: "none" }}>{cat}</button>
         ))}
       </div>
 
       {/* Edit form */}
       {editing && (
-        <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: 12, flexShrink: 0 }}>
+        <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
             <input placeholder="Card title" value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
-              style={{ flex: 1, padding: "6px 10px", borderRadius: 7, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ flex: 1, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
             <select value={editing.category || "Custom"} onChange={e => setEditing({...editing, category: e.target.value, color: LINER_COLORS[e.target.value] || "#94a3b8"})}
-              style={{ padding: "6px 10px", borderRadius: 7, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              style={{ padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
               {LINER_CATS.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <textarea placeholder="Card copy — write exactly what you'll say..." value={editing.body || ""} onChange={e => setEditing({...editing, body: e.target.value})}
             rows={4}
-            style={{ width: "100%", padding: "8px 10px", borderRadius: 7, fontSize: 13, lineHeight: 1.6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", resize: "vertical" as any, boxSizing: "border-box" as any, fontFamily: "'Inter', sans-serif" }} />
+            style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 13, lineHeight: 1.6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", resize: "vertical" as any, boxSizing: "border-box" as any, fontFamily: "'Inter', sans-serif" }} />
           <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-            <button onClick={save} style={{ padding: "5px 14px", borderRadius: 7, fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
-            <button onClick={() => setEditing(null)} style={{ padding: "5px 10px", borderRadius: 7, fontSize: 11, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+            <button onClick={save} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+            <button onClick={() => setEditing(null)} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
           </div>
         </div>
       )}
@@ -328,19 +328,19 @@ function LinerCards() {
               background: isActive ? color + "15" : "var(--bg-tertiary)",
               border: `1px solid ${isActive ? color + "50" : "var(--border-primary)"}`,
               borderLeft: `3px solid ${color}`,
-              borderRadius: 10,
+              borderRadius: 0,
               padding: "10px 12px",
               cursor: "pointer",
               transition: "all 0.15s",
             }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: isActive ? 8 : 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 8, fontWeight: 700, color, background: color + "20", padding: "2px 7px", borderRadius: 20, textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>{card.category}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, color, background: color + "20", padding: "2px 7px", borderRadius: 0, textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>{card.category}</span>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{card.title}</span>
                 </div>
                 <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
-                  <button onClick={() => setEditing(card)} style={{ padding: "2px 7px", borderRadius: 5, fontSize: 9, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
-                  <button onClick={async () => { await execute("DELETE FROM liner_cards WHERE id=?", [card.id]); load(); }} style={{ padding: "2px 6px", borderRadius: 5, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={() => setEditing(card)} style={{ padding: "2px 7px", borderRadius: 0, fontSize: 9, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
+                  <button onClick={async () => { await execute("DELETE FROM liner_cards WHERE id=?", [card.id]); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {isActive && (
@@ -414,30 +414,30 @@ function ScriptWriter() {
         <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>Show Prep</span>
         <div style={{ display: "flex", gap: 6 }}>
           {["Script", "Topic", "Trivia"].map(cat => (
-            <button key={cat} onClick={() => newNote(cat)} style={{ padding: "4px 10px", borderRadius: 7, fontSize: 10, fontWeight: 700, background: catColor[cat] + "20", color: catColor[cat], border: "1px solid " + catColor[cat] + "30", cursor: "pointer" }}>＋ {cat}</button>
+            <button key={cat} onClick={() => newNote(cat)} style={{ padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: catColor[cat] + "20", color: catColor[cat], border: "1px solid " + catColor[cat] + "30", cursor: "pointer" }}>＋ {cat}</button>
           ))}
         </div>
       </div>
 
       {/* Editor */}
       {activeNote !== null && (
-        <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 12, padding: 14, flexShrink: 0 }}>
+        <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 14, flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
             <input placeholder="Title — e.g. Morning opener, Drake intro, Contest setup..." value={activeNote.title || ""} onChange={e => setActiveNote({...activeNote, title: e.target.value})}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
             <select value={activeNote.category || "Script"} onChange={e => setActiveNote({...activeNote, category: e.target.value})}
-              style={{ padding: "8px 10px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              style={{ padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
               {NOTE_CATS.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
             <input type="date" value={activeNote.show_date || ""} onChange={e => setActiveNote({...activeNote, show_date: e.target.value})}
-              style={{ padding: "8px 10px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           </div>
 
           {/* Template picker */}
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as any, marginBottom: 8 }}>
             <span style={{ fontSize: 10, color: "var(--text-tertiary)", alignSelf: "center", flexShrink: 0 }}>Insert template:</span>
             {Object.keys(SCRIPT_TEMPLATES).map(name => (
-              <button key={name} onClick={() => applyTemplate(name)} style={{ padding: "3px 8px", borderRadius: 6, fontSize: 9, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>{name}</button>
+              <button key={name} onClick={() => applyTemplate(name)} style={{ padding: "3px 8px", borderRadius: 0, fontSize: 9, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>{name}</button>
             ))}
           </div>
 
@@ -446,12 +446,12 @@ function ScriptWriter() {
             value={activeNote.body || ""}
             onChange={e => setActiveNote({...activeNote, body: e.target.value})}
             rows={8}
-            style={{ width: "100%", padding: "10px 12px", borderRadius: 8, fontSize: 14, lineHeight: 1.8, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", resize: "vertical" as any, boxSizing: "border-box" as any, fontFamily: "'Inter', sans-serif" }}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 0, fontSize: 14, lineHeight: 1.8, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", resize: "vertical" as any, boxSizing: "border-box" as any, fontFamily: "'Inter', sans-serif" }}
           />
 
           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-            <button onClick={save} style={{ padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
-            <button onClick={() => setActiveNote(null)} style={{ padding: "6px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+            <button onClick={save} style={{ padding: "6px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+            <button onClick={() => setActiveNote(null)} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
           </div>
         </div>
       )}
@@ -468,19 +468,19 @@ function ScriptWriter() {
           const color = catColor[note.category] || "#94a3b8";
           return (
             <div key={note.id}
-              style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderLeft: `3px solid ${color}`, borderRadius: 10, padding: "10px 12px", cursor: "pointer" }}
+              style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderLeft: `3px solid ${color}`, borderRadius: 0, padding: "10px 12px", cursor: "pointer" }}
               onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
               onMouseLeave={e => (e.currentTarget.style.background = "var(--bg-tertiary)")}
               onClick={() => setActiveNote(note)}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 8, fontWeight: 700, color, background: color + "20", padding: "2px 7px", borderRadius: 20, textTransform: "uppercase" as any }}>{note.category}</span>
+                  <span style={{ fontSize: 8, fontWeight: 700, color, background: color + "20", padding: "2px 7px", borderRadius: 0, textTransform: "uppercase" as any }}>{note.category}</span>
                   <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{note.title}</span>
                 </div>
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                   {note.show_date && <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{note.show_date}</span>}
-                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await execute("DELETE FROM prep_notes WHERE id=?", [note.id]); load(); }} style={{ padding: "2px 6px", borderRadius: 5, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await execute("DELETE FROM prep_notes WHERE id=?", [note.id]); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {note.body && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{note.body.substring(0, 100)}{note.body.length > 100 ? "…" : ""}</div>}
@@ -512,11 +512,11 @@ export default function ShowPrep({ onGoLive }: { onGoLive?: () => void }) {
           <MiniMonitor onGoLive={onGoLive} />
 
           {/* Quick tips */}
-          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, padding: "12px 14px" }}>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "12px 14px" }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 }}>Keyboard</div>
             {[["Space", "Play/Pause"], ["B", "Deck B"], ["Esc", "Stop all"]].map(([k, v]) => (
               <div key={k} style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                <kbd style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", padding: "2px 6px", borderRadius: 4, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>{k}</kbd>
+                <kbd style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", padding: "2px 6px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>{k}</kbd>
                 <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{v}</span>
               </div>
             ))}
@@ -524,12 +524,12 @@ export default function ShowPrep({ onGoLive }: { onGoLive?: () => void }) {
         </div>
 
         {/* Col 2: Liner cards */}
-        <div style={{ width: 300, flexShrink: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: 14, display: "flex", flexDirection: "column" as any, overflow: "hidden" }}>
+        <div style={{ width: 300, flexShrink: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 14, display: "flex", flexDirection: "column" as any, overflow: "hidden" }}>
           <LinerCards />
         </div>
 
         {/* Col 3: Script writer */}
-        <div style={{ flex: 1, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 14, padding: 14, display: "flex", flexDirection: "column" as any, overflow: "hidden", minWidth: 0 }}>
+        <div style={{ flex: 1, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 14, display: "flex", flexDirection: "column" as any, overflow: "hidden", minWidth: 0 }}>
           <ScriptWriter />
         </div>
       </div>

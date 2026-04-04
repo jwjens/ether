@@ -152,7 +152,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
         {/* Step dots */}
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 48 }}>
           {[0,1,2].map(i => (
-            <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 4, background: i === step ? "#22d3ee" : i < step ? "rgba(34,211,238,0.4)" : "rgba(255,255,255,0.1)", transition: "all 0.3s ease" }} />
+            <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 0, background: i === step ? "#22d3ee" : i < step ? "rgba(34,211,238,0.4)" : "rgba(255,255,255,0.1)", transition: "all 0.3s ease" }} />
           ))}
         </div>
 
@@ -171,7 +171,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 const selected = venueType === type;
                 return (
                   <button key={type} onClick={() => setVenueType(type)} style={{
-                    padding: "24px 20px", borderRadius: 16,
+                    padding: "24px 20px", borderRadius: 0,
                     background: selected ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.03)",
                     border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
                     cursor: "pointer", textAlign: "left" as any, transition: "all 0.2s",
@@ -191,7 +191,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 const selected = venueType === type;
                 return (
                   <button key={type} onClick={() => setVenueType(type)} style={{
-                    padding: "24px 20px", borderRadius: 16,
+                    padding: "24px 20px", borderRadius: 0,
                     background: selected ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.03)",
                     border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
                     cursor: "pointer", textAlign: "left" as any, transition: "all 0.2s",
@@ -208,7 +208,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
 
             <div style={{ marginTop: 32, textAlign: "center" as any }}>
               <button onClick={() => venueType && setStep(1)} disabled={!venueType} style={{
-                padding: "13px 48px", borderRadius: 12,
+                padding: "13px 48px", borderRadius: 0,
                 background: venueType ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: venueType ? "#000" : "rgba(255,255,255,0.2)",
                 fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
@@ -245,7 +245,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                   placeholder={PLACEHOLDER_NAMES[venueType!]}
                   style={{
                     width: "100%", padding: "14px 18px",
-                    borderRadius: 12, fontSize: 20, fontWeight: 600,
+                    borderRadius: 0, fontSize: 20, fontWeight: 600,
                     fontFamily: "'Syne', sans-serif",
                     background: "rgba(255,255,255,0.05)",
                     border: "1.5px solid rgba(255,255,255,0.12)",
@@ -268,7 +268,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                   placeholder={PLACEHOLDER_TAGLINES[venueType!]}
                   style={{
                     width: "100%", padding: "12px 18px",
-                    borderRadius: 12, fontSize: 14,
+                    borderRadius: 0, fontSize: 14,
                     background: "rgba(255,255,255,0.04)",
                     border: "1.5px solid rgba(255,255,255,0.08)",
                     color: "rgba(255,255,255,0.6)", outline: "none",
@@ -283,9 +283,9 @@ export default function FirstRunWizard({ onComplete }: Props) {
             </div>
 
             <div style={{ marginTop: 36, display: "flex", gap: 10, justifyContent: "center" }}>
-              <button onClick={() => setStep(0)} style={{ padding: "12px 24px", borderRadius: 10, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 13 }}>← Back</button>
+              <button onClick={() => setStep(0)} style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 13 }}>← Back</button>
               <button onClick={() => name.trim() && setStep(2)} disabled={!name.trim()} style={{
-                padding: "13px 48px", borderRadius: 12,
+                padding: "13px 48px", borderRadius: 0,
                 background: name.trim() ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: name.trim() ? "#000" : "rgba(255,255,255,0.2)",
                 fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
@@ -322,7 +322,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
             </h1>
 
             {/* Station name preview */}
-            <div style={{ margin: "20px auto", padding: "16px 28px", borderRadius: 14, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", display: "inline-block" }}>
+            <div style={{ margin: "20px auto", padding: "16px 28px", borderRadius: 0, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", display: "inline-block" }}>
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.03em" }}>{name}</div>
               {tagline && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{tagline}</div>}
             </div>
@@ -337,12 +337,12 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 "Voice Tracking",
                 "Show Prep",
               ].map(f => (
-                <span key={f} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 11, fontWeight: 600, background: "rgba(167,139,250,0.1)", color: "rgba(167,139,250,0.8)", border: "1px solid rgba(167,139,250,0.2)" }}>{f}</span>
+                <span key={f} style={{ padding: "4px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "rgba(167,139,250,0.1)", color: "rgba(167,139,250,0.8)", border: "1px solid rgba(167,139,250,0.2)" }}>{f}</span>
               ))}
             </div>
 
             <button onClick={handleComplete} disabled={saving} style={{
-              padding: "16px 56px", borderRadius: 14,
+              padding: "16px 56px", borderRadius: 0,
               background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
               color: "#000",
               fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800,

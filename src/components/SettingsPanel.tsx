@@ -8,7 +8,7 @@ import { processLibrary as processAllSongs, getProcessingStats } from "../audio/
 
 function Section({ icon, title, description, children }: { icon: React.ReactNode; title: string; description: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
+    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", marginBottom: 12 }}>
       <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid var(--border-primary)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>{icon}</span>
@@ -27,14 +27,14 @@ function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: bool
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
       <div onClick={() => onChange(!value)} style={{
-        width: 40, height: 22, borderRadius: 11, cursor: "pointer",
+        width: 40, height: 22, borderRadius: 0, cursor: "pointer",
         background: value ? "var(--accent-blue)" : "var(--bg-tertiary)",
         border: "1px solid " + (value ? "var(--accent-blue)" : "var(--border-secondary)"),
         position: "relative", transition: "background 0.2s", flexShrink: 0,
       }}>
         <div style={{
           position: "absolute", top: 3, left: value ? 20 : 3,
-          width: 14, height: 14, borderRadius: 7, background: "#fff",
+          width: 14, height: 14, borderRadius: 0, background: "#fff",
           transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
         }} />
       </div>
@@ -58,10 +58,10 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
 function CodeBox({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg-tertiary)", borderRadius: 8, padding: "10px 14px", border: "1px solid var(--border-primary)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg-tertiary)", borderRadius: 0, padding: "10px 14px", border: "1px solid var(--border-primary)" }}>
       <span style={{ flex: 1, fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--accent-cyan)", wordBreak: "break-all" as any }}>{value}</span>
       <button onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-        style={{ padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", flexShrink: 0 }}>
+        style={{ padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", flexShrink: 0 }}>
         {copied ? "✓" : "Copy"}
       </button>
     </div>
@@ -293,7 +293,7 @@ export default function SettingsPanel() {
   };
 
   const tabStyle = (t: string): React.CSSProperties => ({
-    padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "none",
+    padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "none",
     background: tab === t ? "var(--accent-blue)" : "transparent",
     color: tab === t ? "#fff" : "var(--text-secondary)",
     transition: "all 0.15s",
@@ -304,7 +304,7 @@ export default function SettingsPanel() {
       <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 16, fontFamily: "'Syne', sans-serif" }}>Settings</h1>
 
       {/* Tab bar */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, padding: "4px", background: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-primary)", width: "fit-content" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, padding: "4px", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", width: "fit-content" }}>
         <button style={tabStyle("general")} onClick={() => setTab("general")}>General</button>
         <button style={tabStyle("ai")} onClick={() => setTab("ai")}>AI &amp; Integrations</button>
       </div>
@@ -317,16 +317,16 @@ export default function SettingsPanel() {
           <div style={{ display: "flex", gap: 8 }}>
             <input value={stationName} onChange={e => setStationName(e.target.value)}
               placeholder="My Radio Station"
-              style={{ padding: "7px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", width: 200, outline: "none" }} />
+              style={{ padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", width: 200, outline: "none" }} />
             <button onClick={saveStationName}
-              style={{ padding: "7px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: stationNameSaved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+              style={{ padding: "7px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: stationNameSaved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
               {stationNameSaved ? "Saved!" : "Save"}
             </button>
           </div>
         </SettingRow>
         <SettingRow label="Timezone" hint="Used for scheduling, play logs, and DST handling">
           <select value={timezone} onChange={e => { setTimezone(e.target.value); setStationTimezone(e.target.value); }}
-            style={{ padding: "7px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", maxWidth: 280 }}>
+            style={{ padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", maxWidth: 280 }}>
             {COMMON_TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
           </select>
         </SettingRow>
@@ -347,7 +347,7 @@ export default function SettingsPanel() {
               {outputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No output devices found</div> :
                 outputs.map(d => (
                   <button key={d.deviceId} onClick={() => setCurrentOutput(d.deviceId)} style={{
-                    padding: "9px 12px", borderRadius: 8, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
+                    padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
                     background: currentOutput === d.deviceId ? "rgba(56,189,248,0.12)" : "var(--bg-tertiary)",
                     border: "1px solid " + (currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--border-primary)"),
                     color: currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--text-secondary)",
@@ -367,7 +367,7 @@ export default function SettingsPanel() {
               {inputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No microphones found</div> :
                 inputs.map(d => (
                   <button key={d.deviceId} onClick={() => setCurrentInput(d.deviceId)} style={{
-                    padding: "9px 12px", borderRadius: 8, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
+                    padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
                     background: currentInput === d.deviceId ? "rgba(52,211,153,0.12)" : "var(--bg-tertiary)",
                     border: "1px solid " + (currentInput === d.deviceId ? "var(--accent-green)" : "var(--border-primary)"),
                     color: currentInput === d.deviceId ? "var(--accent-green)" : "var(--text-secondary)",
@@ -380,7 +380,7 @@ export default function SettingsPanel() {
             </div>
           </div>
         </div>
-        <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>
+        <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>
           ↻ Rescan Devices
         </button>
       </Section>
@@ -406,12 +406,12 @@ export default function SettingsPanel() {
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                   <input type="number" value={getDisplayValue(r)}
                     onChange={e => setDisplayValue(r, parseFloat(e.target.value) || 0)}
-                    style={{ width: 60, padding: "5px 8px", borderRadius: 7, fontSize: 13, fontFamily: "'DM Mono', monospace", fontWeight: 500, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", textAlign: "center" as any, outline: "none" }} />
+                    style={{ width: 60, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", fontWeight: 500, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", textAlign: "center" as any, outline: "none" }} />
                   {TIME_RULES.includes(r.rule_type) ? (
                     <select
                       value={ruleUnits[r.id] || "min"}
                       onChange={e => setRuleUnits(prev => ({ ...prev, [r.id]: e.target.value as "min" | "hr" }))}
-                      style={{ padding: "5px 8px", borderRadius: 7, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}
+                      style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}
                     >
                       <option value="min">min</option>
                       <option value="hr">hrs</option>
@@ -420,24 +420,24 @@ export default function SettingsPanel() {
                     <span style={{ fontSize: 11, color: "var(--text-tertiary)", width: 42 }}>songs</span>
                   )}
                   <button onClick={() => updateRule(r.id, "is_hard", r.is_hard ? 0 : 1)} style={{
-                    padding: "5px 10px", borderRadius: 7, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
+                    padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
                     background: r.is_hard ? "rgba(248,113,113,0.15)" : "var(--bg-tertiary)",
                     color: r.is_hard ? "var(--accent-red)" : "var(--text-tertiary)",
                   }}>{r.is_hard ? "STRICT" : "SOFT"}</button>
                   <div onClick={() => updateRule(r.id, "is_active", r.is_active ? 0 : 1)} style={{
-                    width: 36, height: 20, borderRadius: 10, cursor: "pointer",
+                    width: 36, height: 20, borderRadius: 0, cursor: "pointer",
                     background: r.is_active ? "var(--accent-green)" : "var(--bg-tertiary)",
                     border: "1px solid " + (r.is_active ? "var(--accent-green)" : "var(--border-secondary)"),
                     position: "relative", transition: "background 0.2s", flexShrink: 0,
                   }}>
-                    <div style={{ position: "absolute", top: 3, left: r.is_active ? 18 : 3, width: 12, height: 12, borderRadius: 6, background: "#fff", transition: "left 0.2s" }} />
+                    <div style={{ position: "absolute", top: 3, left: r.is_active ? 18 : 3, width: 12, height: 12, borderRadius: 0, background: "#fff", transition: "left 0.2s" }} />
                   </div>
                 </div>
               </div>
             );
           })}
         </div>
-        <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 8, fontSize: 11, color: "var(--text-tertiary)" }}>
+        <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 0, fontSize: 11, color: "var(--text-tertiary)" }}>
           <strong style={{ color: "var(--accent-red)" }}>STRICT</strong> — rule is enforced absolutely, no exceptions.&nbsp;&nbsp;
           <strong style={{ color: "var(--text-secondary)" }}>SOFT</strong> — rule is preferred but can be broken if no better option exists.
         </div>
@@ -468,10 +468,10 @@ export default function SettingsPanel() {
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Shows recent posts on the Now Playing screen when no ads are running. Enter a profile handle or hashtag.</div>
             <input value={igHandle} onChange={e => setIgHandle(e.target.value)}
               placeholder="@yourstation or #yourhashtag"
-              style={{ width: "100%", padding: "9px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", marginBottom: 12, boxSizing: "border-box" as any }} />
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", marginBottom: 12, boxSizing: "border-box" as any }} />
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <Toggle value={igEnabled} onChange={setIgEnabled} label="Show Instagram feed on screen" />
-              <button onClick={saveIg} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: igSaved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+              <button onClick={saveIg} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: igSaved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
                 {igSaved ? "Saved!" : "Save"}
               </button>
             </div>
@@ -488,7 +488,7 @@ export default function SettingsPanel() {
               { label: "Average loudness", value: processingStats.avgLufs ? processingStats.avgLufs + " LUFS" : "—" },
               { label: "Still to analyze", value: processingStats.unprocessed, highlight: processingStats.unprocessed > 0 },
             ].map(s => (
-              <div key={s.label} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "12px 14px", textAlign: "center" as any }}>
+              <div key={s.label} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "12px 14px", textAlign: "center" as any }}>
                 <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: (s as any).highlight ? "var(--accent-amber)" : "var(--text-primary)" }}>{s.value}</div>
                 <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4 }}>{s.label}</div>
               </div>
@@ -496,21 +496,21 @@ export default function SettingsPanel() {
           </div>
         )}
         {processingProgress && (
-          <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 8, fontSize: 12, color: "var(--accent-blue)", marginBottom: 12 }}>
+          <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)", marginBottom: 12 }}>
             {processingProgress}
             {processingTotal > 0 && (
-              <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 2, marginTop: 8, overflow: "hidden" }}>
+              <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
                 <div style={{ width: (processingDone / processingTotal * 100) + "%", height: "100%", background: "var(--accent-blue)", transition: "width 0.3s" }} />
               </div>
             )}
           </div>
         )}
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={handleProcessAll} disabled={processing} style={{ padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer" }}>
+          <button onClick={handleProcessAll} disabled={processing} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer" }}>
             {processing ? "Analyzing..." : "Analyze all songs"}
           </button>
           <button onClick={async () => { await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0"); getProcessingStats().then(setProcessingStats); }}
-            style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+            style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
             Reset
           </button>
         </div>
@@ -520,7 +520,7 @@ export default function SettingsPanel() {
       {/* ── Backup ── */}
       <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
-          <button onClick={backup} disabled={backupLoading} style={{ padding: "8px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
+          <button onClick={backup} disabled={backupLoading} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
             {backupLoading ? "Saving..." : "Back up now"}
           </button>
           {backupStatus && <span style={{ fontSize: 12, color: backupStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{backupStatus}</span>}
@@ -530,9 +530,9 @@ export default function SettingsPanel() {
             <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase" as any, marginBottom: 8 }}>Saved backups</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {backups.map(name => (
-                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-tertiary)", borderRadius: 8, padding: "9px 12px", border: "1px solid var(--border-primary)" }}>
+                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-tertiary)", borderRadius: 0, padding: "9px 12px", border: "1px solid var(--border-primary)" }}>
                   <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{formatBackupName(name)}</span>
-                  <button onClick={() => restore(name)} style={{ padding: "4px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                  <button onClick={() => restore(name)} style={{ padding: "4px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
                     Restore
                   </button>
                 </div>
@@ -560,7 +560,7 @@ export default function SettingsPanel() {
               const hasKey = keyStatus[p];
               return (
                 <button key={p} onClick={() => saveProvider(p)} style={{
-                  padding: "9px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  padding: "9px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, cursor: "pointer",
                   border: `1px solid ${active ? "var(--accent-blue)" : "var(--border-primary)"}`,
                   background: active ? "var(--accent-blue)" : "var(--bg-tertiary)",
                   color: active ? "#fff" : hasKey ? "var(--text-primary)" : "var(--text-tertiary)",
@@ -614,7 +614,7 @@ export default function SettingsPanel() {
           const connected = (keyStatus as any)[card.id];
           const busy = connectingProvider === card.id;
           return (
-            <div key={card.id} style={{ background: "var(--bg-secondary)", border: `1px solid ${connected ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
+            <div key={card.id} style={{ background: "var(--bg-secondary)", border: `1px solid ${connected ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, borderRadius: 0, overflow: "hidden", marginBottom: 12 }}>
               <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ width: 10, height: 10, borderRadius: "50%", background: card.color, flexShrink: 0 }} />
@@ -638,16 +638,16 @@ export default function SettingsPanel() {
                     value={card.value}
                     onChange={e => card.set(e.target.value as any)}
                     placeholder={connected ? "••••••••••••••••" : card.placeholder}
-                    style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+                    style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
                   />
                   <button
                     onClick={() => connectProvider(card.id, card.value)}
                     disabled={!card.value.trim() || busy}
-                    style={{ padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "none", cursor: card.value.trim() && !busy ? "pointer" : "default", background: card.value.trim() && !busy ? "var(--accent-blue)" : "var(--bg-tertiary)", color: card.value.trim() && !busy ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
+                    style={{ padding: "8px 16px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "none", cursor: card.value.trim() && !busy ? "pointer" : "default", background: card.value.trim() && !busy ? "var(--accent-blue)" : "var(--bg-tertiary)", color: card.value.trim() && !busy ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
                     {busy ? "Saving..." : "Connect"}
                   </button>
                   {connected && (
-                    <button onClick={() => disconnectProvider(card.id)} style={{ padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
+                    <button onClick={() => disconnectProvider(card.id)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
                       Disconnect
                     </button>
                   )}
@@ -669,7 +669,7 @@ export default function SettingsPanel() {
             <a href="https://openweathermap.org/api" target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl("https://openweathermap.org/api"); }}>
               openweathermap.org/api
             </a>
-            {" "}— sign up, then copy the key from your dashboard. You can also set <code style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 4 }}>OPENWEATHERMAP_API_KEY</code> in your .env file.
+            {" "}— sign up, then copy the key from your dashboard. You can also set <code style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0 }}>OPENWEATHERMAP_API_KEY</code> in your .env file.
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
@@ -677,16 +677,16 @@ export default function SettingsPanel() {
               value={weatherInput}
               onChange={e => setWeatherInput(e.target.value)}
               placeholder={keyStatus.weather ? "••••••••••••••••" : "Paste API key..."}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
             />
             <button
               onClick={() => connectProvider("weather", weatherInput)}
               disabled={!weatherInput.trim() || connectingProvider === "weather"}
-              style={{ padding: "8px 16px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "none", cursor: weatherInput.trim() ? "pointer" : "default", background: weatherInput.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)", color: weatherInput.trim() ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s" }}>
+              style={{ padding: "8px 16px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "none", cursor: weatherInput.trim() ? "pointer" : "default", background: weatherInput.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)", color: weatherInput.trim() ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s" }}>
               {connectingProvider === "weather" ? "Saving..." : "Connect"}
             </button>
             {keyStatus.weather && (
-              <button onClick={() => disconnectProvider("weather")} style={{ padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)" }}>
+              <button onClick={() => disconnectProvider("weather")} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)" }}>
                 Disconnect
               </button>
             )}

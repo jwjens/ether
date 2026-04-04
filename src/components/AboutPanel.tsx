@@ -89,7 +89,7 @@ export default function AboutPanel({ onClose }: Props) {
         width: 640, maxHeight: "88vh",
         background: "#0d0d18",
         border: "1px solid rgba(255,255,255,0.08)",
-        borderRadius: 20,
+        borderRadius: 0,
         display: "flex", flexDirection: "column",
         overflow: "hidden",
         boxShadow: "0 40px 100px rgba(0,0,0,0.7), 0 0 0 1px rgba(34,211,238,0.06)",
@@ -121,7 +121,7 @@ export default function AboutPanel({ onClose }: Props) {
           <div style={{ display: "flex", alignItems: "center", gap: 24, position: "relative" }}>
             {/* Logo mark */}
             <div style={{
-              width: 72, height: 72, borderRadius: 18, flexShrink: 0,
+              width: 72, height: 72, borderRadius: 0, flexShrink: 0,
               background: "linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%)",
               display: "flex", alignItems: "center", justifyContent: "center",
               boxShadow: "0 0 40px rgba(34,211,238,0.25), 0 0 80px rgba(167,139,250,0.12)",
@@ -149,7 +149,7 @@ export default function AboutPanel({ onClose }: Props) {
                   fontSize: 13, fontWeight: 700, color: "#22d3ee",
                   background: "rgba(34,211,238,0.1)",
                   border: "1px solid rgba(34,211,238,0.25)",
-                  borderRadius: 6, padding: "2px 10px",
+                  borderRadius: 0, padding: "2px 10px",
                 }}>v{VERSION}</span>
                 <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontFamily: "'DM Mono', monospace" }}>
                   {BUILD_DATE}
@@ -162,7 +162,7 @@ export default function AboutPanel({ onClose }: Props) {
 
             {/* Close */}
             <button onClick={onClose} style={{
-              marginLeft: "auto", width: 30, height: 30, borderRadius: 8,
+              marginLeft: "auto", width: 30, height: 30, borderRadius: 0,
               background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
               color: "rgba(255,255,255,0.35)", cursor: "pointer", fontSize: 14,
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -187,7 +187,7 @@ export default function AboutPanel({ onClose }: Props) {
             { id: "credits",   label: "Open Source" },
           ] as const).map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{
-              padding: "6px 16px", borderRadius: 7, fontSize: 11, fontWeight: 700,
+              padding: "6px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
               border: "none", cursor: "pointer", transition: "all 0.12s",
               background: tab === t.id ? "rgba(34,211,238,0.12)" : "transparent",
               color: tab === t.id ? "#22d3ee" : "rgba(255,255,255,0.35)",
@@ -220,12 +220,12 @@ export default function AboutPanel({ onClose }: Props) {
                 {TEAM.map(member => (
                   <div key={member.name} style={{
                     display: "flex", alignItems: "center", gap: 14,
-                    padding: "12px 16px", borderRadius: 12,
+                    padding: "12px 16px", borderRadius: 0,
                     background: "rgba(255,255,255,0.03)",
                     border: "1px solid rgba(255,255,255,0.06)",
                   }}>
                     <div style={{
-                      width: 40, height: 40, borderRadius: 10, flexShrink: 0,
+                      width: 40, height: 40, borderRadius: 0, flexShrink: 0,
                       background: "linear-gradient(135deg, rgba(34,211,238,0.2), rgba(167,139,250,0.2))",
                       border: "1px solid rgba(34,211,238,0.2)",
                       display: "flex", alignItems: "center", justifyContent: "center",
@@ -263,7 +263,7 @@ export default function AboutPanel({ onClose }: Props) {
                       }}
                       style={{
                         display: "flex", alignItems: "center", gap: 12,
-                        padding: "10px 14px", borderRadius: 10,
+                        padding: "10px 14px", borderRadius: 0,
                         background: "rgba(255,255,255,0.02)",
                         border: "1px solid rgba(255,255,255,0.05)",
                         cursor: "pointer", transition: "all 0.12s",
@@ -310,10 +310,10 @@ export default function AboutPanel({ onClose }: Props) {
                       color: ri === 0 ? "#22d3ee" : "rgba(255,255,255,0.4)",
                       background: ri === 0 ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.04)",
                       border: `1px solid ${ri === 0 ? "rgba(34,211,238,0.25)" : "rgba(255,255,255,0.06)"}`,
-                      borderRadius: 6, padding: "2px 10px",
+                      borderRadius: 0, padding: "2px 10px",
                     }}>v{release.version}</span>
                     <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'DM Mono', monospace" }}>{release.date}</span>
-                    {ri === 0 && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399", background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 4, padding: "1px 7px", letterSpacing: "0.08em" }}>CURRENT</span>}
+                    {ri === 0 && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399", background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.25)", borderRadius: 0, padding: "1px 7px", letterSpacing: "0.08em" }}>CURRENT</span>}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4 }}>
                     {release.changes.map((change, ci) => (
@@ -349,7 +349,7 @@ export default function AboutPanel({ onClose }: Props) {
                     }}
                     style={{
                       display: "flex", alignItems: "center", gap: 12,
-                      padding: "9px 14px", borderRadius: 9,
+                      padding: "9px 14px", borderRadius: 0,
                       background: "rgba(255,255,255,0.02)",
                       border: "1px solid rgba(255,255,255,0.04)",
                       cursor: "pointer", transition: "background 0.1s",
@@ -387,7 +387,7 @@ export default function AboutPanel({ onClose }: Props) {
             ETHER TECHNOLOGIES · v{VERSION} · MIT LICENSE
           </span>
           <button onClick={onClose} style={{
-            padding: "6px 18px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+            padding: "6px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)",
             color: "rgba(255,255,255,0.4)", cursor: "pointer", transition: "all 0.1s",
           }}

@@ -143,7 +143,7 @@ export default function SmartSegueEditor({
     <div style={{
       background: "rgba(8,8,14,0.95)",
       border: "1px solid rgba(255,255,255,0.07)",
-      borderRadius: 12,
+      borderRadius: 0,
       padding: "12px 16px 16px",
       fontFamily: "'Inter', system-ui, sans-serif",
       userSelect: "none",
@@ -157,7 +157,7 @@ export default function SmartSegueEditor({
           {/* Golden Sync badge */}
           <div style={{
             display: "flex", alignItems: "center", gap: 4,
-            padding: "2px 7px", borderRadius: 10,
+            padding: "2px 7px", borderRadius: 0,
             background: isGreen ? "rgba(52,211,153,0.1)" : "rgba(239,68,68,0.1)",
             border: `1px solid ${isGreen ? "rgba(52,211,153,0.3)" : "rgba(239,68,68,0.4)"}`,
             transition: "all 0.2s",
@@ -182,7 +182,7 @@ export default function SmartSegueEditor({
           {/* Full bar */}
           <div style={{
             position: "absolute", left: 0, right: 0,
-            top: 14, height: 14, borderRadius: 4,
+            top: 14, height: 14, borderRadius: 0,
             background: "rgba(255,255,255,0.06)",
             overflow: "hidden",
           }}>
@@ -220,7 +220,7 @@ export default function SmartSegueEditor({
                 top: 14, height: 16,
                 background: voiceColor,
                 border: `1px solid ${isGreen ? "rgba(139,92,246,0.9)" : "rgba(239,68,68,0.8)"}`,
-                borderRadius: 4,
+                borderRadius: 0,
                 cursor: "grab",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 overflow: "hidden",
@@ -245,7 +245,7 @@ export default function SmartSegueEditor({
           <TrackLabel label="IN" color="rgba(52,211,153,0.7)" />
           <div style={{
             position: "absolute", left: 0, right: 0,
-            top: 14, height: 14, borderRadius: 4,
+            top: 14, height: 14, borderRadius: 0,
             background: "rgba(255,255,255,0.06)",
             overflow: "hidden",
           }}>
@@ -291,7 +291,7 @@ export default function SmartSegueEditor({
             transform: "translateY(-50%)",
             fontSize: 7, fontWeight: 800, color: goldenColor,
             letterSpacing: "0.1em", whiteSpace: "nowrap",
-            background: "rgba(8,8,14,0.8)", padding: "1px 4px", borderRadius: 3,
+            background: "rgba(8,8,14,0.8)", padding: "1px 4px", borderRadius: 0,
             transition: "color 0.2s",
           }}>
             POST

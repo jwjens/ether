@@ -414,7 +414,7 @@ function ColorRow({ label, value, onChange }: { label: string; value: string; on
       <div
         onClick={() => inputRef.current?.click()}
         style={{
-          width: 28, height: 28, borderRadius: 7, flexShrink: 0,
+          width: 28, height: 28, borderRadius: 0, flexShrink: 0,
           background: value,
           border: "2px solid var(--border-secondary)",
           cursor: "pointer",
@@ -441,7 +441,7 @@ function ColorRow({ label, value, onChange }: { label: string; value: string; on
           if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v.length === 7 ? v : value);
         }}
         style={{
-          width: 74, padding: "3px 7px", borderRadius: 6,
+          width: 74, padding: "3px 7px", borderRadius: 0,
           background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
           color: "var(--text-primary)", fontSize: 11,
           fontFamily: "'DM Mono', monospace", outline: "none",
@@ -535,7 +535,7 @@ export function SkinPickerOverlay({
         width: 780, maxHeight: "88vh",
         background: "var(--bg-secondary)",
         border: "1px solid var(--border-secondary)",
-        borderRadius: 20,
+        borderRadius: 0,
         display: "flex", flexDirection: "column",
         boxShadow: "0 32px 80px rgba(0,0,0,0.6)",
         overflow: "hidden",
@@ -560,7 +560,7 @@ export function SkinPickerOverlay({
           <button onClick={handleExport} title="Export theme JSON" style={ghostBtn}>Export</button>
           <button onClick={handleReset} title="Reset to current preset" style={ghostBtn}>Reset</button>
           <button onClick={onClose} style={{
-            width: 30, height: 30, borderRadius: 8,
+            width: 30, height: 30, borderRadius: 0,
             background: "transparent", border: "1px solid var(--border-primary)",
             color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -587,7 +587,7 @@ export function SkinPickerOverlay({
                 {PRESETS.map(p => (
                   <button key={p.id} onClick={() => selectPreset(p.id)} style={{
                     display: "flex", alignItems: "center", gap: 9,
-                    padding: "8px 10px", borderRadius: 9, border: "none",
+                    padding: "8px 10px", borderRadius: 0, border: "none",
                     background: activePreset === p.id ? "var(--accent-cyan)" + "22" : "transparent",
                     outline: activePreset === p.id ? `1.5px solid var(--accent-cyan)` : "1px solid transparent",
                     color: activePreset === p.id ? "var(--accent-cyan)" : "var(--text-secondary)",
@@ -619,7 +619,7 @@ export function SkinPickerOverlay({
                 {VAR_GROUPS.map((g, i) => (
                   <button key={g.label} onClick={() => setActiveGroup(i)} style={{
                     display: "flex", alignItems: "center", gap: 8,
-                    padding: "7px 10px", borderRadius: 8, border: "none",
+                    padding: "7px 10px", borderRadius: 0, border: "none",
                     background: activeGroup === i ? "var(--bg-hover)" : "transparent",
                     color: activeGroup === i ? "var(--text-primary)" : "var(--text-tertiary)",
                     cursor: "pointer", textAlign: "left", width: "100%",
@@ -661,42 +661,42 @@ export function SkinPickerOverlay({
             <div style={{ marginTop: 28 }}>
               <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>Live Preview</div>
               <div style={{
-                borderRadius: 12, overflow: "hidden",
+                borderRadius: 0, overflow: "hidden",
                 border: "1px solid var(--border-primary)",
                 background: vars["--bg-primary"],
               }}>
                 {/* Fake header */}
                 <div style={{ height: 36, background: vars["--bg-secondary"], borderBottom: `1px solid ${vars["--border-primary"]}`, display: "flex", alignItems: "center", gap: 8, padding: "0 14px" }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: vars["--accent-red"] }} />
-                  <div style={{ width: 40, height: 6, borderRadius: 3, background: vars["--text-tertiary"], opacity: 0.4 }} />
+                  <div style={{ width: 40, height: 6, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.4 }} />
                   <div style={{ flex: 1 }} />
-                  <div style={{ width: 48, height: 20, borderRadius: 6, background: vars["--accent-cyan"], opacity: 0.9 }} />
-                  <div style={{ width: 36, height: 20, borderRadius: 6, background: vars["--accent-red"] }} />
+                  <div style={{ width: 48, height: 20, borderRadius: 0, background: vars["--accent-cyan"], opacity: 0.9 }} />
+                  <div style={{ width: 36, height: 20, borderRadius: 0, background: vars["--accent-red"] }} />
                 </div>
                 {/* Fake body */}
                 <div style={{ padding: 14, display: "flex", gap: 10 }}>
                   {/* Fake deck */}
-                  <div style={{ flex: 1, background: vars["--bg-secondary"], borderRadius: 10, border: `1px solid ${vars["--border-primary"]}`, padding: 12 }}>
-                    <div style={{ width: 60, height: 5, borderRadius: 2, background: vars["--deck-a"], marginBottom: 8, opacity: 0.9 }} />
-                    <div style={{ width: "100%", height: 4, borderRadius: 2, background: vars["--wave-unplayed"], marginBottom: 4, position: "relative", overflow: "hidden" }}>
-                      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "45%", background: vars["--wave-played"], borderRadius: 2 }} />
+                  <div style={{ flex: 1, background: vars["--bg-secondary"], borderRadius: 0, border: `1px solid ${vars["--border-primary"]}`, padding: 12 }}>
+                    <div style={{ width: 60, height: 5, borderRadius: 0, background: vars["--deck-a"], marginBottom: 8, opacity: 0.9 }} />
+                    <div style={{ width: "100%", height: 4, borderRadius: 0, background: vars["--wave-unplayed"], marginBottom: 4, position: "relative", overflow: "hidden" }}>
+                      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "45%", background: vars["--wave-played"], borderRadius: 0 }} />
                       <div style={{ position: "absolute", left: "45%", top: "-2px", bottom: "-2px", width: 2, background: vars["--wave-playhead"] }} />
                     </div>
-                    <div style={{ width: 40, height: 4, borderRadius: 2, background: vars["--text-tertiary"], opacity: 0.3 }} />
+                    <div style={{ width: 40, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.3 }} />
                   </div>
                   {/* Fake deck B */}
-                  <div style={{ flex: 1, background: vars["--bg-secondary"], borderRadius: 10, border: `1px solid ${vars["--border-primary"]}`, padding: 12 }}>
-                    <div style={{ width: 60, height: 5, borderRadius: 2, background: vars["--deck-b"], marginBottom: 8, opacity: 0.9 }} />
-                    <div style={{ width: "100%", height: 4, borderRadius: 2, background: vars["--wave-unplayed"], marginBottom: 4 }} />
-                    <div style={{ width: 40, height: 4, borderRadius: 2, background: vars["--text-tertiary"], opacity: 0.3 }} />
+                  <div style={{ flex: 1, background: vars["--bg-secondary"], borderRadius: 0, border: `1px solid ${vars["--border-primary"]}`, padding: 12 }}>
+                    <div style={{ width: 60, height: 5, borderRadius: 0, background: vars["--deck-b"], marginBottom: 8, opacity: 0.9 }} />
+                    <div style={{ width: "100%", height: 4, borderRadius: 0, background: vars["--wave-unplayed"], marginBottom: 4 }} />
+                    <div style={{ width: 40, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.3 }} />
                   </div>
                 </div>
                 {/* Fake footer */}
                 <div style={{ height: 22, background: vars["--bg-secondary"], borderTop: `1px solid ${vars["--border-primary"]}`, display: "flex", alignItems: "center", gap: 8, padding: "0 14px" }}>
                   <div style={{ width: 6, height: 6, borderRadius: "50%", background: vars["--accent-green"] }} />
-                  <div style={{ width: 30, height: 4, borderRadius: 2, background: vars["--text-tertiary"], opacity: 0.4 }} />
+                  <div style={{ width: 30, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.4 }} />
                   <div style={{ flex: 1 }} />
-                  <div style={{ width: 50, height: 4, borderRadius: 2, background: vars["--text-tertiary"], opacity: 0.3 }} />
+                  <div style={{ width: 50, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.3 }} />
                 </div>
               </div>
             </div>
@@ -716,7 +716,7 @@ export function SkinPickerOverlay({
           </div>
           <button onClick={onClose} style={ghostBtn}>Cancel</button>
           <button onClick={handleSave} style={{
-            height: 36, padding: "0 24px", borderRadius: 9, border: "none",
+            height: 36, padding: "0 24px", borderRadius: 0, border: "none",
             background: saved ? "var(--accent-green)" : "var(--accent-blue)",
             color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer",
             letterSpacing: "0.03em",
@@ -746,7 +746,7 @@ export function AppContextMenu({ x, y, onClose, onChangeSkin, onResetLayout }: {
         position: "fixed", left: x, top: y, zIndex: 9999,
         background: "var(--bg-secondary)",
         border: "1px solid var(--border-secondary)",
-        borderRadius: 10, padding: 4, minWidth: 190,
+        borderRadius: 0, padding: 4, minWidth: 190,
         boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
         fontFamily: "'Inter', sans-serif",
       }}>
@@ -768,7 +768,7 @@ export function AppContextMenu({ x, y, onClose, onChangeSkin, onResetLayout }: {
           ) : (
             <button key={i} onClick={item.onClick} style={{
               display: "flex", flexDirection: "column", width: "100%",
-              padding: "8px 12px", border: "none", borderRadius: 7,
+              padding: "8px 12px", border: "none", borderRadius: 0,
               background: "transparent", cursor: "pointer", textAlign: "left",
               transition: "background 0.1s",
             }}
@@ -788,7 +788,7 @@ export function AppContextMenu({ x, y, onClose, onChangeSkin, onResetLayout }: {
 // ─── Shared button style ───────────────────────────────────────
 
 const ghostBtn: React.CSSProperties = {
-  height: 32, padding: "0 14px", borderRadius: 8,
+  height: 32, padding: "0 14px", borderRadius: 0,
   background: "var(--bg-tertiary)",
   border: "1px solid var(--border-primary)",
   color: "var(--text-secondary)",

@@ -57,7 +57,7 @@ function StationCard({
     <div style={{
       background: isActive ? station.color + "08" : "var(--bg-secondary)",
       border: `1px solid ${isActive ? station.color + "40" : "var(--border-primary)"}`,
-      borderRadius: 16, overflow: "hidden",
+      borderRadius: 0, overflow: "hidden",
       boxShadow: isActive ? `0 0 0 2px ${station.color}25` : "none",
       transition: "all 0.15s",
     }}>
@@ -68,7 +68,7 @@ function StationCard({
         {/* Station identity */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
           <div style={{
-            width: 46, height: 46, borderRadius: 12, flexShrink: 0,
+            width: 46, height: 46, borderRadius: 0, flexShrink: 0,
             background: station.color + "20",
             border: `1px solid ${station.color}35`,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -81,15 +81,15 @@ function StationCard({
             <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em", marginBottom: 2 }}>{station.name}</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               {station.frequency && (
-                <span style={{ fontSize: 9, fontWeight: 700, color: station.color, background: station.color + "15", borderRadius: 4, padding: "1px 7px", border: `1px solid ${station.color}30` }}>{station.frequency}</span>
+                <span style={{ fontSize: 9, fontWeight: 700, color: station.color, background: station.color + "15", borderRadius: 0, padding: "1px 7px", border: `1px solid ${station.color}30` }}>{station.frequency}</span>
               )}
               {station.format && (
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)", background: "var(--bg-tertiary)", borderRadius: 4, padding: "1px 7px", border: "1px solid var(--border-primary)" }}>{station.format}</span>
+                <span style={{ fontSize: 9, color: "var(--text-tertiary)", background: "var(--bg-tertiary)", borderRadius: 0, padding: "1px 7px", border: "1px solid var(--border-primary)" }}>{station.format}</span>
               )}
             </div>
           </div>
           {isActive && (
-            <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 20, background: station.color + "15", border: `1px solid ${station.color}30`, flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 0, background: station.color + "15", border: `1px solid ${station.color}30`, flexShrink: 0 }}>
               <div style={{ width: 5, height: 5, borderRadius: "50%", background: station.color, animation: "pulse-dot 1.5s ease-in-out infinite" }} />
               <span style={{ fontSize: 9, fontWeight: 800, color: station.color, letterSpacing: "0.1em" }}>ACTIVE</span>
             </div>
@@ -103,7 +103,7 @@ function StationCard({
             { label: "Clocks",   value: stats.clock_count },
             { label: "Created",  value: fmtDate(station.created_at) },
           ].map(s => (
-            <div key={s.label} style={{ background: "var(--bg-tertiary)", borderRadius: 8, padding: "8px 10px", border: "1px solid var(--border-primary)" }}>
+            <div key={s.label} style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: "8px 10px", border: "1px solid var(--border-primary)" }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", fontFamily: s.label === "Songs" || s.label === "Clocks" ? "'DM Mono', monospace" : undefined }}>{s.value}</div>
               <div style={{ fontSize: 8, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 1 }}>{s.label}</div>
             </div>
@@ -112,7 +112,7 @@ function StationCard({
 
         {/* Stream URL */}
         {station.stream_url && (
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", borderRadius: 6, padding: "5px 9px", marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", borderRadius: 0, padding: "5px 9px", marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             📡 {station.stream_url}
           </div>
         )}
@@ -121,7 +121,7 @@ function StationCard({
         <div style={{ display: "flex", gap: 6 }}>
           {!isActive && (
             <button onClick={() => onSwitch(station.id)} style={{
-              flex: 1, padding: "8px", borderRadius: 9, fontSize: 11, fontWeight: 700,
+              flex: 1, padding: "8px", borderRadius: 0, fontSize: 11, fontWeight: 700,
               background: station.color, color: "#000", border: "none", cursor: "pointer",
               transition: "all 0.15s",
             }}>
@@ -129,13 +129,13 @@ function StationCard({
             </button>
           )}
           {isActive && (
-            <div style={{ flex: 1, padding: "8px", borderRadius: 9, fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", textAlign: "center" }}>
+            <div style={{ flex: 1, padding: "8px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", textAlign: "center" }}>
               Currently Active
             </div>
           )}
-          <button onClick={() => onEdit(station)} style={{ padding: "8px 12px", borderRadius: 9, fontSize: 11, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>✏️</button>
+          <button onClick={() => onEdit(station)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>✏️</button>
           {!isActive && (
-            <button onClick={() => onDelete(station.id)} style={{ padding: "8px 12px", borderRadius: 9, fontSize: 11, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}
+            <button onClick={() => onDelete(station.id)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
             >🗑</button>
@@ -169,7 +169,7 @@ function StationEditor({
     }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
       <div style={{
         width: 480, background: "#0d0d18",
-        border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20,
+        border: "1px solid rgba(255,255,255,0.1)", borderRadius: 0,
         overflow: "hidden",
         boxShadow: "0 40px 100px rgba(0,0,0,0.6)",
       }}>
@@ -185,25 +185,25 @@ function StationEditor({
             {/* Name */}
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Station Name *</div>
-              <input value={form.name || ""} onChange={e => set("name", e.target.value)} placeholder="KETH Radio" style={{ width: "100%", padding: "9px 12px", borderRadius: 9, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
+              <input value={form.name || ""} onChange={e => set("name", e.target.value)} placeholder="KETH Radio" style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
             </div>
 
             {/* Short name + Frequency */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Short Name / Call Sign *</div>
-                <input value={form.short_name || ""} onChange={e => set("short_name", e.target.value)} placeholder="KETH" maxLength={6} style={{ width: "100%", padding: "9px 12px", borderRadius: 9, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono', monospace", textTransform: "uppercase" }} />
+                <input value={form.short_name || ""} onChange={e => set("short_name", e.target.value)} placeholder="KETH" maxLength={6} style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono', monospace", textTransform: "uppercase" }} />
               </div>
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Frequency</div>
-                <input value={form.frequency || ""} onChange={e => set("frequency", e.target.value)} placeholder="98.7 FM" style={{ width: "100%", padding: "9px 12px", borderRadius: 9, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
+                <input value={form.frequency || ""} onChange={e => set("frequency", e.target.value)} placeholder="98.7 FM" style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
               </div>
             </div>
 
             {/* Format */}
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Format</div>
-              <select value={form.format || ""} onChange={e => set("format", e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 9, fontSize: 13, background: "#1a1a2e", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}>
+              <select value={form.format || ""} onChange={e => set("format", e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "#1a1a2e", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}>
                 <option value="">Select format...</option>
                 {["Adult Contemporary","CHR / Top 40","Country","Rock","Classic Rock","Hip-Hop / R&B","Jazz","Classical","News/Talk","Sports","Religious","Easy Listening","Electronic/Dance","Alternative","Oldies","Latin"].map(f => (
                   <option key={f} value={f} style={{ background: "#1a1a2e" }}>{f}</option>
@@ -214,7 +214,7 @@ function StationEditor({
             {/* Stream URL */}
             <div>
               <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Stream URL (Icecast)</div>
-              <input value={form.stream_url || ""} onChange={e => set("stream_url", e.target.value)} placeholder="http://icecast.example.com:8000/stream" style={{ width: "100%", padding: "9px 12px", borderRadius: 9, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono', monospace" }} />
+              <input value={form.stream_url || ""} onChange={e => set("stream_url", e.target.value)} placeholder="http://icecast.example.com:8000/stream" style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono', monospace" }} />
             </div>
 
             {/* Color */}
@@ -236,11 +236,11 @@ function StationEditor({
 
           {/* Buttons */}
           <div style={{ display: "flex", gap: 8, marginTop: 24 }}>
-            <button onClick={onClose} style={{ flex: 1, padding: "10px", borderRadius: 10, fontSize: 12, background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+            <button onClick={onClose} style={{ flex: 1, padding: "10px", borderRadius: 0, fontSize: 12, background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
             <button onClick={() => {
               if (!form.name?.trim() || !form.short_name?.trim()) return alert("Name and call sign are required.");
               onSave(form);
-            }} style={{ flex: 2, padding: "10px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: form.color || COLORS[0], color: "#000", border: "none", cursor: "pointer" }}>
+            }} style={{ flex: 2, padding: "10px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: form.color || COLORS[0], color: "#000", border: "none", cursor: "pointer" }}>
               {station?.id ? "Save Changes" : "Create Station"}
             </button>
           </div>
@@ -414,7 +414,7 @@ export default function StationManager({ onStationSwitch }: Props) {
         </div>
         <button
           onClick={() => setEditing({})}
-          style={{ padding: "9px 20px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#a78bfa", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 0 20px rgba(167,139,250,0.3)" }}
+          style={{ padding: "9px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#a78bfa", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 0 20px rgba(167,139,250,0.3)" }}
         >
           + Add Station
         </button>
@@ -449,7 +449,7 @@ export default function StationManager({ onStationSwitch }: Props) {
               style={{
                 background: "transparent",
                 border: "2px dashed var(--border-primary)",
-                borderRadius: 16, padding: "32px 24px",
+                borderRadius: 0, padding: "32px 24px",
                 cursor: "pointer", color: "var(--text-tertiary)",
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
                 transition: "all 0.15s", minHeight: 200,
@@ -464,7 +464,7 @@ export default function StationManager({ onStationSwitch }: Props) {
         )}
 
         {/* Remote console link */}
-        <div style={{ marginTop: 24, padding: "16px 18px", borderRadius: 14, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ marginTop: 24, padding: "16px 18px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 16 }}>
           <div style={{ fontSize: 24, flexShrink: 0 }}>🌐</div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>Remote Web Console</div>
@@ -480,7 +480,7 @@ export default function StationManager({ onStationSwitch }: Props) {
                 await invoke("open_url", { url: "https://ether-backend-production.up.railway.app/console" });
               } catch { window.open("https://ether-backend-production.up.railway.app/console", "_blank"); }
             }}
-            style={{ padding: "8px 16px", borderRadius: 9, fontSize: 11, fontWeight: 700, background: "rgba(167,139,250,0.12)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer", flexShrink: 0 }}
+            style={{ padding: "8px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgba(167,139,250,0.12)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer", flexShrink: 0 }}
           >
             Open Console ↗
           </button>

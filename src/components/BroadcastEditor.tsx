@@ -1679,7 +1679,7 @@ export default function BroadcastEditor({
                       height: TRACK_H - 8,
                       pointerEvents: "none",
                       zIndex: 8,
-                      borderRadius: 4,
+                      borderRadius: 0,
                       border: `1px solid ${track.accentColor}55`,
                     }}
                   />
@@ -1723,7 +1723,7 @@ export default function BroadcastEditor({
                       style={{
                         position: "absolute" as const,
                         left, top: 6, width: w, height: TRACK_H - 12,
-                        borderRadius: 5,
+                        borderRadius: 0,
                         background: track.color,
                         border: `1px solid ${isSelected ? track.accentColor : track.accentColor + "55"}`,
                         boxShadow: isSelected ? `0 0 0 1.5px ${track.accentColor}` : "none",
@@ -1823,7 +1823,7 @@ export default function BroadcastEditor({
                             position: "absolute" as const, top: 2, right: 10,
                             background: "rgba(239,68,68,0.8)", border: "none",
                             color: "#fff", fontSize: 10, fontWeight: 700,
-                            borderRadius: 3, padding: "1px 5px", cursor: "pointer",
+                            borderRadius: 0, padding: "1px 5px", cursor: "pointer",
                             zIndex: 6,
                           }}
                         >
@@ -1878,7 +1878,7 @@ export default function BroadcastEditor({
               <div style={{
                 position: "absolute" as const, top: 14, left: 4,
                 fontSize: 8, color: "#ef4444", fontFamily: "monospace",
-                background: "rgba(8,8,14,0.85)", padding: "1px 4px", borderRadius: 2,
+                background: "rgba(8,8,14,0.85)", padding: "1px 4px", borderRadius: 0,
                 whiteSpace: "nowrap" as const, pointerEvents: "none",
               }}>
                 {fmtMs(playheadMs)}
@@ -1911,7 +1911,7 @@ export default function BroadcastEditor({
                   background: "rgba(8,8,14,0.92)",
                   border: `1px solid ${mode === "cut" ? "rgba(239,68,68,0.4)" : "rgba(255,255,255,0.15)"}`,
                   padding: "2px 5px",
-                  borderRadius: 3,
+                  borderRadius: 0,
                   whiteSpace: "nowrap" as const,
                   pointerEvents: "none",
                   letterSpacing: "0.04em",
@@ -1998,7 +1998,7 @@ export default function BroadcastEditor({
               zIndex: 9999,
               background: "var(--bg-secondary)",
               border: "1px solid var(--border-primary)",
-              borderRadius: 9, padding: "4px 0",
+              borderRadius: 0, padding: "4px 0",
               minWidth: 210,
               boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
               fontFamily: "'Inter', system-ui, sans-serif",
@@ -2093,7 +2093,7 @@ export default function BroadcastEditor({
               zIndex: 9999,
               background: "var(--bg-secondary)",
               border: "1px solid var(--border-primary)",
-              borderRadius: 9, padding: "4px 0",
+              borderRadius: 0, padding: "4px 0",
               minWidth: 200,
               boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
               fontFamily: "'Inter', system-ui, sans-serif",
@@ -2205,7 +2205,7 @@ function Btn({ children, onClick, active, color, disabled, style }: {
   const c = color || "#7dd3fc";
   return (
     <button onClick={onClick} disabled={disabled} style={{
-      padding: "4px 10px", borderRadius: 7, fontSize: 11, fontWeight: 600,
+      padding: "4px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600,
       cursor: disabled ? "default" : "pointer",
       background: active ? `${c}22` : "var(--bg-tertiary)",
       color: active ? c : "var(--text-secondary)",
@@ -2223,7 +2223,7 @@ function Sep({ small }: { small?: boolean }) {
 }
 
 const miniBtn: React.CSSProperties = {
-  padding: "1px 5px", borderRadius: 4, fontSize: 9, fontWeight: 700,
+  padding: "1px 5px", borderRadius: 0, fontSize: 9, fontWeight: 700,
   background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.4)",
   border: "1px solid rgba(255,255,255,0.08)", cursor: "pointer",
 };

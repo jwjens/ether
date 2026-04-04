@@ -348,7 +348,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
         width: minimized ? 300 : size.w,
         height: minimized ? "auto" : size.h,
         zIndex: 11000,
-        borderRadius: 18,
+        borderRadius: 0,
         background: "linear-gradient(160deg, rgba(18,18,26,0.97) 0%, rgba(12,12,20,0.98) 100%)",
         border: "1px solid rgba(255,255,255,0.07)",
         boxShadow: "0 40px 100px rgba(0,0,0,0.8), 0 0 0 0.5px rgba(255,255,255,0.04), inset 0 1px 0 rgba(255,255,255,0.06)",
@@ -405,7 +405,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
               <span style={{ fontSize: 9, color: "#34d399", fontWeight: 800, letterSpacing: "0.08em" }}>✓ SAVED</span>
             ) : (
               <button onMouseDown={e => e.stopPropagation()} onClick={saveDesk}
-                style={{ padding: "3px 9px", borderRadius: 6, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", fontSize: 9, fontWeight: 700, cursor: "pointer", transition: "all 0.15s", letterSpacing: "0.06em", textTransform: "uppercase" as const }}
+                style={{ padding: "3px 9px", borderRadius: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.3)", fontSize: 9, fontWeight: 700, cursor: "pointer", transition: "all 0.15s", letterSpacing: "0.06em", textTransform: "uppercase" as const }}
                 onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(52,211,153,0.1)"; el.style.borderColor = "rgba(52,211,153,0.3)"; el.style.color = "#34d399"; }}
                 onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = "rgba(255,255,255,0.04)"; el.style.borderColor = "rgba(255,255,255,0.08)"; el.style.color = "rgba(255,255,255,0.3)"; }}
               >Save</button>
@@ -413,10 +413,10 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
           )}
 
           {!minimized && (
-            <div style={{ display: "flex", gap: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "2px" }}>
+            <div style={{ display: "flex", gap: 1, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 0, padding: "2px" }}>
               {(["board", "ai"] as const).map(id => (
                 <button key={id} onMouseDown={e => e.stopPropagation()} onClick={() => setTab(id)} style={{
-                  padding: "3px 11px", borderRadius: 6, border: "none",
+                  padding: "3px 11px", borderRadius: 0, border: "none",
                   background: tab === id ? "rgba(255,255,255,0.10)" : "none",
                   color: tab === id ? "rgba(255,255,255,0.88)" : "rgba(255,255,255,0.28)",
                   fontSize: 10, fontWeight: tab === id ? 700 : 400,
@@ -447,7 +447,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
               {(["yellow", "pink", "cyan", "green", "purple"] as NoteColor[]).map(c => (
                 <button key={c} onClick={() => addNote(c)} title={`Add ${c} note`} style={{
-                  width: 16, height: 16, borderRadius: 4,
+                  width: 16, height: 16, borderRadius: 0,
                   background: NOTE_COLORS[c].bg,
                   border: `1.5px solid ${NOTE_COLORS[c].border}`,
                   cursor: "pointer", padding: 0,
@@ -464,7 +464,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
 
             <button onClick={addLink} style={{
               display: "flex", alignItems: "center", gap: 4,
-              padding: "3px 9px", borderRadius: 6,
+              padding: "3px 9px", borderRadius: 0,
               background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
               color: "rgba(255,255,255,0.4)", fontSize: 10, fontWeight: 600, cursor: "pointer",
               transition: "all 0.15s",
@@ -478,7 +478,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
 
             <button onClick={() => setTab("ai")} style={{
               display: "flex", alignItems: "center", gap: 4,
-              padding: "3px 9px", borderRadius: 6,
+              padding: "3px 9px", borderRadius: 0,
               background: "rgba(167,139,250,0.07)", border: "1px solid rgba(167,139,250,0.15)",
               color: "rgba(167,139,250,0.7)", fontSize: 10, fontWeight: 600, cursor: "pointer",
               transition: "all 0.15s",
@@ -549,7 +549,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
         <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, minHeight: 0 }}>
           {/* No-key disclaimer */}
           {aiKeyConfigured === false && (
-            <div style={{ margin: "16px 18px", padding: "12px 16px", borderRadius: 10, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "rgba(251,191,36,0.9)", lineHeight: 1.6 }}>
+            <div style={{ margin: "16px 18px", padding: "12px 16px", borderRadius: 0, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 12, color: "rgba(251,191,36,0.9)", lineHeight: 1.6 }}>
               AI features require your own API key — add yours in{" "}
               <span style={{ fontWeight: 700 }}>Settings → AI &amp; Integrations</span>.
             </div>
@@ -559,7 +559,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
             {messages.map((msg, i) => (
               <div key={i} style={{ display: "flex", gap: 10, flexDirection: msg.role === "user" ? "row-reverse" : "row" }}>
                 {msg.role === "assistant" && (
-                  <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg, rgba(167,139,250,0.3), rgba(56,189,248,0.3))", border: "1px solid rgba(167,139,250,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0, marginTop: 2 }}>✦</div>
+                  <div style={{ width: 26, height: 26, borderRadius: 0, background: "linear-gradient(135deg, rgba(167,139,250,0.3), rgba(56,189,248,0.3))", border: "1px solid rgba(167,139,250,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, flexShrink: 0, marginTop: 2 }}>✦</div>
                 )}
                 <div style={{
                   maxWidth: "78%",
@@ -588,7 +588,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
             ))}
             {aiLoading && (
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <div style={{ width: 26, height: 26, borderRadius: 8, background: "linear-gradient(135deg, rgba(167,139,250,0.3), rgba(56,189,248,0.3))", border: "1px solid rgba(167,139,250,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>✦</div>
+                <div style={{ width: 26, height: 26, borderRadius: 0, background: "linear-gradient(135deg, rgba(167,139,250,0.3), rgba(56,189,248,0.3))", border: "1px solid rgba(167,139,250,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>✦</div>
                 <div style={{ display: "flex", gap: 4, padding: "11px 14px", background: "rgba(255,255,255,0.05)", borderRadius: "4px 13px 13px 13px", border: "1px solid rgba(255,255,255,0.07)" }}>
                   {[0, 1, 2].map(i => (
                     <div key={i} style={{ width: 5, height: 5, borderRadius: "50%", background: "rgba(167,139,250,0.6)", animation: `bounce 1.2s ease-in-out ${i * 0.15}s infinite` }} />
@@ -602,7 +602,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
           <div style={{ padding: "8px 16px 6px", display: "flex", gap: 5, flexWrap: "wrap" as const, flexShrink: 0, borderTop: "1px solid rgba(255,255,255,0.05)" }}>
             {quickButtons.map(({ label, action }) => (
               <button key={label} onClick={action} disabled={aiLoading} style={{
-                padding: "4px 11px", borderRadius: 20,
+                padding: "4px 11px", borderRadius: 0,
                 border: "1px solid rgba(255,255,255,0.08)",
                 background: "rgba(255,255,255,0.03)",
                 color: aiLoading ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.55)",
@@ -623,7 +623,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
               placeholder="Ask anything about your episode..."
               style={{
-                flex: 1, padding: "9px 14px", borderRadius: 10,
+                flex: 1, padding: "9px 14px", borderRadius: 0,
                 background: "rgba(255,255,255,0.05)",
                 border: "1px solid rgba(255,255,255,0.08)",
                 color: "rgba(255,255,255,0.85)", fontSize: 12, outline: "none",
@@ -633,7 +633,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
               onBlur={e => (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.08)"}
             />
             <button onClick={sendMessage} disabled={aiLoading || !input.trim()} style={{
-              width: 36, height: 36, borderRadius: 10, border: "none",
+              width: 36, height: 36, borderRadius: 0, border: "none",
               background: input.trim() && !aiLoading ? "rgba(167,139,250,0.8)" : "rgba(255,255,255,0.05)",
               color: input.trim() && !aiLoading ? "#fff" : "rgba(255,255,255,0.2)",
               cursor: input.trim() && !aiLoading ? "pointer" : "default",
@@ -724,7 +724,7 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
     position: "absolute",
     left: item.x, top: item.y,
     width: item.w, minHeight: item.h,
-    borderRadius: 12,
+    borderRadius: 0,
     boxShadow: selected
       ? `0 12px 40px rgba(0,0,0,0.6), 0 0 0 1.5px rgba(56,189,248,0.5), 0 0 24px ${dn.shadow}`
       : dragging
@@ -751,15 +751,15 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
           <div style={{ display: "flex", alignItems: "center", gap: 4 }} onMouseDown={e => e.stopPropagation()}>
             {/* Bold toggle */}
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontBold: !item.fontBold }); }}
-              style={{ background: item.fontBold ? "rgba(255,255,255,0.15)" : "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", fontSize: 11, fontWeight: 800, color: dn.text, padding: "1px 6px", lineHeight: 1.4 }}>
+              style={{ background: item.fontBold ? "rgba(255,255,255,0.15)" : "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, fontWeight: 800, color: dn.text, padding: "1px 6px", lineHeight: 1.4 }}>
               B
             </button>
             {/* Font size */}
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontSize: Math.max(9, (item.fontSize || 12) - 1) }); }}
-              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>−</button>
+              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>−</button>
             <span style={{ fontSize: 9, color: dn.text, opacity: 0.5, minWidth: 18, textAlign: "center", fontFamily: "'DM Mono',monospace" }}>{item.fontSize || 12}</span>
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontSize: Math.min(48, (item.fontSize || 12) + 1) }); }}
-              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 4, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>+</button>
+              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>+</button>
           </div>
           <button onClick={e => { e.stopPropagation(); onDelete(item.id); }}
             style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: dn.text, opacity: 0.4, padding: 0, lineHeight: 1, transition: "opacity 0.1s" }}
@@ -819,7 +819,7 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
       <div style={{ ...baseStyle, background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.15)", padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}
         onMouseDown={e => { onSelect(item.id); onDragStart(e, item.id); }}
       >
-        <div style={{ width: 26, height: 26, borderRadius: 7, background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <div style={{ width: 26, height: 26, borderRadius: 0, background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(56,189,248,0.7)" strokeWidth="2" strokeLinecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -957,7 +957,7 @@ export function InlineProducerDesk({ episodeTitle, nowPlaying }: { episodeTitle?
           {(["yellow","pink","cyan","green","purple"] as NoteColor[]).map(c => (
             <button key={c} onClick={() => addNote(c)} style={{ width: 14, height: 14, borderRadius: "50%", background: NOTE_COLORS[c].border, border: "none", cursor: "pointer", flexShrink: 0 }} title={`Add ${c} note`} />
           ))}
-          <button onClick={() => setChatOpen(o => !o)} style={{ marginLeft: 4, padding: "3px 8px", borderRadius: 6, background: chatOpen ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.07)", border: "1px solid rgba(139,92,246,0.4)", color: "#a78bfa", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✦ AI</button>
+          <button onClick={() => setChatOpen(o => !o)} style={{ marginLeft: 4, padding: "3px 8px", borderRadius: 0, background: chatOpen ? "rgba(139,92,246,0.3)" : "rgba(255,255,255,0.07)", border: "1px solid rgba(139,92,246,0.4)", color: "#a78bfa", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>✦ AI</button>
         </div>
       </div>
 
@@ -991,7 +991,7 @@ export function InlineProducerDesk({ episodeTitle, nowPlaying }: { episodeTitle?
           width: 320, height: 420,
           background: "rgba(10,10,18,0.97)",
           border: "1px solid rgba(139,92,246,0.3)",
-          borderRadius: 14,
+          borderRadius: 0,
           display: "flex", flexDirection: "column",
           overflow: "hidden",
           boxShadow: "0 12px 48px rgba(0,0,0,0.7), 0 0 0 0.5px rgba(139,92,246,0.15)",
@@ -1036,14 +1036,14 @@ export function InlineProducerDesk({ episodeTitle, nowPlaying }: { episodeTitle?
           {/* Quick-tap buttons */}
           <div style={{ display: "flex", gap: 4, padding: "6px 10px", flexWrap: "wrap" as const, borderTop: "1px solid rgba(255,255,255,0.05)", flexShrink: 0 }}>
             {inlineQuickButtons.map(({ label, action }) => (
-              <button key={label} onClick={action} disabled={chatLoading} style={{ padding: "3px 9px", borderRadius: 20, border: "1px solid rgba(139,92,246,0.25)", background: "rgba(139,92,246,0.07)", color: chatLoading ? "rgba(255,255,255,0.2)" : "rgba(167,139,250,0.8)", fontSize: 10, fontWeight: 600, cursor: chatLoading ? "default" : "pointer", whiteSpace: "nowrap" as const }}>{label}</button>
+              <button key={label} onClick={action} disabled={chatLoading} style={{ padding: "3px 9px", borderRadius: 0, border: "1px solid rgba(139,92,246,0.25)", background: "rgba(139,92,246,0.07)", color: chatLoading ? "rgba(255,255,255,0.2)" : "rgba(167,139,250,0.8)", fontSize: 10, fontWeight: 600, cursor: chatLoading ? "default" : "pointer", whiteSpace: "nowrap" as const }}>{label}</button>
             ))}
           </div>
 
           {/* Input */}
           <div style={{ display: "flex", gap: 6, padding: "6px 10px 8px", flexShrink: 0 }}>
-            <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") sendChat(); }} placeholder="Ask anything..." style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8, padding: "5px 10px", fontSize: 11, color: "rgba(255,255,255,0.85)", outline: "none" }} />
-            <button onClick={() => sendChat()} disabled={chatLoading || !chatInput.trim()} style={{ padding: "5px 12px", borderRadius: 8, background: chatInput.trim() && !chatLoading ? "#7c3aed" : "rgba(255,255,255,0.05)", border: "none", color: chatInput.trim() && !chatLoading ? "#fff" : "rgba(255,255,255,0.2)", fontSize: 11, fontWeight: 700, cursor: chatInput.trim() && !chatLoading ? "pointer" : "default" }}>Send</button>
+            <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => { if (e.key === "Enter") sendChat(); }} placeholder="Ask anything..." style={{ flex: 1, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 0, padding: "5px 10px", fontSize: 11, color: "rgba(255,255,255,0.85)", outline: "none" }} />
+            <button onClick={() => sendChat()} disabled={chatLoading || !chatInput.trim()} style={{ padding: "5px 12px", borderRadius: 0, background: chatInput.trim() && !chatLoading ? "#7c3aed" : "rgba(255,255,255,0.05)", border: "none", color: chatInput.trim() && !chatLoading ? "#fff" : "rgba(255,255,255,0.2)", fontSize: 11, fontWeight: 700, cursor: chatInput.trim() && !chatLoading ? "pointer" : "default" }}>Send</button>
           </div>
         </div>
       )}

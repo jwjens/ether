@@ -221,13 +221,13 @@ export default function SmartScheduler({ onClose }: Props) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {saved && <span style={{ fontSize: 10, color: "var(--accent-green)", fontWeight: 700 }}>✓ Saved</span>}
-            {onClose && <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16 }}>×</button>}
+            {onClose && <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16 }}>×</button>}
           </div>
         </div>
 
         {/* Active now indicator */}
         {activeRulesNow().length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 0, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", marginBottom: 12 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#34d399", boxShadow: "0 0 6px #34d399", animation: "pulse 2s ease-in-out infinite" }} />
             <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>
               Active now: {activeRulesNow().map(r => r.description).join(", ")}
@@ -264,7 +264,7 @@ export default function SmartScheduler({ onClose }: Props) {
         {/* Quick presets */}
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {["Radio Station", "Coffee Shop", "Worship", "Club / Venue"].map(p => (
-            <button key={p} onClick={() => applyPreset(p)} style={{ padding: "5px 12px", borderRadius: 20, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 10, fontWeight: 600, cursor: "pointer", transition: "all 0.12s" }}
+            <button key={p} onClick={() => applyPreset(p)} style={{ padding: "5px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 10, fontWeight: 600, cursor: "pointer", transition: "all 0.12s" }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-cyan)"; (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
             >{p}</button>
@@ -280,15 +280,15 @@ export default function SmartScheduler({ onClose }: Props) {
             value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter") handleAI(); }}
             placeholder="e.g. Play high energy music weekday mornings, slow jazz Friday evenings, news at the top of every hour..."
-            style={{ flex: 1, padding: "10px 14px", borderRadius: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "inherit" }}
+            style={{ flex: 1, padding: "10px 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "inherit" }}
           />
-          <button onClick={handleAI} disabled={loading || !input.trim()} style={{ padding: "10px 18px", borderRadius: 10, background: loading || !input.trim() ? "var(--bg-tertiary)" : "var(--accent-cyan)", border: "none", color: loading || !input.trim() ? "var(--text-tertiary)" : "#000", fontSize: 12, fontWeight: 700, cursor: loading || !input.trim() ? "default" : "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
+          <button onClick={handleAI} disabled={loading || !input.trim()} style={{ padding: "10px 18px", borderRadius: 0, background: loading || !input.trim() ? "var(--bg-tertiary)" : "var(--accent-cyan)", border: "none", color: loading || !input.trim() ? "var(--text-tertiary)" : "#000", fontSize: 12, fontWeight: 700, cursor: loading || !input.trim() ? "default" : "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
             {loading ? <><div style={{ width: 11, height: 11, borderRadius: "50%", border: "2px solid rgba(0,0,0,0.4)", borderTopColor: "transparent", animation: "spin 0.7s linear infinite" }} />Building...</> : "✦ Build Rules"}
           </button>
         </div>
         <div style={{ marginTop: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
           {["High energy mornings", "Chill evenings", "News every hour", "Weekend party mode", "No talk, just music"].map(q => (
-            <button key={q} onClick={() => setInput(q)} style={{ padding: "3px 9px", borderRadius: 20, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 10, cursor: "pointer", transition: "all 0.1s" }}
+            <button key={q} onClick={() => setInput(q)} style={{ padding: "3px 9px", borderRadius: 0, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 10, cursor: "pointer", transition: "all 0.1s" }}
               onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"}
               onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
             >{q}</button>
@@ -299,7 +299,7 @@ export default function SmartScheduler({ onClose }: Props) {
       {/* 24hr timeline strip */}
       <div style={{ padding: "12px 24px 0", flexShrink: 0 }}>
         <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>Today's Schedule</div>
-        <div style={{ position: "relative", height: 28, borderRadius: 6, background: "var(--bg-tertiary)", overflow: "hidden" }}>
+        <div style={{ position: "relative", height: 28, borderRadius: 0, background: "var(--bg-tertiary)", overflow: "hidden" }}>
           {rules.filter(r => r.active).map(rule => {
             const now = new Date();
             const d = now.getDay();
@@ -340,7 +340,7 @@ export default function SmartScheduler({ onClose }: Props) {
             const colors = ENERGY_COLORS[rule.energyLevel];
             return (
               <div key={rule.id} style={{
-                padding: "14px 16px", borderRadius: 14,
+                padding: "14px 16px", borderRadius: 0,
                 background: rule.active ? colors.bg : "var(--bg-secondary)",
                 border: `1px solid ${rule.active ? colors.border : "var(--border-primary)"}`,
                 opacity: rule.active ? 1 : 0.5,
@@ -350,13 +350,13 @@ export default function SmartScheduler({ onClose }: Props) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                       <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{rule.description}</span>
-                      <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 8, background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>{colors.label}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 0, background: colors.bg, color: colors.text, border: `1px solid ${colors.border}` }}>{colors.label}</span>
                     </div>
                     <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                       {/* Days */}
                       <div style={{ display: "flex", gap: 3 }}>
                         {DAY_NAMES.map((d, i) => (
-                          <div key={d} style={{ width: 20, height: 20, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700, background: rule.days.includes(i) ? colors.bg : "var(--bg-tertiary)", color: rule.days.includes(i) ? colors.text : "var(--text-tertiary)", border: `1px solid ${rule.days.includes(i) ? colors.border : "var(--border-primary)"}` }}>{d}</div>
+                          <div key={d} style={{ width: 20, height: 20, borderRadius: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 8, fontWeight: 700, background: rule.days.includes(i) ? colors.bg : "var(--bg-tertiary)", color: rule.days.includes(i) ? colors.text : "var(--text-tertiary)", border: `1px solid ${rule.days.includes(i) ? colors.border : "var(--border-primary)"}` }}>{d}</div>
                         ))}
                       </div>
                       {/* Time */}
@@ -373,10 +373,10 @@ export default function SmartScheduler({ onClose }: Props) {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                     {/* Toggle */}
-                    <button onClick={() => toggleRule(rule.id)} style={{ width: 36, height: 20, borderRadius: 10, border: "none", background: rule.active ? colors.border : "var(--bg-tertiary)", cursor: "pointer", position: "relative", transition: "background 0.2s" }}>
+                    <button onClick={() => toggleRule(rule.id)} style={{ width: 36, height: 20, borderRadius: 0, border: "none", background: rule.active ? colors.border : "var(--bg-tertiary)", cursor: "pointer", position: "relative", transition: "background 0.2s" }}>
                       <div style={{ position: "absolute", top: 2, left: rule.active ? 18 : 2, width: 16, height: 16, borderRadius: "50%", background: rule.active ? "#fff" : "var(--text-tertiary)", transition: "left 0.2s" }} />
                     </button>
-                    <button onClick={() => deleteRule(rule.id)} style={{ width: 26, height: 26, borderRadius: 7, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, opacity: 0.4 }}
+                    <button onClick={() => deleteRule(rule.id)} style={{ width: 26, height: 26, borderRadius: 0, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, opacity: 0.4 }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.4"}
                     >×</button>

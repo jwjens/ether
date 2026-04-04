@@ -26,7 +26,7 @@ function DuckToggle() {
       <button
         onClick={() => setDuck(d => !d)}
         style={{
-          width: "100%", padding: "5px 10px", borderRadius: 8,
+          width: "100%", padding: "5px 10px", borderRadius: 0,
           background: duck ? "rgba(56,189,248,0.1)" : "var(--bg-tertiary)",
           border: `1px solid ${duck ? "rgba(56,189,248,0.3)" : "var(--border-primary)"}`,
           color: duck ? "var(--accent-cyan)" : "var(--text-tertiary)",
@@ -268,7 +268,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
     <div style={{
       display: "flex", flexDirection: "column",
       background: "var(--bg-secondary)",
-      borderRadius: 18,
+      borderRadius: 0,
       border: micLive ? "1px solid rgba(239,68,68,0.35)" : "1px solid var(--border-primary)",
       overflow: "hidden",
       height: "100%",
@@ -291,7 +291,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           {/* Mic icon — channel strip style */}
           <div style={{
-            width: 26, height: 26, borderRadius: 7,
+            width: 26, height: 26, borderRadius: 0,
             background: micLive ? "rgba(239,68,68,0.12)" : "var(--bg-tertiary)",
             border: `1px solid ${micLive ? "rgba(239,68,68,0.3)" : "var(--border-primary)"}`,
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -313,7 +313,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
         {/* Live indicator badge */}
         <div style={{
           display: "flex", alignItems: "center", gap: 4,
-          padding: "3px 8px", borderRadius: 20,
+          padding: "3px 8px", borderRadius: 0,
           background: micLive ? "rgba(239,68,68,0.08)" : "var(--bg-tertiary)",
           border: `1px solid ${micLive ? "rgba(239,68,68,0.25)" : "var(--border-primary)"}`,
           transition: "all 0.2s",
@@ -359,7 +359,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
               return (
                 <div key={i} style={{
                   flex: 1, height: active ? "100%" : "30%",
-                  borderRadius: 1, background: active ? color : "var(--bg-tertiary)",
+                  borderRadius: 0, background: active ? color : "var(--bg-tertiary)",
                   transition: "height 0.05s, background 0.05s",
                 }} />
               );
@@ -375,12 +375,12 @@ export default function MicDeck({ inputDeviceId }: Props) {
       </div>
 
       {/* Progress bar */}
-      <div style={{ margin: "0 14px 8px", height: 2, background: "var(--bg-tertiary)", borderRadius: 1, overflow: "hidden", flexShrink: 0 }}>
-        <div style={{ height: "100%", width: micLive ? Math.round(level * 100) + "%" : "0%", background: level > 0.85 ? "#ef4444" : "var(--accent-green)", borderRadius: 1, transition: "width 0.05s linear" }} />
+      <div style={{ margin: "0 14px 8px", height: 2, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", flexShrink: 0 }}>
+        <div style={{ height: "100%", width: micLive ? Math.round(level * 100) + "%" : "0%", background: level > 0.85 ? "#ef4444" : "var(--accent-green)", borderRadius: 0, transition: "width 0.05s linear" }} />
       </div>
 
       {/* Canvas VU */}
-      <div style={{ margin: "0 14px 8px", flex: 1, minHeight: 40, borderRadius: 10, overflow: "hidden", background: "var(--bg-tertiary)" }}>
+      <div style={{ margin: "0 14px 8px", flex: 1, minHeight: 40, borderRadius: 0, overflow: "hidden", background: "var(--bg-tertiary)" }}>
         <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
       </div>
 
@@ -388,7 +388,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
       {/* Studio Sound */}
       <div style={{ padding: "0 14px 4px" }}>
         <button onClick={() => setShowProcessing((p: boolean) => !p)} style={{
-          width: "100%", padding: "5px 10px", borderRadius: 8, border: "none",
+          width: "100%", padding: "5px 10px", borderRadius: 0, border: "none",
           background: showProcessing ? "rgba(56,189,248,0.12)" : "var(--bg-tertiary)",
           color: showProcessing ? "var(--accent-cyan)" : "var(--text-tertiary)",
           fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.08em",
@@ -402,7 +402,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
           STUDIO SOUND {showProcessing ? "ON" : "OFF"}
         </button>
         {showProcessing && streamRef.current && (
-          <div style={{ marginBottom: 6, padding: "8px 10px", borderRadius: 9, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+          <div style={{ marginBottom: 6, padding: "8px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
             <AudioProcessorPanel stream={streamRef.current} compact onLevel={(lv) => setLevel(lv)} />
           </div>
         )}
@@ -417,7 +417,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
           disabled={!micLive}
           title="Cut mic"
           style={{
-            width: 40, height: 44, borderRadius: 9,
+            width: 40, height: 44, borderRadius: 0,
             background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
             color: "var(--text-tertiary)", cursor: micLive ? "pointer" : "default",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -431,7 +431,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
         <button
           onClick={micLive ? stopMic : startMic}
           style={{
-            flex: 1, height: 44, borderRadius: 9,
+            flex: 1, height: 44, borderRadius: 0,
             background: micLive ? "linear-gradient(135deg, #ef4444, #dc2626)" : "rgba(239,68,68,0.1)",
             border: micLive ? "none" : "1px solid rgba(239,68,68,0.25)",
             color: micLive ? "#fff" : "#ef4444",

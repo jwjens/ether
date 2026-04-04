@@ -15,8 +15,23 @@ const RULE_LABELS: Record<string, string> = {
   max_same_category: "Max Consecutive Same Category",
 };
 
+// ── Content filter helpers ────────────────────────────────────
+// Stored in localStorage under "ether_content_filter" so both the
+// auto-play queue (loggen.ts) and the format clock scheduler
+// (ProgramLog.tsx scheduleOneHour) read the same setting.
+
+function readContentFilter(): { blockExplicit: boolean } {
+  try { return JSON.parse(localStorage.getItem("ether_content_filter") || "{}"); }
+  catch { return { blockExplicit: false }; }
+}
+
+function writeContentFilter(val: { blockExplicit: boolean }) {
+  localStorage.setItem("ether_content_filter", JSON.stringify(val));
+}
+
 export default function RulesEditor() {
   const [rules, setRules] = useState<Rule[]>([]);
+  const [blockExplicit, setBlockExplicit] = useState(() => readContentFilter().blockExplicit);
 
   const load = async () => { setRules(await query<Rule>("SELECT * FROM separation_rules ORDER BY id")); };
   useEffect(() => { load(); }, []);
@@ -26,13 +41,35 @@ export default function RulesEditor() {
     load();
   };
 
+  const toggleExplicit = () => {
+    const next = !blockExplicit;
+    setBlockExplicit(next);
+    writeContentFilter({ blockExplicit: next });
+    console.log(`[rules] Explicit content filter: ${next ? "ON — explicit songs will be skipped" : "OFF"}`);
+  };
+
   return (
     <div className="space-y-3">
       <h2 className="text-sm font-bold text-zinc-300">Scheduling Rules</h2>
       <div className="text-xs text-zinc-500">These rules control how the log generator picks songs. Hard rules block violations entirely. Soft rules penalize but still allow if no better option exists.</div>
+
+      {/* Content filter — applies to both auto-play queue and format clock scheduling */}
+      <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3 flex items-center justify-between">
+        <div className="flex-1">
+          <div className="text-xs text-zinc-100 font-medium">Block Explicit Content</div>
+          <div className="text-[10px] text-zinc-500">Prevent songs marked Explicit from playing automatically or being scheduled. Applies to both live auto-play and format clock generation.</div>
+        </div>
+        <button
+          onClick={toggleExplicit}
+          className={blockExplicit ? "px-2 py-1 rounded text-[10px] font-bold bg-red-700 text-white" : "px-2 py-1 rounded text-[10px] font-bold bg-zinc-800 text-zinc-500"}
+        >
+          {blockExplicit ? "BLOCKING" : "ALLOWED"}
+        </button>
+      </div>
+
       <div className="space-y-2">
         {rules.map(r => (
-          <div key={r.id} className="bg-zinc-900 rounded-lg border border-zinc-800 p-3 flex items-center justify-between">
+          <div key={r.id} className="bg-zinc-900 rounded-none border border-zinc-800 p-3 flex items-center justify-between">
             <div className="flex-1">
               <div className="text-xs text-zinc-100 font-medium">{RULE_LABELS[r.rule_type] || r.rule_type}</div>
               <div className="text-[10px] text-zinc-500">{r.description}</div>

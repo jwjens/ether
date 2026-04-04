@@ -51,8 +51,8 @@ export default function ProcessingPanel() {
     const color = Math.abs(lufs - (-14)) < 2 ? "#22c55e" : Math.abs(lufs - (-14)) < 5 ? "#f59e0b" : "#ef4444";
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ width: 64, height: 4, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden" }}>
-          <div style={{ width: pct + "%", height: "100%", background: color, borderRadius: 2 }} />
+        <div style={{ width: 64, height: 4, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
+          <div style={{ width: pct + "%", height: "100%", background: color, borderRadius: 0 }} />
         </div>
         <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color }}>{lufs}</span>
       </div>
@@ -72,23 +72,23 @@ export default function ProcessingPanel() {
         <div style={{ display: "flex", gap: 8 }}>
           <button
             onClick={handleResetAll}
-            style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}
+            style={{ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}
           >Reset All</button>
           <button
             onClick={handleProcessAll}
             disabled={processing}
-            style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer", opacity: processing ? 0.6 : 1 }}
+            style={{ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer", opacity: processing ? 0.6 : 1 }}
           >{processing ? "Processing..." : "Analyze All"}</button>
         </div>
       </div>
 
       {/* Progress */}
       {progress && (
-        <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 10, fontSize: 12, color: "var(--accent-blue)" }}>
+        <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>
           {progress}
           {total > 0 && (
-            <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 2, marginTop: 8, overflow: "hidden" }}>
-              <div style={{ width: (done / total * 100) + "%", height: "100%", background: "var(--accent-blue)", borderRadius: 2, transition: "width 0.3s ease" }} />
+            <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
+              <div style={{ width: (done / total * 100) + "%", height: "100%", background: "var(--accent-blue)", borderRadius: 0, transition: "width 0.3s ease" }} />
             </div>
           )}
         </div>
@@ -103,7 +103,7 @@ export default function ProcessingPanel() {
             { label: "Target LUFS", value: "-14", color: "var(--accent-green)" },
             { label: "Pending", value: stats.unprocessed, color: stats.unprocessed > 0 ? "var(--accent-amber)" : "var(--accent-green)" },
           ].map(s => (
-            <div key={s.label} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "12px 14px", textAlign: "center" as any }}>
+            <div key={s.label} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "12px 14px", textAlign: "center" as any }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: s.color, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.03em" }}>{s.value}</div>
               <div style={{ fontSize: 9, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginTop: 4 }}>{s.label}</div>
             </div>
@@ -114,11 +114,11 @@ export default function ProcessingPanel() {
       {/* Loudest/quietest */}
       {stats?.loudest && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
+          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "10px 14px", fontSize: 12 }}>
             <span style={{ color: "var(--text-tertiary)" }}>Loudest: </span>
             <span style={{ color: "var(--accent-red)", fontWeight: 500 }}>{stats.loudest}</span>
           </div>
-          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "10px 14px", fontSize: 12 }}>
+          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "10px 14px", fontSize: 12 }}>
             <span style={{ color: "var(--text-tertiary)" }}>Quietest: </span>
             <span style={{ color: "var(--accent-blue)", fontWeight: 500 }}>{stats.quietest}</span>
           </div>
@@ -127,7 +127,7 @@ export default function ProcessingPanel() {
 
       {/* Songs table */}
       {songs.length > 0 && (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>

@@ -115,7 +115,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
       display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
-        width: 580, maxHeight: "80vh", borderRadius: 18,
+        width: 580, maxHeight: "80vh", borderRadius: 0,
         background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
         boxShadow: "0 32px 80px rgba(0,0,0,0.5)",
         display: "flex", flexDirection: "column" as const,
@@ -133,7 +133,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
           {([["music", musicCount], ["mic", micCount], ["guest", guestCount], ["cart", cartCount], ["desk", deskCount]] as [DeckType, number][]).map(([type, count]) => (
             <div key={type} style={{
               display: "flex", alignItems: "center", gap: 5,
-              padding: "4px 10px", borderRadius: 20,
+              padding: "4px 10px", borderRadius: 0,
               background: count > 0 ? `${TYPE_META[type].color}15` : "var(--bg-tertiary)",
               border: `1px solid ${count > 0 ? TYPE_META[type].color + "30" : "var(--border-primary)"}`,
             }}>
@@ -154,14 +154,14 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
             {configs.map(c => (
               <div key={c.slot} style={{
-                borderRadius: 12, border: `1px solid ${c.color}40`,
+                borderRadius: 0, border: `1px solid ${c.color}40`,
                 background: `${c.color}08`,
                 overflow: "hidden", transition: "all 0.2s",
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}>
                   {/* Slot badge */}
                   <div style={{
-                    width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+                    width: 32, height: 32, borderRadius: 0, flexShrink: 0,
                     background: c.color,
                     border: `1px solid ${c.color}`,
                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -193,7 +193,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                         disabled={!c.enabled && enabled.length >= 6}
                         style={{
                           display: "flex", alignItems: "center", gap: 4,
-                          padding: "5px 10px", borderRadius: 8,
+                          padding: "5px 10px", borderRadius: 0,
                           background: c.type === type ? `${TYPE_META[type].color}20` : "var(--bg-secondary)",
                           border: `1px solid ${c.type === type ? TYPE_META[type].color + "50" : "var(--border-primary)"}`,
                           color: c.type === type ? TYPE_META[type].color : "var(--text-tertiary)",
@@ -212,7 +212,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                   <button
                     onClick={() => toggle(c.slot)}
                     style={{
-                      width: 40, height: 22, borderRadius: 11, border: "none",
+                      width: 40, height: 22, borderRadius: 0, border: "none",
                       background: c.enabled ? c.color : "var(--bg-tertiary)",
                       cursor: enabled.length >= 6 && !c.enabled ? "not-allowed" : "pointer",
                       position: "relative" as const, flexShrink: 0,
@@ -252,13 +252,13 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
               { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: true },
             ]);
             onClose();
-          }} style={{ padding: "11px 14px", borderRadius: 10, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const }}>
+          }} style={{ padding: "11px 14px", borderRadius: 0, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const }}>
             Reset Default
           </button>
-          <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 10, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "11px", borderRadius: 0, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
             Cancel
           </button>
-          <button onClick={apply} style={{ flex: 2, padding: "11px", borderRadius: 10, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer", letterSpacing: "0.02em" }}>
+          <button onClick={apply} style={{ flex: 2, padding: "11px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer", letterSpacing: "0.02em" }}>
             Apply Layout
           </button>
         </div>
@@ -331,13 +331,13 @@ export function PlaylistPlayer({ deckSlot, color }: PlaylistProps) {
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>{tracks.length} tracks · {totalMin} min</div>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => playIdx(Math.max(0, (currentIdx ?? 0) - 1))} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12 }}>⏮</button>
+            <button onClick={() => playIdx(Math.max(0, (currentIdx ?? 0) - 1))} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12 }}>⏮</button>
             <button
               onClick={() => { if (playing) { engine.getDeck(deckSlot)?.pause(); setPlaying(false); } else if (currentIdx !== null) { engine.getDeck(deckSlot)?.play(); setPlaying(true); } else if (tracks.length > 0) { playIdx(0); } }}
-              style={{ width: 36, height: 28, borderRadius: 7, background: color, border: "none", color: "#000", cursor: "pointer", fontSize: 13, fontWeight: 700 }}
+              style={{ width: 36, height: 28, borderRadius: 0, background: color, border: "none", color: "#000", cursor: "pointer", fontSize: 13, fontWeight: 700 }}
             >{playing ? "⏸" : "▶"}</button>
-            <button onClick={() => playIdx((currentIdx ?? -1) + 1)} style={{ width: 28, height: 28, borderRadius: 7, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12 }}>⏭</button>
-            <button onClick={() => setShowLibrary(p => !p)} style={{ height: 28, padding: "0 10px", borderRadius: 7, background: showLibrary ? color : "var(--bg-tertiary)", border: "none", color: showLibrary ? "#000" : "var(--text-secondary)", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>
+            <button onClick={() => playIdx((currentIdx ?? -1) + 1)} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-tertiary)", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 12 }}>⏭</button>
+            <button onClick={() => setShowLibrary(p => !p)} style={{ height: 28, padding: "0 10px", borderRadius: 0, background: showLibrary ? color : "var(--bg-tertiary)", border: "none", color: showLibrary ? "#000" : "var(--text-secondary)", cursor: "pointer", fontSize: 10, fontWeight: 600 }}>
               + Add
             </button>
           </div>
@@ -388,7 +388,7 @@ export function PlaylistPlayer({ deckSlot, color }: PlaylistProps) {
               <input
                 value={search} onChange={e => setSearch(e.target.value)}
                 placeholder="Search library..."
-                style={{ width: "100%", padding: "5px 8px", borderRadius: 7, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 11, outline: "none", boxSizing: "border-box" as const }}
+                style={{ width: "100%", padding: "5px 8px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 11, outline: "none", boxSizing: "border-box" as const }}
               />
             </div>
             <div style={{ flex: 1, overflowY: "auto" as const }}>
@@ -507,7 +507,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
               onDrop={e => handleDrop(e, cart.key)}
               style={{
                 padding: "5px 8px",
-                borderRadius: 7,
+                borderRadius: 0,
                 background: cart.playing ? cart.color : cart.filePath ? `${cart.color}15` : "var(--bg-tertiary)",
                 border: `1px solid ${cart.playing ? cart.color : cart.filePath ? cart.color + "40" : "var(--border-primary)"}`,
                 cursor: cart.filePath ? "pointer" : "default",
@@ -538,7 +538,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
             onDrop={e => handleDrop(e, cart.key)}
             style={{
               padding: "10px 10px 8px",
-              borderRadius: 10,
+              borderRadius: 0,
               background: cart.playing ? cart.color : dragOver === cart.key ? `${cart.color}20` : cart.filePath ? `${cart.color}10` : "var(--bg-tertiary)",
               border: `1px solid ${cart.playing ? cart.color : dragOver === cart.key ? cart.color + "60" : cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
               cursor: cart.filePath ? "pointer" : "default",
@@ -571,7 +571,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
             {cart.playing && (
               <div style={{ marginTop: 4, display: "flex", gap: 2, alignItems: "flex-end", height: 12 }}>
                 {[0.6, 1, 0.8, 1, 0.6].map((h, i) => (
-                  <div key={i} style={{ flex: 1, height: `${h * 100}%`, background: "rgba(0,0,0,0.5)", borderRadius: 1 }} />
+                  <div key={i} style={{ flex: 1, height: `${h * 100}%`, background: "rgba(0,0,0,0.5)", borderRadius: 0 }} />
                 ))}
               </div>
             )}

@@ -127,7 +127,7 @@ export default function ChannelStrip({
         width: "100%", height: "100%",
         display: "flex", flexDirection: "column",
         background: "var(--bg-secondary)",
-        borderRadius: 10,
+        borderRadius: 0,
         border: `1px solid ${isOnAir ? typeColor : "var(--border-primary)"}`,
         boxShadow: isOnAir ? `0 0 0 1px ${typeColor}40` : "none",
         overflow: "hidden",
@@ -155,7 +155,7 @@ export default function ChannelStrip({
           <div style={{
             fontSize: 7, fontWeight: 800, letterSpacing: "0.08em",
             color: "#fff", background: typeColor,
-            padding: "1px 4px", borderRadius: 3,
+            padding: "1px 4px", borderRadius: 0,
           }}>ON AIR</div>
         )}
       </div>
@@ -194,7 +194,7 @@ export default function ChannelStrip({
           ref={canvasRef}
           width={120}
           height={200}
-          style={{ width: "100%", height: "100%", display: "block", borderRadius: 6 }}
+          style={{ width: "100%", height: "100%", display: "block", borderRadius: 0 }}
         />
         {/* Time remaining overlay */}
         {isPlaying && remaining > 0 && (
@@ -217,7 +217,7 @@ export default function ChannelStrip({
           <div style={{
             height: "100%", width: `${pct * 100}%`,
             background: typeColor,
-            borderRadius: 2, transition: "width 0.5s linear",
+            borderRadius: 0, transition: "width 0.5s linear",
           }} />
         </div>
       )}
@@ -241,7 +241,7 @@ export default function ChannelStrip({
             <button
               onClick={isPlaying ? onPause : onPlay}
               style={{
-                flex: 1, padding: "5px 0", borderRadius: 6, border: "none",
+                flex: 1, padding: "5px 0", borderRadius: 0, border: "none",
                 background: isPlaying ? typeColor : "var(--bg-tertiary)",
                 color: isPlaying ? "#000" : "var(--text-secondary)",
                 fontSize: 10, fontWeight: 800, cursor: "pointer",
@@ -253,7 +253,7 @@ export default function ChannelStrip({
             <button
               onClick={onStop}
               style={{
-                width: 24, padding: "5px 0", borderRadius: 6, border: "none",
+                width: 24, padding: "5px 0", borderRadius: 0, border: "none",
                 background: "var(--bg-tertiary)",
                 color: "var(--text-tertiary)",
                 fontSize: 9, cursor: "pointer",
@@ -263,7 +263,7 @@ export default function ChannelStrip({
         )}
         {(type === "mic" || type === "guest") && (
           <button style={{
-            flex: 1, padding: "5px 0", borderRadius: 6, border: "none",
+            flex: 1, padding: "5px 0", borderRadius: 0, border: "none",
             background: isOnAir ? typeColor : "var(--bg-tertiary)",
             color: isOnAir ? "#fff" : "var(--text-tertiary)",
             fontSize: 8, fontWeight: 800, letterSpacing: "0.06em", cursor: "pointer",

@@ -132,7 +132,7 @@ export default function StreamManager() {
       <h1 style={{ fontSize: 18, fontWeight: 600, marginBottom: 20, color: "var(--text-primary)" }}>Stream Manager</h1>
 
       {/* Status bar */}
-      <div style={{ background: streaming ? "rgba(34,197,94,0.06)" : "var(--bg-secondary)", border: "1px solid " + (streaming ? "rgba(34,197,94,0.25)" : "var(--border-primary)"), borderRadius: 12, padding: "14px 16px", marginBottom: 20 }}>
+      <div style={{ background: streaming ? "rgba(34,197,94,0.06)" : "var(--bg-secondary)", border: "1px solid " + (streaming ? "rgba(34,197,94,0.25)" : "var(--border-primary)"), borderRadius: 0, padding: "14px 16px", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: health && streaming ? 12 : 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 10, height: 10, borderRadius: "50%", background: streaming ? "#22c55e" : "#666", boxShadow: streaming ? "0 0 8px #22c55e" : "none", transition: "all 0.3s" }} />
@@ -151,7 +151,7 @@ export default function StreamManager() {
               { label: "Drops", value: String(health.dropCount ?? 0), color: health.dropCount > 0 ? "#fbbf24" : "#22c55e" },
               { label: "Buffer", value: `${health.bufferSecs || 0}s`, color: "#38bdf8" },
             ].map(({ label, value, color }) => (
-              <div key={label} style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+              <div key={label} style={{ padding: "8px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as any, marginBottom: 3 }}>{label}</div>
                 <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: "monospace" }}>{value}</div>
               </div>
@@ -159,32 +159,32 @@ export default function StreamManager() {
           </div>
         )}
         {streaming && (health?.dropCount ?? 0) > 0 && (
-          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 11, color: "#fbbf24" }}>
+          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 0, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", fontSize: 11, color: "#fbbf24" }}>
             ⚡ {health.dropCount} reconnect{health.dropCount !== 1 ? "s" : ""} — listeners heard no gap thanks to the replay buffer
           </div>
         )}
       </div>
 
       {/* Server settings */}
-      <div style={{ background: "var(--bg-secondary)", borderRadius: 10, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
+      <div style={{ background: "var(--bg-secondary)", borderRadius: 0, padding: 16, border: "1px solid var(--border-primary)", marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.06em", marginBottom: 12 }}>Icecast / Shoutcast Server</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 8 }}>
           <input value={settings.server} onChange={e => setSettings({...settings, server: e.target.value})}
-            placeholder="localhost" style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+            placeholder="localhost" style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
           <input value={settings.port} onChange={e => setSettings({...settings, port: parseInt(e.target.value) || 8000})}
-            placeholder="8000" style={{ width: 80, padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+            placeholder="8000" style={{ width: 80, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
           <input value={settings.mount} onChange={e => setSettings({...settings, mount: e.target.value})}
-            placeholder="/stream" style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+            placeholder="/stream" style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
           <input type="password" value={settings.password} onChange={e => setSettings({...settings, password: e.target.value})}
-            placeholder="Password" style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+            placeholder="Password" style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
           <input value={settings.station_name || ""} onChange={e => setSettings({...settings, station_name: e.target.value})}
-            placeholder="Station Name" style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+            placeholder="Station Name" style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
           <select value={settings.bitrate} onChange={e => setSettings({...settings, bitrate: parseInt(e.target.value)})}
-            style={{ padding: "8px 12px", borderRadius: 8, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}>
+            style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }}>
             <option value={64}>64 kbps</option>
             <option value={96}>96 kbps</option>
             <option value={128}>128 kbps</option>
@@ -192,19 +192,19 @@ export default function StreamManager() {
             <option value={320}>320 kbps</option>
           </select>
         </div>
-        <button onClick={save} style={{ padding: "8px 20px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Save Settings</button>
+        <button onClick={save} style={{ padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Save Settings</button>
       </div>
 
-      {error && <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid #ef4444", borderRadius: 8, padding: "10px 14px", fontSize: 12, color: "#ef4444", marginBottom: 12 }}>{error}</div>}
+      {error && <div style={{ background: "rgba(239,68,68,0.1)", border: "1px solid #ef4444", borderRadius: 0, padding: "10px 14px", fontSize: 12, color: "#ef4444", marginBottom: 12 }}>{error}</div>}
 
       {/* Stream control */}
       <div style={{ display: "flex", gap: 10 }}>
         {!streaming ? (
-          <button onClick={startStream} style={{ flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, background: "#22c55e", color: "#fff", border: "none", cursor: "pointer" }}>
+          <button onClick={startStream} style={{ flex: 1, padding: "12px", borderRadius: 0, fontSize: 14, fontWeight: 700, background: "#22c55e", color: "#fff", border: "none", cursor: "pointer" }}>
             ▶ Start Streaming
           </button>
         ) : (
-          <button onClick={stopStream} style={{ flex: 1, padding: "12px", borderRadius: 10, fontSize: 14, fontWeight: 700, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer" }}>
+          <button onClick={stopStream} style={{ flex: 1, padding: "12px", borderRadius: 0, fontSize: 14, fontWeight: 700, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer" }}>
             ⏹ Stop Streaming
           </button>
         )}

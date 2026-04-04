@@ -175,7 +175,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
             fontSize: 12, fontWeight: 600,
             background: "var(--bg-tertiary)",
             border: "1px solid var(--accent-cyan)",
-            borderRadius: 7, padding: "3px 9px",
+            borderRadius: 0, padding: "3px 9px",
             color: "var(--text-primary)", outline: "none",
             width: 160,
           }}
@@ -187,7 +187,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
             fontSize: 12, fontWeight: 600,
             background: "none", border: "none",
             color: "var(--text-secondary)", cursor: "text",
-            padding: "3px 6px", borderRadius: 7,
+            padding: "3px 6px", borderRadius: 0,
             letterSpacing: "-0.01em",
             transition: "all 0.15s",
           }}
@@ -209,7 +209,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
           onClick={handleSave}
           style={{
             fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
-            padding: "3px 8px", borderRadius: 6,
+            padding: "3px 8px", borderRadius: 0,
             background: saved ? "var(--accent-green)" : "var(--bg-tertiary)",
             border: `1px solid ${saved ? "var(--accent-green)" : "var(--border-primary)"}`,
             color: saved ? "#000" : "var(--text-tertiary)",
@@ -223,7 +223,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
       {layouts.length > 0 && !editing && (
         <button
           onClick={() => setShowList(p => !p)}
-          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 5 }}
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
           title="Switch layout"
         >▾</button>
       )}
@@ -234,7 +234,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
           <div style={{
             position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 999,
             background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
-            borderRadius: 12, padding: 8, minWidth: 240,
+            borderRadius: 0, padding: 8, minWidth: 240,
             boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
             fontFamily: "'Inter', sans-serif",
           }}>
@@ -255,12 +255,12 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                         }
                         if (e.key === "Escape") setRenamingId(null);
                       }}
-                      style={{ flex: 1, fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--accent-cyan)", background: "var(--bg-tertiary)", color: "var(--text-primary)", outline: "none" }}
+                      style={{ flex: 1, fontSize: 12, padding: "4px 8px", borderRadius: 0, border: "1px solid var(--accent-cyan)", background: "var(--bg-tertiary)", color: "var(--text-primary)", outline: "none" }}
                     />
                     <button onClick={() => setRenamingId(null)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}>✕</button>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, borderRadius: 8, background: l.name === name ? "rgba(56,189,248,0.1)" : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, borderRadius: 0, background: l.name === name ? "rgba(56,189,248,0.1)" : "none" }}>
                     <button
                       onClick={() => { onLoadLayout(l.id); setShowList(false); }}
                       style={{
@@ -277,7 +277,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                     <button
                       title="Rename"
                       onClick={e => { e.stopPropagation(); setRenamingId(l.id); setRenameDraft(l.name); }}
-                      style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "4px 6px", borderRadius: 5, fontSize: 11, opacity: 0.6 }}
+                      style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "4px 6px", borderRadius: 0, fontSize: 11, opacity: 0.6 }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.6"}
                     >
@@ -293,7 +293,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                             onDeleteLayout(l.id);
                           }
                         }}
-                        style={{ background: "none", border: "none", color: "var(--accent-red)", cursor: "pointer", padding: "4px 6px", borderRadius: 5, fontSize: 11, opacity: 0.5, marginRight: 2 }}
+                        style={{ background: "none", border: "none", color: "var(--accent-red)", cursor: "pointer", padding: "4px 6px", borderRadius: 0, fontSize: 11, opacity: 0.5, marginRight: 2 }}
                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.5"}
                       >
@@ -804,7 +804,7 @@ export default function App() {
           {panel !== "live" && (
             <button
               onClick={() => setPanel("live")}
-              style={{ height: 28, padding: "0 10px", borderRadius: 7, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+              style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
             >
               <svg width="7" height="9" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
               Go Live
@@ -813,7 +813,7 @@ export default function App() {
           <button
             onClick={() => setPanel("programlog")}
             style={{
-              height: 28, padding: "0 10px", borderRadius: 7,
+              height: 28, padding: "0 10px", borderRadius: 0,
               background: panel === "programlog" ? "rgba(167,139,250,0.2)" : "var(--bg-tertiary)",
               border: `1px solid ${panel === "programlog" ? "rgba(167,139,250,0.4)" : "var(--border-primary)"}`,
               color: panel === "programlog" ? "#a78bfa" : "var(--text-secondary)",
@@ -824,7 +824,7 @@ export default function App() {
             📋 Schedule
           </button>
           <ClockDisplay />
-          <button onClick={() => setDarkMode(!darkMode)} style={{ width: 30, height: 30, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={() => setDarkMode(!darkMode)} style={{ width: 30, height: 30, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {darkMode ? (
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
             ) : (
@@ -835,24 +835,24 @@ export default function App() {
 
         {/* RIGHT: Desk + Now Playing + Pro + Admin + ON AIR */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1 }}>
-          <button onClick={openDeskWindow} style={{ height: 30, padding: "0 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
+          <button onClick={openDeskWindow} style={{ height: 30, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
             onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background="rgba(167,139,250,0.15)";(e.currentTarget as HTMLElement).style.color="#a78bfa";(e.currentTarget as HTMLElement).style.borderColor="rgba(167,139,250,0.3)";}}
             onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background="var(--bg-tertiary)";(e.currentTarget as HTMLElement).style.color="var(--text-secondary)";(e.currentTarget as HTMLElement).style.borderColor="var(--border-primary)";}}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             Desk
           </button>
-          <button onClick={() => openNowPlayingWindow()} style={{ height: 30, padding: "0 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={() => openNowPlayingWindow()} style={{ height: 30, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6 }}>
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ opacity: 0.6 }}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
             Now Playing
           </button>
           {currentPlan === "free" && (
-            <button onClick={() => setPanel("subscription")} style={{ height: 30, padding: "0 10px", borderRadius: 8, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 4 }}>
+            <button onClick={() => setPanel("subscription")} style={{ height: 30, padding: "0 10px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 4 }}>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
               Pro
             </button>
           )}
-          <button onClick={() => setCurrentUser(null)} style={{ height: 30, padding: "0 10px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", gap: 5 }}>
+          <button onClick={() => setCurrentUser(null)} style={{ height: 30, padding: "0 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", gap: 5 }}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             {currentUser?.name}
           </button>
@@ -869,7 +869,7 @@ export default function App() {
               }
             }}
             style={{
-              height: 32, padding: "0 16px", borderRadius: 8, border: "none", cursor: "pointer",
+              height: 32, padding: "0 16px", borderRadius: 0, border: "none", cursor: "pointer",
               fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
               background: onAir ? "#ef4444" : "var(--bg-tertiary)",
               color: onAir ? "#fff" : "var(--text-tertiary)",
@@ -971,12 +971,12 @@ export default function App() {
                 <SmartScheduler onClose={() => setPanel("live")} />
               )}
               {panel === "cartwall" && (
-                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                   <CartWallPanel onClose={() => setPanel("live")} />
                 </div>
               )}
               {panel === "playlist" && (
-                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                   <PlaylistPanel onClose={() => setPanel("live")} />
                 </div>
               )}
@@ -1012,7 +1012,7 @@ export default function App() {
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
-            borderRadius: 20, padding: "28px 32px", width: 560, maxHeight: "80vh", overflowY: "auto",
+            borderRadius: 0, padding: "28px 32px", width: 560, maxHeight: "80vh", overflowY: "auto",
             boxShadow: "0 32px 80px rgba(0,0,0,0.6)",
           }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
@@ -1042,11 +1042,11 @@ export default function App() {
                 <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 10 }}>{group}</div>
                 <div style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
                   {items.map(({ key, desc }) => (
-                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderRadius: 8, background: "var(--bg-tertiary)" }}>
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderRadius: 0, background: "var(--bg-tertiary)" }}>
                       <kbd style={{
                         fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700,
                         background: "var(--bg-primary)", color: "var(--accent-cyan)",
-                        border: "1px solid var(--border-secondary)", borderRadius: 6,
+                        border: "1px solid var(--border-secondary)", borderRadius: 0,
                         padding: "3px 8px", whiteSpace: "nowrap" as const, flexShrink: 0,
                         minWidth: 80, textAlign: "center" as const,
                         boxShadow: "0 2px 0 var(--border-primary)",
@@ -1058,7 +1058,7 @@ export default function App() {
               </div>
             ))}
             <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const }}>
-              Press <kbd style={{ fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 4, border: "1px solid var(--border-primary)" }}>Esc</kbd> or click outside to close
+              Press <kbd style={{ fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0, border: "1px solid var(--border-primary)" }}>Esc</kbd> or click outside to close
             </div>
           </div>
         </div>
@@ -1165,7 +1165,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
       zIndex: 10000,
       background: "var(--bg-secondary)",
       border: "1px solid var(--border-secondary)",
-      borderRadius: 10, padding: "4px",
+      borderRadius: 0, padding: "4px",
       minWidth: 220,
       boxShadow: "0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15)",
       fontFamily: "'Inter', sans-serif",
@@ -1186,7 +1186,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         onMouseDown={e => { e.stopPropagation(); if (!disabled && onClick) { onClick(); close(); } }}
         style={{
           display: "flex", alignItems: "center", width: "100%",
-          padding: "7px 10px", borderRadius: 7, border: "none",
+          padding: "7px 10px", borderRadius: 0, border: "none",
           background: hovered && !disabled ? "rgba(255,255,255,0.07)" : "transparent",
           color: disabled ? "var(--text-tertiary)" : "var(--text-primary)",
           fontSize: 12, fontFamily: "'Inter', sans-serif",
@@ -1337,7 +1337,7 @@ function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => voi
       onMouseDown={onMouseDown}
       title="Drag to reorder panels"
       style={{
-        cursor: "grab", padding: "4px 6px", borderRadius: 6, flexShrink: 0,
+        cursor: "grab", padding: "4px 6px", borderRadius: 0, flexShrink: 0,
         color: "var(--text-tertiary)", display: "flex", alignItems: "center",
         transition: "color 0.15s, background 0.15s",
         userSelect: "none",
@@ -1546,12 +1546,12 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
     const pct = duration > 0 ? Math.max(0, Math.min(1, (duration - remaining) / duration)) : 0;
 
     const VUBar = ({ lv, pk, mono }: { lv: number; pk: number; mono?: boolean }) => (
-      <div style={{ flex: mono ? 2 : 1, position: 'relative', borderRadius: 3, overflow: 'hidden', background: 'var(--bg-tertiary)' }}>
+      <div style={{ flex: mono ? 2 : 1, position: 'relative', borderRadius: 0, overflow: 'hidden', background: 'var(--bg-tertiary)' }}>
         <div style={{
           position: 'absolute', bottom: 0, left: 0, right: 0,
           height: `${Math.min(100, lv * 100)}%`,
           background: lv > 0.85 ? '#ef4444' : lv > 0.65 ? '#fbbf24' : color,
-          borderRadius: 3,
+          borderRadius: 0,
           transition: 'height 0.06s ease-out',
         }} />
         {pk > 0.05 && (
@@ -1579,14 +1579,14 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
         background: isActive ? `${color}12` : 'var(--bg-secondary)',
         border: `1px solid ${isActive ? color+'80' : 'var(--border-primary)'}`,
         boxShadow: isActive ? `0 0 0 1px ${color}30, inset 0 0 12px ${color}08` : 'none',
-        borderRadius: 10, overflow: 'hidden',
+        borderRadius: 0, overflow: 'hidden',
         transition: 'border-color 0.2s, background 0.2s',
       }}>
 
         {/* Label + ON AIR badge */}
         <div style={{ padding: '4px 6px 3px', flexShrink: 0, borderBottom: '1px solid var(--border-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.1em', color: isActive ? color : 'var(--text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
-          {isActive && <div style={{ fontSize: 7, fontWeight: 800, color: '#fff', background: color, padding: '1px 5px', borderRadius: 3, flexShrink: 0, animation: 'mic-blink 2s ease-in-out infinite', letterSpacing: '0.05em' }}>ON AIR</div>}
+          {isActive && <div style={{ fontSize: 7, fontWeight: 800, color: '#fff', background: color, padding: '1px 5px', borderRadius: 0, flexShrink: 0, animation: 'mic-blink 2s ease-in-out infinite', letterSpacing: '0.05em' }}>ON AIR</div>}
         </div>
 
         {/* Music: track + artist + time. Mic: no info needed */}
@@ -1612,7 +1612,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
         {/* Progress bar — music only */}
         {!isMic && (
           <div style={{ height: 2, background: 'var(--bg-tertiary)', flexShrink: 0, margin: '0 6px' }}>
-            <div style={{ height: '100%', width: `${pct*100}%`, background: color, borderRadius: 1, transition: 'width 0.5s linear' }} />
+            <div style={{ height: '100%', width: `${pct*100}%`, background: color, borderRadius: 0, transition: 'width 0.5s linear' }} />
           </div>
         )}
 
@@ -1635,16 +1635,16 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
             <div style={{ display: 'flex', gap: 3 }}>
               <button
                 onClick={() => deck?.status === 'playing' ? engine.getDeck(deckSlot!)?.pause() : engine.getDeck(deckSlot!)?.play()}
-                style={{ flex: 1, padding: '5px 0', borderRadius: 5, border: 'none', background: deck?.status === 'playing' ? color : 'var(--bg-tertiary)', color: deck?.status === 'playing' ? '#000' : 'var(--text-secondary)', fontSize: 9, fontWeight: 800, cursor: 'pointer', transition: 'all 0.15s' }}>
+                style={{ flex: 1, padding: '5px 0', borderRadius: 0, border: 'none', background: deck?.status === 'playing' ? color : 'var(--bg-tertiary)', color: deck?.status === 'playing' ? '#000' : 'var(--text-secondary)', fontSize: 9, fontWeight: 800, cursor: 'pointer', transition: 'all 0.15s' }}>
                 {deck?.status === 'playing' ? '❚❚' : '▶'}
               </button>
               <button onClick={() => engine.getDeck(deckSlot!)?.stop()}
-                style={{ width: 24, padding: '5px 0', borderRadius: 5, border: 'none', background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)', fontSize: 9, cursor: 'pointer' }}>■</button>
+                style={{ width: 24, padding: '5px 0', borderRadius: 0, border: 'none', background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)', fontSize: 9, cursor: 'pointer' }}>■</button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 3 }}>
               <button onClick={() => setMuted(m => !m)} style={{
-                flex: 1, padding: '5px 0', borderRadius: 5, border: 'none',
+                flex: 1, padding: '5px 0', borderRadius: 0, border: 'none',
                 background: muted ? '#ef444430' : 'var(--bg-tertiary)',
                 color: muted ? '#ef4444' : 'var(--text-tertiary)',
                 fontSize: 8, fontWeight: 800, letterSpacing: '0.05em', cursor: 'pointer',
@@ -1654,7 +1654,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
               </button>
               <div style={{
                 width: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                borderRadius: 5, background: isActive && !muted ? `${color}20` : 'var(--bg-tertiary)',
+                borderRadius: 0, background: isActive && !muted ? `${color}20` : 'var(--bg-tertiary)',
               }}>
                 <div style={{
                   width: 6, height: 6, borderRadius: '50%',
@@ -1695,7 +1695,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, boxShadow: guestStatus === "connected" ? `0 0 5px ${statusColor}` : "none", animation: guestStatus === "connecting" ? "mic-blink 0.8s ease-in-out infinite" : "none" }} />
           )}
           {isActive && !guestStatus && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 10, background: `${color}15`, border: `1px solid ${color}25` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 0, background: `${color}15`, border: `1px solid ${color}25` }}>
               <div style={{ width: 5, height: 5, borderRadius: "50%", background: color, animation: "mic-blink 1.5s ease-in-out infinite" }} />
               <span style={{ fontSize: 8, fontWeight: 800, color, letterSpacing: "0.08em" }}>LIVE</span>
             </div>
@@ -1705,7 +1705,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
           <span style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", fontWeight: 500, color: dbVal !== null && dbVal > -3 ? "#ef4444" : "var(--text-tertiary)", minWidth: 36, textAlign: "right" as const }}>
             {dbVal !== null ? `${dbVal}dB` : "—"}
           </span>
-          <button onClick={() => setMuted(m => !m)} style={{ padding: "2px 8px", borderRadius: 5, background: muted ? `${color}20` : "var(--bg-tertiary)", border: `1px solid ${muted ? color + "40" : "var(--border-primary)"}`, color: muted ? color : "var(--text-tertiary)", fontSize: 9, fontWeight: 800, cursor: "pointer", letterSpacing: "0.06em" }}>
+          <button onClick={() => setMuted(m => !m)} style={{ padding: "2px 8px", borderRadius: 0, background: muted ? `${color}20` : "var(--bg-tertiary)", border: `1px solid ${muted ? color + "40" : "var(--border-primary)"}`, color: muted ? color : "var(--text-tertiary)", fontSize: 9, fontWeight: 800, cursor: "pointer", letterSpacing: "0.06em" }}>
             {muted ? "MUTED" : "MUTE"}
           </button>
         </div>
@@ -1737,7 +1737,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
               <div key={i} style={{
                 flex: 1,
                 height: segHeight,
-                borderRadius: 2,
+                borderRadius: 0,
                 background: lit ? segColor : isPeak ? segColor + "90" : "var(--bg-tertiary)",
                 opacity: lit ? 1 : isPeak ? 0.8 : 0.25,
                 boxShadow: lit && i >= NUM_SEGS - 2 ? `0 0 4px ${segColor}` : "none",
@@ -1771,7 +1771,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
             zIndex: 9001,
             background: "var(--bg-elevated)",
             border: "1px solid var(--border-secondary)",
-            borderRadius: 12, padding: "8px 6px",
+            borderRadius: 0, padding: "8px 6px",
             boxShadow: "0 -4px 32px rgba(0,0,0,0.4)",
             minWidth: 260, maxWidth: 340,
           }}>
@@ -1785,7 +1785,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
                 <button key={dev.deviceId} onClick={() => { setDeviceId(dev.deviceId); setShowPicker(false); }} style={{
                   display: "flex", alignItems: "center", gap: 8,
                   width: "100%", textAlign: "left" as const,
-                  padding: "8px 10px", borderRadius: 8, border: "none", cursor: "pointer",
+                  padding: "8px 10px", borderRadius: 0, border: "none", cursor: "pointer",
                   background: active ? `${color}18` : "none",
                   color: active ? color : "var(--text-primary)",
                   fontSize: 12, fontWeight: active ? 700 : 400,
@@ -1861,7 +1861,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
           <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Sound Effects & Stingers</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{loaded}/{carts.length} slots loaded · Press key or click to fire · Drop audio to assign · Double-click to rename</div>
         </div>
-        <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+        <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
       </div>
 
       {/* Grid */}
@@ -1881,7 +1881,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
             }}
             style={{
               padding: "12px 12px 10px",
-              borderRadius: 12,
+              borderRadius: 0,
               background: cart.playing ? cart.color
                 : dragOver === cart.key ? `${cart.color}20`
                 : cart.filePath ? `${cart.color}12` : "var(--bg-tertiary)",
@@ -1905,7 +1905,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
             {cart.playing && (
               <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 16, marginBottom: 6 }}>
                 {[0.5,1,0.7,0.9,0.6,1,0.8].map((h,i) => (
-                  <div key={i} style={{ flex: 1, height: `${h*100}%`, background: "rgba(0,0,0,0.45)", borderRadius: 1, animation: `on-air-breathe ${0.4 + i*0.1}s ease-in-out infinite` }} />
+                  <div key={i} style={{ flex: 1, height: `${h*100}%`, background: "rgba(0,0,0,0.45)", borderRadius: 0, animation: `on-air-breathe ${0.4 + i*0.1}s ease-in-out infinite` }} />
                 ))}
               </div>
             )}
@@ -1999,10 +1999,10 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
             {/* Deck selector */}
             <div style={{ display: "flex", gap: 3 }}>
               {["A","B","C"].map(s => (
-                <button key={s} onClick={() => setDeckSlot(s)} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: deckSlot === s ? "var(--accent-green)" : "var(--bg-tertiary)", color: deckSlot === s ? "#000" : "var(--text-secondary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{s}</button>
+                <button key={s} onClick={() => setDeckSlot(s)} style={{ width: 28, height: 28, borderRadius: 0, border: "none", background: deckSlot === s ? "var(--accent-green)" : "var(--bg-tertiary)", color: deckSlot === s ? "#000" : "var(--text-secondary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{s}</button>
               ))}
             </div>
-            <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+            <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
           </div>
         </div>
 
@@ -2057,7 +2057,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
         {showLib && (
           <div style={{ width: 280, borderLeft: "1px solid var(--border-primary)", display: "flex", flexDirection: "column" as const, background: "var(--bg-secondary)" }}>
             <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search library..." style={{ width: "100%", padding: "8px 12px", borderRadius: 8, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }} />
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search library..." style={{ width: "100%", padding: "8px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box" as const }} />
             </div>
             <div style={{ flex: 1, overflowY: "auto" as const }}>
               {filtered.slice(0, 200).map((t: any) => (
@@ -2296,7 +2296,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         width: queueWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
         opacity: dragging === "queue" ? 0.55 : 1,
         outline: dropTarget === "queue" ? "2px solid #38bdf8" : "none",
-        outlineOffset: 2, borderRadius: 14,
+        outlineOffset: 2, borderRadius: 0,
         transition: "opacity 0.15s, outline 0.1s",
       }}
     >
@@ -2311,7 +2311,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", gap: 10,
         opacity: dragging === "decks" ? 0.55 : 1,
         outline: dropTarget === "decks" ? "2px solid #38bdf8" : "none",
-        outlineOffset: 2, borderRadius: 14,
+        outlineOffset: 2, borderRadius: 0,
         transition: "opacity 0.15s, outline 0.1s",
       }}
     >
@@ -2342,7 +2342,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 }}
               >
                 <div style={{
-                  width: 3, height: 32, borderRadius: 2,
+                  width: 3, height: 32, borderRadius: 0,
                   background: "var(--border-secondary)",
                   pointerEvents: "none",
                   transition: "background 0.15s, height 0.15s",
@@ -2510,7 +2510,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 }}
               >
                 <div style={{
-                  width: 3, height: 40, borderRadius: 2,
+                  width: 3, height: 40, borderRadius: 0,
                   background: "var(--border-secondary)",
                   transition: "background 0.15s, height 0.15s",
                   pointerEvents: "none",
@@ -2607,8 +2607,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   const filtered = search ? songs.filter(s => (s.title||"").toLowerCase().includes(search.toLowerCase()) || (s.artist_name||"").toLowerCase().includes(search.toLowerCase())) : songs;
 
   const S = {
-    btn: (bg: string, color = "#fff") => ({ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 600 as any, background: bg, color, border: "none", cursor: "pointer" as any }),
-    btnOutline: { padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600 as any, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" as any, border: "1px solid var(--border-primary)", cursor: "pointer" as any },
+    btn: (bg: string, color = "#fff") => ({ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600 as any, background: bg, color, border: "none", cursor: "pointer" as any }),
+    btnOutline: { padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600 as any, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" as any, border: "1px solid var(--border-primary)", cursor: "pointer" as any },
   };
 
   return (
@@ -2620,26 +2620,26 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
           <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>{count} tracks</span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={relocateLibrary} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={relocateLibrary} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             Relocate
           </button>
-          <button onClick={analyzeLufs} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+          <button onClick={analyzeLufs} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
             Normalize
           </button>
           {isStation
-            ? <button onClick={() => setShowNexGen(!showNexGen)} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showNexGen ? "Cancel" : "NexGen / ENCO"}</button>
-            : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Station plan required">🔒 NexGen / ENCO</button>
+            ? <button onClick={() => setShowNexGen(!showNexGen)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showNexGen ? "Cancel" : "NexGen / ENCO"}</button>
+            : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Station plan required">🔒 NexGen / ENCO</button>
           }
-          <button onClick={() => { setShowCreateCat(p => !p); setShowImport(false); }} style={{ padding: "7px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: showCreateCat ? "var(--accent-purple)" : "var(--bg-secondary)", color: showCreateCat ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showCreateCat ? "Cancel" : "+ Category"}</button>
-          <button onClick={() => { setShowImport(p => !p); setShowCreateCat(false); }} style={{ padding: "7px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>
+          <button onClick={() => { setShowCreateCat(p => !p); setShowImport(false); }} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: showCreateCat ? "var(--accent-purple)" : "var(--bg-secondary)", color: showCreateCat ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showCreateCat ? "Cancel" : "+ Category"}</button>
+          <button onClick={() => { setShowImport(p => !p); setShowCreateCat(false); }} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>
         </div>
       </div>
 
       {/* Search + filters row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: "8px 14px" }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "8px 14px" }}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ opacity: 0.35, flexShrink: 0, color: "var(--text-primary)" }}>
             <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
             <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
@@ -2649,7 +2649,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
           {search && <button onMouseDown={e => { e.preventDefault(); setSearch(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 16 }}>×</button>}
         </div>
         <select onChange={async (e) => { if (!e.target.value) return; const catId = catList.find(c => c.code === e.target.value)?.id || null; for (const s of filtered) await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); e.target.value = ""; load(); }}
-          style={{ padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
+          style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">Assign category...</option>
           {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}
         </select>
@@ -2658,18 +2658,18 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
         <button onClick={deleteAll} style={{ ...S.btnOutline, color: "var(--accent-red)" as any }}>Delete All</button>
       </div>
 
-      {status && <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 8, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
+      {status && <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
       {showCreateCat && (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, marginBottom: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, marginBottom: 8 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" as any }}>New Category</span>
           <input placeholder="Code (e.g. AC)" value={newCatCode} onChange={e => setNewCatCode(e.target.value.toUpperCase().slice(0,6))}
-            style={{ width: 80, padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            style={{ width: 80, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           <input placeholder="Name (e.g. Adult Contemporary)" value={newCatName} onChange={e => setNewCatName(e.target.value)}
-            style={{ flex: 1, padding: "6px 10px", borderRadius: 6, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}
+            style={{ flex: 1, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}
             onKeyDown={e => { if (e.key === "Enter") createCategory(); }} />
           <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)}
-            style={{ width: 36, height: 32, borderRadius: 6, border: "1px solid var(--border-primary)", cursor: "pointer", padding: 2, background: "var(--bg-tertiary)" }} />
-          <button onClick={createCategory} style={{ padding: "6px 16px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Create</button>
+            style={{ width: 36, height: 32, borderRadius: 0, border: "1px solid var(--border-primary)", cursor: "pointer", padding: 2, background: "var(--bg-tertiary)" }} />
+          <button onClick={createCategory} style={{ padding: "6px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Create</button>
         </div>
       )}
       {showImport && <ImportDialog onDone={() => { setShowImport(false); load(); }} />}
@@ -2686,7 +2686,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
@@ -2712,7 +2712,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
                   <td style={{ padding: "10px 12px", color: "var(--text-secondary)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.artist_name || "—"}</td>
                   <td style={{ padding: "10px 12px" }}>
                     <select value={s.category_code || ""} onChange={async (e) => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); load(); }}
-                      style={{ padding: "3px 6px", borderRadius: 6, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
+                      style={{ padding: "3px 6px", borderRadius: 0, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
                       <option value="">—</option>
                       {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
                     </select>
@@ -2720,13 +2720,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
                   <td style={{ padding: "10px 12px", fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", textTransform: "uppercase" as any }}>{s.file_path ? fmtExt(s.file_path) : "—"}</td>
                   <td style={{ padding: "10px 12px", textAlign: "right" as any }}>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
-                      <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
-                      <button onClick={() => onQueue(s)} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
-                      <button onClick={() => onEdit(s)} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
+                      <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
+                      <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
+                      <button onClick={() => onQueue(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
+                      <button onClick={() => onEdit(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
                       </button>
-                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [s.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [s.id]); load(); } }} style={{ padding: "4px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [s.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [s.id]); load(); } }} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
                   </td>
                 </tr>

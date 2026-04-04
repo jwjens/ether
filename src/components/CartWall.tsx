@@ -75,7 +75,7 @@ export default function CartWall() {
     <div>
       {editing !== null && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={() => setEditing(null)}>
-          <div className="bg-zinc-900 rounded-lg border border-zinc-700 p-4 w-80 space-y-3" onClick={e => e.stopPropagation()}>
+          <div className="bg-zinc-900 rounded-none border border-zinc-700 p-4 w-80 space-y-3" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-zinc-100">Edit Cart {(editing || 0) + 1}</h3>
             <div><label className="text-[10px] text-zinc-500 uppercase">Title</label><input className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editTitle} onChange={e => setEditTitle(e.target.value)} /></div>
             <div><label className="text-[10px] text-zinc-500 uppercase">Hotkey</label><input className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Press a key..." value={editHotkey} onKeyDown={e => { e.preventDefault(); setEditHotkey(e.code); }} readOnly /></div>
@@ -89,7 +89,7 @@ export default function CartWall() {
           if (slot && slot.file_path) {
             return (
               <div key={i} className="relative group">
-                <button onClick={() => fireCart(i)} draggable onDragStart={(e) => { e.dataTransfer.setData("application/cart", JSON.stringify({ filePath: slot.file_path, title: slot.title || "Cart " + (i+1), artist: "" })); e.dataTransfer.effectAllowed = "copy"; }} onContextMenu={(e) => { e.preventDefault(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }} className={"w-full rounded-lg flex flex-col items-center justify-center text-center transition-all " + (playing === i ? "ring-2 ring-white scale-95" : "hover:brightness-125")} style={{ backgroundColor: slot.color, aspectRatio: "1", minHeight: "0" }}>
+                <button onClick={() => fireCart(i)} draggable onDragStart={(e) => { e.dataTransfer.setData("application/cart", JSON.stringify({ filePath: slot.file_path, title: slot.title || "Cart " + (i+1), artist: "" })); e.dataTransfer.effectAllowed = "copy"; }} onContextMenu={(e) => { e.preventDefault(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }} className={"w-full rounded-none flex flex-col items-center justify-center text-center transition-all " + (playing === i ? "ring-2 ring-white scale-95" : "hover:brightness-125")} style={{ backgroundColor: slot.color, aspectRatio: "1", minHeight: "0" }}>
                   <span className="text-sm font-medium text-white leading-tight px-1 truncate w-full">{slot.title}</span>
                   <span className="text-[10px] text-white opacity-50 mt-1">{slot.hotkey ? slot.hotkey.replace("Key","").replace("Digit","") : ""}</span>
                   {playing === i && <span className="text-[10px] text-white font-bold animate-pulse">PLAYING</span>}
@@ -99,7 +99,7 @@ export default function CartWall() {
             );
           }
           return (
-            <button key={i} onClick={() => assignSlot(i)} className="w-full rounded-lg flex flex-col items-center justify-center" style={{ background: "var(--bg-tertiary)", border: "2px dashed var(--border-secondary)", cursor: "pointer", aspectRatio: "1", minHeight: "0" }}>
+            <button key={i} onClick={() => assignSlot(i)} className="w-full rounded-none flex flex-col items-center justify-center" style={{ background: "var(--bg-tertiary)", border: "2px dashed var(--border-secondary)", cursor: "pointer", aspectRatio: "1", minHeight: "0" }}>
               <span className="text-2xl text-zinc-600">+</span>
               {i < 12 && <span className="text-xs text-zinc-600 mt-1">{"F" + (i + 1)}</span>}
             </button>

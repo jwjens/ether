@@ -319,7 +319,7 @@ export function ZettaExportButton({ cards, stationName = "My Station", showTitle
         disabled={status === "exporting"}
         style={{
           display: "flex", alignItems: "center", gap: 6,
-          padding: "5px 12px", borderRadius: 7,
+          padding: "5px 12px", borderRadius: 0,
           background: bg,
           border: `1px solid ${color}44`,
           color, fontSize: 10, fontWeight: 700,
