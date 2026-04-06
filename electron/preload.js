@@ -44,6 +44,17 @@ contextBridge.exposeInMainWorld("ether", {
     disable: () => ipcRenderer.invoke("autostart:disable"),
     isEnabled: () => ipcRenderer.invoke("autostart:isEnabled"),
   },
+  iris: {
+    // Fires when Iris sends a command — payload: { action, label }
+    onCommand:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('iris:command-received', h); return h; },
+    offCommand:  (h)  => ipcRenderer.removeListener('iris:command-received', h),
+    // Fires with true/false as Iris connects or drops off
+    onConnected: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('iris:connected', h); return h; },
+    offConnected:(h)  => ipcRenderer.removeListener('iris:connected', h),
+    // Iris requesting next-track (renderer auto-advance handles it)
+    onNextTrack: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('iris:next-track', h); return h; },
+    offNextTrack:(h)  => ipcRenderer.removeListener('iris:next-track', h),
+  },
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   on: (channel, cb) => {
     const h = (_, ...a) => cb(...a);

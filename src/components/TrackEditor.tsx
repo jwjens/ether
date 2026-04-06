@@ -996,7 +996,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
               {fmtSmpte(value)}
             </div>
             <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 3 }}>{desc}</div>
-            <div style={{ position: "absolute" as const, bottom: 0, left: 0, right: 0, height: 2, background: color + "50", borderRadius: 0,} />
+            <div style={{ position: "absolute" as const, bottom: 0, left: 0, right: 0, height: 2, background: color + "50", borderRadius: 0 }} />
           </div>
         ))}
 

@@ -1,6 +1,6 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
-import EtherLogo from "./components/EtherLogo";
+import etherMarkSvg from "../assets/ether-logo-mark-only.svg";
 import { UserContext, AppUser, useRole } from "./UserContext";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 const emit = (e: string, p?: any): Promise<void> => Promise.resolve((window as any).ether.emit(e, p));
@@ -11,6 +11,7 @@ const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.open
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 import { engine, DeckState } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
+import { watchShowTransitions, getNextTransition, type NextTransition } from "../audio/showClock";
 import { readID3 } from "./audio/id3";
 import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
@@ -19,6 +20,7 @@ import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type
 import ProducerDesk from "./components/ProducerDesk";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
+import LibraryImport from "./components/LibraryImport";
 import SettingsPanel from "./components/SettingsPanel";
 import DMCANotice from "./components/DMCANotice";
 import JockStrip from "./components/JockStrip";
@@ -41,6 +43,7 @@ import SplashScreen from "./components/SplashScreen";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import PodcastStudio from "./components/PodcastStudio";
+import Studio from "./components/Studio";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot } from "./components/HealthMonitor";
 import WidgetCanvas from "./canvas/WidgetCanvas";
@@ -49,7 +52,7 @@ import TrackEditor from "./components/TrackEditor";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPicker";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "libraryimport" | "studio";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -201,7 +204,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
       {layouts.length > 0 && !editing && (
         <button
           onClick={() => setShowList(p => !p)}
-          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 0,}
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
           title="Switch layout"
         >▾</button>
       )}
@@ -316,6 +319,8 @@ export default function App() {
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
   const [editSong, setEditSong] = useState<any>(null);
+  const [irisConnected, setIrisConnected] = useState(false);
+  const [irisLastCmd, setIrisLastCmd] = useState<string | null>(null);
 
   // Check if first run is complete
   useEffect(() => {
@@ -464,6 +469,13 @@ export default function App() {
     else invoke("watchdog_set", { active: false, thresholdSec: 10.0 }).catch(() => {});
   }, [autoAdv]);
 
+  // Hard top-of-hour show transitions — only active while automation is on
+  useEffect(() => {
+    if (!autoAdv) return;
+    const stop = watchShowTransitions();
+    return stop;
+  }, [autoAdv]);
+
   useEffect(() => {
     const unlisten = listen("dead-air-detected", async (event) => {
       console.warn("Dead air detected after", event.payload, "seconds - recovering...");
@@ -578,6 +590,26 @@ export default function App() {
     invoke("set_now_playing", { data: JSON.stringify(payload) }).catch(() => {});
   }, [deckA, deckB, deckC]);
 
+  // ── Iris bridge — connection + command events ─────────────────
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.iris) return;
+    const hConn = ether.iris.onConnected((v: boolean) => setIrisConnected(v));
+    const hCmd  = ether.iris.onCommand((c: { action: string; label: string }) => {
+      setIrisLastCmd(c.label ?? c.action);
+      setTimeout(() => setIrisLastCmd(null), 3000);
+    });
+    const hNext = ether.iris.onNextTrack(() => {
+      // Trigger auto-advance: stop deck A so the auto-advance engine loads next
+      engine.getDeck('A')?.stop().catch(() => {});
+    });
+    return () => {
+      ether.iris.offConnected(hConn);
+      ether.iris.offCommand(hCmd);
+      ether.iris.offNextTrack(hNext);
+    };
+  }, []);
+
   if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
   if (firstRunChecked && !wizardDone) return <FirstRunWizard onComplete={handleWizardComplete} />;
   if (!currentUser) return <UserLogin onLogin={setCurrentUser} />;
@@ -592,6 +624,8 @@ export default function App() {
 
         {/* ── LEFT: Logo + Menu + Session ── */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, zIndex: 1 }}>
+          <img src={etherMarkSvg} height={28} width={28} alt="ether" style={{ flexShrink: 0, display: "block" }} />
+          <div style={{ width: 1, height: 16, background: "var(--border-primary)" }} />
           <MenuBar
             active={panel} set={setPanel}
             canvasEngine={canvasEngine}
@@ -632,6 +666,11 @@ export default function App() {
               Go Live
             </button>
           )}
+          {/* IRIS connection badge */}
+          <div title={irisConnected ? (irisLastCmd ?? 'Iris connected') : 'Iris not connected'} style={{ display: 'flex', alignItems: 'center', gap: 4, height: 24, padding: '0 8px', border: '1px solid var(--border-primary)', fontSize: 9, fontWeight: 800, letterSpacing: '0.1em', color: irisConnected ? '#7eb8f7' : 'var(--text-tertiary)', opacity: irisConnected ? 1 : 0.35, transition: 'all 0.4s', userSelect: 'none' }}>
+            <div style={{ width: 5, height: 5, borderRadius: '50%', background: irisConnected ? '#7eb8f7' : 'currentColor', boxShadow: irisConnected ? '0 0 6px #7eb8f7' : 'none', transition: 'all 0.4s' }} />
+            {irisLastCmd ? irisLastCmd.toUpperCase() : 'IRIS'}
+          </div>
           <ClockDisplay />
           <button onClick={() => setDarkMode(!darkMode)} style={{ width: 30, height: 30, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
             {darkMode ? (
@@ -699,7 +738,7 @@ export default function App() {
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast") ? 0 : 16, display: "flex", flexDirection: "column" }}>
+        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "studio") ? 0 : 16, display: "flex", flexDirection: "column" }}>
           {(panel === "live" || panel === "podcast") && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
               {panel === "podcast" ? (
@@ -753,6 +792,8 @@ export default function App() {
                   <PlaylistPanel onClose={() => setPanel("live")} />
                 </div>
               )}
+              {panel === "libraryimport" && <LibraryImport onClose={() => setPanel("library")} />}
+              {panel === "studio" && <Studio />}
             </div>
           )}
           <DMCANotice />
@@ -970,11 +1011,13 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Export Episode" onClick={() => { set("live"); togglePanel("export"); }} />
         <Item separator />
         <Item label="Podcast Studio" onClick={() => set("podcast")} />
+        <Item label="Video Studio" onClick={() => set("studio")} />
         <Item label="Cart Wall" onClick={() => set("cartwall")} />
         <Item label="Playlist Player" onClick={() => set("playlist")} />
         <Item label="Auto-Cue Library..." onClick={() => set("autocue")} />
         <Item label="System Health" onClick={() => set("health")} />
         <Item separator />
+        <Item label="Import Library..." onClick={() => set("libraryimport")} />
         <Item label="Auto-Duck Settings" disabled />
       </Menu>
     ),
@@ -1601,6 +1644,68 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Next-show countdown pill ──────────────────────────────────
+// Shown in the Live Assist toolbar when automation is on and a show
+// transition is within 10 minutes.
+
+function NextShowCountdown() {
+  const [transition, setTransition] = React.useState<NextTransition | null>(null);
+  const [elapsed, setElapsed] = React.useState(0);
+
+  // Refresh the next-transition target every 30 s
+  React.useEffect(() => {
+    const fetch = async () => {
+      const t = await getNextTransition().catch(() => null);
+      setTransition(t);
+      setElapsed(0);
+    };
+    fetch();
+    const id = setInterval(fetch, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Count down locally every second
+  React.useEffect(() => {
+    if (!transition) return;
+    const id = setInterval(() => setElapsed(e => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [transition]);
+
+  if (!transition) return null;
+  const remaining = transition.secondsAway - elapsed;
+  if (remaining > 600 || remaining <= 0) return null; // only within 10 min
+
+  const mins  = Math.floor(remaining / 60);
+  const secs  = String(remaining % 60).padStart(2, "0");
+  const urgent = remaining < 60;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 5,
+      padding: "3px 9px", flexShrink: 0,
+      background: urgent ? "rgba(239,68,68,0.12)" : "rgba(251,191,36,0.08)",
+      border: `1px solid ${urgent ? "#ef444450" : "#fbbf2440"}`,
+      borderRadius: 0,
+    }}>
+      <div style={{
+        width: 5, height: 5, borderRadius: "50%",
+        background: urgent ? "#ef4444" : "#fbbf24",
+        animation: "on-air-breathe 1s ease-in-out infinite",
+        flexShrink: 0,
+      }} />
+      <span style={{
+        fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
+        color: urgent ? "#ef4444" : "#fbbf24",
+        fontFamily: "'DM Mono', monospace",
+        textTransform: "uppercase" as const,
+        whiteSpace: "nowrap" as const,
+      }}>
+        {transition.showName} {mins}:{secs}
+      </span>
+    </div>
+  );
+}
+
 function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
@@ -1675,16 +1780,36 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const dragStartXRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Individual deck order — A, B, C, mic can be dragged to any position
-  type DeckSlot = "A" | "B" | "C" | "mic";
+  // Individual deck order — A, B, C, D, E, F, mic can be dragged to any position
+  type DeckSlot = "A" | "B" | "C" | "D" | "E" | "F" | "mic";
   const [deckOrder, setDeckOrder] = useState<DeckSlot[]>(["A", "B", "C", "mic"]);
+
+  // Sync deck order when deckConfigs changes (adds/removes D/E/F)
+  React.useEffect(() => {
+    if (!deckConfigs) return;
+    const enabledSlots = deckConfigs.map(c => c.slot as DeckSlot);
+    setDeckOrder(prev => {
+      const hasNew   = enabledSlots.some(s => !prev.includes(s));
+      const hasStale = prev.some(s => s !== "mic" && !enabledSlots.includes(s));
+      if (!hasNew && !hasStale) return prev; // nothing changed — bail out, no re-render
+      const next = [...prev];
+      const micIdx = next.indexOf("mic");
+      for (const slot of enabledSlots) {
+        if (!next.includes(slot)) {
+          next.splice(micIdx >= 0 ? micIdx : next.length, 0, slot);
+        }
+      }
+      return next.filter(slot => slot === "mic" || enabledSlots.includes(slot));
+    });
+  }, [deckConfigs]);
+
   // Filter deck order based on visible panels
   const activeDeckOrder = deckOrder.filter(slot => {
     if (slot === "A") return vp.deckA !== false;
     if (slot === "B") return vp.deckB !== false;
     if (slot === "C") return vp.deckC !== false;
     if (slot === "mic") return vp.mic !== false;
-    return true;
+    return true; // D, E, F — always shown when in deckOrder
   });
   const [draggingDeck, setDraggingDeck] = useState<DeckSlot | null>(null);
   const [dropDeck, setDropDeck] = useState<DeckSlot | null>(null);
@@ -1837,7 +1962,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           const isDragging = draggingDeck === slot;
           const isDropTarget = dropDeck === slot;
           const hasRight = i < deckOrder.length - 1;
-          const fixedW = deckWidths[slot];
+          const fixedW = deckWidths[slot] ?? null;
 
           const divider = hasRight ? (
             <div
@@ -1957,6 +2082,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           {!showCarts && <JockStrip deckA={deckA} deckB={deckB} dropDown />}
         </div>
         <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
+        {autoAdv && <NextShowCountdown />}
         <button
           onClick={onConfigureDecks}
           title="Configure deck layout"

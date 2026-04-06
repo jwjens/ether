@@ -13,7 +13,7 @@
 //
 // Falls back to filtered random if no rules match or library isn't analyzed yet.
 
-import { query, execute } from "../db/client";
+import { query, execute, queryOne } from "../db/client";
 import { engine } from "./engine-rodio";
 
 interface SmartRule {
@@ -49,6 +49,17 @@ interface SepRules {
   artist_sep_sec: number;
   /** seconds — from song_separation_min DB rule, converted from minutes */
   song_sep_sec: number;
+}
+
+// ── Hourly daypart log — fires once per clock-hour ────────────
+let _lastLoggedHour = -1;
+function maybeDaypartLog(hour: number) {
+  if (hour === _lastLoggedHour) return;
+  _lastLoggedHour = hour;
+  console.log(
+    `[daypart] Local hour: ${hour}  ` +
+    `(bit ${hour} of daypart_mask must be 1 for songs to play this hour)`
+  );
 }
 
 // ── Get current active rule ────────────────────────────────────
@@ -233,41 +244,154 @@ async function pickRandom(
   );
 }
 
+// ── Format-clock based song selection ────────────────────────
+//
+// When the current hour has an active show with a format clock assigned,
+// pick songs from that clock's music slots (in order) before falling back
+// to SmartRules or random.  All base rotation rules still apply.
+
+interface ClockSlotRow { category_id: number; }
+
+async function getActiveShowClock(): Promise<{ clockId: number; showName: string } | null> {
+  try {
+    const hour = new Date().getHours();
+    const day  = String(new Date().getDay());
+
+    // Fetch all active shows with clocks and evaluate the hour range in JS
+    // (avoids complex SQL for overnight / midnight-ending shows)
+    const rows = await query<{
+      clock_id: number; name: string;
+      start_hour: number; end_hour: number; days: string;
+    }>(
+      `SELECT clock_id, name, start_hour, end_hour, days
+       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL`
+    );
+
+    for (const row of rows) {
+      if (!row.days.includes(day)) continue;
+
+      const { start_hour, end_hour } = row;
+      let active: boolean;
+
+      if (end_hour === 0 || end_hour === start_hour) {
+        // "Until midnight" — active from start_hour through 23
+        active = hour >= start_hour;
+      } else if (end_hour > start_hour) {
+        // Normal daytime show
+        active = hour >= start_hour && hour < end_hour;
+      } else {
+        // Overnight show (e.g. 22–06): active after start OR before end
+        active = hour >= start_hour || hour < end_hour;
+      }
+
+      if (active) {
+        console.log(`[loggen] Active show: "${row.name}" (${start_hour}–${end_hour}) clock=${row.clock_id}`);
+        return { clockId: row.clock_id, showName: row.name };
+      }
+    }
+
+    console.log(`[loggen] No active show with clock found for hour ${hour} day ${day}`);
+    return null;
+  } catch (e) {
+    console.error("[loggen] getActiveShowClock error:", e);
+    return null;
+  }
+}
+
+async function pickSongsFromClock(
+  clockId: number,
+  count: number,
+  sep: SepRules,
+  blockExplicit: boolean
+): Promise<Song[]> {
+  const slots = await query<ClockSlotRow>(
+    `SELECT category_id FROM clock_slots
+     WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL
+     ORDER BY position`,
+    [clockId]
+  );
+  if (slots.length === 0) {
+    console.warn(`[loggen] Clock ${clockId} has no music slots with categories assigned`);
+    return [];
+  }
+  console.log(`[loggen] Clock ${clockId}: ${slots.length} music slots`);
+
+  const hour = new Date().getHours();
+  const songs: Song[] = [];
+  const usedIds: number[] = [];
+
+  for (const slot of slots) {
+    if (songs.length >= count) break;
+
+    const params: any[] = [];
+    let cond = buildBaseConditions(hour, sep, blockExplicit, params);
+    cond += " AND s.category_id = ?";
+    params.push(slot.category_id);
+
+    if (usedIds.length > 0) {
+      cond += ` AND s.id NOT IN (${usedIds.map(() => "?").join(",")})`;
+      params.push(...usedIds);
+    }
+    params.push(1); // LIMIT
+
+    const rows = await query<Song>(
+      `SELECT s.id, s.title, a.name as artist_name, s.file_path,
+              s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
+       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+       WHERE ${cond}
+       ORDER BY RANDOM() LIMIT ?`,
+      params
+    );
+    if (rows.length > 0) {
+      songs.push(rows[0]);
+      usedIds.push(rows[0].id);
+    }
+  }
+
+  return songs;
+}
+
 // ── Main export: fill the queue ────────────────────────────────
 
 export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
   try {
-    const rule = getActiveRule();
     const sep  = await getSepRules();
     const { blockExplicit } = getContentFilter();
+    const hour = new Date().getHours();
+    maybeDaypartLog(hour);
+
+    let songs: Song[] = [];
+    let source = "random";
+
+    // ── Priority 1: active show's format clock ────────────────
+    const showClock = await getActiveShowClock();
+    if (showClock) {
+      songs = await pickSongsFromClock(showClock.clockId, targetCount, sep, blockExplicit);
+      source = `clock "${showClock.showName}"`;
+    }
+
+    // ── Priority 2: localStorage SmartRules ───────────────────
+    if (songs.length < targetCount / 2) {
+      const rule = getActiveRule();
+      if (rule) {
+        const ruleSongs = await pickSongsForRule(rule, targetCount - songs.length, sep, blockExplicit);
+        songs = [...songs, ...ruleSongs];
+        source = showClock ? `${source} + rule "${rule.description}"` : `rule "${rule.description}"`;
+      }
+    }
+
+    // ── Priority 3: filtered random ───────────────────────────
+    if (songs.length < targetCount / 2) {
+      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit);
+      songs = [...songs, ...extra];
+      if (songs.length > 0 && source === "random") source = "random (no show/rules matched)";
+    }
 
     console.log(
-      `[loggen] fillQueue: rule="${rule?.description ?? "none"}" | ` +
-      `blockExplicit=${blockExplicit} | ` +
-      `artistSep=${sep.artist_sep_sec / 60}min | ` +
-      `songSep=${sep.song_sep_sec / 60}min | ` +
-      `hour=${new Date().getHours()}`
+      `[loggen] fillQueue: source=${source} | ` +
+      `hour=${hour} | blockExplicit=${blockExplicit} | ` +
+      `artistSep=${sep.artist_sep_sec / 60}min`
     );
-
-    let songs: Song[];
-
-    if (rule) {
-      songs = await pickSongsForRule(rule, targetCount, sep, blockExplicit);
-
-      // If filters returned fewer than half the target, pad with filtered random.
-      // Filtered random still obeys all base rules — it just drops the SmartRule
-      // energy/BPM/genre constraints.
-      if (songs.length < targetCount / 2) {
-        console.warn(
-          `[loggen] Rule "${rule.description}" returned ${songs.length}/${targetCount} ` +
-          `eligible songs — padding with filtered random (all rotation rules still apply)`
-        );
-        const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit);
-        songs = [...songs, ...extra];
-      }
-    } else {
-      songs = await pickRandom(targetCount, sep, blockExplicit);
-    }
 
     if (songs.length === 0) {
       console.warn(

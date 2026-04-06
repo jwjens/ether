@@ -4,15 +4,9 @@ const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, ar
 interface Props {
   deckId: "A" | "B" | "C" | string;
   isPlaying: boolean;
-  remaining?: number;
-  duration?: number;
-  pos?: number;
-  isInIntro?: boolean;
-  isEnding?: boolean;
-  isCritical?: boolean;
-  introEnd?: number;
-  hasTrack?: boolean;
-  filePath?: string;
+  remaining?: number; duration?: number; pos?: number;
+  isInIntro?: boolean; isEnding?: boolean; isCritical?: boolean;
+  introEnd?: number; hasTrack?: boolean; filePath?: string;
 }
 
 const BAR_COUNT    = 48;
@@ -20,36 +14,19 @@ const PEAK_HOLD_MS = 1200;
 
 export default function VUMeter({
   deckId, isPlaying,
-  remaining = 0, duration = 0, pos = 0,
-  isInIntro, isEnding, isCritical,
-  hasTrack = false,
+  isInIntro, isEnding, isCritical, hasTrack = false,
 }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  // Per-bar independent state
-  const barLevels   = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const barTargets  = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const barPhases   = useRef<number[]>(
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const barLevels    = useRef<number[]>(new Array(BAR_COUNT).fill(0));
+  const barTargets   = useRef<number[]>(new Array(BAR_COUNT).fill(0));
+  const barPhases    = useRef<number[]>(
     Array.from({ length: BAR_COUNT }, (_, i) => i * 0.71 + Math.random() * 2)
   );
-  const peakLevels  = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const peakTimes   = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const masterLevel = useRef(0);
-  const rafRef      = useRef<number>(0);
-  // Standby sine wave — separate per-deck phase, never resets
+  const peakLevels   = useRef<number[]>(new Array(BAR_COUNT).fill(0));
+  const peakTimes    = useRef<number[]>(new Array(BAR_COUNT).fill(0));
+  const masterLevel  = useRef(0);
+  const rafRef       = useRef<number>(0);
   const standbyPhase = useRef(Math.random() * Math.PI * 2);
-
-  const getColors = () => {
-    if (!isPlaying) {
-      if (deckId === "C") return { bar: "#a78bfa", peak: "#7c3aed" };
-      if (deckId === "B") return { bar: "#34d399", peak: "#059669" };
-      return { bar: "#64748b", peak: "#475569" };
-    }
-    if (isCritical) return { bar: "#f87171", peak: "#dc2626" };
-    if (isEnding)   return { bar: "#fb923c", peak: "#ea580c" };
-    if (isInIntro)  return { bar: "#38bdf8", peak: "#0284c7" };
-    return { bar: "#34d399", peak: "#059669" };
-  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -60,95 +37,74 @@ export default function VUMeter({
     const draw = () => {
       const w   = canvas.width;
       const h   = canvas.height;
-      const col = getColors();
       const now = Date.now();
 
       ctx.clearRect(0, 0, w, h);
+
+      // Very dark background
+      ctx.fillStyle = "#0a0a0e";
+      ctx.fillRect(0, 0, w, h);
 
       const barW   = Math.max(2, Math.floor((w - (BAR_COUNT - 1)) / BAR_COUNT));
       const gap    = 1;
       const totalW = BAR_COUNT * (barW + gap) - gap;
       const offX   = Math.floor((w - totalW) / 2);
 
-      // ── STANDBY sine wave — original bow-tie style ──────────
+      // ── STANDBY ─────────────────────────────────────────────
       if (!isPlaying) {
         if (hasTrack) {
           const speed = deckId === "C" ? 0.07 : deckId === "A" ? 0.018 : 0.025;
           standbyPhase.current += speed;
           const phase = standbyPhase.current;
           const isC   = deckId === "C";
+          const idleColor = deckId === "A" ? "#008878"
+            : deckId === "C" ? "#203878"
+            : "#1a6040";
 
           for (let i = 0; i < BAR_COUNT; i++) {
             const x    = offX + i * (barW + gap);
             const wave = isC
-              ? 0.055 * Math.sin(phase - i * 0.38) +
-                0.025 * Math.sin(phase * 2.3 - i * 0.7) +
-                0.010 * Math.sin(phase * 3.1 + i * 0.4)
-              : 0.040 * Math.sin(phase - i * 0.35) +
-                0.015 * Math.sin(phase * 1.7 - i * 0.6);
-
+              ? 0.055 * Math.sin(phase - i * 0.38) + 0.025 * Math.sin(phase * 2.3 - i * 0.7)
+              : 0.040 * Math.sin(phase - i * 0.35) + 0.015 * Math.sin(phase * 1.7 - i * 0.6);
             const amp  = isC ? 0.065 : 0.055;
             const barH = Math.max(2, Math.floor((amp + wave) * h));
             const y    = Math.floor(h / 2 - barH / 2);
 
-            ctx.fillStyle   = col.bar;
-            ctx.globalAlpha = isC ? 0.75 : 0.70;
-            ctx.beginPath();
-            ctx.roundRect(x, y, barW, barH, 1);
-            ctx.fill();
+            ctx.fillStyle   = idleColor;
+            ctx.globalAlpha = 0.55;
+            ctx.fillRect(x, y, barW, barH);
             ctx.globalAlpha = 1;
           }
 
-          // Dashed center line
-          ctx.strokeStyle = col.bar;
-          ctx.globalAlpha = isC ? 0.4 : 0.35;
+          // Center line
+          ctx.strokeStyle = idleColor;
+          ctx.globalAlpha = 0.25;
           ctx.lineWidth   = 1;
-          ctx.setLineDash([3, isC ? 4 : 5]);
+          ctx.setLineDash([3, 5]);
           ctx.beginPath();
           ctx.moveTo(offX, h / 2);
           ctx.lineTo(offX + totalW, h / 2);
           ctx.stroke();
           ctx.setLineDash([]);
           ctx.globalAlpha = 1;
-
-          // Status label
-          const label = deckId === "C" ? "NEXT UP" : deckId === "A" ? "PRIMARY" : "STANDBY";
-          ctx.font      = `700 8px 'Inter', sans-serif`;
-          ctx.textAlign = "center";
-          const lw      = ctx.measureText(label).width + 16;
-          ctx.fillStyle   = col.bar;
-          ctx.globalAlpha = 0.12;
-          ctx.beginPath();
-          ctx.roundRect(w / 2 - lw / 2, h - 22, lw, 16, 4);
-          ctx.fill();
-          ctx.globalAlpha = 0.5;
-          ctx.fillText(label, w / 2, h - 11);
-          ctx.globalAlpha = 1;
-
         } else {
-          // No track
+          // No track — dim tick marks only
           for (let i = 0; i < BAR_COUNT; i++) {
             const x = offX + i * (barW + gap);
-            ctx.fillStyle   = col.bar;
-            ctx.globalAlpha = 0.1;
-            ctx.beginPath();
-            ctx.roundRect(x, Math.floor(h / 2 - 2), barW, 4, 1);
-            ctx.fill();
+            ctx.fillStyle   = "#1a1a22";
+            ctx.fillRect(x, Math.floor(h / 2 - 1), barW, 2);
           }
-          ctx.globalAlpha = 1;
         }
 
         rafRef.current = requestAnimationFrame(draw);
         return;
       }
 
-      // ── PLAYING — each bar fully independent ─────────────────
+      // ── PLAYING — animate each bar independently ─────────────
       for (let i = 0; i < BAR_COUNT; i++) {
-        // Advance this bar's own phase at its own speed
         barPhases.current[i] += 0.04 + (i % 7) * 0.005 + (i % 3) * 0.007;
         const p = barPhases.current[i];
 
-        // Independent target — multi-frequency combination unique per bar
         const target =
           masterLevel.current * (
             0.4 +
@@ -157,14 +113,13 @@ export default function VUMeter({
             0.10 * Math.abs(Math.cos(p * 0.79 + i * 0.3))
           );
 
-        // Smooth toward target: fast attack, slow decay
         const diff = target - barLevels.current[i];
         barLevels.current[i] += diff * (diff > 0 ? 0.40 : 0.08);
 
         const level = Math.max(0, barLevels.current[i]);
-        const barH  = Math.max(2, Math.floor(level * h));
+        const barH  = Math.max(0, Math.floor(level * h));
 
-        // Peak hold per bar
+        // Peak hold
         if (level > peakLevels.current[i]) {
           peakLevels.current[i] = level;
           peakTimes.current[i]  = now;
@@ -172,58 +127,88 @@ export default function VUMeter({
           peakLevels.current[i] = Math.max(0, peakLevels.current[i] - 0.016);
         }
 
-        // Bottom-up gradient
-        const x    = offX + i * (barW + gap);
-        const grad = ctx.createLinearGradient(x, h, x, h - barH);
-        if (isCritical) {
-          grad.addColorStop(0, "#fca5a5");
-          grad.addColorStop(0.6, "#f87171");
-          grad.addColorStop(1, "#dc2626");
-        } else if (isEnding) {
-          grad.addColorStop(0, "#fed7aa");
-          grad.addColorStop(0.6, "#fb923c");
-          grad.addColorStop(1, "#ea580c");
-        } else if (isInIntro) {
-          grad.addColorStop(0, "#bae6fd");
-          grad.addColorStop(0.6, "#38bdf8");
-          grad.addColorStop(1, "#0284c7");
-        } else {
-          grad.addColorStop(0, "#86efac");
-          grad.addColorStop(0.6, "#34d399");
-          grad.addColorStop(1, "#059669");
+        const x = offX + i * (barW + gap);
+
+        // ── Unlit track (above the fill) ──────────────────────
+        if (barH < h) {
+          ctx.fillStyle = "#111116";
+          ctx.fillRect(x, 0, barW, h - barH);
         }
 
-        const r = Math.min(2, barW / 2);
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.roundRect(x, h - barH, barW, barH, [r, r, 0, 0]);
-        ctx.fill();
+        // ── Lit fill with zone-aware gradient ─────────────────
+        if (barH > 0) {
+          const fillY = h - barH;
+          // Determine the top zone the bar reaches
+          const normPeak = level; // 0–1
 
-        // Peak dot — clamped to visible area
+          // Build gradient: bottom-to-top of the fill
+          const grad = ctx.createLinearGradient(x, h, x, fillY);
+
+          // Bottom of fill = brighter / more saturated (energy source)
+          if (normPeak <= 0.60) {
+            grad.addColorStop(0,   "#00c8a8"); // bright teal bottom
+            grad.addColorStop(0.5, "#008878");
+            grad.addColorStop(1,   "#006058");
+          } else if (normPeak <= 0.80) {
+            grad.addColorStop(0,   "#00c8a8"); // teal at base
+            grad.addColorStop(0.5, "#008878");
+            grad.addColorStop(0.75, "#c07820"); // amber transition
+            grad.addColorStop(1,   "#905010");
+          } else {
+            grad.addColorStop(0,   "#00c8a8"); // teal at base
+            grad.addColorStop(0.4, "#008878");
+            grad.addColorStop(0.6, "#c07820"); // amber mid
+            grad.addColorStop(0.8, "#c02828"); // red top
+            grad.addColorStop(1,   "#901818");
+          }
+
+          ctx.fillStyle = grad;
+          ctx.fillRect(x, fillY, barW, barH);
+
+          // ── Highlight cap — top 2px of fill, brighter ────────
+          if (barH > 4) {
+            ctx.fillStyle   = "rgba(255,255,255,0.18)";
+            ctx.fillRect(x, fillY, barW, 2);
+          }
+        }
+
+        // ── Peak dot ─────────────────────────────────────────
         if (peakLevels.current[i] > 0.05) {
-          const py = Math.max(2, h - Math.floor(peakLevels.current[i] * h) - 2);
-          ctx.fillStyle   = col.peak;
-          ctx.globalAlpha = 0.75;
+          const py      = Math.max(1, h - Math.floor(peakLevels.current[i] * h) - 2);
+          const normPk  = peakLevels.current[i];
+          const pkColor = normPk > 0.80 ? "#e04040"
+            : normPk > 0.60 ? "#d09030"
+            : "#00d8b0";
+          ctx.fillStyle   = pkColor;
+          ctx.globalAlpha = 0.85;
           ctx.fillRect(x, py, barW, 2);
           ctx.globalAlpha = 1;
         }
-
-        // Ghost above bar
-        if (barH < h - 2) {
-          ctx.fillStyle = "rgba(255,255,255,0.02)";
-          ctx.beginPath();
-          ctx.roundRect(x, 0, barW, h - barH, [r, r, 0, 0]);
-          ctx.fill();
-        }
       }
 
-      // Subtle grid lines
-      ctx.strokeStyle = "rgba(255,255,255,0.03)";
+      // ── Zone separator tick lines (subtle) ───────────────────
+      const tick60 = Math.floor(h * 0.40); // 60% fill level from top
+      const tick80 = Math.floor(h * 0.20); // 80% fill level from top
+      ctx.strokeStyle = "rgba(255,255,255,0.04)";
       ctx.lineWidth   = 1;
-      for (let g = 1; g < 4; g++) {
-        const y = Math.floor(h * g / 4);
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
+      ctx.beginPath(); ctx.moveTo(0, tick60); ctx.lineTo(w, tick60); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, tick80); ctx.lineTo(w, tick80); ctx.stroke();
+
+      // ── Glass / dome overlay ─────────────────────────────────
+      // Soft white-to-transparent gradient over top ~35% of canvas
+      const glass = ctx.createLinearGradient(0, 0, 0, h * 0.45);
+      glass.addColorStop(0,   "rgba(255,255,255,0.055)");
+      glass.addColorStop(0.5, "rgba(255,255,255,0.018)");
+      glass.addColorStop(1,   "rgba(255,255,255,0)");
+      ctx.fillStyle = glass;
+      ctx.fillRect(0, 0, w, h * 0.45);
+
+      // Very subtle vignette at edges
+      const vig = ctx.createRadialGradient(w/2, h/2, h * 0.35, w/2, h/2, w * 0.8);
+      vig.addColorStop(0, "rgba(0,0,0,0)");
+      vig.addColorStop(1, "rgba(0,0,0,0.22)");
+      ctx.fillStyle = vig;
+      ctx.fillRect(0, 0, w, h);
 
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -232,23 +217,23 @@ export default function VUMeter({
     return () => cancelAnimationFrame(rafRef.current);
   }, [isPlaying, isInIntro, isEnding, isCritical, hasTrack, deckId]);
 
-  // Poll master level
+  // Poll real audio levels
   useEffect(() => {
     if (!isPlaying) { masterLevel.current = 0; return; }
     const poll = async () => {
       try {
-        const lvl = await invoke<{ a: number; b: number; c: number }>("get_levels");
+        const lvl = await invoke("get_levels") as { a: number; b: number; c: number };
         const raw = deckId === "A" ? lvl.a : deckId === "C" ? lvl.c : lvl.b;
-        masterLevel.current = raw > 0.005 ? 0.3 + raw * 0.7 : 0.15 + Math.random() * 0.2;
+        masterLevel.current = Math.max(0, Math.min(1, raw));
       } catch {
-        masterLevel.current = 0.2 + Math.random() * 0.5;
+        masterLevel.current = 0.28 + 0.32 * Math.abs(Math.sin(Date.now() * 0.0018));
       }
     };
-    const id = setInterval(poll, 60);
+    const id = setInterval(poll, 50);
     return () => { clearInterval(id); masterLevel.current = 0; };
   }, [isPlaying, deckId]);
 
-  // HiDPI resize
+  // HiDPI canvas sizing
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -269,8 +254,8 @@ export default function VUMeter({
   }, []);
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", borderRadius: 0 }}>
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", borderRadius: 0 }} />
+    <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden" }}>
+      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
     </div>
   );
 }

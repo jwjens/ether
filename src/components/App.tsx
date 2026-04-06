@@ -212,7 +212,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
       {layouts.length > 0 && !editing && (
         <button
           onClick={() => setShowList(p => !p)}
-          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 0,}
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
           title="Switch layout"
         >▾</button>
       )}

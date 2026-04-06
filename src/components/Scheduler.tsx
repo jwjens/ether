@@ -71,12 +71,18 @@ function ShowsTab() {
 
   const save = async () => {
     if (!editing || !editing.name) return;
+    const days = editing.days ?? "0123456";
+    const isActive = editing.is_active ?? 1;
     if (editing.id) {
-      await execute("UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=? WHERE id=?",
-        [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, editing.id]);
+      await execute(
+        "UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=?, days=?, is_active=? WHERE id=?",
+        [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive, editing.id]
+      );
     } else {
-      await execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES (?,?,?,?,?)",
-        [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null]);
+      await execute(
+        "INSERT INTO shows (name, start_hour, end_hour, color, description, days, is_active) VALUES (?,?,?,?,?,?,?)",
+        [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive]
+      );
     }
     setEditing(null); load();
   };
@@ -130,6 +136,24 @@ function ShowsTab() {
             <input type="color" className="h-8 w-full bg-zinc-800 border border-zinc-700 rounded" value={editing.color || "#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})} />
             <input className="col-span-3 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Description" value={editing.description || ""} onChange={e => setEditing({...editing, description: e.target.value})} />
           </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Days:</span>
+            {DAYS.map((d, i) => {
+              const dayStr = String(i);
+              const active = (editing.days ?? "0123456").includes(dayStr);
+              return (
+                <button key={i} onClick={() => {
+                  const cur = editing.days ?? "0123456";
+                  const next = active ? cur.replace(dayStr, "") : (cur + dayStr).split("").sort().join("");
+                  setEditing({...editing, days: next});
+                }} className={`px-2 py-0.5 rounded text-[10px] font-bold ${active ? "bg-blue-600 text-white" : "bg-zinc-700 text-zinc-400"}`}>{d}</button>
+              );
+            })}
+            <label className="ml-3 flex items-center gap-1 text-[10px] text-zinc-400 cursor-pointer">
+              <input type="checkbox" checked={(editing.is_active ?? 1) === 1} onChange={e => setEditing({...editing, is_active: e.target.checked ? 1 : 0})} />
+              Active
+            </label>
+          </div>
           <div className="flex gap-2">
             <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save</button>
             <button onClick={() => setEditing(null)} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
@@ -180,6 +204,7 @@ function CategoriesTab() {
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   const load = async () => {
     const rows = await query<Category & { song_count: number }>("SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c ORDER BY c.code");
@@ -220,14 +245,19 @@ function CategoriesTab() {
 
   const save = async () => {
     if (!editing || !editing.code) return;
-    if (editing.id) {
-      await execute("UPDATE categories SET code=?, name=?, color=?, spins_per_hour=?, priority=? WHERE id=?",
-        [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0, editing.id]);
-    } else {
-      await execute("INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
-        [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0]);
+    setSaveError("");
+    try {
+      if (editing.id) {
+        await execute("UPDATE categories SET code=?, name=?, color=?, spins_per_hour=?, priority=? WHERE id=?",
+          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0, editing.id]);
+      } else {
+        await execute("INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
+          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0]);
+      }
+      setEditing(null); load();
+    } catch (e: any) {
+      setSaveError(e?.message || "Save failed");
     }
-    setEditing(null); load();
   };
 
   return (
@@ -257,9 +287,10 @@ function CategoriesTab() {
             <input type="number" className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Spins/hr" value={editing.spins_per_hour || ""} onChange={e => setEditing({...editing, spins_per_hour: parseInt(e.target.value) || 0})} />
             <input type="color" className="h-8 w-full bg-zinc-800 border border-zinc-700 rounded" value={editing.color || "#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})} />
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save</button>
-            <button onClick={() => setEditing(null)} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
+            <button onClick={() => { setEditing(null); setSaveError(""); }} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
+            {saveError && <span className="text-xs text-red-400">{saveError}</span>}
           </div>
         </div>
       )}
@@ -664,7 +695,7 @@ function ClocksTab() {
   const createClock = async () => {
     if (!newName.trim()) return;
     const r = await execute("INSERT INTO clocks (name) VALUES (?)", [newName.trim()]);
-    setNewName(""); loadAll(); setSelected(r.lastInsertId);
+    setNewName(""); loadAll(); setSelected(r.lastInsertRowid as number);
   };
 
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);

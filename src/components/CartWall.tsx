@@ -17,12 +17,13 @@ function titleFromFile(p: string) {
 export default function CartWall() {
   const [slots, setSlots] = useState<(CartSlot | null)[]>([]);
   const [playing, setPlaying] = useState<number | null>(null);
+  const [flashing, setFlashing] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [editColor, setEditColor] = useState("#3f3f46");
   const [editTitle, setEditTitle] = useState("");
   const [editHotkey, setEditHotkey] = useState("");
   const audioMap = new Map<number, HTMLAudioElement>();
-  const TOTAL = 16;
+  const TOTAL = 18;
 
   const load = async () => {
     const rows = await query<CartSlot>("SELECT * FROM cart_slots ORDER BY slot_number");
@@ -35,6 +36,7 @@ export default function CartWall() {
   const fireCart = useCallback(async (n: number) => {
     const slot = slots[n];
     if (!slot || !slot.file_path) return;
+    setFlashing(n); setTimeout(() => setFlashing(f => f === n ? null : f), 180);
     if (playing === n) { const el = audioMap.get(n); if (el) { el.pause(); el.currentTime = 0; } setPlaying(null); return; }
     if (playing !== null) { const el = audioMap.get(playing); if (el) { el.pause(); el.currentTime = 0; } }
     try {
@@ -73,35 +75,90 @@ export default function CartWall() {
 
   return (
     <div>
+      <style>{`
+        @keyframes cart-flash {
+          0%   { opacity: 1; }
+          25%  { opacity: 0.25; }
+          100% { opacity: 1; }
+        }
+        .cart-flash { animation: cart-flash 0.18s ease-out; }
+      `}</style>
+
       {editing !== null && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={() => setEditing(null)}>
-          <div className="bg-zinc-900 rounded-none border border-zinc-700 p-4 w-80 space-y-3" onClick={e => e.stopPropagation()}>
+          <div style={{ background: "#111118", border: "1px solid #2a2a38" }} className="p-4 w-80 space-y-3" onClick={e => e.stopPropagation()}>
             <h3 className="text-sm font-bold text-zinc-100">Edit Cart {(editing || 0) + 1}</h3>
-            <div><label className="text-[10px] text-zinc-500 uppercase">Title</label><input className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" value={editTitle} onChange={e => setEditTitle(e.target.value)} /></div>
-            <div><label className="text-[10px] text-zinc-500 uppercase">Hotkey</label><input className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100" placeholder="Press a key..." value={editHotkey} onKeyDown={e => { e.preventDefault(); setEditHotkey(e.code); }} readOnly /></div>
-            <div><label className="text-[10px] text-zinc-500 uppercase">Color</label><div className="flex gap-1 flex-wrap mt-1">{COLORS.map(c => (<button key={c} onClick={() => setEditColor(c)} className="w-6 h-6 rounded" style={{ backgroundColor: c, border: editColor === c ? "2px solid white" : "2px solid transparent" }} />))}</div></div>
-            <div className="flex gap-2 justify-end"><button onClick={() => setEditing(null)} className="px-3 py-1.5 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button><button onClick={saveEdit} className="px-3 py-1.5 bg-blue-600 rounded text-xs font-bold text-white">Save</button></div>
+            <div><label className="text-[10px] text-zinc-500 uppercase">Title</label><input className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 text-xs text-zinc-100" value={editTitle} onChange={e => setEditTitle(e.target.value)} /></div>
+            <div><label className="text-[10px] text-zinc-500 uppercase">Hotkey</label><input className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 text-xs text-zinc-100" placeholder="Press a key..." value={editHotkey} onKeyDown={e => { e.preventDefault(); setEditHotkey(e.code); }} readOnly /></div>
+            <div><label className="text-[10px] text-zinc-500 uppercase">Color</label><div className="flex gap-1 flex-wrap mt-1">{COLORS.map(c => (<button key={c} onClick={() => setEditColor(c)} className="w-6 h-6" style={{ backgroundColor: c, border: editColor === c ? "2px solid white" : "2px solid transparent" }} />))}</div></div>
+            <div className="flex gap-2 justify-end"><button onClick={() => setEditing(null)} className="px-3 py-1.5 bg-zinc-700 text-xs text-zinc-300">Cancel</button><button onClick={saveEdit} className="px-3 py-1.5 bg-blue-600 text-xs font-bold text-white">Save</button></div>
           </div>
         </div>
       )}
-      <div className="grid grid-cols-8 gap-3 ">
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "6px" }}>
         {slots.map((slot, i) => {
           if (slot && slot.file_path) {
+            const isPlaying = playing === i;
+            const isFlashing = flashing === i;
             return (
-              <div key={i} className="relative group">
-                <button onClick={() => fireCart(i)} draggable onDragStart={(e) => { e.dataTransfer.setData("application/cart", JSON.stringify({ filePath: slot.file_path, title: slot.title || "Cart " + (i+1), artist: "" })); e.dataTransfer.effectAllowed = "copy"; }} onContextMenu={(e) => { e.preventDefault(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }} className={"w-full rounded-none flex flex-col items-center justify-center text-center transition-all " + (playing === i ? "ring-2 ring-white scale-95" : "hover:brightness-125")} style={{ backgroundColor: slot.color, aspectRatio: "1", minHeight: "0" }}>
-                  <span className="text-sm font-medium text-white leading-tight px-1 truncate w-full">{slot.title}</span>
-                  <span className="text-[10px] text-white opacity-50 mt-1">{slot.hotkey ? slot.hotkey.replace("Key","").replace("Digit","") : ""}</span>
-                  {playing === i && <span className="text-[10px] text-white font-bold animate-pulse">PLAYING</span>}
+              <div key={i} className="relative group" style={{ minHeight: 80 }}>
+                <button
+                  onClick={() => fireCart(i)}
+                  draggable
+                  onDragStart={(e) => { e.dataTransfer.setData("application/cart", JSON.stringify({ filePath: slot.file_path, title: slot.title || "Cart " + (i+1), artist: "" })); e.dataTransfer.effectAllowed = "copy"; }}
+                  onContextMenu={(e) => { e.preventDefault(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }}
+                  className={isFlashing ? "cart-flash" : ""}
+                  style={{
+                    width: "100%", height: "100%", minHeight: 80,
+                    background: isPlaying ? "#1c1c28" : "#111118",
+                    borderLeft: `4px solid ${slot.color}`,
+                    borderTop: "1px solid #2a2a38",
+                    borderRight: "1px solid #2a2a38",
+                    borderBottom: isPlaying ? `2px solid ${slot.color}` : "1px solid #2a2a38",
+                    display: "flex", flexDirection: "column",
+                    alignItems: "flex-start", justifyContent: "space-between",
+                    padding: "8px 8px 6px 10px",
+                    cursor: "pointer", transition: "filter 0.1s",
+                    boxShadow: isPlaying ? `inset 0 0 0 1px ${slot.color}33` : "none",
+                  }}
+                  onMouseEnter={e => { if (!isPlaying) (e.currentTarget as HTMLElement).style.filter = "brightness(1.2)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.filter = "brightness(1)"; }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "#e4e4f0", lineHeight: 1.3, wordBreak: "break-word", textAlign: "left", maxWidth: "100%" }}>
+                    {slot.title}
+                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, width: "100%", justifyContent: "space-between" }}>
+                    {isPlaying
+                      ? <span style={{ fontSize: 9, fontWeight: 700, color: slot.color, letterSpacing: "0.08em" }}>▶ PLAYING</span>
+                      : <span style={{ fontSize: 9, color: "#555568" }}>{slot.hotkey ? slot.hotkey.replace("Key","").replace("Digit","") : ""}</span>
+                    }
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: isPlaying ? slot.color : "transparent", flexShrink: 0, boxShadow: isPlaying ? `0 0 6px ${slot.color}` : "none" }} />
+                  </div>
                 </button>
-                <button onClick={() => clearSlot(i)} className="absolute -top-1 -right-1 w-4 h-4 bg-zinc-900 rounded-full text-[8px] text-zinc-500 hover:text-red-400 opacity-0 group-hover:opacity-100 flex items-center justify-center border border-zinc-700">x</button>
+                <button onClick={() => clearSlot(i)} style={{ position: "absolute", top: 3, right: 3, width: 14, height: 14, background: "#0e0e14", border: "1px solid #2a2a38", fontSize: 8, color: "#555568", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} className="opacity-0 group-hover:opacity-100 hover:!text-red-400">×</button>
               </div>
             );
           }
           return (
-            <button key={i} onClick={() => assignSlot(i)} className="w-full rounded-none flex flex-col items-center justify-center" style={{ background: "var(--bg-tertiary)", border: "2px dashed var(--border-secondary)", cursor: "pointer", aspectRatio: "1", minHeight: "0" }}>
-              <span className="text-2xl text-zinc-600">+</span>
-              {i < 12 && <span className="text-xs text-zinc-600 mt-1">{"F" + (i + 1)}</span>}
+            <button
+              key={i}
+              onClick={() => assignSlot(i)}
+              style={{
+                minHeight: 80, width: "100%",
+                background: "#0b0b10",
+                border: "1.5px dashed #2a2a38",
+                display: "flex", flexDirection: "column",
+                alignItems: "center", justifyContent: "center",
+                gap: 4, cursor: "pointer", transition: "border-color 0.15s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#3a3a50"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "#2a2a38"; }}
+            >
+              <span style={{ fontSize: 16, color: "#333344" }}>+</span>
+              <span style={{ fontSize: 9, color: "#333344", letterSpacing: "0.06em" }}>
+                {i < 12 ? "F" + (i + 1) : "Empty"}
+              </span>
             </button>
           );
         })}

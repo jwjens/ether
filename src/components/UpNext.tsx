@@ -1,6 +1,130 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { engine } from "../audio/engine-rodio";
 import { query } from "../db/client";
+
+// ── ShowTicker ────────────────────────────────────────────────
+// Live countdown + current/next show + hour progress bar.
+
+interface ShowInfo { name: string; start_hour: number; end_hour: number; days: string; }
+
+function fmtHour(h: number): string {
+  const suffix = h >= 12 ? "PM" : "AM";
+  const h12    = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:00 ${suffix}`;
+}
+
+function ShowTicker() {
+  const [now, setNow]           = useState(() => new Date());
+  const [currentShow, setCurrentShow] = useState<ShowInfo | null>(null);
+  const [nextShow, setNextShow]       = useState<ShowInfo | null>(null);
+
+  // Tick every second
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Reload shows every minute (or when hour changes)
+  const loadShows = useCallback(async () => {
+    try {
+      const shows = await query<ShowInfo>(
+        "SELECT name, start_hour, end_hour, days FROM shows WHERE is_active = 1 ORDER BY start_hour"
+      );
+      const hour = new Date().getHours();
+      const day  = String(new Date().getDay());
+
+      // Current show: start_hour <= hour < end_hour (handle overnight)
+      const current = shows.find(s => {
+        if (!s.days.includes(day)) return false;
+        if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
+        if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
+        return hour >= s.start_hour || hour < s.end_hour; // overnight
+      }) ?? null;
+      setCurrentShow(current);
+
+      // Next show: first show starting after current hour today (or tomorrow)
+      let next: ShowInfo | null = null;
+      for (let h = 1; h <= 24; h++) {
+        const candidate    = (hour + h) % 24;
+        const candidateDay = String(new Date(Date.now() + h * 3_600_000).getDay());
+        const found = shows.find(s => s.start_hour === candidate && s.days.includes(candidateDay));
+        if (found) { next = found; break; }
+      }
+      setNextShow(next);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadShows();
+    const id = setInterval(loadShows, 60_000);
+    return () => clearInterval(id);
+  }, [loadShows]);
+
+  // Countdown to top of next hour
+  const totalSecs   = 3600;
+  const elapsed     = now.getMinutes() * 60 + now.getSeconds();
+  const remaining   = totalSecs - elapsed;
+  const mm          = String(Math.floor(remaining / 60)).padStart(2, "0");
+  const ss          = String(remaining % 60).padStart(2, "0");
+  const progress    = elapsed / totalSecs; // 0 → 1
+  const nearEnd     = remaining <= 600;    // final 10 min
+
+  const barColor    = nearEnd
+    ? `hsl(${38 - (1 - remaining / 600) * 20}, 95%, 55%)`  // amber shading
+    : "#14b8a6";                                              // teal
+
+  const nextHour    = (now.getHours() + 1) % 24;
+  const nextShowLine = nextShow
+    ? `${nextShow.name} starts at ${fmtHour(nextShow.start_hour)}`
+    : null;
+
+  return (
+    <div style={{ padding: "8px 14px 0", borderBottom: "1px solid var(--border-primary)" }}>
+      {/* Row: countdown + show name */}
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+        <span style={{
+          fontFamily: "'DM Mono', 'Courier New', monospace",
+          fontSize: 20, fontWeight: 700,
+          color: nearEnd ? "#f59e0b" : "var(--text-primary)",
+          letterSpacing: "-0.02em", lineHeight: 1,
+          transition: "color 1s",
+        }}>
+          {mm}:{ss}
+        </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+            remaining in hour
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", letterSpacing: "0.01em" }}>
+            {currentShow ? currentShow.name : "Unscheduled"}
+          </span>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div style={{ height: 3, background: "var(--bg-tertiary)", marginBottom: 6, overflow: "hidden" }}>
+        <div style={{
+          height: "100%",
+          width: `${progress * 100}%`,
+          background: barColor,
+          transition: "width 1s linear, background 2s",
+        }} />
+      </div>
+
+      {/* Next show */}
+      {nextShowLine && (
+        <div style={{ paddingBottom: 7, fontSize: 10, color: nearEnd ? "#f59e0b" : "var(--text-tertiary)", letterSpacing: "0.01em", transition: "color 1s" }}>
+          ↳ {nextShowLine}
+        </div>
+      )}
+      {!nextShowLine && (
+        <div style={{ paddingBottom: 7, fontSize: 10, color: "var(--text-tertiary)" }}>
+          ↳ No show scheduled at {fmtHour(nextHour)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface Props {
   queueLen: number;
@@ -12,11 +136,6 @@ interface CategoryInfo {
   code: string;
   name: string;
   color: string;
-}
-
-interface ActiveShow {
-  name: string;
-  clock_name: string | null;
 }
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -49,7 +168,6 @@ async function fetchArt(title: string, artist: string): Promise<string | null> {
 export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories] = useState<CategoryInfo[]>([]);
-  const [activeShow, setActiveShow] = useState<ActiveShow | null>(null);
   const [artUrls, setArtUrls] = useState<Record<string, string>>({});
   const [totalDuration, setTotalDuration] = useState(0);
 
@@ -87,21 +205,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     })();
   }, []);
 
-  useEffect(() => {
-    const loadShow = async () => {
-      try {
-        const hour = new Date().getHours();
-        const rows = await query<{ name: string; clock_name: string | null }>(
-          "SELECT s.name, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.start_hour <= ? AND (s.end_hour > ? OR s.end_hour <= s.start_hour) LIMIT 1",
-          [hour, hour]
-        );
-        setActiveShow(rows.length > 0 ? rows[0] : null);
-      } catch {}
-    };
-    loadShow();
-    const id = setInterval(loadShow, 30000);
-    return () => clearInterval(id);
-  }, []);
 
   const getItemColor = (item: any): string => {
     if (item.itemType) return CATEGORY_COLORS[item.itemType] || "var(--text-tertiary)";
@@ -234,13 +337,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
           </div>
           {queue.length > 0 && <button onClick={() => { engine.clearQueue(); onQueueChange(); }} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>Clear All</button>}
         </div>
-        {activeShow && (
-          <div style={{ padding: "0 14px 8px", display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-green)" }} />
-            <span style={{ fontSize: 10, fontWeight: 600, color: "var(--accent-green)" }}>{activeShow.name}</span>
-            {activeShow.clock_name && <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>— {activeShow.clock_name}</span>}
-          </div>
-        )}
+        <ShowTicker />
       </div>
 
       {/* Queue list */}

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { engine } from "../audio/engine-rodio";
 import { query } from "../db/client";
 
@@ -59,7 +59,7 @@ export function useDeckConfig() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   };
 
-  const enabled = configs.filter(c => c.enabled);
+  const enabled = useMemo(() => configs.filter(c => c.enabled), [configs]);
   return { configs, save, enabled };
 }
 

@@ -1,0 +1,22 @@
+<svg viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+  <rect fill="#111114" x="40" y="40" width="320" height="320" rx="32"/>
+  <g transform="translate(200,200) rotate(-7)">
+    <ellipse fill="none" stroke="#8878c0" stroke-width="1.4" rx="128" ry="48"/>
+    <ellipse fill="none" stroke="#8878c0" stroke-width="1.4" rx="128" ry="48" transform="rotate(60)"/>
+    <ellipse fill="none" stroke="#8878c0" stroke-width="1.4" rx="128" ry="48" transform="rotate(-60)"/>
+    <circle fill="#c8b8e8" cx="0" cy="-128" r="5.5"/>
+    <circle fill="#c8b8e8" cx="110.8" cy="64" r="5.5"/>
+    <circle fill="#483870" cx="0" cy="128" r="4"/>
+    <circle fill="#483870" cx="-110.8" cy="-64" r="4"/>
+    <polygon fill="#d8d0e8" opacity="0.16" points="0,-42 34,6 0,20 -34,6"/>
+    <polygon fill="#b0a8c8" opacity="0.10" points="0,42 -34,6 0,20 0,42"/>
+    <polygon fill="#908898" opacity="0.07" points="0,42 34,6 0,20 0,42"/>
+    <polygon fill="none" stroke="#d0c8e0" stroke-width="1.8" stroke-linejoin="round" points="0,-42 34,6 0,20 -34,6"/>
+    <polygon fill="none" stroke="#8878a8" stroke-width="1.1" stroke-linejoin="round" points="0,42 34,6 0,20 -34,6"/>
+    <line stroke="#9888b8" stroke-width="0.8" opacity="0.65" x1="0" y1="-42" x2="0" y2="20"/>
+    <line stroke="#9888b8" stroke-width="0.8" opacity="0.65" x1="-34" y1="6" x2="34" y2="6"/>
+    <line stroke="#9888b8" stroke-width="0.8" opacity="0.65" x1="-34" y1="6" x2="0" y2="42"/>
+    <line stroke="#9888b8" stroke-width="0.8" opacity="0.65" x1="34" y1="6" x2="0" y2="42"/>
+  </g>
+  <rect fill="none" stroke="#2a1f48" stroke-width="1" x="40" y="40" width="320" height="320" rx="32"/>
+</svg>

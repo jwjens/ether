@@ -269,6 +269,32 @@ export class AudioEngine {
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
   async setOutputDevice(_id: string) {}
 
+  /**
+   * Pop the first song from the queue, load it into deck A, and start
+   * playing immediately. Used by the show-clock transition so the new
+   * show begins on the exact second it's scheduled.
+   */
+  async jumpToNextSong(): Promise<boolean> {
+    if (this.queue.length === 0) return false;
+    this.advancing = false; // clear any stale lock from the previous show
+    const next = this.dequeue();
+    try {
+      await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
+      await invoke("audio_play", { deck: "A" });
+      this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
+      this.endTriggered.delete("A");
+      // Preload next two songs into B and C so rotation is seamless
+      setTimeout(async () => {
+        await this.preloadDeck("B", 0);
+        setTimeout(() => this.preloadDeck("C", 1), 400);
+      }, 800);
+      return true;
+    } catch (e) {
+      console.error("[ENGINE] jumpToNextSong error:", e);
+      return false;
+    }
+  }
+
   crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {
     const from = this.getDeck(fromId);
     const to = this.getDeck(toId);

@@ -269,20 +269,20 @@ export default function MicDeck({ inputDeviceId }: Props) {
       display: "flex", flexDirection: "column",
       background: "var(--bg-secondary)",
       borderRadius: 0,
-      border: micLive ? "1px solid rgba(239,68,68,0.35)" : "1px solid var(--border-primary)",
+      border: "1px solid #1e1e28",
       overflow: "hidden",
       height: "100%",
-      transition: "border-color 0.3s ease, box-shadow 0.3s ease",
-      boxShadow: micLive ? "0 0 0 1px rgba(239,68,68,0.15), 0 4px 24px rgba(239,68,68,0.12)" : "var(--shadow-sm)",
+      transition: "box-shadow 0.3s ease",
+      boxShadow: micLive ? "0 0 12px rgba(239,68,68,0.18)" : "none",
     }}>
 
-      {/* Top accent stripe — thicker, more intentional */}
+      {/* Top accent stripe */}
       <div style={{
-        height: micLive ? 4 : 3, flexShrink: 0,
+        height: micLive ? 3 : 2, flexShrink: 0,
         background: micLive
           ? "linear-gradient(90deg, #ef4444, #f87171)"
-          : "var(--border-primary)",
-        boxShadow: micLive ? "0 0 16px rgba(239,68,68,0.5)" : "none",
+          : "#883040",
+        boxShadow: micLive ? "0 0 12px rgba(239,68,68,0.45)" : "none",
         transition: "all 0.3s ease",
       }} />
 
@@ -312,20 +312,22 @@ export default function MicDeck({ inputDeviceId }: Props) {
 
         {/* Live indicator badge */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 4,
-          padding: "3px 8px", borderRadius: 0,
-          background: micLive ? "rgba(239,68,68,0.08)" : "var(--bg-tertiary)",
-          border: `1px solid ${micLive ? "rgba(239,68,68,0.25)" : "var(--border-primary)"}`,
+          display: "flex", alignItems: "center", gap: 5,
+          padding: micLive ? "6px 14px" : "3px 8px", borderRadius: 0,
+          background: micLive ? "#cc2020" : "var(--bg-tertiary)",
+          border: `1px solid ${micLive ? "#cc2020" : "var(--border-primary)"}`,
+          boxShadow: micLive ? "0 0 12px rgba(204,32,32,0.5)" : "none",
           transition: "all 0.2s",
         }}>
           <div style={{
-            width: 5, height: 5, borderRadius: "50%",
-            background: micLive ? "#ef4444" : "var(--text-tertiary)",
-            boxShadow: micLive ? "0 0 6px #ef4444" : "none",
+            width: micLive ? 7 : 5, height: micLive ? 7 : 5, borderRadius: "50%",
+            background: micLive ? "#fff" : "var(--text-tertiary)",
+            boxShadow: micLive ? "0 0 6px rgba(255,255,255,0.8)" : "none",
             animation: micLive ? "mic-blink 1.2s ease-in-out infinite" : "none",
+            flexShrink: 0,
           }} />
-          <span style={{ fontSize: 8, fontWeight: 700, color: micLive ? "#ef4444" : "var(--text-tertiary)", letterSpacing: "0.1em" }}>
-            {micLive ? "LIVE" : "READY"}
+          <span style={{ fontSize: micLive ? 11 : 8, fontWeight: 700, color: micLive ? "#fff" : "var(--text-tertiary)", letterSpacing: "0.12em" }}>
+            {micLive ? "MIC ON AIR" : "READY"}
           </span>
         </div>
       </div>
@@ -380,7 +382,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
       </div>
 
       {/* Canvas VU */}
-      <div style={{ margin: "0 14px 8px", flex: 1, minHeight: 40, borderRadius: 0, overflow: "hidden", background: "var(--bg-tertiary)" }}>
+      <div style={{ margin: "0 14px 8px", height: 40, maxHeight: 40, flexShrink: 0, borderRadius: 0, overflow: "hidden", background: "var(--bg-tertiary)" }}>
         <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
       </div>
 

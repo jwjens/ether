@@ -32,9 +32,8 @@ export default function NowPlayingSettings() {
   const [weatherLon, setWeatherLon] = useState("-115.1398");
 
   React.useEffect(() => {
-    (async () => { const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args); {
-      invoke<string>("get_local_ip").then(ip => setDashboardUrl("http://" + ip + ":4242")).catch(() => setDashboardUrl("http://localhost:4242"));
-    });
+    const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+    invoke<string>("get_local_ip").then(ip => setDashboardUrl("http://" + ip + ":4242")).catch(() => setDashboardUrl("http://localhost:4242"));
   }, []);
 
   useEffect(() => { getStationTimezone().then(setTimezone); }, []);
@@ -42,9 +41,8 @@ export default function NowPlayingSettings() {
   const saveTimezone = async (tz: string) => { setTimezone(tz); await setStationTimezone(tz); };
 
   useEffect(() => {
-    (async () => { const isEnabled = () => (window as any).ether.autostart.isEnabled(); {
-      isEnabled().then(setAutostart).catch(() => {});
-    }).catch(() => {});
+    const isEnabled = () => (window as any).ether.autostart.isEnabled();
+    isEnabled().then(setAutostart).catch(() => {});
   }, []);
 
   const toggleAutostart = async () => {

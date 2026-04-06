@@ -192,32 +192,32 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
     setBlink(false);
   }, [isCritical]);
 
+  // Deck identity colors (top-bar accent when not playing)
+  const identityColor = deckId === "A" ? "#008878" : deckId === "C" ? "#203878" : "#1a6040";
+
   // State-driven colors
   let accent = "#94a3b8";
   let statusLabel = "IDLE";
   let statusColor = "var(--text-tertiary)";
-  let topBarColor = "var(--border-primary)";
+  let topBarColor = identityColor;
   let cardBg = "var(--bg-secondary)";
-  let cardShadow = "var(--shadow-sm)";
-  let cardBorder = "var(--border-primary)";
+  let cardShadow = "none";
+  let cardBorder = "#1e1e28";
 
   if (isPlaying) {
     if (isCritical) {
       accent = "var(--accent-red)"; statusLabel = "ENDING"; statusColor = "var(--accent-red)";
       topBarColor = "var(--accent-red)";
-      cardBg = blink ? "rgba(248,113,113,0.05)" : "var(--bg-secondary)";
-      cardShadow = "0 0 0 1px rgba(248,113,113,0.2), 0 8px 32px rgba(248,113,113,0.12)";
-      cardBorder = "rgba(248,113,113,0.3)";
+      cardBg = blink ? "rgba(248,113,113,0.04)" : "var(--bg-secondary)";
+      cardShadow = "0 0 12px rgba(248,113,113,0.18)";
     } else if (isEnding) {
       accent = "var(--accent-orange)"; statusLabel = "OUTRO"; statusColor = "var(--accent-orange)";
       topBarColor = "var(--accent-orange)";
-      cardShadow = "0 0 0 1px rgba(251,146,60,0.15), 0 8px 32px rgba(251,146,60,0.1)";
-      cardBorder = "rgba(251,146,60,0.25)";
+      cardShadow = "0 0 12px rgba(251,146,60,0.14)";
     } else {
       accent = "var(--accent-green)"; statusLabel = "ON AIR"; statusColor = "var(--accent-green)";
       topBarColor = "var(--accent-green)";
-      cardShadow = "0 0 0 1px rgba(52,211,153,0.15), 0 8px 32px rgba(52,211,153,0.1)";
-      cardBorder = "rgba(52,211,153,0.25)";
+      cardShadow = "0 0 12px rgba(52,211,153,0.12)";
     }
   } else if (isPaused) {
     accent = "var(--accent-amber)"; statusLabel = "PAUSED"; statusColor = "var(--accent-amber)";
@@ -238,7 +238,21 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   const deckHueBg = `rgba(${deckHueRaw},0.1)`;
   const deckHueBorder = `rgba(${deckHueRaw},0.25)`;
 
-  const playBtnBg    = isPlaying ? "var(--accent-green)" : isPaused ? "var(--accent-cyan)" : deckHue;
+  // Play button identity styling per deck
+  const playBtnBg = isPlaying ? "var(--accent-green)"
+    : isPaused ? "var(--accent-cyan)"
+    : deckId === "A" ? "#0a3020"
+    : deckId === "C" ? "#0a0a28"
+    : deckHueBg;
+  const playBtnBorder = isPlaying || isPaused ? "none"
+    : deckId === "A" ? "1px solid #00a878"
+    : deckId === "C" ? "1px solid #2040a0"
+    : `1px solid ${deckHueBorder}`;
+  const playBtnColor = isPlaying ? "#fff"
+    : isPaused ? "var(--accent-cyan)"
+    : deckId === "A" ? "#00a878"
+    : deckId === "C" ? "#2040a0"
+    : deckHue;
   const playBtnLabel = isPlaying ? "PAUSE" : isPaused ? "RESUME" : "PLAY";
 
   return (
@@ -271,7 +285,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "10px 16px 6px",
+        padding: "14px 16px 10px",
         flexShrink: 0,
       }}>
         {/* Deck badge */}
@@ -312,29 +326,30 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           </span>
         </div>
 
-        {/* Status pill — bold text, no dot */}
+        {/* Status badge — no fill when idle/ready */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 5,
-          padding: "3px 10px",
+          display: "flex", alignItems: "center",
+          padding: "2px 8px",
           borderRadius: 0,
-          background: isPlaying ? `${accent}14` : "var(--bg-tertiary)",
-          border: `1px solid ${isPlaying ? accent + "30" : "var(--border-primary)"}`,
+          background: isPlaying ? `${accent}12` : "transparent",
+          border: `1px solid ${isPlaying ? accent + "28" : "rgba(255,255,255,0.07)"}`,
         }}>
           <span style={{
-            fontSize: 9, fontWeight: 700,
+            fontSize: 8, fontWeight: 700,
             color: statusColor,
-            letterSpacing: "0.1em",
+            letterSpacing: "0.14em",
             textTransform: "uppercase",
+            opacity: isPlaying ? 1 : 0.6,
           }}>{statusLabel}</span>
         </div>
       </div>
 
       {/* ── Track info — Apple Music bold hierarchy ── */}
-      <div style={{ padding: "4px 16px 10px", flexShrink: 0 }}>
+      <div style={{ padding: "6px 16px 12px", flexShrink: 0 }}>
         <div
           key={title}
           style={{
-            fontSize: 14,
+            fontSize: 15,
             color: isIdle ? "var(--text-tertiary)" : "var(--text-primary)",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -360,7 +375,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           })() : "No track loaded"}
         </div>
         <div style={{
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: 400,
           color: "var(--text-tertiary)",
           marginTop: 2,
@@ -387,7 +402,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         <div>
           <div style={{
             fontFamily: "'DM Mono', 'SF Mono', monospace",
-            fontSize: dur > 0 ? 40 : 28,
+            fontSize: dur > 0 ? 40 : 36,
             fontWeight: 300,
             fontVariantNumeric: "tabular-nums",
             letterSpacing: "-0.04em",
@@ -448,13 +463,12 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         }} />
       </div>
 
-      {/* ── VU Meter ── */}
+      {/* ── VU Meter — fills available space ── */}
       <div style={{
         margin: "0 16px 10px",
         flex: 1,
         minHeight: 44,
         position: "relative",
-        borderRadius: 0,
         overflow: "hidden",
         background: "var(--bg-tertiary)",
       }}>
@@ -481,21 +495,10 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             }} />
           </>
         )}
-        <VUMeter
-          deckId={deckId}
-          isPlaying={isPlaying}
-          remaining={remaining}
-          duration={dur}
-          pos={pos}
-          isInIntro={isInIntro}
-          isEnding={isEnding}
-          isCritical={isCritical}
-          introEnd={introEnd}
-          hasTrack={!!title}
-          filePath={deck?.filePath || undefined}
-        />
 
-        {/* Countdown overlay — background fades letting waveform show through, text fully opaque */}
+        <VUMeter deckId={deckId} isPlaying={isPlaying} />
+
+        {/* Countdown overlay */}
         {showOverlay && (
           <div style={{
             position: "absolute", inset: 0, borderRadius: 0,
@@ -614,8 +617,8 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             height: 36,
             borderRadius: 0,
             background: playBtnBg,
-            border: "none",
-            color: isPlaying ? "#fff" : "#000",
+            border: playBtnBorder,
+            color: playBtnColor,
             cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             gap: 6,
@@ -623,7 +626,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             letterSpacing: "0.08em",
             textTransform: "uppercase",
             transition: "all 0.15s ease",
-            boxShadow: `0 2px 8px ${playBtnBg}50`,
+            boxShadow: isPlaying ? `0 2px 8px ${playBtnBg}50` : "none",
           }}
         >
           {isPlaying ? (

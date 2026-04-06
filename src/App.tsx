@@ -1,6 +1,7 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
-import EtherLogo from "./components/EtherLogo";
+import etherMarkSvg from "./assets/ether-logo-mark-only.svg";
+import VideoStudio from "./components/Studio";
 import { UserContext, AppUser, useRole } from "./UserContext";
 // Electron IPC bridge (replaces @tauri-apps imports)
 const invoke = (cmd: string, args?: Record<string, unknown>) =>
@@ -71,7 +72,7 @@ import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -376,7 +377,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "file:import") setPanel("library");
       if (cmd === "file:preferences") setPanel("settings");
@@ -787,8 +788,10 @@ export default function App() {
       {/* ── Header ── */}
       <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
-                {/* LEFT: Live Assist + Session */}
+                {/* LEFT: Logo + Session */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, zIndex: 1 }}>
+          <img src={etherMarkSvg} height={28} width={28} alt="ether" style={{ flexShrink: 0, display: "block" }} />
+          <div style={{ width: 1, height: 16, background: "var(--border-primary)" }} />
           <SessionNameBar
             name={canvasEngine.activeLayoutName}
             onChange={canvasEngine.renameActive}
@@ -884,7 +887,7 @@ export default function App() {
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast") ? 0 : 16, display: "flex", flexDirection: "column" }}>
+        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "videostudio") ? 0 : 16, display: "flex", flexDirection: "column" }}>
           {(panel === "live" || panel === "podcast") && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
               {panel === "podcast" ? (
@@ -978,6 +981,11 @@ export default function App() {
               {panel === "playlist" && (
                 <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                   <PlaylistPanel onClose={() => setPanel("live")} />
+                </div>
+              )}
+              {panel === "videostudio" && (
+                <div style={{ height: "100%", overflow: "hidden" }}>
+                  <VideoStudio />
                 </div>
               )}
             </div>
@@ -1271,6 +1279,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         {/* Production */}
         <Item label={L.voicetrack}         onClick={() => set("voicetrack")} />
         <Item label="Studio Editor"        onClick={() => set("studio")} />
+        <Item label="Video Studio"         onClick={() => set("videostudio")} />
         <Item label="Production Editor"    onClick={() => set("broadcasteditor")} />
         <Item label="Cue Editor"           onClick={() => set("trackedit")} />
         <Item label="Auto-Cue Library"     onClick={() => set("autocue")} />
