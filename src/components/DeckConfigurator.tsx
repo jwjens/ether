@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { engine } from "../audio/engine-rodio";
-import { query } from "../db/client";
+import { query, execute } from "../db/client";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -12,6 +12,7 @@ export interface DeckConfig {
   label: string;
   color: string;
   enabled: boolean;
+  purpose?: string;   // If set, deck is always visible regardless of experience mode
 }
 
 export interface PlaylistTrack {
@@ -22,7 +23,11 @@ export interface PlaylistTrack {
   durationMs: number;
 }
 
-const SLOTS = ["A", "B", "C", "D", "E", "F"];
+// Deck slots are defined in the database (electron/main.js seedDeckConfigs).
+// Do not hardcode deck lists here. UI code only reads from the database.
+
+const SLOT_ORDER = ["A", "B", "C", "D", "E", "F"];
+
 const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; desc: string }> = {
   music:  { label: "Music",    icon: "🎵", color: "#34d399", desc: "Play tracks from library or playlist" },
   mic:    { label: "Mic",      icon: "🎙",  color: "#ef4444", desc: "Live microphone input channel" },
@@ -31,32 +36,33 @@ const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; 
   desk:   { label: "Desk",     icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
 };
 
-const DEFAULT_CONFIGS: DeckConfig[] = [
-  { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: true },
-  { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: true },
-  { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: true },
-  { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: false },
-  { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: false },
-  { slot: "F", type: "music", label: "Deck F", color: "#a78bfa", enabled: false },
-];
-
-const STORAGE_KEY = "ether_deck_config_v1";
-
+// ── useDeckConfig ─────────────────────────────────────────────
+// Reads from and writes to the deck_configs SQLite table.
+// The DB is seeded with all 6 slots (A-F) on every app startup
+// in electron/main.js before the window loads — they can never
+// disappear regardless of what UI code does.
 export function useDeckConfig() {
-  const [configs, setConfigs] = useState<DeckConfig[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return DEFAULT_CONFIGS;
-      const parsed: DeckConfig[] = JSON.parse(saved);
-      // Merge in any missing slots from DEFAULT_CONFIGS
-      const merged = DEFAULT_CONFIGS.map(def => parsed.find(p => p.slot === def.slot) || def);
-      return merged;
-    } catch { return DEFAULT_CONFIGS; }
-  });
+  const [configs, setConfigs] = useState<DeckConfig[]>([]);
 
-  const save = (next: DeckConfig[]) => {
-    setConfigs(next);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  useEffect(() => {
+    query<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string }>(
+      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose FROM deck_configs ORDER BY slot"
+    ).then(rows => {
+      const sorted = [...rows].sort(
+        (a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)
+      );
+      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1 })));
+    }).catch(e => console.error("[DeckConfig] Failed to load from DB:", e));
+  }, []);
+
+  const save = async (next: DeckConfig[]) => {
+    await Promise.all(next.map(c =>
+      execute(
+        "UPDATE deck_configs SET type=?, label=?, color=?, enabled=?, purpose=? WHERE slot=?",
+        [c.type, c.label, c.color, c.enabled ? 1 : 0, c.purpose || "", c.slot]
+      )
+    ));
+    setConfigs([...next].sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)));
   };
 
   const enabled = useMemo(() => configs.filter(c => c.enabled), [configs]);
@@ -71,12 +77,14 @@ interface Props {
 }
 
 export default function DeckConfigurator({ onClose, onApply }: Props) {
-  const [configs, setConfigs] = useState<DeckConfig[]>(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : DEFAULT_CONFIGS;
-    } catch { return DEFAULT_CONFIGS; }
-  });
+  // Deck slots are defined in the database. Do not hardcode deck lists here.
+  const { configs: dbConfigs, save } = useDeckConfig();
+  const [configs, setConfigs] = useState<DeckConfig[]>([]);
+
+  // Sync local editing state from DB once loaded
+  useEffect(() => {
+    if (dbConfigs.length > 0 && configs.length === 0) setConfigs(dbConfigs);
+  }, [dbConfigs]);
 
   const enabled = configs.filter(c => c.enabled);
   const musicCount = enabled.filter(c => c.type === "music").length;
@@ -102,8 +110,8 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
     } : c));
   };
 
-  const apply = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
+  const apply = async () => {
+    await save(configs);
     onApply(configs);
     onClose();
   };
@@ -230,12 +238,26 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                   </button>
                 </div>
 
-                {/* Type description */}
-                <div style={{ padding: "0 14px 10px", paddingLeft: 58 }}>
+                {/* Type description + Purpose */}
+                <div style={{ padding: "0 14px 10px", paddingLeft: 58, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as const }}>
                     <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{TYPE_META[c.type].desc}</span>
-                    {c.type === "music" && (
-                      <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}> · Uses queue or standalone playlist</span>
-                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" }}>
+                      <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as const }}>Purpose</span>
+                      <select
+                        value={c.purpose || ""}
+                        onChange={e => setConfigs(p => p.map(x => x.slot === c.slot ? { ...x, purpose: e.target.value } : x))}
+                        style={{ fontSize: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", borderRadius: 0, padding: "2px 6px", cursor: "pointer" }}
+                        title="Decks with a purpose are always visible regardless of experience mode"
+                      >
+                        <option value="">— none (follows mode)</option>
+                        <option value="music">Music</option>
+                        <option value="mic">Mic Input</option>
+                        <option value="cart">Cart / SFX</option>
+                        <option value="phone">Phone Line</option>
+                        <option value="guest">Guest Feed</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </div>
                 </div>
               </div>
             ))}
@@ -244,14 +266,15 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
 
         {/* Footer */}
         <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-primary)", display: "flex", gap: 10, flexShrink: 0 }}>
-          <button onClick={() => {
-            localStorage.removeItem(STORAGE_KEY);
-            onApply([
-              { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: true },
-              { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: true },
-              { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: true },
-            ]);
-            onClose();
+          <button onClick={async () => {
+            // Deck slots are defined in the database. Do not hardcode deck lists here.
+            const result = await (window as any).ether.invoke("deck-configs:reset");
+            if (result?.data) {
+              const fresh = result.data.map((r: any) => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1 }));
+              setConfigs(fresh);
+              onApply(fresh);
+              onClose();
+            }
           }} style={{ padding: "11px 14px", borderRadius: 0, background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const }}>
             Reset Default
           </button>

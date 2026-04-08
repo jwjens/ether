@@ -37,6 +37,7 @@ import JockStrip from "./components/JockStrip";
 import UpNext from "./components/UpNext";
 import Scheduler from "./components/Scheduler";
 import ProgramLog from "./components/ProgramLog";
+import PlayLog from "./components/PlayLog";
 import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
@@ -320,6 +321,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [currentPlan, setCurrentPlan] = useState<PlanTier>("free");
   const [panel, setPanel] = useState<Panel>("live");
+  const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const panelRef = useRef<Panel>("live");
   useEffect(() => {
     panelRef.current = panel;
@@ -379,6 +381,9 @@ export default function App() {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
       const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
+      if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
+      if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
+      if (cmd === "nav:scheduler-tab:categories") { setSchedulerTab("categories"); return; }
       if (cmd === "file:import") setPanel("library");
       if (cmd === "file:preferences") setPanel("settings");
       if (cmd === "file:save") canvasEngine.saveCurrentLayout(canvasEngine.activeLayoutName);
@@ -470,6 +475,9 @@ export default function App() {
     return engine.onPlayStart(async (deckId, title, artist, _filePath) => {
       try { await logPlay(title, artist, deckId); }
       catch (e) { console.error('Log write error:', e); }
+      // Keep Iris informed about what's on air
+      try { (window as any).ether.emit("iris:nowplaying", { title, artist }); }
+      catch {}
     });
   }, []);
 
@@ -814,6 +822,19 @@ export default function App() {
             </button>
           )}
           <button
+            onClick={() => setPanel("clocks")}
+            style={{
+              height: 28, padding: "0 10px", borderRadius: 0,
+              background: panel === "clocks" ? "rgba(56,189,248,0.2)" : "var(--bg-tertiary)",
+              border: `1px solid ${panel === "clocks" ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`,
+              color: panel === "clocks" ? "var(--accent-cyan)" : "var(--text-secondary)",
+              fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 5,
+            }}
+          >
+            📋 Schedule
+          </button>
+          <button
             onClick={() => setPanel("programlog")}
             style={{
               height: 28, padding: "0 10px", borderRadius: 0,
@@ -824,7 +845,7 @@ export default function App() {
               display: "flex", alignItems: "center", gap: 5,
             }}
           >
-            📋 Schedule
+            📜 Program Log
           </button>
           <ClockDisplay />
           <button onClick={() => setDarkMode(!darkMode)} style={{ width: 30, height: 30, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -924,8 +945,8 @@ export default function App() {
           {panel !== "live" && panel !== "podcast" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
-              {panel === "clocks" && <Scheduler />}
-              {panel === "programlog" && <ProgramLog onClose={() => setPanel("clocks")} />}
+              {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
+              {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "studio" && (
                 <StudioEditor
                   deckAPath={null} deckATitle={undefined}
@@ -1269,9 +1290,9 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label={L.clocks}         onClick={() => set("clocks")} />
         <Item label="Shows & Dayparts" onClick={() => set("clocks")} />
         <Item label="Music Categories" onClick={() => set("clocks")} />
-        <Item label="Program Log"      onClick={() => set("programlog")} />
         <Item separator />
-        <Item label={L.logs} onClick={() => set("logs")} />
+        <Item label="Program Log"      onClick={() => set("programlog")} />
+        <Item label={L.logs}           onClick={() => set("logs")} />
       </Menu>
     ),
     tools: (
@@ -2549,6 +2570,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -2613,7 +2635,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
     setStatus("Relocated " + fixed + " songs"); setTimeout(() => setStatus(""), 4000); load();
   };
   const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }))); };
-  const filtered = search ? songs.filter(s => (s.title||"").toLowerCase().includes(search.toLowerCase()) || (s.artist_name||"").toLowerCase().includes(search.toLowerCase())) : songs;
+  const filtered = songs.filter(s => {
+    const matchSearch = !search ||
+      (s.title||"").toLowerCase().includes(search.toLowerCase()) ||
+      (s.artist_name||"").toLowerCase().includes(search.toLowerCase());
+    const matchCat = !categoryFilter || (s.category_code || "") === categoryFilter;
+    return matchSearch && matchCat;
+  });
 
   const S = {
     btn: (bg: string, color = "#fff") => ({ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600 as any, background: bg, color, border: "none", cursor: "pointer" as any }),
@@ -2626,7 +2654,10 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Song Library</h1>
-          <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>{count} tracks</span>
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+            {count} tracks{(search || categoryFilter) ? ` · ${filtered.length} shown` : ""}
+            {categoryFilter ? ` in ${categoryFilter}` : ""}
+          </span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={relocateLibrary} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
@@ -2657,6 +2688,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
             style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 13, color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }} />
           {search && <button onMouseDown={e => { e.preventDefault(); setSearch(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 16 }}>×</button>}
         </div>
+        {/* Category filter */}
+        <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
+          style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
+          <option value="">All Categories</option>
+          {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
+        </select>
+        {/* Assign category to filtered songs */}
         <select onChange={async (e) => { if (!e.target.value) return; const catId = catList.find(c => c.code === e.target.value)?.id || null; for (const s of filtered) await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); e.target.value = ""; load(); }}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">Assign category...</option>

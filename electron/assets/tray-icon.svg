@@ -1,1 +1,16 @@
-<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg"><rect fill="#0e0e14" width="256" height="256" rx="48"/><g transform="translate(128,128) rotate(-7)"><ellipse fill="none" stroke="#9070d0" stroke-width="5" rx="88" ry="33"/><ellipse fill="none" stroke="#9070d0" stroke-width="5" rx="88" ry="33" transform="rotate(60)"/><ellipse fill="none" stroke="#9070d0" stroke-width="5" rx="88" ry="33" transform="rotate(-60)"/><circle fill="#c8a8f0" cx="0" cy="-88" r="8"/><circle fill="#c8a8f0" cx="76.2" cy="44" r="8"/><polygon fill="none" stroke="#e0d0f8" stroke-width="3.5" stroke-linejoin="round" points="0,-38 30,5 0,18 -30,5"/><polygon fill="none" stroke="#7858b8" stroke-width="2.5" stroke-linejoin="round" points="0,38 30,5 0,18 -30,5"/></g></svg>
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="45%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#6d28d9"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" ry="56" fill="url(#g)"/>
+  <g fill="none" stroke="#0a0a18" stroke-linecap="round" stroke-linejoin="round" stroke-width="34">
+    <line x1="74" y1="60" x2="74" y2="196"/>
+    <line x1="74" y1="60" x2="182" y2="60"/>
+    <line x1="74" y1="128" x2="159" y2="128"/>
+    <line x1="74" y1="196" x2="182" y2="196"/>
+  </g>
+</svg>

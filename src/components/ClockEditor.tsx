@@ -113,6 +113,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
+  const [savedFlash, setSavedFlash] = useState(false);
   const [clocks, setClocks] = useState<{ id: number; name: string; daypart: string }[]>([]);
 
   const timelineRef = useRef<HTMLDivElement>(null);
@@ -169,6 +170,8 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
         );
       }
       setStatus("✓ Clock saved");
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2000);
       onSave?.(clock);
     } catch (e) {
       setStatus(`✗ Save failed: ${e}`);
@@ -311,10 +314,12 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
 
           <button onClick={saveClock} disabled={saving} style={{
             padding: "6px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
-            background: "rgba(52,211,153,0.15)", color: "#34d399",
+            background: savedFlash ? "rgba(52,211,153,0.35)" : "rgba(52,211,153,0.15)",
+            color: "#34d399",
             border: "1px solid rgba(52,211,153,0.4)", cursor: "pointer",
+            transition: "background 0.3s",
           }}>
-            {saving ? "Saving..." : "Save Clock"}
+            {saving ? "Saving..." : savedFlash ? "✓ Saved" : "Save Clock"}
           </button>
 
           {onClose && (

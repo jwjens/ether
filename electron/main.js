@@ -80,6 +80,7 @@ function initDb() {
   db.pragma("foreign_keys = ON");
   console.log("[DB] Connected:", dbPath);
   runMigrations();
+  seedDeckConfigs();
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
 
@@ -355,6 +356,14 @@ function runMigrations() {
       stream_key TEXT DEFAULT '',
       is_active INTEGER DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS deck_configs (
+      slot    TEXT PRIMARY KEY,
+      type    TEXT NOT NULL DEFAULT 'music',
+      label   TEXT NOT NULL,
+      color   TEXT NOT NULL DEFAULT '#34d399',
+      enabled INTEGER NOT NULL DEFAULT 0
+    );
   `);
 
   // Seed default separation rules if empty
@@ -390,6 +399,24 @@ function runMigrations() {
   alterSafe("ALTER TABLE play_log ADD COLUMN session_id TEXT");
   alterSafe("ALTER TABLE artists ADD COLUMN gender TEXT DEFAULT 'unknown'");
 
+  // Part 1 — deck purpose (controls mode-based visibility)
+  alterSafe("ALTER TABLE deck_configs ADD COLUMN purpose TEXT DEFAULT ''");
+  // Part 2 — operators and operator notes
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS operators (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      name     TEXT NOT NULL,
+      initials TEXT NOT NULL DEFAULT '',
+      created_at INTEGER DEFAULT (unixepoch())
+    );
+    CREATE TABLE IF NOT EXISTS operator_notes (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      operator_id INTEGER NOT NULL REFERENCES operators(id),
+      note        TEXT NOT NULL DEFAULT '',
+      updated_at  INTEGER DEFAULT (unixepoch())
+    );
+  `);
+
   // FTS index for song search
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(title, artist, content='songs', content_rowid='id');
@@ -402,6 +429,30 @@ function runMigrations() {
   `);
 
   console.log("[DB] Schema ready");
+}
+
+// ── Deck config seeder ────────────────────────────────────────
+// Deck slots A-F are defined HERE, in the database, on every startup.
+// Do NOT hardcode deck slot lists in any React component or UI file.
+// UI code reads from this table; it never defines which slots exist.
+function seedDeckConfigs() {
+  const defaults = [
+    { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: 1 },
+    { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: 1 },
+    { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: 1 },
+    { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 0 },
+    { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 0 },
+    { slot: "F", type: "music", label: "Deck F", color: "#a78bfa", enabled: 0 },
+  ];
+  const insert = db.prepare(
+    "INSERT OR IGNORE INTO deck_configs (slot, type, label, color, enabled) VALUES (?, ?, ?, ?, ?)"
+  );
+  const seed = db.transaction((decks) => {
+    for (const d of decks) insert.run(d.slot, d.type, d.label, d.color, d.enabled);
+  });
+  seed(defaults);
+  const { c } = db.prepare("SELECT COUNT(*) as c FROM deck_configs").get();
+  console.log(`[DeckGuard] ✓ deck_configs: ${c}/6 slots present — A B C D E F guaranteed in database`);
 }
 
 // ── Window ────────────────────────────────────────────────────
@@ -580,15 +631,20 @@ function buildMenu() {
       { label: "Cue Editor", click: () => send("nav:trackedit") },
     ]},
     { label: "Schedule", submenu: [
-      { label: "Format Clocks", click: () => send("nav:clocks") },
-      { label: "Program Log", click: () => send("nav:programlog") },
-      { label: "Play Log", click: () => send("nav:logs") },
+      { label: "Format Clock",     click: () => { send("nav:clocks"); send("nav:scheduler-tab:clocks"); } },
+      { label: "Shows & Dayparts", click: () => { send("nav:clocks"); send("nav:scheduler-tab:shows"); } },
+      { label: "Music Categories", click: () => { send("nav:clocks"); send("nav:scheduler-tab:categories"); } },
+      { type: "separator" },
+      { label: "Program Log",      click: () => send("nav:programlog") },
+      { label: "Play Log",         click: () => send("nav:logs") },
     ]},
     { label: "Tools", submenu: [
       { label: "Voice Tracker", click: () => send("nav:voicetrack") },
       { label: "Studio Editor", click: () => send("nav:studio") },
       { label: "Video Studio",  click: () => send("nav:videostudio") },
       { label: "Cue Editor", click: () => send("nav:trackedit") },
+      { type: "separator" },
+      { label: "Import Library...", click: () => send("nav:importlibrary") },
       { type: "separator" },
       { label: "Stream Manager", click: () => send("nav:streaming") },
       { label: "Smart Scheduler", click: () => send("nav:smartschedule") },
@@ -609,9 +665,80 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// ── VIP invite file detection ─────────────────────────────────
+// Checks for ether-invite.json in the exe dir or resources path.
+// Runs once after DB is ready. Deletes the file after reading so it never fires twice.
+let _inviteUsed = false;
+let _invitedBy = "";
+
+function processInviteFile() {
+  const searchPaths = [
+    path.join(path.dirname(app.getPath("exe")), "ether-invite.json"),
+    path.join(process.resourcesPath || "", "ether-invite.json"),
+    path.join(app.getAppPath(), "ether-invite.json"),
+  ];
+
+  let invitePath = null;
+  for (const p of searchPaths) {
+    try { if (fs.existsSync(p)) { invitePath = p; break; } } catch {}
+  }
+  if (!invitePath) return;
+
+  let invite;
+  try {
+    invite = JSON.parse(fs.readFileSync(invitePath, "utf8"));
+  } catch (e) {
+    console.error("[Invite] Failed to parse invite file:", e.message);
+    return;
+  }
+
+  try {
+    // Check if first run is already complete
+    const existing = db.prepare("SELECT value FROM station_config_kv WHERE key = 'first_run_complete'").get();
+    if (existing && existing.value === "1") {
+      console.log("[Invite] First run already complete — skipping invite processing");
+      fs.renameSync(invitePath, invitePath + ".used");
+      return;
+    }
+
+    // Create operator
+    const name = invite.operator_name || "Operator";
+    const initials = invite.operator_initials || name.charAt(0);
+    db.prepare("INSERT OR IGNORE INTO operators (name, initials) VALUES (?, ?)").run(name, initials);
+    const op = db.prepare("SELECT id FROM operators WHERE name = ?").get(name);
+
+    if (op && invite.personal_note) {
+      db.prepare("INSERT OR REPLACE INTO operator_notes (operator_id, note, updated_at) VALUES (?, ?, unixepoch())").run(op.id, invite.personal_note);
+    }
+
+    // Set experience mode
+    const mode = invite.experience_mode || "standard";
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('experience_mode', ?)").run(mode);
+
+    // Mark first run complete
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('first_run_complete', '1')").run();
+
+    // Store invite metadata for Iris greeting
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('invite_used', '1')").run();
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('invited_by', ?)").run(invite.invited_by || "Deniro");
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('last_operator_id', ?)").run(op ? String(op.id) : "");
+
+    _inviteUsed = true;
+    _invitedBy = invite.invited_by || "Deniro";
+
+    console.log(`[Invite] ✓ Processed invite for ${name} (invited by ${_invitedBy})`);
+
+    // Rename so it never runs again
+    fs.renameSync(invitePath, invitePath + ".used");
+  } catch (e) {
+    console.error("[Invite] Error processing invite:", e.message);
+  }
+}
+
 app.whenReady().then(() => {
   createSplash();
-  initDb();
+  initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
+  processInviteFile(); // VIP invite seeding — runs after DB is ready
   createWindow();
   createTray();
   buildMenu();
@@ -751,6 +878,36 @@ ipcMain.handle("db:backup", () => {
       }
     });
     return { data: backupPath, error: null };
+  } catch (e) { return { data: null, error: e.message }; }
+});
+
+// Generate a VIP invite file and save it via save dialog
+ipcMain.handle("invite:generate", async (_, { name, initials, note, mode, invitedBy }) => {
+  try {
+    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: "Save Invite File",
+      defaultPath: "ether-invite.json",
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (!filePath) return { ok: false, reason: "cancelled" };
+    const payload = {
+      operator_name: name,
+      operator_initials: initials,
+      invited_by: invitedBy || "Deniro",
+      personal_note: note,
+      experience_mode: mode,
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
+    return { ok: true, filePath };
+  } catch (e) { return { ok: false, reason: e.message }; }
+});
+
+// Reset deck configs to factory defaults and return fresh rows
+ipcMain.handle("deck-configs:reset", () => {
+  try {
+    db.exec("DELETE FROM deck_configs");
+    seedDeckConfigs();
+    return { data: db.prepare("SELECT * FROM deck_configs ORDER BY slot").all(), error: null };
   } catch (e) { return { data: null, error: e.message }; }
 });
 
@@ -995,6 +1152,14 @@ ipcMain.handle("ai:setProvider", (_, provider) => {
 ipcMain.handle("ai:getProvider", () => readAiConfig().provider || "anthropic");
 
 // ── AI assistant — multi-provider ─────────────────────────────
+// Shared now-playing state updated by the main window
+let _nowPlayingContext = { title: null, artist: null };
+ipcMain.on("iris:nowplaying", (_, payload) => {
+  if (payload && typeof payload === "object") {
+    _nowPlayingContext = { title: payload.title || null, artist: payload.artist || null };
+  }
+});
+
 ipcMain.handle("ai:ask", async (_, messages) => {
   const cfg = readAiConfig();
   const provider = cfg.provider || "anthropic";
@@ -1002,7 +1167,12 @@ ipcMain.handle("ai:ask", async (_, messages) => {
   if (!apiKey && provider === "anthropic") apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return "__NO_KEY__";
 
-  const system = "You are a show producer AI assistant for a live radio/podcast broadcast. Be concise, practical, and creative. Keep responses short and scannable — use bullet points when listing ideas.";
+  // Build station context string for Iris
+  const nowPlayingLine = _nowPlayingContext.title
+    ? `Station is currently playing: "${_nowPlayingContext.title}" by ${_nowPlayingContext.artist || "Unknown"}.`
+    : "No song is currently playing.";
+
+  const system = `You are Iris, the Executive Producer for ether radio. You are professional, sharp, and slightly witty. You have direct knowledge of the station's current state. Use radio terminology. Never break character. Be concise.\n\nCurrent station state: ${nowPlayingLine}`;
 
   try {
     if (provider === "anthropic") {

@@ -136,10 +136,26 @@ export default function ProgramLog({ onClose }: Props) {
       // Only show hours that have a show OR have scheduled entries
       const scheduledHours = new Set(entries.map(e => e.hour));
       const showHours = new Set<number>();
-      allShows.forEach(s => { for (let h = s.start_hour; h < s.end_hour; h++) showHours.add(h); });
+      // Fix: handle overnight shows (end_hour=0 or end_hour < start_hour)
+      allShows.forEach(s => {
+        const end = s.end_hour === 0 || s.end_hour === s.start_hour ? 24 : s.end_hour;
+        if (end > s.start_hour) {
+          for (let h = s.start_hour; h < end; h++) showHours.add(h % 24);
+        } else {
+          // overnight: start_hour=19 end_hour=2 → hours 19,20,21,22,23,0,1
+          for (let h = s.start_hour; h < 24; h++) showHours.add(h);
+          for (let h = 0; h < end; h++) showHours.add(h);
+        }
+      });
       const allHours = new Set([...scheduledHours, ...showHours]);
       Array.from(allHours).sort((a,b) => a-b).forEach(hour => {
-        const show = allShows.find(s => s.start_hour <= hour && s.end_hour > hour);
+        // Fix: correctly match overnight shows for a given hour
+        const show = allShows.find(s => {
+          if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
+          if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
+          // overnight: active after start OR before end
+          return hour >= s.start_hour || hour < s.end_hour;
+        });
         blocks.push({
           hour, entries: entries.filter(e => e.hour === hour),
           show_name: show?.name || null,
@@ -158,9 +174,16 @@ export default function ProgramLog({ onClose }: Props) {
 
   const scheduleOneHour = async (date: string, hour: number): Promise<boolean> => {
     try {
-      const showRows = await query<{ id: number; name: string; clock_id: number | null }>(
-        "SELECT id, name, clock_id FROM shows WHERE start_hour <= ? AND end_hour > ? LIMIT 1", [hour, hour]
+      // Fix: handle overnight shows (end_hour=0 means "until midnight" = 24)
+      const allShowsForHour = await query<{ id: number; name: string; clock_id: number | null; start_hour: number; end_hour: number }>(
+        "SELECT id, name, clock_id, start_hour, end_hour FROM shows WHERE is_active = 1"
       );
+      const matchedShow = allShowsForHour.find(s => {
+        if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
+        if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
+        return hour >= s.start_hour || hour < s.end_hour; // overnight
+      });
+      const showRows = matchedShow ? [matchedShow] : [];
       if (!showRows.length || !showRows[0].clock_id) return false;
 
       const clockSlots = await query<{

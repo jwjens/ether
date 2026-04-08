@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { engine } from "../audio/engine-rodio";
 import { query } from "../db/client";
+import { getNextTransition, NextTransition } from "../audio/showClock";
 
 // ── ShowTicker ────────────────────────────────────────────────
-// Live countdown + current/next show + hour progress bar.
+// Live countdown to next SHOW TRANSITION + current/next show + progress bar.
+// Turns amber when less than 5 minutes remain before the next show.
 
 interface ShowInfo { name: string; start_hour: number; end_hour: number; days: string; }
 
@@ -14,9 +16,9 @@ function fmtHour(h: number): string {
 }
 
 function ShowTicker() {
-  const [now, setNow]           = useState(() => new Date());
-  const [currentShow, setCurrentShow] = useState<ShowInfo | null>(null);
-  const [nextShow, setNextShow]       = useState<ShowInfo | null>(null);
+  const [now, setNow]                         = useState(() => new Date());
+  const [currentShow, setCurrentShow]         = useState<ShowInfo | null>(null);
+  const [nextTransition, setNextTransition]   = useState<NextTransition | null>(null);
 
   // Tick every second
   useEffect(() => {
@@ -24,7 +26,7 @@ function ShowTicker() {
     return () => clearInterval(id);
   }, []);
 
-  // Reload shows every minute (or when hour changes)
+  // Reload shows + next transition every 30 seconds
   const loadShows = useCallback(async () => {
     try {
       const shows = await query<ShowInfo>(
@@ -33,49 +35,64 @@ function ShowTicker() {
       const hour = new Date().getHours();
       const day  = String(new Date().getDay());
 
-      // Current show: start_hour <= hour < end_hour (handle overnight)
       const current = shows.find(s => {
         if (!s.days.includes(day)) return false;
         if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
         if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
-        return hour >= s.start_hour || hour < s.end_hour; // overnight
+        return hour >= s.start_hour || hour < s.end_hour;
       }) ?? null;
       setCurrentShow(current);
 
-      // Next show: first show starting after current hour today (or tomorrow)
-      let next: ShowInfo | null = null;
-      for (let h = 1; h <= 24; h++) {
-        const candidate    = (hour + h) % 24;
-        const candidateDay = String(new Date(Date.now() + h * 3_600_000).getDay());
-        const found = shows.find(s => s.start_hour === candidate && s.days.includes(candidateDay));
-        if (found) { next = found; break; }
-      }
-      setNextShow(next);
+      // Get the next show transition from showClock
+      const nx = await getNextTransition();
+      setNextTransition(nx);
     } catch {}
   }, []);
 
   useEffect(() => {
     loadShows();
-    const id = setInterval(loadShows, 60_000);
+    const id = setInterval(loadShows, 30_000);
     return () => clearInterval(id);
   }, [loadShows]);
 
-  // Countdown to top of next hour
-  const totalSecs   = 3600;
-  const elapsed     = now.getMinutes() * 60 + now.getSeconds();
-  const remaining   = totalSecs - elapsed;
-  const mm          = String(Math.floor(remaining / 60)).padStart(2, "0");
-  const ss          = String(remaining % 60).padStart(2, "0");
-  const progress    = elapsed / totalSecs; // 0 → 1
-  const nearEnd     = remaining <= 600;    // final 10 min
+  // Countdown: if there's a show transition within 24h, count down to it.
+  // Otherwise fall back to top-of-hour countdown.
+  const hasTransition = nextTransition !== null;
+  const transitionSecsAway = hasTransition
+    ? Math.max(0, Math.round((nextTransition!.startsAt.getTime() - now.getTime()) / 1000))
+    : null;
 
-  const barColor    = nearEnd
-    ? `hsl(${38 - (1 - remaining / 600) * 20}, 95%, 55%)`  // amber shading
-    : "#14b8a6";                                              // teal
+  // Use top-of-hour as fallback display
+  const totalSecs = 3600;
+  const elapsed   = now.getMinutes() * 60 + now.getSeconds();
+  const hourRemaining = totalSecs - elapsed;
 
-  const nextHour    = (now.getHours() + 1) % 24;
-  const nextShowLine = nextShow
-    ? `${nextShow.name} starts at ${fmtHour(nextShow.start_hour)}`
+  const displaySecs = transitionSecsAway !== null ? transitionSecsAway : hourRemaining;
+  const mm = String(Math.floor(displaySecs / 60)).padStart(2, "0");
+  const ss = String(displaySecs % 60).padStart(2, "0");
+
+  // Amber when ≤ 5 minutes to next show transition (300 seconds)
+  const criticalThreshold = 300;
+  const nearEnd = hasTransition
+    ? transitionSecsAway !== null && transitionSecsAway <= criticalThreshold
+    : hourRemaining <= 600;
+
+  const barColor = nearEnd ? "#f59e0b" : "#14b8a6";
+
+  // Progress bar: show fraction of time elapsed toward next transition
+  const totalForBar = hasTransition
+    ? Math.max(1, (nextTransition!.startsAt.getTime() - now.getTime()) / 1000 + displaySecs)
+    : totalSecs;
+  const progress = hasTransition
+    ? Math.max(0, Math.min(1, 1 - (transitionSecsAway || 0) / Math.max(1, totalForBar)))
+    : elapsed / totalSecs;
+
+  const countdownLabel = hasTransition
+    ? `until ${nextTransition!.showName}`
+    : "remaining in hour";
+
+  const nextLine = hasTransition
+    ? `↳ ${nextTransition!.showName} at ${nextTransition!.startsAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
     : null;
 
   return (
@@ -92,8 +109,8 @@ function ShowTicker() {
           {mm}:{ss}
         </span>
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
-            remaining in hour
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: nearEnd ? "#f59e0b" : "var(--text-tertiary)", transition: "color 1s" }}>
+            {countdownLabel}
           </span>
           <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-secondary)", letterSpacing: "0.01em" }}>
             {currentShow ? currentShow.name : "Unscheduled"}
@@ -111,15 +128,15 @@ function ShowTicker() {
         }} />
       </div>
 
-      {/* Next show */}
-      {nextShowLine && (
-        <div style={{ paddingBottom: 7, fontSize: 10, color: nearEnd ? "#f59e0b" : "var(--text-tertiary)", letterSpacing: "0.01em", transition: "color 1s" }}>
-          ↳ {nextShowLine}
+      {/* Next show transition */}
+      {nextLine && (
+        <div style={{ paddingBottom: 7, fontSize: 10, color: nearEnd ? "#f59e0b" : "var(--text-tertiary)", letterSpacing: "0.01em", transition: "color 1s", fontWeight: nearEnd ? 700 : 400 }}>
+          {nearEnd && "⚡ "}{nextLine}
         </div>
       )}
-      {!nextShowLine && (
+      {!nextLine && (
         <div style={{ paddingBottom: 7, fontSize: 10, color: "var(--text-tertiary)" }}>
-          ↳ No show scheduled at {fmtHour(nextHour)}
+          ↳ No upcoming show transition
         </div>
       )}
     </div>

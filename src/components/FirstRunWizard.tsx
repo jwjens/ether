@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { execute, query } from "../db/client";
+import { execute } from "../db/client";
+
+export type ExperienceMode = "solo" | "standard" | "live_radio";
 
 interface Props {
   onComplete: (profile: VenueProfile) => void;
@@ -109,8 +111,33 @@ const PLACEHOLDER_TAGLINES: Record<VenueType, string> = {
   podcast: "Weekly conversations worth having",
 };
 
+const EXPERIENCE_MODES: Array<{ id: ExperienceMode; label: string; tagline: string; desc: string; badge: string }> = [
+  {
+    id: "solo",
+    label: "Solo",
+    tagline: "One deck · Simple play/pause",
+    desc: "Single deck, no crossfades. Best for podcasters and first-time users.",
+    badge: "BEGINNER",
+  },
+  {
+    id: "standard",
+    label: "Standard",
+    tagline: "Two decks · Crossfades included",
+    desc: "Decks A and B always visible. Smooth crossfades between them. For independent broadcasters.",
+    badge: "POPULAR",
+  },
+  {
+    id: "live_radio",
+    label: "Live Radio",
+    tagline: "All six decks · Full automation",
+    desc: "All six decks unlocked. Format clock scheduling, hard transitions, full rotation engine.",
+    badge: "PRO",
+  },
+];
+
 export default function FirstRunWizard({ onComplete }: Props) {
   const [step, setStep] = useState(0);
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode | null>(null);
   const [venueType, setVenueType] = useState<VenueType | null>(null);
   const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
@@ -122,16 +149,14 @@ export default function FirstRunWizard({ onComplete }: Props) {
     if (!venueType || !name.trim()) return;
     setSaving(true);
     try {
-      // Ensure table exists
-      await execute(`CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT)`, []);
       await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_name', ?)", [name.trim()]);
       await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_tagline', ?)", [tagline.trim()]);
       await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('venue_type', ?)", [venueType]);
+      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('experience_mode', ?)", [experienceMode || "standard"]);
       await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('first_run_complete', '1')", []);
       onComplete({ venueType, name: name.trim(), tagline: tagline.trim() });
     } catch (e) {
       console.error("Wizard save failed:", e);
-      // Even if DB fails, let them into the app
       onComplete({ venueType, name: name.trim(), tagline: tagline.trim() });
     }
     setSaving(false);
@@ -151,13 +176,67 @@ export default function FirstRunWizard({ onComplete }: Props) {
       <div style={{ width: "100%", maxWidth: 640, position: "relative" as any }}>
         {/* Step dots */}
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 48 }}>
-          {[0,1,2].map(i => (
+          {[0,1,2,3].map(i => (
             <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 0, background: i === step ? "#22d3ee" : i < step ? "rgba(34,211,238,0.4)" : "rgba(255,255,255,0.1)", transition: "all 0.3s ease" }} />
           ))}
         </div>
 
-        {/* ── STEP 0: Venue type ── */}
+        {/* ── STEP 0: Experience mode ── */}
         {step === 0 && (
+          <div style={{ animation: "wiz-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#22d3ee", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
+              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>How do you want<br />to broadcast?</h1>
+              <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>This sets your default deck layout. You can change it anytime in Settings.</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column" as any, gap: 12, maxWidth: 520, margin: "0 auto" }}>
+              {EXPERIENCE_MODES.map(mode => {
+                const selected = experienceMode === mode.id;
+                return (
+                  <button key={mode.id} onClick={() => setExperienceMode(mode.id)} style={{
+                    padding: "20px 24px", borderRadius: 0, textAlign: "left" as any,
+                    background: selected ? "rgba(34,211,238,0.08)" : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
+                    cursor: "pointer", transition: "all 0.2s",
+                    boxShadow: selected ? "0 0 24px rgba(34,211,238,0.12)" : "none",
+                    display: "flex", alignItems: "center", gap: 20,
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: selected ? "#22d3ee" : "#f0f0f8", letterSpacing: "-0.02em" }}>{mode.label}</span>
+                        <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: selected ? "#22d3ee" : "rgba(255,255,255,0.25)", background: selected ? "rgba(34,211,238,0.15)" : "rgba(255,255,255,0.06)", padding: "2px 7px", borderRadius: 0 }}>{mode.badge}</span>
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: selected ? "rgba(34,211,238,0.7)" : "rgba(255,255,255,0.35)", marginBottom: 4, letterSpacing: "0.02em" }}>{mode.tagline}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{mode.desc}</div>
+                    </div>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.15)"}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {selected && <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22d3ee" }} />}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div style={{ marginTop: 32, textAlign: "center" as any }}>
+              <button onClick={() => experienceMode && setStep(1)} disabled={!experienceMode} style={{
+                padding: "13px 48px", borderRadius: 0,
+                background: experienceMode ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
+                color: experienceMode ? "#000" : "rgba(255,255,255,0.2)",
+                fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                border: "none", cursor: experienceMode ? "pointer" : "default",
+                letterSpacing: "0.04em",
+                boxShadow: experienceMode ? "0 0 32px rgba(34,211,238,0.3)" : "none",
+                transition: "all 0.2s",
+              }}>
+                Continue →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── STEP 1: Venue type ── */}
+        {step === 1 && (
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#22d3ee", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
@@ -207,7 +286,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
             </div>
 
             <div style={{ marginTop: 32, textAlign: "center" as any }}>
-              <button onClick={() => venueType && setStep(1)} disabled={!venueType} style={{
+              <button onClick={() => venueType && setStep(2)} disabled={!venueType} style={{
                 padding: "13px 48px", borderRadius: 0,
                 background: venueType ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: venueType ? "#000" : "rgba(255,255,255,0.2)",
@@ -223,8 +302,8 @@ export default function FirstRunWizard({ onComplete }: Props) {
           </div>
         )}
 
-        {/* ── STEP 1: Name ── */}
-        {step === 1 && selectedLabel && (
+        {/* ── STEP 2: Name ── */}
+        {step === 2 && selectedLabel && (
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
               <div style={{ marginBottom: 12, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: selectedLabel.icon }} />
@@ -241,7 +320,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                   autoFocus
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && name.trim() && setStep(2)}
+                  onKeyDown={e => e.key === "Enter" && name.trim() && setStep(3)}
                   placeholder={PLACEHOLDER_NAMES[venueType!]}
                   style={{
                     width: "100%", padding: "14px 18px",
@@ -264,7 +343,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 <input
                   value={tagline}
                   onChange={e => setTagline(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && name.trim() && setStep(2)}
+                  onKeyDown={e => e.key === "Enter" && name.trim() && setStep(3)}
                   placeholder={PLACEHOLDER_TAGLINES[venueType!]}
                   style={{
                     width: "100%", padding: "12px 18px",
@@ -283,8 +362,8 @@ export default function FirstRunWizard({ onComplete }: Props) {
             </div>
 
             <div style={{ marginTop: 36, display: "flex", gap: 10, justifyContent: "center" }}>
-              <button onClick={() => setStep(0)} style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 13 }}>← Back</button>
-              <button onClick={() => name.trim() && setStep(2)} disabled={!name.trim()} style={{
+              <button onClick={() => setStep(1)} style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 13 }}>← Back</button>
+              <button onClick={() => name.trim() && setStep(3)} disabled={!name.trim()} style={{
                 padding: "13px 48px", borderRadius: 0,
                 background: name.trim() ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: name.trim() ? "#000" : "rgba(255,255,255,0.2)",

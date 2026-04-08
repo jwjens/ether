@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
+import CreateShowWizard from "./CreateShowWizard";
 
 interface Show {
   id: number; name: string; start_hour: number; end_hour: number;
@@ -35,11 +36,33 @@ function fmtHour(h: number): string {
   return h < 12 ? h + " AM" : (h - 12) + " PM";
 }
 
-export default function Scheduler() {
-  const [tab, setTab] = useState<"shows" | "categories" | "clocks">("shows");
+interface SchedulerProps {
+  defaultTab?: "shows" | "categories" | "clocks";
+}
+
+export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
+  const [tab, setTab] = useState<"shows" | "categories" | "clocks">(defaultTab);
+  const [showWizard, setShowWizard] = useState(false);
+  const [wizardKey, setWizardKey] = useState(0); // force ShowsTab reload after wizard
+
+  // Sync when parent navigation changes the requested tab
+  useEffect(() => { setTab(defaultTab); }, [defaultTab]);
+
   return (
     <div className="space-y-3">
-      <h1 className="text-lg font-bold">Show Scheduler</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <h1 className="text-lg font-bold" style={{ margin: 0 }}>Schedule</h1>
+        <button
+          onClick={() => setShowWizard(true)}
+          style={{
+            padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+            background: "var(--accent-blue)", color: "#fff", border: "none",
+            boxShadow: "0 2px 8px rgba(56,189,248,0.3)",
+          }}
+        >
+          + Create Show
+        </button>
+      </div>
       <div className="flex gap-1">
         {(["shows", "categories", "clocks"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
@@ -47,9 +70,15 @@ export default function Scheduler() {
           >{t === "shows" ? "Shows & Dayparts" : t === "categories" ? "Music Categories" : "Format Clocks"}</button>
         ))}
       </div>
-      {tab === "shows" && <ShowsTab />}
+      {tab === "shows" && <ShowsTab key={wizardKey} />}
       {tab === "categories" && <CategoriesTab />}
       {tab === "clocks" && <ClocksTab />}
+      {showWizard && (
+        <CreateShowWizard
+          onClose={() => setShowWizard(false)}
+          onDone={() => { setShowWizard(false); setTab("shows"); setWizardKey(k => k + 1); }}
+        />
+      )}
     </div>
   );
 }
@@ -62,6 +91,7 @@ function ShowsTab() {
   const [shows, setShows] = useState<Show[]>([]);
   const [clocks, setClocks] = useState<Clock[]>([]);
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
+  const [saved, setSaved] = useState(false);
 
   const load = async () => {
     setShows(await query<Show>("SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour"));
@@ -84,6 +114,8 @@ function ShowsTab() {
         [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive]
       );
     }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
     setEditing(null); load();
   };
 
@@ -154,9 +186,10 @@ function ShowsTab() {
               Active
             </label>
           </div>
-          <div className="flex gap-2">
-            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save</button>
+          <div className="flex gap-2 items-center">
+            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save Show</button>
             <button onClick={() => setEditing(null)} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
+            {saved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
           </div>
         </div>
       )}
@@ -205,6 +238,7 @@ function CategoriesTab() {
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [catSaved, setCatSaved] = useState(false);
 
   const load = async () => {
     const rows = await query<Category & { song_count: number }>("SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c ORDER BY c.code");
@@ -254,6 +288,8 @@ function CategoriesTab() {
         await execute("INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
           [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0]);
       }
+      setCatSaved(true);
+      setTimeout(() => setCatSaved(false), 2000);
       setEditing(null); load();
     } catch (e: any) {
       setSaveError(e?.message || "Save failed");
@@ -288,8 +324,9 @@ function CategoriesTab() {
             <input type="color" className="h-8 w-full bg-zinc-800 border border-zinc-700 rounded" value={editing.color || "#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})} />
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save</button>
+            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save Category</button>
             <button onClick={() => { setEditing(null); setSaveError(""); }} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
+            {catSaved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
             {saveError && <span className="text-xs text-red-400">{saveError}</span>}
           </div>
         </div>
