@@ -271,6 +271,9 @@ function HostCamera({
   teleScrolling,
   teleScrollRef,
   resolution,
+  isRecording,
+  showGrid,
+  showFrameOverlays,
 }: {
   onStream: (s: MediaStream | null) => void;
   lowerThirds: LowerThird[];
@@ -281,6 +284,9 @@ function HostCamera({
   teleScrolling: boolean;
   teleScrollRef: React.RefObject<HTMLDivElement>;
   resolution: ResKey;
+  isRecording?: boolean;
+  showGrid?: boolean;
+  showFrameOverlays?: boolean;
 }) {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
@@ -325,8 +331,25 @@ function HostCamera({
     position: "absolute", bottom: 48 + i * 56, left: 16,
   });
 
+  const frameColor = "#4040a0";
+  const cornerLen  = 20;
+  const cornerW    = 2;
+  const corners: { top?: 0; bottom?: 0; left?: 0; right?: 0 }[] = [
+    { top: 0, left: 0 }, { top: 0, right: 0 },
+    { bottom: 0, left: 0 }, { bottom: 0, right: 0 },
+  ];
+
   return (
-    <div style={{ position: "relative", background: BG0, flex: 1, minHeight: 0, overflow: "hidden" }}>
+    <div style={{ position: "relative", background: "#0a0a10", border: `1px solid #1a1a22`, flex: 1, minHeight: 0, overflow: "hidden" }}>
+
+      {/* Dark placeholder when no stream */}
+      {!actualRes && !error && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, pointerEvents: "none" }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#2a2a50" strokeWidth="1.5" strokeLinecap="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+          <span style={{ fontSize: 11, color: "#2a2a50", letterSpacing: "0.05em" }}>Camera not active</span>
+        </div>
+      )}
+
       {error && !error.includes("4K") ? (
         <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: RED, fontSize: 12 }}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><circle cx="12" cy="16" r="1" fill="currentColor"/></svg>
@@ -336,8 +359,83 @@ function HostCamera({
       ) : (
         <video ref={videoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       )}
-      {/* Resolution badge */}
-      {actualRes && (
+
+      {/* ── Frame treatment overlays (when stream active) ── */}
+      {actualRes && showFrameOverlays && (
+        <>
+          {/* Viewfinder corners — 4 L-shaped markers */}
+          {corners.map((pos, i) => (
+            <div key={i} style={{ position: "absolute", ...pos, width: cornerLen, height: cornerLen, pointerEvents: "none" }}>
+              {/* Horizontal arm */}
+              <div style={{
+                position: "absolute",
+                top: pos.bottom !== undefined ? undefined : 0,
+                bottom: pos.bottom !== undefined ? 0 : undefined,
+                left: pos.right !== undefined ? undefined : 0,
+                right: pos.right !== undefined ? 0 : undefined,
+                width: cornerLen, height: cornerW,
+                background: frameColor,
+              }} />
+              {/* Vertical arm */}
+              <div style={{
+                position: "absolute",
+                top: pos.bottom !== undefined ? undefined : 0,
+                bottom: pos.bottom !== undefined ? 0 : undefined,
+                left: pos.right !== undefined ? undefined : 0,
+                right: pos.right !== undefined ? 0 : undefined,
+                width: cornerW, height: cornerLen,
+                background: frameColor,
+              }} />
+            </div>
+          ))}
+
+          {/* Safe zone — 80% inset rectangle */}
+          <div style={{
+            position: "absolute",
+            top: "10%", left: "10%", right: "10%", bottom: "10%",
+            border: `0.5px solid ${frameColor}`,
+            pointerEvents: "none",
+          }} />
+
+          {/* Rule of thirds grid */}
+          {showGrid && (
+            <>
+              {/* Horizontal thirds */}
+              <div style={{ position: "absolute", top: "33.33%", left: 0, right: 0, height: 1, background: "rgba(100,100,180,0.15)", pointerEvents: "none" }} />
+              <div style={{ position: "absolute", top: "66.66%", left: 0, right: 0, height: 1, background: "rgba(100,100,180,0.15)", pointerEvents: "none" }} />
+              {/* Vertical thirds */}
+              <div style={{ position: "absolute", top: 0, bottom: 0, left: "33.33%", width: 1, background: "rgba(100,100,180,0.15)", pointerEvents: "none" }} />
+              <div style={{ position: "absolute", top: 0, bottom: 0, left: "66.66%", width: 1, background: "rgba(100,100,180,0.15)", pointerEvents: "none" }} />
+            </>
+          )}
+
+          {/* Resolution badge — top right, updates immediately with resolution prop */}
+          <div style={{
+            position: "absolute", top: 8, right: 8,
+            background: "rgba(0,0,0,0.65)", padding: "2px 7px",
+            fontSize: 9, fontWeight: 700, color: "#8080b0", letterSpacing: "0.1em",
+            pointerEvents: "none",
+          }}>
+            {error?.includes("4K") ? `⚠ ${actualRes}` : RES[resolution].label}
+          </div>
+
+          {/* Recording indicator — top left, pulsing when active */}
+          {isRecording && (
+            <div style={{
+              position: "absolute", top: 8, left: 8,
+              display: "flex", alignItems: "center", gap: 5,
+              background: "rgba(0,0,0,0.65)", padding: "2px 8px",
+              pointerEvents: "none",
+            }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: RED, animation: "rec-pulse 1.4s ease-in-out infinite" }} />
+              <span style={{ fontSize: 9, fontWeight: 800, color: RED, letterSpacing: "0.12em" }}>REC</span>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Resolution badge without frame overlays (standalone mode) */}
+      {actualRes && !showFrameOverlays && (
         <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.55)", padding: "2px 7px", fontSize: 9, fontWeight: 700, color: TXT2, letterSpacing: "0.08em" }}>
           {error?.includes("4K") ? `⚠ ${actualRes}` : actualRes}
         </div>
@@ -889,18 +987,312 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
 }
 
 // ─────────────────────────────────────────────────────────────
+// EmbeddedStudio — 16:9 camera + tabbed controls below
+// Used when VideoStudio deck is shown inline in the deck area.
+// ─────────────────────────────────────────────────────────────
+
+type EmbedTab = "chat" | "guests" | "script" | "settings";
+
+function EmbeddedStudio({
+  hostStream, setHostStream,
+  lowerThirds,
+  resolution, setResolution,
+  bitrate, setBitrate,
+  isRecording, isStreaming, setIsStreaming,
+  showGrid, setShowGrid,
+  teleScript, setTeleScript, teleScrollRef,
+  hostLevel,
+  toggleRecord,
+  guests, removeGuest, toggleMute,
+  guestsEnabled, setGuestsEnabled,
+}: {
+  hostStream: MediaStream | null; setHostStream: (s: MediaStream | null) => void;
+  lowerThirds: LowerThird[];
+  resolution: ResKey; setResolution: (v: ResKey) => void;
+  bitrate: BrKey; setBitrate: (v: BrKey) => void;
+  isRecording: boolean; isStreaming: boolean; setIsStreaming: (v: boolean) => void;
+  showGrid: boolean; setShowGrid: (fn: (v: boolean) => boolean) => void;
+  teleScript: string; setTeleScript: (v: string) => void;
+  teleScrollRef: React.RefObject<HTMLDivElement>;
+  hostLevel: number;
+  toggleRecord: () => void;
+  guests: GuestPeer[]; removeGuest: (id: string) => void; toggleMute: (id: string) => void;
+  guestsEnabled: boolean; setGuestsEnabled: (fn: (v: boolean) => boolean) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<EmbedTab>("script");
+  const [teleOverlay, setTeleOverlay] = useState(false);
+  const [teleSpeed, setTeleSpeed] = useState(14); // px/s
+  const [teleFontSize, setTeleFontSize] = useState(22);
+  const [rtmpUrl, setRtmpUrl] = useState("");
+  const [streamKey, setStreamKey] = useState("");
+
+  // Load RTMP settings
+  useEffect(() => {
+    dbQuery<{ key: string; value: string }>(
+      "SELECT key, value FROM station_config_kv WHERE key IN ('studio_rtmp_url','studio_stream_key')"
+    ).then(rows => {
+      rows.forEach(r => {
+        if (r.key === "studio_rtmp_url") setRtmpUrl(r.value);
+        if (r.key === "studio_stream_key") setStreamKey(r.value);
+      });
+    }).catch(() => {});
+  }, []);
+
+  const saveRtmp = () => {
+    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_rtmp_url',?)", [rtmpUrl]).catch(() => {});
+    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_stream_key',?)", [streamKey]).catch(() => {});
+  };
+
+  const TABS: Array<{ id: EmbedTab; label: string }> = [
+    { id: "chat",     label: "Chat" },
+    { id: "guests",   label: "Guests" },
+    { id: "script",   label: "Script" },
+    { id: "settings", label: "Settings" },
+  ];
+
+  const inviteUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/guest?room=studio`;
+  const copyInvite = () => { try { navigator.clipboard.writeText(inviteUrl); } catch {} };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: BG1, overflow: "hidden" }}>
+
+      {/* Header controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 8px", borderBottom: `1px solid ${BOR}`, flexShrink: 0, background: BG0 }}>
+        <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.14em", color: "#4040a0", textTransform: "uppercase" as const }}>Video Studio</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setShowGrid(g => !g)} style={{
+          padding: "2px 7px", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+          background: showGrid ? "rgba(64,64,160,0.3)" : "transparent",
+          border: `1px solid ${showGrid ? "#4040a0" : BOR}`,
+          color: showGrid ? "#8080d0" : TXT2, cursor: "pointer",
+        }}>Grid</button>
+        <button onClick={toggleRecord} disabled={!hostStream} style={{
+          padding: "2px 8px", fontSize: 9, fontWeight: 700,
+          background: isRecording ? RED : "transparent",
+          border: `1px solid ${isRecording ? RED : BOR}`,
+          color: isRecording ? "#fff" : TXT2, cursor: "pointer",
+        }}>{isRecording ? "■ Stop" : "⏺ Rec"}</button>
+        <button onClick={() => setIsStreaming(!isStreaming)} style={{
+          padding: "2px 8px", fontSize: 9, fontWeight: 700,
+          background: isStreaming ? "#22c55e" : "transparent",
+          border: `1px solid ${isStreaming ? "#22c55e" : BOR}`,
+          color: isStreaming ? "#fff" : TXT2, cursor: "pointer",
+        }}>{isStreaming ? "● Live" : "Go Live"}</button>
+      </div>
+
+      {/* 16:9 camera — locked aspect ratio, width-driven */}
+      <div style={{ width: "100%", aspectRatio: "16/9", flexShrink: 0, position: "relative", background: "#0a0a10" }}>
+        <HostCamera
+          onStream={setHostStream}
+          lowerThirds={lowerThirds}
+          teleMode={teleOverlay ? "overlay" : "off"}
+          teleOpacity={0.82}
+          teleScript={teleScript}
+          teleFontSize={teleFontSize}
+          teleScrolling={false}
+          teleScrollRef={teleScrollRef}
+          resolution={resolution}
+          isRecording={isRecording}
+          showGrid={showGrid}
+          showFrameOverlays
+        />
+        <LevelBar level={hostLevel} height={3} />
+      </div>
+
+      {/* Tab strip */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${BOR}`, flexShrink: 0, background: BG0 }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+            flex: 1, padding: "5px 0", border: "none", cursor: "pointer",
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase" as const,
+            background: "none",
+            color: activeTab === t.id ? "#00c8a8" : TXT2,
+            borderBottom: `2px solid ${activeTab === t.id ? "#00c8a8" : "transparent"}`,
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div style={{ flex: 1, overflowY: "auto", minHeight: 0, background: BG1 }}>
+
+        {/* CHAT */}
+        {activeTab === "chat" && (
+          <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 16 }}>
+            {isStreaming ? (
+              <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
+                <div style={{ flex: 1, background: "#060608", border: `1px solid ${BOR}`, padding: "6px 8px", overflowY: "auto", fontSize: 10, color: "#808090" }}>
+                  <div style={{ color: TXT2, fontStyle: "italic" }}>Chat connected — messages will appear here.</div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center" as const, color: TXT2, fontSize: 11, lineHeight: 1.7 }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginBottom: 8, opacity: 0.3 }}><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                <div>Chat will appear here</div>
+                <div style={{ fontSize: 10, marginTop: 4, color: "#404050" }}>when you go live.</div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* GUESTS */}
+        {activeTab === "guests" && (
+          <div style={{ padding: "10px 12px" }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center" }}>
+              <button onClick={copyInvite} style={{
+                padding: "4px 12px", fontSize: 9, fontWeight: 700, background: "#6040c0", border: "none",
+                color: "#fff", cursor: "pointer", letterSpacing: "0.06em",
+              }}>Invite Guest</button>
+              <button onClick={() => setGuestsEnabled(v => !v)} style={{
+                padding: "4px 10px", fontSize: 9, background: "transparent", border: `1px solid ${BOR}`,
+                color: guestsEnabled ? "#22c55e" : TXT2, cursor: "pointer",
+              }}>{guestsEnabled ? "● Guests On" : "Guests Off"}</button>
+            </div>
+            {guests.length === 0 ? (
+              <div style={{ textAlign: "center" as const, color: TXT2, fontSize: 10, padding: "20px 0", lineHeight: 1.8 }}>
+                No guests connected<br />
+                <span style={{ fontSize: 9, color: "#404050" }}>Click Invite to add someone.</span>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {guests.map(g => (
+                  <div key={g.id} style={{ background: BG0, border: `1px solid ${BOR}`, padding: 6 }}>
+                    {g.stream ? (
+                      <video
+                        ref={el => { if (el) el.srcObject = g.stream; }}
+                        autoPlay playsInline muted
+                        style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", background: "#0a0a10" }}
+                      />
+                    ) : (
+                      <div style={{ width: "100%", aspectRatio: "4/3", background: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: 10, color: "#303040" }}>No video</span>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                      <span style={{ flex: 1, fontSize: 9, color: TXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.name}</span>
+                      <button onClick={() => toggleMute(g.id)} style={{ padding: "1px 5px", fontSize: 8, background: "none", border: `1px solid ${BOR}`, color: g.muted ? AMB : TXT2, cursor: "pointer" }}>{g.muted ? "Unmute" : "Mute"}</button>
+                      <button onClick={() => removeGuest(g.id)} style={{ padding: "1px 5px", fontSize: 8, background: "none", border: `1px solid ${BOR}`, color: RED, cursor: "pointer" }}>Remove</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SCRIPT / TELEPROMPTER */}
+        {activeTab === "script" && (
+          <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <textarea
+              value={teleScript}
+              onChange={e => setTeleScript(e.target.value)}
+              placeholder="Paste or type your script here…"
+              rows={6}
+              style={{
+                width: "100%", padding: "8px 10px", background: BG0,
+                border: `1px solid ${BOR}`, color: TXT, fontSize: 11,
+                lineHeight: 1.6, resize: "vertical" as const, outline: "none",
+                fontFamily: "'Inter', system-ui, sans-serif",
+              }}
+            />
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={label}>Speed</span>
+              <input type="range" min={4} max={40} step={2} value={teleSpeed}
+                onChange={e => setTeleSpeed(Number(e.target.value))}
+                style={{ flex: 1, accentColor: "#00c8a8", height: 3 }} />
+              <span style={{ fontSize: 9, color: TXT2, width: 28, textAlign: "right" as const }}>{teleSpeed}px</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={label}>Font</span>
+              <input type="range" min={14} max={48} step={2} value={teleFontSize}
+                onChange={e => setTeleFontSize(Number(e.target.value))}
+                style={{ flex: 1, accentColor: "#00c8a8", height: 3 }} />
+              <span style={{ fontSize: 9, color: TXT2, width: 28, textAlign: "right" as const }}>{teleFontSize}px</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={() => setTeleOverlay(v => !v)}
+                style={{
+                  padding: "4px 12px", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+                  background: teleOverlay ? "#6040c0" : "transparent",
+                  border: `1px solid ${teleOverlay ? "#6040c0" : BOR}`,
+                  color: teleOverlay ? "#fff" : TXT2, cursor: "pointer",
+                }}
+              >{teleOverlay ? "● Overlay On" : "Overlay Off"}</button>
+              <span style={{ fontSize: 9, color: "#404050" }}>Script scrolls over camera</span>
+            </div>
+          </div>
+        )}
+
+        {/* SETTINGS */}
+        {activeTab === "settings" && (
+          <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <div style={label}>Resolution</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {(Object.keys(RES) as ResKey[]).map(k => (
+                  <button key={k} onClick={() => setResolution(k)} style={{
+                    flex: 1, padding: "4px 0", fontSize: 9, fontWeight: 700,
+                    background: resolution === k ? "#6040c0" : "transparent",
+                    border: `1px solid ${resolution === k ? "#6040c0" : BOR}`,
+                    color: resolution === k ? "#fff" : TXT2, cursor: "pointer",
+                  }}>{RES[k].label}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={label}>Bitrate</div>
+              <div style={{ display: "flex", gap: 4 }}>
+                {(Object.keys(BITRATES) as BrKey[]).map(k => (
+                  <button key={k} onClick={() => setBitrate(k)} style={{
+                    flex: 1, padding: "4px 0", fontSize: 9, fontWeight: 700,
+                    background: bitrate === k ? "#6040c0" : "transparent",
+                    border: `1px solid ${bitrate === k ? "#6040c0" : BOR}`,
+                    color: bitrate === k ? "#fff" : TXT2, cursor: "pointer",
+                  }}>{BITRATES[k].label}</button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={label}>RTMP Destination</div>
+              <input
+                value={rtmpUrl} onChange={e => setRtmpUrl(e.target.value)} onBlur={saveRtmp}
+                placeholder="rtmp://live.youtube.com/live2"
+                style={{ ...inp, marginBottom: 4 }}
+              />
+              <input
+                value={streamKey} onChange={e => setStreamKey(e.target.value)} onBlur={saveRtmp}
+                placeholder="Stream key"
+                type="password"
+                style={{ ...inp }}
+              />
+            </div>
+            <button onClick={() => {}} style={{
+              padding: "5px 14px", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+              background: "transparent", border: `1px solid ${BOR}`, color: TXT2, cursor: "pointer",
+            }}>Test Stream</button>
+          </div>
+        )}
+      </div>
+
+      <style>{`@keyframes rec-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }`}</style>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Studio — main export
 // ─────────────────────────────────────────────────────────────
 
 type RightTab = "guests" | "tele" | "lower" | "rtmp" | "quality";
 
-export default function Studio() {
+export default function Studio({ embedded }: { embedded?: boolean } = {}) {
   const [hostStream, setHostStream]       = useState<MediaStream | null>(null);
   const [guestsEnabled, setGuestsEnabled] = useState(false);
   const [lowerThirds, setLowerThirds]     = useState<LowerThird[]>([]);
   const [rightTab, setRightTab]           = useState<RightTab>("guests");
   const [isStreaming, setIsStreaming]     = useState(false);
   const [isRecording, setIsRecording]     = useState(false);
+  const [showGrid, setShowGrid]           = useState(false);
 
   const { resolution, setResolution, bitrate, setBitrate, bitrateKbps } = useVideoQuality();
 
@@ -977,6 +1369,27 @@ export default function Studio() {
     >{lbl}</button>
   );
 
+  // ── Embedded deck mode — 16:9 camera + tabbed controls below ───
+  if (embedded) {
+    return (
+      <EmbeddedStudio
+        hostStream={hostStream} setHostStream={setHostStream}
+        lowerThirds={lowerThirds}
+        resolution={resolution} setResolution={setResolution}
+        bitrate={bitrate} setBitrate={setBitrate}
+        isRecording={isRecording} isStreaming={isStreaming}
+        setIsStreaming={setIsStreaming}
+        showGrid={showGrid} setShowGrid={setShowGrid}
+        teleScript={teleScript} setTeleScript={setTeleScript}
+        teleScrollRef={teleScrollRef}
+        hostLevel={hostLevel}
+        toggleRecord={toggleRecord}
+        guests={guests} removeGuest={removeGuest} toggleMute={toggleMute}
+        guestsEnabled={guestsEnabled} setGuestsEnabled={setGuestsEnabled}
+      />
+    );
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: BG1, overflow: "hidden" }}>
 
@@ -998,6 +1411,9 @@ export default function Studio() {
               teleScrolling={teleScrolling}
               teleScrollRef={teleScrollRef}
               resolution={resolution}
+              isRecording={isRecording}
+              showGrid={showGrid}
+              showFrameOverlays={!!embedded}
             />
 
             {/* Sidebar teleprompter */}
@@ -1092,6 +1508,9 @@ export default function Studio() {
         onToggleRecord={toggleRecord}
         stream={hostStream}
       />
+      <style>{`
+        @keyframes rec-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
+      `}</style>
     </div>
   );
 }

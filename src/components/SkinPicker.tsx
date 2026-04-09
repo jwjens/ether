@@ -1,18 +1,20 @@
 /**
- * SkinPicker.tsx — Ether Theme Engine (revamped)
+ * SkinPicker.tsx — Ether Theme Engine
  *
- * Replaces the old 8-swatch right-click overlay with a full theme studio:
- *   - 8 named preset themes (Dark Studio, Bright Venue, Midnight, High Contrast,
- *     Crimson Air, Forest, Ocean Deep, Warm Broadcast)
- *   - Per-element color wheels organized into groups
+ * Full theme studio with:
+ *   - 8 named preset themes with miniature UI preview cards
+ *   - Tier system: Presets → Tuning → Station Identity
+ *   - Font selection (6 system-safe typefaces via --font-ui CSS var)
+ *   - Per-operator theme override stored in operators.theme column
+ *   - Station logo upload (base64 in station_config_kv)
+ *   - Export / import .ethertheme files via native file dialogs
  *   - Live preview — every change applies instantly via CSS variables
  *   - Saved to SQLite station_config_kv as JSON
- *   - Export / import JSON
  *
- * API (unchanged from old SkinPicker so App.tsx needs minimal edits):
+ * API (unchanged so App.tsx needs no edits):
  *   useSkin()           → { skinId, setSkin, openThemeEditor, themeEditorOpen, closeThemeEditor }
- *   AppContextMenu      → right-click menu (now says "Theme Studio" instead of "Change Skin")
- *   SkinPickerOverlay   → replaced by ThemeStudio modal (triggered same way)
+ *   AppContextMenu      → right-click menu ("Theme Studio")
+ *   SkinPickerOverlay   → ThemeStudio modal
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -49,6 +51,23 @@ export interface ThemeVars {
   "--deck-c": string;
 }
 
+// ─── Font options ──────────────────────────────────────────────
+
+export interface FontOption {
+  id:    string;
+  label: string;
+  stack: string; // CSS font-family value
+}
+
+export const FONT_OPTIONS: FontOption[] = [
+  { id: "system",    label: "System Default",   stack: "system-ui, sans-serif" },
+  { id: "inter",     label: "Inter",             stack: "'Inter', system-ui, sans-serif" },
+  { id: "segoe",     label: "Segoe UI",          stack: "'Segoe UI', system-ui, sans-serif" },
+  { id: "georgia",   label: "Broadcast Serif",   stack: "Georgia, 'Times New Roman', serif" },
+  { id: "trebuchet", label: "Trebuchet MS",       stack: "'Trebuchet MS', system-ui, sans-serif" },
+  { id: "mono",      label: "Tech Mono",          stack: "'Courier New', 'Consolas', monospace" },
+];
+
 // ─── Preset themes ─────────────────────────────────────────────
 
 export interface Preset {
@@ -62,26 +81,26 @@ export const PRESETS: Preset[] = [
   {
     id: "dark-studio", name: "Dark Studio", emoji: "🎙",
     vars: {
-      "--bg-primary":    "#0f0f13",
-      "--bg-secondary":  "#18181f",
-      "--bg-tertiary":   "#212128",
-      "--bg-hover":      "#2a2a35",
-      "--text-primary":  "#f4f4f5",
-      "--text-secondary":"#a1a1aa",
-      "--text-tertiary": "#52525b",
-      "--border-primary":  "#27272a",
-      "--border-secondary":"#3f3f46",
+      "--bg-primary":    "#0e0e12",
+      "--bg-secondary":  "#111116",
+      "--bg-tertiary":   "#141420",
+      "--bg-hover":      "#1e1e26",
+      "--text-primary":  "#c0c0d0",
+      "--text-secondary":"#8878c0",
+      "--text-tertiary": "#303048",
+      "--border-primary":  "#1a1a22",
+      "--border-secondary":"#1e1e2e",
       "--accent-blue":  "#0ea5e9",
       "--accent-green": "#34d399",
       "--accent-cyan":  "#22d3ee",
       "--accent-red":   "#ef4444",
-      "--accent-amber": "#f59e0b",
-      "--wave-played":   "#22d3ee",
-      "--wave-unplayed": "#27272a",
-      "--wave-playhead": "#ffffff",
-      "--deck-a": "#0ea5e9",
-      "--deck-b": "#34d399",
-      "--deck-c": "#a78bfa",
+      "--accent-amber": "#c07820",
+      "--wave-played":   "#008878",
+      "--wave-unplayed": "#1a1a22",
+      "--wave-playhead": "#c07820",
+      "--deck-a": "#008878",
+      "--deck-b": "#6040c0",
+      "--deck-c": "#c07820",
     }
   },
   {
@@ -167,10 +186,10 @@ export const PRESETS: Preset[] = [
       "--bg-tertiary":   "#260d10",
       "--bg-hover":      "#321115",
       "--text-primary":  "#fce4e4",
-      "--text-secondary":"#d4a0a0",
-      "--text-tertiary": "#8a5555",
-      "--border-primary":  "#3d1515",
-      "--border-secondary":"#521c1c",
+      "--text-secondary":"#e8c0c0", // contrast fix: was #d4a0a0 (3.1:1 → 4.8:1)
+      "--text-tertiary": "#b87878", // contrast fix: was #8a5555 (too dim)
+      "--border-primary":  "#521c1c", // contrast fix: was #3d1515 (too subtle)
+      "--border-secondary":"#6b2424",
       "--accent-blue":  "#f87171",
       "--accent-green": "#34d399",
       "--accent-cyan":  "#fca5a5",
@@ -192,10 +211,10 @@ export const PRESETS: Preset[] = [
       "--bg-tertiary":   "#121e13",
       "--bg-hover":      "#182618",
       "--text-primary":  "#e4f0e4",
-      "--text-secondary":"#90b090",
-      "--text-tertiary": "#506050",
-      "--border-primary":  "#1e301e",
-      "--border-secondary":"#2a402a",
+      "--text-secondary":"#a8c4a8", // contrast fix: was #90b090 (3.2:1 → 4.5:1)
+      "--text-tertiary": "#6a906a", // contrast fix: was #506050 (too dim)
+      "--border-primary":  "#2a402a", // contrast fix: was #1e301e
+      "--border-secondary":"#385038",
       "--accent-blue":  "#4ade80",
       "--accent-green": "#22c55e",
       "--accent-cyan":  "#86efac",
@@ -265,8 +284,7 @@ const DEFAULT_PRESET = PRESETS[0];
 
 // ─── Variable injection ────────────────────────────────────────
 
-function applyTheme(vars: ThemeVars) {
-  // Apply to both root and any theme class elements
+export function applyTheme(vars: ThemeVars, fontStack?: string) {
   const targets = [
     document.documentElement,
     document.querySelector(".dark-theme"),
@@ -277,28 +295,43 @@ function applyTheme(vars: ThemeVars) {
     for (const [k, v] of Object.entries(vars)) {
       (target as HTMLElement).style.setProperty(k, v);
     }
+    if (fontStack) {
+      (target as HTMLElement).style.setProperty("--font-ui", fontStack);
+    }
   }
 }
 
 // ─── Persistence ───────────────────────────────────────────────
 
-async function saveTheme(presetId: string, vars: ThemeVars) {
+async function saveTheme(presetId: string, vars: ThemeVars, fontId?: string) {
   try {
     await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('theme_preset_id',?)", [presetId]);
     await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('theme_custom_vars',?)", [JSON.stringify(vars)]);
+    if (fontId !== undefined) {
+      await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('theme_font_id',?)", [fontId]);
+    }
   } catch {}
 }
 
-async function loadTheme(): Promise<{ presetId: string; vars: ThemeVars } | null> {
+async function loadTheme(): Promise<{ presetId: string; vars: ThemeVars; fontId: string } | null> {
   try {
-    const [pidRow, varsRow] = await Promise.all([
+    const [pidRow, varsRow, fontRow] = await Promise.all([
       query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='theme_preset_id'"),
       query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='theme_custom_vars'"),
+      query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='theme_font_id'"),
     ]);
     if (!pidRow.length || !varsRow.length) return null;
-    return { presetId: pidRow[0].value, vars: JSON.parse(varsRow[0].value) };
+    return {
+      presetId: pidRow[0].value,
+      vars: JSON.parse(varsRow[0].value),
+      fontId: fontRow.length ? fontRow[0].value : "system",
+    };
   } catch { return null; }
 }
+
+// Apply dark defaults synchronously at module load so early-return screens
+// (OnShiftScreen, UserLogin, etc.) don't inherit the light :root CSS vars.
+applyTheme(DEFAULT_PRESET.vars);
 
 // ─── useSkin hook ──────────────────────────────────────────────
 
@@ -307,6 +340,7 @@ let _setThemeEditorOpen: ((v: boolean) => void) | null = null;
 
 export function useSkin() {
   const [skinId, setSkinIdState]       = useState(DEFAULT_PRESET.id);
+  const [fontId, setFontIdState]       = useState("system");
   const [editorOpen, setEditorOpen]    = useState(false);
 
   // Register setter so AppContextMenu can open the editor
@@ -315,12 +349,22 @@ export function useSkin() {
     return () => { _setThemeEditorOpen = null; };
   }, []);
 
-  // Load saved theme on mount
+  // Load saved theme on mount — auto-reset if a light theme was saved
   useEffect(() => {
     loadTheme().then(saved => {
       if (saved) {
+        // If saved theme has a light background, force back to dark-studio
+        const bgPrimary = saved.vars["--bg-primary"] || "";
+        if (bgPrimary.startsWith("#f") || bgPrimary.startsWith("#e") || bgPrimary === "#ffffff") {
+          setSkinIdState(DEFAULT_PRESET.id);
+          applyTheme(DEFAULT_PRESET.vars);
+          saveTheme(DEFAULT_PRESET.id, DEFAULT_PRESET.vars);
+          return;
+        }
         setSkinIdState(saved.presetId);
-        applyTheme(saved.vars);
+        setFontIdState(saved.fontId || "system");
+        const fontStack = FONT_OPTIONS.find(f => f.id === saved.fontId)?.stack;
+        applyTheme(saved.vars, fontStack);
       } else {
         applyTheme(DEFAULT_PRESET.vars);
       }
@@ -330,12 +374,14 @@ export function useSkin() {
   const setSkin = useCallback((id: string) => {
     const preset = PRESETS.find(p => p.id === id) || DEFAULT_PRESET;
     setSkinIdState(id);
-    applyTheme(preset.vars);
-    saveTheme(id, preset.vars);
-  }, []);
+    const fontStack = FONT_OPTIONS.find(f => f.id === fontId)?.stack;
+    applyTheme(preset.vars, fontStack);
+    saveTheme(id, preset.vars, fontId);
+  }, [fontId]);
 
   return {
     skinId,
+    fontId,
     setSkin,
     themeEditorOpen: editorOpen,
     openThemeEditor: () => setEditorOpen(true),
@@ -454,6 +500,55 @@ function ColorRow({ label, value, onChange }: { label: string; value: string; on
 
 // ─── Theme Studio modal ────────────────────────────────────────
 
+// ─── Miniature UI preview card for a preset ───────────────────
+
+function PresetCard({ p, active }: { p: Preset; active: boolean }) {
+  const v = p.vars;
+  return (
+    <button onClick={() => {/* handled by parent */}} style={{
+      display: "block", width: "100%", padding: "8px 10px",
+      border: "none", borderRadius: 0,
+      background: active ? "rgba(255,255,255,0.05)" : "transparent",
+      outline: active ? "1.5px solid var(--accent-cyan)" : "1px solid transparent",
+      cursor: "pointer", textAlign: "left",
+      transition: "all 0.12s",
+    }}>
+      {/* Miniature UI mockup */}
+      <div style={{
+        width: "100%", height: 34,
+        background: v["--bg-primary"],
+        border: `1px solid ${v["--border-primary"]}`,
+        overflow: "hidden", marginBottom: 5,
+        display: "flex", flexDirection: "column",
+      }}>
+        {/* Header bar */}
+        <div style={{ height: 10, background: v["--bg-secondary"], borderBottom: `1px solid ${v["--border-primary"]}`, display: "flex", alignItems: "center", gap: 2, padding: "0 4px", flexShrink: 0 }}>
+          <div style={{ width: 4, height: 4, borderRadius: "50%", background: v["--accent-red"] }} />
+          <div style={{ flex: 1 }} />
+          <div style={{ width: 10, height: 3, background: v["--accent-cyan"], opacity: 0.8 }} />
+        </div>
+        {/* Body — two fake decks */}
+        <div style={{ flex: 1, display: "flex", gap: 2, padding: 2 }}>
+          <div style={{ flex: 1, background: v["--bg-secondary"], border: `1px solid ${v["--border-primary"]}`, padding: "2px 3px" }}>
+            <div style={{ width: "60%", height: 2, background: v["--deck-a"], marginBottom: 2 }} />
+            <div style={{ width: "100%", height: 2, background: v["--wave-unplayed"], position: "relative", overflow: "hidden" }}>
+              <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "40%", background: v["--wave-played"] }} />
+            </div>
+          </div>
+          <div style={{ flex: 1, background: v["--bg-secondary"], border: `1px solid ${v["--border-primary"]}`, padding: "2px 3px" }}>
+            <div style={{ width: "55%", height: 2, background: v["--deck-b"], marginBottom: 2 }} />
+            <div style={{ width: "100%", height: 2, background: v["--wave-unplayed"] }} />
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 13 }}>{p.emoji}</span>
+        <span style={{ fontSize: 11, fontWeight: active ? 700 : 500, color: active ? "var(--accent-cyan)" : "var(--text-secondary)" }}>{p.name}</span>
+      </div>
+    </button>
+  );
+}
+
 export function SkinPickerOverlay({
   currentSkin, onSelect, onClose,
 }: {
@@ -468,9 +563,35 @@ export function SkinPickerOverlay({
   });
   const [activeGroup, setActiveGroup]   = useState(0);
   const [saved, setSaved]               = useState(false);
+  // Tier: "presets" | "tuning" | "identity"
+  const [tier, setTier]                 = useState<"presets" | "tuning" | "identity">("presets");
+  // Font
+  const [fontId, setFontId]             = useState("system");
+  // Operator theme
+  const [operators, setOperators]       = useState<{ id: number; name: string }[]>([]);
+  const [opThemeId, setOpThemeId]       = useState<number | null>(null);
+  // Station logo
+  const [logoUrl, setLogoUrl]           = useState<string | null>(null);
+
+  // Load operators and logo on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const ops = await (window as any).ether.db.query("SELECT id, name FROM operators ORDER BY id", []);
+        if (ops.data) setOperators(ops.data);
+        const logoRow = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='station_logo'", []);
+        if (logoRow.data?.length) setLogoUrl(logoRow.data[0].value);
+        const fontRow = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='theme_font_id'", []);
+        if (fontRow.data?.length) setFontId(fontRow.data[0].value);
+      } catch {}
+    })();
+  }, []);
 
   // Live preview on every change
-  useEffect(() => { applyTheme(vars); }, [vars]);
+  useEffect(() => {
+    const fontStack = FONT_OPTIONS.find(f => f.id === fontId)?.stack;
+    applyTheme(vars, fontStack);
+  }, [vars, fontId]);
 
   const selectPreset = (id: string) => {
     const preset = PRESETS.find(p => p.id === id)!;
@@ -484,36 +605,30 @@ export function SkinPickerOverlay({
   };
 
   const handleSave = async () => {
-    await saveTheme(activePreset, vars);
+    await saveTheme(activePreset, vars, fontId);
+    // Save operator theme if one is selected
+    if (opThemeId !== null) {
+      await (window as any).ether.db.execute(
+        "UPDATE operators SET theme=? WHERE id=?",
+        [JSON.stringify({ presetId: activePreset, vars }), opThemeId]
+      );
+    }
     onSelect(activePreset);
     setSaved(true);
-    // No reload needed — theme applied via CSS variables in real time
   };
 
-  const handleExport = () => {
-    const blob = new Blob([JSON.stringify({ presetId: activePreset, vars }, null, 2)], { type: "application/json" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url; a.download = `ether-theme-${activePreset}.json`; a.click();
-    URL.revokeObjectURL(url);
+  const handleExport = async () => {
+    const result = await (window as any).ether.theme.export(activePreset, vars, fontId);
+    if (!result?.ok) console.warn("[Theme] Export failed:", result?.error);
   };
 
-  const handleImport = () => {
-    const input = document.createElement("input");
-    input.type = "file"; input.accept = ".json";
-    input.onchange = () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = e => {
-        try {
-          const data = JSON.parse(e.target?.result as string);
-          if (data.vars) { setVars(data.vars); setActivePreset(data.presetId || "custom"); }
-        } catch {}
-      };
-      reader.readAsText(file);
-    };
-    input.click();
+  const handleImport = async () => {
+    const result = await (window as any).ether.theme.import();
+    if (result?.ok && result.data?.vars) {
+      setVars(result.data.vars);
+      setActivePreset(result.data.presetId || "custom");
+      if (result.data.font) setFontId(result.data.font);
+    }
   };
 
   const handleReset = () => {
@@ -521,6 +636,37 @@ export function SkinPickerOverlay({
     setActivePreset(preset.id);
     setVars({ ...preset.vars });
   };
+
+  const handleLogoUpload = async () => {
+    const result = await (window as any).ether.station.uploadLogo();
+    if (result?.ok && result.dataUrl) {
+      setLogoUrl(result.dataUrl);
+      await (window as any).ether.db.execute(
+        "INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('station_logo',?)",
+        [result.dataUrl]
+      );
+    }
+  };
+
+  const handleLogoRemove = async () => {
+    setLogoUrl(null);
+    await (window as any).ether.db.execute(
+      "DELETE FROM station_config_kv WHERE key='station_logo'",
+      []
+    );
+  };
+
+  const tierBtn = (id: "presets" | "tuning" | "identity", label: string) => (
+    <button onClick={() => setTier(id)} style={{
+      flex: 1, padding: "7px 0", border: "none", borderRadius: 0,
+      background: tier === id ? "var(--bg-hover)" : "transparent",
+      color: tier === id ? "var(--text-primary)" : "var(--text-tertiary)",
+      fontSize: 10, fontWeight: tier === id ? 700 : 500,
+      letterSpacing: "0.06em", textTransform: "uppercase",
+      cursor: "pointer", borderBottom: tier === id ? "2px solid var(--accent-cyan)" : "2px solid transparent",
+      transition: "all 0.1s",
+    }}>{label}</button>
+  );
 
   return (
     <div style={{
@@ -532,7 +678,7 @@ export function SkinPickerOverlay({
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div style={{
-        width: 780, maxHeight: "88vh",
+        width: 820, maxHeight: "90vh",
         background: "var(--bg-secondary)",
         border: "1px solid var(--border-secondary)",
         borderRadius: 0,
@@ -545,19 +691,18 @@ export function SkinPickerOverlay({
         {/* ── Header ── */}
         <div style={{
           display: "flex", alignItems: "center", gap: 12,
-          padding: "18px 24px",
+          padding: "16px 24px",
           borderBottom: "1px solid var(--border-primary)",
           flexShrink: 0,
         }}>
-          <div style={{ fontSize: 20 }}>🎨</div>
+          <div style={{ fontSize: 18 }}>🎨</div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Theme Studio</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>Pick a preset or customize every color — changes preview live</div>
+            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Theme Studio</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>Pick a preset · Tune every color · Set station identity</div>
           </div>
           <div style={{ flex: 1 }} />
-          {/* Action buttons */}
-          <button onClick={handleImport} title="Import theme JSON" style={ghostBtn}>Import</button>
-          <button onClick={handleExport} title="Export theme JSON" style={ghostBtn}>Export</button>
+          <button onClick={handleImport} title="Import .ethertheme file" style={ghostBtn}>Import</button>
+          <button onClick={handleExport} title="Export .ethertheme file" style={ghostBtn}>Export</button>
           <button onClick={handleReset} title="Reset to current preset" style={ghostBtn}>Reset</button>
           <button onClick={onClose} style={{
             width: 30, height: 30, borderRadius: 0,
@@ -570,137 +715,177 @@ export function SkinPickerOverlay({
           >✕</button>
         </div>
 
+        {/* ── Tier tabs ── */}
+        <div style={{ display: "flex", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+          {tierBtn("presets",  "Presets")}
+          {tierBtn("tuning",   "Tuning")}
+          {tierBtn("identity", "Station Identity")}
+        </div>
+
         {/* ── Body ── */}
         <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
 
-          {/* LEFT: presets + group nav */}
-          <div style={{
-            width: 220, flexShrink: 0,
-            borderRight: "1px solid var(--border-primary)",
-            display: "flex", flexDirection: "column",
-            overflowY: "auto",
-          }}>
-            {/* Presets */}
-            <div style={{ padding: "14px 14px 8px" }}>
-              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 }}>Presets</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                {PRESETS.map(p => (
-                  <button key={p.id} onClick={() => selectPreset(p.id)} style={{
-                    display: "flex", alignItems: "center", gap: 9,
-                    padding: "8px 10px", borderRadius: 0, border: "none",
-                    background: activePreset === p.id ? "var(--accent-cyan)" + "22" : "transparent",
-                    outline: activePreset === p.id ? `1.5px solid var(--accent-cyan)` : "1px solid transparent",
-                    color: activePreset === p.id ? "var(--accent-cyan)" : "var(--text-secondary)",
-                    cursor: "pointer", textAlign: "left", width: "100%",
-                    transition: "all 0.12s",
-                  }}>
-                    {/* Palette preview dots */}
-                    <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
-                      {[p.vars["--bg-primary"], p.vars["--accent-cyan"], p.vars["--accent-blue"]].map((c, i) => (
-                        <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: c, border: "1px solid rgba(255,255,255,0.1)" }} />
-                      ))}
+          {/* ── PRESETS TIER ── */}
+          {tier === "presets" && (
+            <>
+              {/* Grid of miniature preview cards */}
+              <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                  {PRESETS.map(p => (
+                    <div key={p.id} onClick={() => selectPreset(p.id)} style={{ cursor: "pointer" }}>
+                      <PresetCard p={p} active={activePreset === p.id} />
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: activePreset === p.id ? 700 : 500 }}>{p.emoji} {p.name}</span>
-                  </button>
-                ))}
+                  ))}
+                </div>
                 {activePreset === "custom" && (
-                  <div style={{ padding: "6px 10px", fontSize: 10, color: "var(--accent-amber)", fontWeight: 700, letterSpacing: "0.06em" }}>✦ Custom</div>
+                  <div style={{ marginTop: 14, padding: "8px 12px", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", fontSize: 11, color: "var(--accent-amber)", fontWeight: 600 }}>
+                    ✦ Custom theme active — tuned from a preset
+                  </div>
+                )}
+                {/* Quick live preview */}
+                <div style={{ marginTop: 20 }}>
+                  <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>Preview</div>
+                  <LivePreviewBlock vars={vars} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── TUNING TIER ── */}
+          {tier === "tuning" && (
+            <>
+              {/* Left: group nav */}
+              <div style={{ width: 180, flexShrink: 0, borderRight: "1px solid var(--border-primary)", overflowY: "auto" }}>
+                <div style={{ padding: "12px 12px 6px" }}>
+                  <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 }}>Color Groups</div>
+                  {VAR_GROUPS.map((g, i) => (
+                    <button key={g.label} onClick={() => setActiveGroup(i)} style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "7px 10px", border: "none", borderRadius: 0,
+                      background: activeGroup === i ? "var(--bg-hover)" : "transparent",
+                      color: activeGroup === i ? "var(--text-primary)" : "var(--text-tertiary)",
+                      cursor: "pointer", textAlign: "left", width: "100%",
+                      fontSize: 11, fontWeight: activeGroup === i ? 700 : 400,
+                      transition: "all 0.1s",
+                    }}>
+                      <span style={{ fontSize: 12 }}>{g.emoji}</span>
+                      <span>{g.label}</span>
+                      <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-tertiary)" }}>{g.vars.length}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Right: color rows */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", marginBottom: 3 }}>
+                    {VAR_GROUPS[activeGroup].emoji} {VAR_GROUPS[activeGroup].label}
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+                    Click any swatch or type hex — app updates live
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {VAR_GROUPS[activeGroup].vars.map(({ key, label }) => (
+                    <ColorRow key={key} label={label} value={vars[key]} onChange={v => updateVar(key, v)} />
+                  ))}
+                </div>
+                <div style={{ marginTop: 24 }}>
+                  <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>Live Preview</div>
+                  <LivePreviewBlock vars={vars} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── STATION IDENTITY TIER ── */}
+          {tier === "identity" && (
+            <div style={{ flex: 1, overflowY: "auto", padding: "24px 32px" }}>
+
+              {/* Font selection */}
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 4 }}>UI Typeface</div>
+                <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 14 }}>Applied globally via --font-ui CSS variable</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {FONT_OPTIONS.map(f => (
+                    <button key={f.id} onClick={() => setFontId(f.id)} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "10px 14px", border: "none", borderRadius: 0,
+                      background: fontId === f.id ? "rgba(255,255,255,0.05)" : "transparent",
+                      outline: fontId === f.id ? "1px solid var(--accent-cyan)" : "1px solid var(--border-primary)",
+                      color: fontId === f.id ? "var(--accent-cyan)" : "var(--text-secondary)",
+                      cursor: "pointer", textAlign: "left",
+                      transition: "all 0.1s",
+                    }}>
+                      <span style={{ fontSize: 12, fontFamily: f.stack }}>{f.label}</span>
+                      <span style={{ fontSize: 10, fontFamily: f.stack, opacity: 0.6 }}>Aa Bb 123</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Station logo */}
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 4 }}>Station Logo</div>
+                <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 14 }}>Displayed on the On-Shift welcome screen</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                  <div style={{
+                    width: 80, height: 80, background: "var(--bg-tertiary)",
+                    border: "1px solid var(--border-primary)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    overflow: "hidden", flexShrink: 0,
+                  }}>
+                    {logoUrl
+                      ? <img src={logoUrl} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+                      : <span style={{ fontSize: 22, opacity: 0.3 }}>📻</span>
+                    }
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <button onClick={handleLogoUpload} style={{ ...ghostBtn, fontSize: 11 }}>
+                      {logoUrl ? "Replace Logo" : "Upload Logo..."}
+                    </button>
+                    {logoUrl && (
+                      <button onClick={handleLogoRemove} style={{ ...ghostBtn, fontSize: 11, color: "var(--accent-red)", border: "1px solid rgba(239,68,68,0.3)" }}>
+                        Remove
+                      </button>
+                    )}
+                    <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>PNG, JPG, SVG · Max ~500 KB</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Per-operator theme */}
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "0.04em", textTransform: "uppercase", marginBottom: 4 }}>Per-Operator Theme</div>
+                <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 14 }}>
+                  Assign the current theme to a specific operator. Their personal theme loads when they log in.
+                </div>
+                {operators.length === 0 ? (
+                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>No operators configured yet</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {operators.map(op => (
+                      <button key={op.id} onClick={() => setOpThemeId(opThemeId === op.id ? null : op.id)} style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "9px 14px", border: "none", borderRadius: 0,
+                        background: opThemeId === op.id ? "rgba(255,255,255,0.05)" : "transparent",
+                        outline: opThemeId === op.id ? "1px solid var(--accent-green)" : "1px solid var(--border-primary)",
+                        color: opThemeId === op.id ? "var(--accent-green)" : "var(--text-secondary)",
+                        cursor: "pointer", textAlign: "left",
+                        transition: "all 0.1s",
+                      }}>
+                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: opThemeId === op.id ? "var(--accent-green)" : "var(--text-tertiary)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, fontWeight: opThemeId === op.id ? 700 : 400 }}>{op.name}</span>
+                        {opThemeId === op.id && <span style={{ fontSize: 10, marginLeft: "auto", opacity: 0.7 }}>will receive current theme on Save</span>}
+                      </button>
+                    ))}
+                  </div>
                 )}
               </div>
-            </div>
 
-            {/* Divider */}
-            <div style={{ height: 1, background: "var(--border-primary)", margin: "4px 14px" }} />
-
-            {/* Group navigation */}
-            <div style={{ padding: "8px 14px 14px" }}>
-              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 }}>Customize</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                {VAR_GROUPS.map((g, i) => (
-                  <button key={g.label} onClick={() => setActiveGroup(i)} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "7px 10px", borderRadius: 0, border: "none",
-                    background: activeGroup === i ? "var(--bg-hover)" : "transparent",
-                    color: activeGroup === i ? "var(--text-primary)" : "var(--text-tertiary)",
-                    cursor: "pointer", textAlign: "left", width: "100%",
-                    fontSize: 11, fontWeight: activeGroup === i ? 700 : 400,
-                    transition: "all 0.1s",
-                  }}>
-                    <span style={{ fontSize: 13 }}>{g.emoji}</span>
-                    {g.label}
-                    <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-tertiary)" }}>{g.vars.length}</span>
-                  </button>
-                ))}
-              </div>
             </div>
-          </div>
+          )}
 
-          {/* RIGHT: color rows for active group */}
-          <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", marginBottom: 3 }}>
-                {VAR_GROUPS[activeGroup].emoji} {VAR_GROUPS[activeGroup].label}
-              </div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                Click any color swatch or type a hex value — the app updates live.
-              </div>
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {VAR_GROUPS[activeGroup].vars.map(({ key, label }) => (
-                <ColorRow
-                  key={key}
-                  label={label}
-                  value={vars[key]}
-                  onChange={v => updateVar(key, v)}
-                />
-              ))}
-            </div>
-
-            {/* Mini live preview strip */}
-            <div style={{ marginTop: 28 }}>
-              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>Live Preview</div>
-              <div style={{
-                borderRadius: 0, overflow: "hidden",
-                border: "1px solid var(--border-primary)",
-                background: vars["--bg-primary"],
-              }}>
-                {/* Fake header */}
-                <div style={{ height: 36, background: vars["--bg-secondary"], borderBottom: `1px solid ${vars["--border-primary"]}`, display: "flex", alignItems: "center", gap: 8, padding: "0 14px" }}>
-                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: vars["--accent-red"] }} />
-                  <div style={{ width: 40, height: 6, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.4 }} />
-                  <div style={{ flex: 1 }} />
-                  <div style={{ width: 48, height: 20, borderRadius: 0, background: vars["--accent-cyan"], opacity: 0.9 }} />
-                  <div style={{ width: 36, height: 20, borderRadius: 0, background: vars["--accent-red"] }} />
-                </div>
-                {/* Fake body */}
-                <div style={{ padding: 14, display: "flex", gap: 10 }}>
-                  {/* Fake deck */}
-                  <div style={{ flex: 1, background: vars["--bg-secondary"], borderRadius: 0, border: `1px solid ${vars["--border-primary"]}`, padding: 12 }}>
-                    <div style={{ width: 60, height: 5, borderRadius: 0, background: vars["--deck-a"], marginBottom: 8, opacity: 0.9 }} />
-                    <div style={{ width: "100%", height: 4, borderRadius: 0, background: vars["--wave-unplayed"], marginBottom: 4, position: "relative", overflow: "hidden" }}>
-                      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "45%", background: vars["--wave-played"], borderRadius: 0 }} />
-                      <div style={{ position: "absolute", left: "45%", top: "-2px", bottom: "-2px", width: 2, background: vars["--wave-playhead"] }} />
-                    </div>
-                    <div style={{ width: 40, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.3 }} />
-                  </div>
-                  {/* Fake deck B */}
-                  <div style={{ flex: 1, background: vars["--bg-secondary"], borderRadius: 0, border: `1px solid ${vars["--border-primary"]}`, padding: 12 }}>
-                    <div style={{ width: 60, height: 5, borderRadius: 0, background: vars["--deck-b"], marginBottom: 8, opacity: 0.9 }} />
-                    <div style={{ width: "100%", height: 4, borderRadius: 0, background: vars["--wave-unplayed"], marginBottom: 4 }} />
-                    <div style={{ width: 40, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.3 }} />
-                  </div>
-                </div>
-                {/* Fake footer */}
-                <div style={{ height: 22, background: vars["--bg-secondary"], borderTop: `1px solid ${vars["--border-primary"]}`, display: "flex", alignItems: "center", gap: 8, padding: "0 14px" }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: vars["--accent-green"] }} />
-                  <div style={{ width: 30, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.4 }} />
-                  <div style={{ flex: 1 }} />
-                  <div style={{ width: 50, height: 4, borderRadius: 0, background: vars["--text-tertiary"], opacity: 0.3 }} />
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* ── Footer ── */}
@@ -712,7 +897,10 @@ export function SkinPickerOverlay({
           flexShrink: 0,
         }}>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", flex: 1 }}>
-            {activePreset === "custom" ? "✦ Custom theme — save to apply permanently" : `Preset: ${PRESETS.find(p => p.id === activePreset)?.name || activePreset}`}
+            {activePreset === "custom"
+              ? "✦ Custom theme"
+              : `Preset: ${PRESETS.find(p => p.id === activePreset)?.name || activePreset}`}
+            {" · "}Font: {FONT_OPTIONS.find(f => f.id === fontId)?.label || "System Default"}
           </div>
           <button onClick={onClose} style={ghostBtn}>Cancel</button>
           <button onClick={handleSave} style={{
@@ -726,6 +914,43 @@ export function SkinPickerOverlay({
             {saved ? "✓ Saved!" : "Save & Apply"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Shared live preview block ─────────────────────────────────
+
+function LivePreviewBlock({ vars }: { vars: ThemeVars }) {
+  return (
+    <div style={{
+      borderRadius: 0, overflow: "hidden",
+      border: "1px solid var(--border-primary)",
+      background: vars["--bg-primary"],
+    }}>
+      <div style={{ height: 32, background: vars["--bg-secondary"], borderBottom: `1px solid ${vars["--border-primary"]}`, display: "flex", alignItems: "center", gap: 8, padding: "0 12px" }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: vars["--accent-red"] }} />
+        <div style={{ width: 36, height: 5, background: vars["--text-tertiary"], opacity: 0.35 }} />
+        <div style={{ flex: 1 }} />
+        <div style={{ width: 44, height: 18, background: vars["--accent-cyan"], opacity: 0.9 }} />
+        <div style={{ width: 32, height: 18, background: vars["--accent-red"] }} />
+      </div>
+      <div style={{ padding: 12, display: "flex", gap: 8 }}>
+        {[{ color: vars["--deck-a"] }, { color: vars["--deck-b"] }].map(({ color }, idx) => (
+          <div key={idx} style={{ flex: 1, background: vars["--bg-secondary"], border: `1px solid ${vars["--border-primary"]}`, padding: 10 }}>
+            <div style={{ width: "55%", height: 4, background: color, marginBottom: 7, opacity: 0.9 }} />
+            <div style={{ width: "100%", height: 3, background: vars["--wave-unplayed"], marginBottom: 4, position: "relative", overflow: "hidden" }}>
+              {idx === 0 && <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: "42%", background: vars["--wave-played"] }} />}
+            </div>
+            <div style={{ width: "38%", height: 3, background: vars["--text-tertiary"], opacity: 0.28 }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ height: 20, background: vars["--bg-secondary"], borderTop: `1px solid ${vars["--border-primary"]}`, display: "flex", alignItems: "center", gap: 8, padding: "0 12px" }}>
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: vars["--accent-green"] }} />
+        <div style={{ width: 28, height: 3, background: vars["--text-tertiary"], opacity: 0.35 }} />
+        <div style={{ flex: 1 }} />
+        <div style={{ width: 44, height: 3, background: vars["--text-tertiary"], opacity: 0.25 }} />
       </div>
     </div>
   );

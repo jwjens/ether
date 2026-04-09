@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { query, execute } from "../db/client";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -27,6 +28,10 @@ interface BoardItem {
   question?: string;
   answer?: string;
   loading?: boolean;
+  // show notes metadata
+  createdAt?: string;       // ISO timestamp set at creation
+  showName?: string;        // current show name at creation time
+  linkedTrack?: { title: string; artist: string } | null;
 }
 
 interface Message {
@@ -73,9 +78,10 @@ interface Props {
   onClose: () => void;
   episodeTitle?: string;
   nowPlaying?: string;
+  nowPlayingTrack?: { title: string; artist: string } | null;
 }
 
-export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Props) {
+export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPlayingTrack }: Props) {
   // Window position/size
   const [minimized, setMinimized] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -118,6 +124,13 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
   const [aiLoading, setAiLoading] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const [aiKeyConfigured, setAiKeyConfigured] = useState<boolean | null>(null);
+
+  // Show notes context
+  const [currentShowName, setCurrentShowName] = useState<string>("");
+  const [archiveOpen, setArchiveOpen]         = useState(false);
+  const [archiveSearch, setArchiveSearch]     = useState("");
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [exportFlash, setExportFlash]         = useState(false);
 
   // ── Save ─────────────────────────────────────────────────────
   const saveDesk = () => {
@@ -214,13 +227,81 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
   // ── Add items ────────────────────────────────────────────────
   const addNote = (color: NoteColor = "yellow") => {
     const id = Date.now().toString();
+    const now = new Date();
     setItemsAndSave(p => [...p, {
       id, type: "note",
       x: 40 + Math.random() * 200, y: 40 + Math.random() * 100,
       w: 190, h: 150,
       text: "", color,
+      createdAt: now.toISOString(),
+      showName: currentShowName,
     }]);
     setSelectedNote(id);
+  };
+
+  const addFromTemplate = (tpl: string) => {
+    const templates: Record<string, string> = {
+      intro:    "SHOW INTRO\n\nGood [morning/afternoon/evening], you're listening to [Station]. I'm [Name].\n\nToday on the show:\n• \n• \n• ",
+      sponsor:  "SPONSOR READ — [Sponsor Name]\n\n[Opening line]\n\n[Key messages]\n• \n• \n\n[CTA + Tagline]",
+      bio:      "ARTIST BIO — [Artist Name]\n\nOrigin: \nGenre: \nNotable works: \n\nFun fact: \n\nOn-air tease: ",
+      weather:  "WEATHER / TRAFFIC\n\nTemp: \nConditions: \nWind: \n\nTraffic:\n• \n• ",
+      shoutout: "LISTENER SHOUTOUT\n\nName: \nLocation: \nMessage: \n\nOn-air response: ",
+    };
+    const id = Date.now().toString();
+    const now = new Date();
+    setItemsAndSave(p => [...p, {
+      id, type: "note" as const,
+      x: 40 + Math.random() * 200, y: 40 + Math.random() * 100,
+      w: 230, h: 200,
+      text: templates[tpl] || "",
+      color: "white" as NoteColor,
+      createdAt: now.toISOString(),
+      showName: currentShowName,
+    }]);
+    setSelectedNote(id);
+    setTemplateMenuOpen(false);
+  };
+
+  const linkToCurrentTrack = (noteId: string) => {
+    if (!nowPlayingTrack) return;
+    setItemsAndSave(p => p.map(i =>
+      i.id === noteId ? { ...i, linkedTrack: { ...nowPlayingTrack } } : i
+    ));
+  };
+
+  const pushToCart = async (text: string) => {
+    try {
+      const rows = await query<{ slot_number: number }>("SELECT slot_number FROM cart_slots ORDER BY slot_number");
+      const used = new Set(rows.map(r => r.slot_number));
+      let slot = -1;
+      for (let i = 0; i < 18; i++) { if (!used.has(i)) { slot = i; break; } }
+      if (slot === -1) { alert("All 18 cart slots are full."); return; }
+      const label = text.slice(0, 40).replace(/\n/g, " ").trim();
+      await execute(
+        "INSERT OR REPLACE INTO cart_slots (slot_number, title, file_path, color, hotkey) VALUES (?,?,NULL,?,?)",
+        [slot, label, "#f59e0b", ""]
+      );
+    } catch (e) { console.error("Cart push failed", e); }
+  };
+
+  const exportNotes = async () => {
+    const lines: string[] = [`=== DeskProducer Notes — ${new Date().toDateString()} ===`, ""];
+    items.filter(i => i.type === "note" && i.text).forEach(i => {
+      if (i.showName || i.createdAt) {
+        const ts = i.createdAt
+          ? new Date(i.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+          : "";
+        lines.push(`[${[i.showName, ts].filter(Boolean).join(" · ")}]`);
+      }
+      if (i.linkedTrack) lines.push(`♪ ${i.linkedTrack.title} — ${i.linkedTrack.artist}`);
+      lines.push(i.text || "");
+      lines.push("");
+    });
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setExportFlash(true);
+      setTimeout(() => setExportFlash(false), 2000);
+    } catch {}
   };
 
   const addLink = () => {
@@ -263,6 +344,53 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
       .then(([status, provider]: any[]) => setAiKeyConfigured(!!(status?.[provider])))
       .catch(() => setAiKeyConfigured(true));
   }, []);
+
+  // ── Current show name ────────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const hour = new Date().getHours();
+        const shows = await query<{ name: string; start_hour: number; end_hour: number }>(
+          "SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour"
+        );
+        const curr = shows.find(s => {
+          if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
+          if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
+          return hour >= s.start_hour || hour < s.end_hour;
+        });
+        setCurrentShowName(curr?.name ?? "");
+      } catch {}
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Iris voice-to-note: "Iris, note this <content>" ──────────
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.iris) return;
+    const h = ether.iris.onCommand((c: { action: string; label: string }) => {
+      const raw = (c.label || c.action || "").toLowerCase();
+      if (!raw.includes("note")) return;
+      const text = (c.label || c.action)
+        .replace(/^iris[,.]?\s*/i, "")
+        .replace(/^note\s+(this\s+)?/i, "")
+        .trim();
+      const id = Date.now().toString();
+      const now = new Date();
+      setItemsAndSave(p => [...p, {
+        id, type: "note" as const,
+        x: 40 + Math.random() * 200, y: 40 + Math.random() * 100,
+        w: 220, h: 160,
+        text: text || "(Iris note)",
+        color: "cyan" as NoteColor,
+        createdAt: now.toISOString(),
+        showName: currentShowName,
+      }]);
+    });
+    return () => ether.iris.offCommand(h);
+  }, [currentShowName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── AI chat ──────────────────────────────────────────────────
   const sendMessage = async () => {
@@ -476,6 +604,43 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
               Link
             </button>
 
+            {/* Template dropdown */}
+            <div style={{ position: "relative" }} onMouseDown={e => e.stopPropagation()}>
+              <button onClick={() => setTemplateMenuOpen(o => !o)} style={{
+                display: "flex", alignItems: "center", gap: 3,
+                padding: "3px 9px", borderRadius: 0,
+                background: templateMenuOpen ? "rgba(255,255,255,0.09)" : "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                color: "rgba(255,255,255,0.5)", fontSize: 10, fontWeight: 600, cursor: "pointer",
+              }}>+ Template</button>
+              {templateMenuOpen && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, zIndex: 500, marginTop: 2,
+                  background: "#1a1a24", border: "1px solid rgba(255,255,255,0.12)",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+                  minWidth: 160,
+                }}>
+                  {[
+                    ["intro",    "Show Intro"],
+                    ["sponsor",  "Sponsor Read"],
+                    ["bio",      "Artist Bio"],
+                    ["weather",  "Weather / Traffic"],
+                    ["shoutout", "Listener Shoutout"],
+                  ].map(([k, label]) => (
+                    <button key={k} onClick={() => addFromTemplate(k)} style={{
+                      display: "block", width: "100%", textAlign: "left",
+                      padding: "8px 12px", background: "none", border: "none",
+                      color: "rgba(255,255,255,0.75)", fontSize: 11, cursor: "pointer",
+                      borderBottom: "1px solid rgba(255,255,255,0.05)",
+                    }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.07)"}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}
+                    >{label}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <button onClick={() => setTab("ai")} style={{
               display: "flex", alignItems: "center", gap: 4,
               padding: "3px 9px", borderRadius: 0,
@@ -489,9 +654,22 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
               ✦ Ask AI
             </button>
 
-            <span style={{ marginLeft: "auto", fontSize: 9, color: "rgba(255,255,255,0.12)", letterSpacing: "0.03em" }}>
-              {items.length > 0 ? `${items.length} items` : "Drop images · add notes"}
-            </span>
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+              <button onClick={() => setArchiveOpen(o => !o)} title="Past Notes" style={{
+                padding: "3px 9px", borderRadius: 0,
+                background: archiveOpen ? "rgba(56,189,248,0.12)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${archiveOpen ? "rgba(56,189,248,0.3)" : "rgba(255,255,255,0.08)"}`,
+                color: archiveOpen ? "#7dd3fc" : "rgba(255,255,255,0.35)",
+                fontSize: 10, fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+              }}>📂 Past Notes</button>
+              <button onClick={exportNotes} title="Copy all notes to clipboard" style={{
+                padding: "3px 9px", borderRadius: 0,
+                background: exportFlash ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${exportFlash ? "rgba(52,211,153,0.4)" : "rgba(255,255,255,0.08)"}`,
+                color: exportFlash ? "#34d399" : "rgba(255,255,255,0.35)",
+                fontSize: 10, fontWeight: 600, cursor: "pointer", transition: "all 0.15s",
+              }}>{exportFlash ? "✓ Copied" : "↑ Export"}</button>
+            </div>
           </div>
 
           {/* Canvas — dark dot grid */}
@@ -518,6 +696,9 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
                 onChange={(id, updates) => setItemsAndSave(p => p.map(i => i.id === id ? { ...i, ...updates } : i))}
                 onDelete={id => setItemsAndSave(p => p.filter(i => i.id !== id))}
                 onPin={pinToBoard}
+                onLink={nowPlayingTrack ? linkToCurrentTrack : undefined}
+                onCart={text => pushToCart(text)}
+                nowPlayingTrack={nowPlayingTrack}
               />
             ))}
 
@@ -647,6 +828,83 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying }: Prop
         </div>
       )}
 
+      {/* ── Past Notes archive drawer ── */}
+      {archiveOpen && !minimized && (
+        <div style={{
+          position: "absolute", top: 48, right: 0, bottom: 0, width: 280, zIndex: 200,
+          background: "#12121a", borderLeft: "1px solid rgba(255,255,255,0.08)",
+          display: "flex", flexDirection: "column", overflow: "hidden",
+        }}>
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.5)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Past Notes</div>
+            <input
+              value={archiveSearch}
+              onChange={e => setArchiveSearch(e.target.value)}
+              placeholder="Search notes..."
+              style={{
+                width: "100%", padding: "5px 8px", boxSizing: "border-box",
+                background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+                color: "rgba(255,255,255,0.75)", fontSize: 11, outline: "none", borderRadius: 0,
+                fontFamily: "inherit",
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
+            {(() => {
+              const noteItems = items.filter(i => i.type === "note" && i.text);
+              const q = archiveSearch.toLowerCase();
+              const filtered = q ? noteItems.filter(i =>
+                (i.text || "").toLowerCase().includes(q) ||
+                (i.showName || "").toLowerCase().includes(q) ||
+                (i.linkedTrack?.title || "").toLowerCase().includes(q) ||
+                (i.linkedTrack?.artist || "").toLowerCase().includes(q)
+              ) : noteItems;
+              // Group by date + show
+              const groups: Record<string, typeof filtered> = {};
+              filtered.forEach(i => {
+                const d = i.createdAt ? new Date(i.createdAt).toDateString() : "Untagged";
+                const key = i.showName ? `${i.showName} · ${d}` : d;
+                (groups[key] = groups[key] || []).push(i);
+              });
+              const entries = Object.entries(groups);
+              if (entries.length === 0) return (
+                <div style={{ padding: "20px 12px", textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.2)" }}>
+                  {q ? "No matching notes" : "No notes yet"}
+                </div>
+              );
+              return entries.map(([group, groupItems]) => (
+                <div key={group}>
+                  <div style={{ padding: "6px 12px 3px", fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.3)", letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
+                    {group}
+                  </div>
+                  {groupItems.map(i => (
+                    <div key={i.id} style={{ padding: "6px 12px", borderBottom: "1px solid rgba(255,255,255,0.04)", cursor: "pointer" }}
+                      onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)"}
+                      onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}
+                      onClick={() => setArchiveOpen(false)}
+                    >
+                      {i.linkedTrack && (
+                        <div style={{ fontSize: 9, color: "#7dd3fc", marginBottom: 2 }}>
+                          ♪ {i.linkedTrack.title}
+                        </div>
+                      )}
+                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.65)", lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as any }}>
+                        {i.text}
+                      </div>
+                      {i.createdAt && (
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.25)", marginTop: 3 }}>
+                          {new Date(i.createdAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* ── Resize handle ── */}
       {!minimized && (
         <div onMouseDown={startResize} style={{ position: "absolute" as const, bottom: 0, right: 0, width: 20, height: 20, cursor: "se-resize", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -677,6 +935,9 @@ interface CardProps {
   onChange: (id: string, updates: Partial<BoardItem>) => void;
   onDelete: (id: string) => void;
   onPin: (content: string) => void;
+  onLink?: (id: string) => void;
+  onCart?: (text: string) => void;
+  nowPlayingTrack?: { title: string; artist: string } | null;
 }
 
 // Richer note palette — warm paper tones on dark glass
@@ -689,7 +950,7 @@ const DARK_NOTE: Record<NoteColor, { bg: string; border: string; text: string; s
   white:  { bg: "rgba(255,255,255,0.05)", border: "rgba(255,255,255,0.1)", text: "rgba(255,255,255,0.8)", shadow: "rgba(255,255,255,0.04)" },
 };
 
-function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChange, onDelete, onPin }: CardProps) {
+function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChange, onDelete, onPin, onLink, onCart, nowPlayingTrack }: CardProps) {
   const dn = item.color ? DARK_NOTE[item.color] : DARK_NOTE.white;
   const [isResizing, setIsResizing] = useState(false);
   const cardResizeData = useRef({ mx: 0, my: 0, ow: 0, oh: 0, ox: 0, oy: 0, dir: "se" as "se" | "sw" | "ne" | "nw" });
@@ -738,6 +999,16 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
   };
 
   if (item.type === "note") {
+    const tsLabel = (() => {
+      const parts: string[] = [];
+      if (item.showName) parts.push(item.showName);
+      if (item.createdAt) {
+        const d = new Date(item.createdAt);
+        parts.push(d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }));
+        parts.push(d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }));
+      }
+      return parts.join(" · ");
+    })();
     return (
       <div
         style={{ ...baseStyle, background: dn.bg, border: `1px solid ${dn.border}`, minHeight: undefined, height: item.h, display: "flex", flexDirection: "column" }}
@@ -746,20 +1017,56 @@ function BoardItemCard({ item, selected, dragging, onDragStart, onSelect, onChan
       >
         {/* Top accent line */}
         <div style={{ height: 2, background: `linear-gradient(90deg, ${dn.border}, transparent)`, flexShrink: 0 }} />
-        {/* Header — font controls + delete */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 8px 0", opacity: selected ? 1 : 0.4, transition: "opacity 0.15s", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 4 }} onMouseDown={e => e.stopPropagation()}>
-            {/* Bold toggle */}
+
+        {/* Timestamp header — always visible */}
+        {tsLabel && (
+          <div style={{ padding: "4px 10px 0", fontSize: 8.5, color: dn.text, opacity: 0.38, letterSpacing: "0.04em", lineHeight: 1.3, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {tsLabel}
+          </div>
+        )}
+
+        {/* Linked track badge */}
+        {item.linkedTrack && (
+          <div onMouseDown={e => e.stopPropagation()} style={{ margin: "3px 8px 0", padding: "2px 7px", background: "rgba(56,189,248,0.1)", border: "1px solid rgba(56,189,248,0.2)", fontSize: 9, color: "#7dd3fc", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            <span>♪</span>
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {item.linkedTrack.title} — {item.linkedTrack.artist}
+            </span>
+            <button onClick={e => { e.stopPropagation(); onChange(item.id, { linkedTrack: null }); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#7dd3fc", opacity: 0.5, padding: 0, marginLeft: "auto", fontSize: 11, lineHeight: 1 }}>×</button>
+          </div>
+        )}
+
+        {/* Header — font controls + action buttons + delete */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 8px 0", opacity: selected ? 1 : 0.35, transition: "opacity 0.15s", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 3 }} onMouseDown={e => e.stopPropagation()}>
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontBold: !item.fontBold }); }}
-              style={{ background: item.fontBold ? "rgba(255,255,255,0.15)" : "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, fontWeight: 800, color: dn.text, padding: "1px 6px", lineHeight: 1.4 }}>
-              B
-            </button>
-            {/* Font size */}
+              style={{ background: item.fontBold ? "rgba(255,255,255,0.15)" : "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, fontWeight: 800, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>B</button>
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontSize: Math.max(9, (item.fontSize || 12) - 1) }); }}
-              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>−</button>
-            <span style={{ fontSize: 9, color: dn.text, opacity: 0.5, minWidth: 18, textAlign: "center", fontFamily: "'DM Mono',monospace" }}>{item.fontSize || 12}</span>
+              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 4px", lineHeight: 1.4 }}>−</button>
+            <span style={{ fontSize: 9, color: dn.text, opacity: 0.5, minWidth: 16, textAlign: "center", fontFamily: "'DM Mono',monospace" }}>{item.fontSize || 12}</span>
             <button onClick={e => { e.stopPropagation(); onChange(item.id, { fontSize: Math.min(48, (item.fontSize || 12) + 1) }); }}
-              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 5px", lineHeight: 1.4 }}>+</button>
+              style={{ background: "none", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 0, cursor: "pointer", fontSize: 11, color: dn.text, padding: "1px 4px", lineHeight: 1.4 }}>+</button>
+
+            {/* Link to current track */}
+            {onLink && (
+              <button onClick={e => { e.stopPropagation(); onLink(item.id); }}
+                title={nowPlayingTrack ? `Link: ${nowPlayingTrack.title}` : "No track playing"}
+                style={{ background: "none", border: "1px solid rgba(56,189,248,0.25)", borderRadius: 0, cursor: "pointer", fontSize: 9, color: "#7dd3fc", opacity: 0.7, padding: "1px 5px", lineHeight: 1.4, marginLeft: 2 }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.7"}
+              >♪</button>
+            )}
+
+            {/* Push to cart wall */}
+            {onCart && item.text && (
+              <button onClick={e => { e.stopPropagation(); onCart(item.text || ""); }}
+                title="Send to empty cart slot"
+                style={{ background: "none", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 0, cursor: "pointer", fontSize: 9, color: "#f59e0b", opacity: 0.7, padding: "1px 5px", lineHeight: 1.4 }}
+                onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
+                onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.7"}
+              >→□</button>
+            )}
           </div>
           <button onClick={e => { e.stopPropagation(); onDelete(item.id); }}
             style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: dn.text, opacity: 0.4, padding: 0, lineHeight: 1, transition: "opacity 0.1s" }}

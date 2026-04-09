@@ -1,8 +1,10 @@
 import VUMeter from "./VUMeter";
 import ArtistCard from "./ArtistCard";
-import { useState, useEffect, useRef } from "react";
+import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { DeckState } from "../audio/engine-rodio";
 import { query } from "../db/client";
+import { execute } from "../db/client";
 
 interface Props {
   deck: DeckState | null;
@@ -36,6 +38,12 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   const [categoryColor, setCategoryColor] = useState<string | null>(null);
   const [categoryName, setCategoryName] = useState<string | null>(null);
 
+  // ── EQ state ─────────────────────────────────────────────────
+  const [eqOpen,  setEqOpen]  = useState(false);
+  const [eqBands, setEqBands] = useState<number[]>(EQ_DEFAULT);
+  const eqActive = eqBands.some(g => Math.abs(g) > 0.05);
+  const eqKey = `eq_deck_${deckId}`;
+
   // Deck values — must be declared before any useEffect that references them
   const status = deck?.status || "idle";
   const title  = deck?.title  || "";
@@ -59,6 +67,29 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       setCategoryName(rows[0]?.name || rows[0]?.code || null);
     }).catch(() => {});
   }, [title]);
+
+  // ── EQ load from DB on mount ─────────────────────────────────
+  useEffect(() => {
+    query<{ value: string }>(
+      "SELECT value FROM station_config_kv WHERE key=?", [eqKey]
+    ).then(rows => {
+      if (rows[0]?.value) {
+        try { setEqBands(JSON.parse(rows[0].value)); } catch {}
+      }
+    }).catch(() => {});
+  }, [eqKey]);
+
+  // ── EQ save + send to engine ──────────────────────────────────
+  const handleEqChange = useCallback((bands: number[]) => {
+    setEqBands(bands);
+    execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES (?,?)",
+      [eqKey, JSON.stringify(bands)]).catch(() => {});
+    // Send to native audio engine (audioSetEq added in native addon)
+    try {
+      const w = window as any;
+      if (w.ether?.audio?.setEq) w.ether.audio.setEq(deckId, bands);
+    } catch {}
+  }, [eqKey, deckId]);
 
   const remaining = Math.max(0, dur - pos);
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -200,24 +231,23 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   let statusLabel = "IDLE";
   let statusColor = "var(--text-tertiary)";
   let topBarColor = identityColor;
-  let cardBg = "var(--bg-secondary)";
+  let cardBg = "#0e0e12";
   let cardShadow = "none";
-  let cardBorder = "#1e1e28";
 
   if (isPlaying) {
     if (isCritical) {
       accent = "var(--accent-red)"; statusLabel = "ENDING"; statusColor = "var(--accent-red)";
       topBarColor = "var(--accent-red)";
-      cardBg = blink ? "rgba(248,113,113,0.04)" : "var(--bg-secondary)";
+      cardBg = blink ? "rgba(248,113,113,0.04)" : "#0e0e12";
       cardShadow = "0 0 12px rgba(248,113,113,0.18)";
     } else if (isEnding) {
       accent = "var(--accent-orange)"; statusLabel = "OUTRO"; statusColor = "var(--accent-orange)";
       topBarColor = "var(--accent-orange)";
       cardShadow = "0 0 12px rgba(251,146,60,0.14)";
     } else {
-      accent = "var(--accent-green)"; statusLabel = "ON AIR"; statusColor = "var(--accent-green)";
-      topBarColor = "var(--accent-green)";
-      cardShadow = "0 0 12px rgba(52,211,153,0.12)";
+      accent = "var(--accent-orange)"; statusLabel = "ON AIR"; statusColor = "var(--accent-green)";
+      topBarColor = "#6040c0";
+      cardShadow = "0 0 12px rgba(96,64,192,0.18)";
     }
   } else if (isPaused) {
     accent = "var(--accent-amber)"; statusLabel = "PAUSED"; statusColor = "var(--accent-amber)";
@@ -261,7 +291,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       backdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
       WebkitBackdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
       borderRadius: 0,
-      border: `1px solid ${cardBorder}`,
+      border: "none",
       boxShadow: cardShadow,
       display: "flex",
       flexDirection: "column",
@@ -280,113 +310,66 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         flexShrink: 0,
       }} />
 
-      {/* ── Header row ── */}
-      <div style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "14px 16px 10px",
-        flexShrink: 0,
-      }}>
-        {/* Deck badge */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {onDragStart && (
-            <div
-              onMouseDown={onDragStart}
-              title="Drag to reorder"
-              style={{ cursor: "grab", padding: "2px 3px", borderRadius: 0, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.5 }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.5"; }}
-            >
-              <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
-                <circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/>
-                <circle cx="3" cy="6" r="1.2"/><circle cx="7" cy="6" r="1.2"/>
-                <circle cx="3" cy="10" r="1.2"/><circle cx="7" cy="10" r="1.2"/>
-              </svg>
-            </div>
-          )}
+      {/* ── Track info ── */}
+      <div style={{ padding: "10px 16px 8px", flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 8 }}>
+        {onDragStart && (
+          <div
+            onMouseDown={onDragStart}
+            title="Drag to reorder"
+            style={{ cursor: "grab", paddingTop: 4, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.3 }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "0.7"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.3"; }}
+          >
+            <svg width="8" height="12" viewBox="0 0 10 14" fill="currentColor">
+              <circle cx="3" cy="2" r="1.2"/><circle cx="7" cy="2" r="1.2"/>
+              <circle cx="3" cy="6" r="1.2"/><circle cx="7" cy="6" r="1.2"/>
+              <circle cx="3" cy="10" r="1.2"/><circle cx="7" cy="10" r="1.2"/>
+            </svg>
+          </div>
+        )}
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            key={title}
+            style={{
+              fontSize: 13,
+              color: isIdle ? "var(--text-tertiary)" : "#c0c0d0",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              letterSpacing: "-0.02em",
+              lineHeight: 1.2,
+              fontFamily: "'Inter', system-ui, sans-serif",
+              fontStyle: isIdle ? "italic" : "normal",
+              fontWeight: isIdle ? 400 : 500,
+              animation: title ? "deck-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both" : "none",
+              transition: "color 0.2s ease",
+            }}>
+            {title ? (() => {
+              const remaster = title.match(/\s*[-–]\s*([\d]{4}\s*remaster(?:ed)?|remaster(?:ed)?|re-?master(?:ed)?.*)/i);
+              const cleanTitle = remaster ? title.slice(0, remaster.index).trim() : title;
+              const remasterTag = remaster ? remaster[0].replace(/\s*[-–]\s*/, '').trim() : null;
+              return (
+                <>
+                  {cleanTitle}
+                  {remasterTag && <span style={{ fontSize: "0.55em", fontWeight: 400, opacity: 0.4, marginLeft: 6 }}>{remasterTag}</span>}
+                </>
+              );
+            })() : "No track loaded"}
+          </div>
           <div style={{
-            width: 28, height: 28, borderRadius: 0,
-            background: deckHueBg,
-            border: `1px solid ${deckHueBorder}`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: "'Syne', sans-serif",
-            fontSize: 12, fontWeight: 800,
-            color: deckHue,
-            letterSpacing: "0em",
-            flexShrink: 0,
-          }}>{deckId}</div>
-          <span style={{
-            fontSize: 9, fontWeight: 700,
-            color: isPlaying ? deckHue : "var(--text-tertiary)",
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-          }}>
-            {isPlaying ? "ON AIR" : isPaused ? "PAUSED" : deckId === "A" ? "PRIMARY" : deckId === "B" ? "STANDBY" : "NEXT UP"}
-          </span>
-        </div>
-
-        {/* Status badge — no fill when idle/ready */}
-        <div style={{
-          display: "flex", alignItems: "center",
-          padding: "2px 8px",
-          borderRadius: 0,
-          background: isPlaying ? `${accent}12` : "transparent",
-          border: `1px solid ${isPlaying ? accent + "28" : "rgba(255,255,255,0.07)"}`,
-        }}>
-          <span style={{
-            fontSize: 8, fontWeight: 700,
-            color: statusColor,
-            letterSpacing: "0.14em",
-            textTransform: "uppercase",
-            opacity: isPlaying ? 1 : 0.6,
-          }}>{statusLabel}</span>
-        </div>
-      </div>
-
-      {/* ── Track info — Apple Music bold hierarchy ── */}
-      <div style={{ padding: "6px 16px 12px", flexShrink: 0 }}>
-        <div
-          key={title}
-          style={{
-            fontSize: 15,
-            color: isIdle ? "var(--text-tertiary)" : "var(--text-primary)",
+            fontSize: 11,
+            fontWeight: 400,
+            color: "#606070",
+            marginTop: 3,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            letterSpacing: "-0.02em",
-            lineHeight: 1.3,
-            fontFamily: "'Inter', system-ui, sans-serif",
-            fontStyle: isIdle ? "italic" : "normal",
-            fontWeight: isIdle ? 400 : 700,
-            animation: title ? "deck-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both" : "none",
-            transition: "color 0.2s ease",
+            letterSpacing: "-0.005em",
+            opacity: isIdle ? 0 : 1,
+            transition: "opacity 0.2s",
           }}>
-          {title ? (() => {
-            const remaster = title.match(/\s*[-–]\s*([\d]{4}\s*remaster(?:ed)?|remaster(?:ed)?|re-?master(?:ed)?.*)/i);
-            const cleanTitle = remaster ? title.slice(0, remaster.index).trim() : title;
-            const remasterTag = remaster ? remaster[0].replace(/\s*[-–]\s*/, '').trim() : null;
-            return (
-              <>
-                {cleanTitle}
-                {remasterTag && <span style={{ fontSize: "0.6em", fontWeight: 400, opacity: 0.4, marginLeft: 6 }}>{remasterTag}</span>}
-              </>
-            );
-          })() : "No track loaded"}
-        </div>
-        <div style={{
-          fontSize: 12,
-          fontWeight: 400,
-          color: "var(--text-tertiary)",
-          marginTop: 2,
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          letterSpacing: "-0.005em",
-          opacity: isIdle ? 0 : 0.8,
-          transition: "opacity 0.2s",
-        }}>
-          {artist || ""}
+            {artist || ""}
+          </div>
         </div>
       </div>
 
@@ -463,14 +446,12 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         }} />
       </div>
 
-      {/* ── VU Meter — fills available space ── */}
+      {/* ── VU Meter — fills available space, borderless hardware aesthetic ── */}
       <div style={{
-        margin: "0 16px 10px",
         flex: 1,
         minHeight: 44,
         position: "relative",
         overflow: "hidden",
-        background: "var(--bg-tertiary)",
       }}>
         {/* Artwork background for standby decks */}
         {!isPlaying && artUrl && artReady && (
@@ -577,6 +558,16 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         )}
       </div>
 
+      {/* ── EQ panel — slides up from bottom ── */}
+      <div style={{
+        maxHeight: eqOpen ? 130 : 0,
+        overflow: "hidden",
+        transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
+        flexShrink: 0,
+      }}>
+        <GraphicEQ bands={eqBands} onChange={handleEqChange} label="EQ" />
+      </div>
+
       {/* ── Controls ── */}
       <div style={{
         padding: "10px 16px 14px",
@@ -646,6 +637,37 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           {playBtnLabel}
         </button>
 
+        {/* EQ toggle */}
+        <button
+          onClick={() => setEqOpen(o => !o)}
+          title={eqOpen ? "Close EQ" : "Open graphic EQ"}
+          style={{
+            width: 36, height: 36,
+            borderRadius: 0,
+            background: eqOpen ? "rgba(96,64,192,0.18)" : "var(--bg-secondary)",
+            border: `1px solid ${eqOpen ? "#6040c0" : "var(--border-secondary)"}`,
+            color: eqOpen ? "#8060e0" : "var(--text-tertiary)",
+            cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexDirection: "column" as const,
+            gap: 2,
+            flexShrink: 0,
+            transition: "all 0.15s ease",
+            position: "relative" as const,
+          }}
+        >
+          <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: "0.06em" }}>EQ</span>
+          {/* Active dot */}
+          {eqActive && (
+            <div style={{
+              position: "absolute",
+              top: 3, right: 3,
+              width: 4, height: 4, borderRadius: "50%",
+              background: "#c07820",
+              boxShadow: "0 0 4px #c07820",
+            }} />
+          )}
+        </button>
 
       </div>
     </div>

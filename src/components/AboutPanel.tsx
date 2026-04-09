@@ -383,9 +383,14 @@ export default function AboutPanel({ onClose }: Props) {
           display: "flex", alignItems: "center", justifyContent: "space-between",
           background: "#0a0a14", flexShrink: 0,
         }}>
-          <span style={{ fontSize: 9, color: "rgba(255,255,255,0.15)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.06em" }}>
-            ETHER TECHNOLOGIES · v{VERSION} · MIT LICENSE
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.15)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.06em" }}>
+              ETHER TECHNOLOGIES · v{VERSION} · MIT LICENSE
+            </span>
+            <span style={{ fontSize: 9, color: "rgba(255,255,255,0.08)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em" }}>
+              BUILT BY DENIRO
+            </span>
+          </div>
           <button onClick={onClose} style={{
             padding: "6px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.08)",

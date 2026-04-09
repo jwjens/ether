@@ -1,5 +1,4 @@
 import { useEffect, useRef } from "react";
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
 interface Props {
   deckId: "A" | "B" | "C" | string;
@@ -7,233 +6,199 @@ interface Props {
   remaining?: number; duration?: number; pos?: number;
   isInIntro?: boolean; isEnding?: boolean; isCritical?: boolean;
   introEnd?: number; hasTrack?: boolean; filePath?: string;
+  /** When provided, bypasses IPC subscription and uses this value (0–1) directly. */
+  externalLevel?: number;
 }
 
-const BAR_COUNT    = 48;
-const PEAK_HOLD_MS = 1200;
+const PEAK_HOLD_MS = 1500;
 
 export default function VUMeter({
   deckId, isPlaying,
   isInIntro, isEnding, isCritical, hasTrack = false,
+  externalLevel,
 }: Props) {
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const barLevels    = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const barTargets   = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const barPhases    = useRef<number[]>(
-    Array.from({ length: BAR_COUNT }, (_, i) => i * 0.71 + Math.random() * 2)
-  );
-  const peakLevels   = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const peakTimes    = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const masterLevel  = useRef(0);
-  const rafRef       = useRef<number>(0);
-  const standbyPhase = useRef(Math.random() * Math.PI * 2);
+  const canvasRef     = useRef<HTMLCanvasElement>(null);
+  const rawLevel      = useRef(0);
+  const levelL        = useRef(0);
+  const peakL         = useRef(0);
+  const peakLAt       = useRef(0);
+  const phaseL        = useRef(0);
+  const rafRef        = useRef<number>(0);
+  const standbyPhase  = useRef(Math.random() * Math.PI * 2);
 
+  // ── Draw loop ─────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
 
     const draw = () => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { rafRef.current = requestAnimationFrame(draw); return; }
+
       const w   = canvas.width;
       const h   = canvas.height;
       const now = Date.now();
 
       ctx.clearRect(0, 0, w, h);
 
-      // Very dark background
-      ctx.fillStyle = "#0a0a0e";
+      // Background — #080808, barely darker than deck surface #0e0e12
+      ctx.fillStyle = "#080808";
       ctx.fillRect(0, 0, w, h);
 
-      const barW   = Math.max(2, Math.floor((w - (BAR_COUNT - 1)) / BAR_COUNT));
-      const gap    = 1;
-      const totalW = BAR_COUNT * (barW + gap) - gap;
-      const offX   = Math.floor((w - totalW) / 2);
-
-      // ── STANDBY ─────────────────────────────────────────────
+      // ── STANDBY ───────────────────────────────────────────────
       if (!isPlaying) {
         if (hasTrack) {
-          const speed = deckId === "C" ? 0.07 : deckId === "A" ? 0.018 : 0.025;
-          standbyPhase.current += speed;
-          const phase = standbyPhase.current;
-          const isC   = deckId === "C";
-          const idleColor = deckId === "A" ? "#008878"
-            : deckId === "C" ? "#203878"
-            : "#1a6040";
-
-          for (let i = 0; i < BAR_COUNT; i++) {
-            const x    = offX + i * (barW + gap);
-            const wave = isC
-              ? 0.055 * Math.sin(phase - i * 0.38) + 0.025 * Math.sin(phase * 2.3 - i * 0.7)
-              : 0.040 * Math.sin(phase - i * 0.35) + 0.015 * Math.sin(phase * 1.7 - i * 0.6);
-            const amp  = isC ? 0.065 : 0.055;
-            const barH = Math.max(2, Math.floor((amp + wave) * h));
-            const y    = Math.floor(h / 2 - barH / 2);
-
-            ctx.fillStyle   = idleColor;
-            ctx.globalAlpha = 0.55;
-            ctx.fillRect(x, y, barW, barH);
+          // Gentle center flatline wave — not a fake level simulation
+          standbyPhase.current += 0.022;
+          const p = standbyPhase.current;
+          const col = deckId === "C" ? "#601820" : "#003828";
+          ctx.fillStyle = col;
+          ctx.globalAlpha = 0.55;
+          const lineH = Math.max(2, Math.floor(h * 0.06));
+          for (let x = 0; x < w; x += 3) {
+            const wave = Math.sin(p + x * 0.04) * h * 0.04;
+            const y = Math.floor(h / 2 - lineH / 2 + wave);
+            ctx.fillRect(x, y, 2, lineH);
+          }
+          ctx.globalAlpha = 1;
+        }
+        // Deck letter — visible grey so jocks can identify which deck at a glance
+        {
+          const label = deckId === "mic" ? "MIC" : (/^[A-Z]$/.test(deckId) ? deckId : null);
+          if (label) {
+            const sz = label.length > 1
+              ? Math.floor(Math.min(h * 0.40, w * 0.55))
+              : Math.floor(Math.min(h * 0.40, w * 0.70));
+            ctx.globalAlpha = hasTrack ? 0.18 : 0.30;
+            ctx.fillStyle = "#c0c0d0";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = `bold ${sz}px sans-serif`;
+            ctx.fillText(label, w / 2, h / 2);
             ctx.globalAlpha = 1;
           }
-
-          // Center line
-          ctx.strokeStyle = idleColor;
-          ctx.globalAlpha = 0.25;
-          ctx.lineWidth   = 1;
-          ctx.setLineDash([3, 5]);
-          ctx.beginPath();
-          ctx.moveTo(offX, h / 2);
-          ctx.lineTo(offX + totalW, h / 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.globalAlpha = 1;
-        } else {
-          // No track — dim tick marks only
-          for (let i = 0; i < BAR_COUNT; i++) {
-            const x = offX + i * (barW + gap);
-            ctx.fillStyle   = "#1a1a22";
-            ctx.fillRect(x, Math.floor(h / 2 - 1), barW, 2);
-          }
         }
-
         rafRef.current = requestAnimationFrame(draw);
         return;
       }
 
-      // ── PLAYING — animate each bar independently ─────────────
-      for (let i = 0; i < BAR_COUNT; i++) {
-        barPhases.current[i] += 0.04 + (i % 7) * 0.005 + (i % 3) * 0.007;
-        const p = barPhases.current[i];
+      // ── PLAYING ────────────────────────────────────────────────
+      phaseL.current += 0.042;
+      const wobble = 0.05;
+      const raw    = rawLevel.current;
+      const targetL = Math.max(0, Math.min(1, raw + wobble * Math.sin(phaseL.current)));
+      // Attack: ~2 frames (80%). Decay: ~300ms (5.5% per frame at 60fps)
+      levelL.current += (targetL - levelL.current) * (targetL > levelL.current ? 0.80 : 0.055);
 
-        const target =
-          masterLevel.current * (
-            0.4 +
-            0.35 * Math.abs(Math.sin(p)) +
-            0.15 * Math.abs(Math.sin(p * 1.61 + i)) +
-            0.10 * Math.abs(Math.cos(p * 0.79 + i * 0.3))
-          );
 
-        const diff = target - barLevels.current[i];
-        barLevels.current[i] += diff * (diff > 0 ? 0.40 : 0.08);
+      const drawBar = (
+        x: number, bw: number, lv: number,
+        pkRef: React.MutableRefObject<number>,
+        pkAtRef: React.MutableRefObject<number>
+      ) => {
+        const barH = Math.floor(lv * h);
+        const fillY = h - barH;
 
-        const level = Math.max(0, barLevels.current[i]);
-        const barH  = Math.max(0, Math.floor(level * h));
+        // Unlit track — #080808, same as bg, invisible when silent
+        ctx.fillStyle = "#080808";
+        ctx.fillRect(x, 0, bw, h);
 
-        // Peak hold
-        if (level > peakLevels.current[i]) {
-          peakLevels.current[i] = level;
-          peakTimes.current[i]  = now;
-        } else if (now - peakTimes.current[i] > PEAK_HOLD_MS) {
-          peakLevels.current[i] = Math.max(0, peakLevels.current[i] - 0.016);
-        }
-
-        const x = offX + i * (barW + gap);
-
-        // ── Unlit track (above the fill) ──────────────────────
-        if (barH < h) {
-          ctx.fillStyle = "#111116";
-          ctx.fillRect(x, 0, barW, h - barH);
-        }
-
-        // ── Lit fill with zone-aware gradient ─────────────────
+        // Lit fill — gradient: teal at bottom → amber at 60% → red at top
         if (barH > 0) {
-          const fillY = h - barH;
-          // Determine the top zone the bar reaches
-          const normPeak = level; // 0–1
-
-          // Build gradient: bottom-to-top of the fill
-          const grad = ctx.createLinearGradient(x, h, x, fillY);
-
-          // Bottom of fill = brighter / more saturated (energy source)
-          if (normPeak <= 0.60) {
-            grad.addColorStop(0,   "#00c8a8"); // bright teal bottom
-            grad.addColorStop(0.5, "#008878");
-            grad.addColorStop(1,   "#006058");
-          } else if (normPeak <= 0.80) {
-            grad.addColorStop(0,   "#00c8a8"); // teal at base
-            grad.addColorStop(0.5, "#008878");
-            grad.addColorStop(0.75, "#c07820"); // amber transition
-            grad.addColorStop(1,   "#905010");
-          } else {
-            grad.addColorStop(0,   "#00c8a8"); // teal at base
-            grad.addColorStop(0.4, "#008878");
-            grad.addColorStop(0.6, "#c07820"); // amber mid
-            grad.addColorStop(0.8, "#c02828"); // red top
-            grad.addColorStop(1,   "#901818");
-          }
-
+          const grad = ctx.createLinearGradient(x, h, x, 0);
+          grad.addColorStop(0,    "#008878"); // teal at bottom
+          grad.addColorStop(0.60, "#a07020"); // amber at 60%
+          grad.addColorStop(0.80, "#a02020"); // red at 80%
+          grad.addColorStop(1,    "#a02020"); // red at top
           ctx.fillStyle = grad;
-          ctx.fillRect(x, fillY, barW, barH);
-
-          // ── Highlight cap — top 2px of fill, brighter ────────
-          if (barH > 4) {
-            ctx.fillStyle   = "rgba(255,255,255,0.18)";
-            ctx.fillRect(x, fillY, barW, 2);
-          }
+          ctx.fillRect(x, fillY, bw, barH);
         }
 
-        // ── Peak dot ─────────────────────────────────────────
-        if (peakLevels.current[i] > 0.05) {
-          const py      = Math.max(1, h - Math.floor(peakLevels.current[i] * h) - 2);
-          const normPk  = peakLevels.current[i];
-          const pkColor = normPk > 0.80 ? "#e04040"
-            : normPk > 0.60 ? "#d09030"
-            : "#00d8b0";
-          ctx.fillStyle   = pkColor;
-          ctx.globalAlpha = 0.85;
-          ctx.fillRect(x, py, barW, 2);
-          ctx.globalAlpha = 1;
+        // Peak hold line (1px)
+        if (lv > pkRef.current) {
+          pkRef.current   = lv;
+          pkAtRef.current = now;
+        } else if (now - pkAtRef.current > PEAK_HOLD_MS) {
+          pkRef.current = Math.max(0, pkRef.current - 0.010);
         }
-      }
+        if (pkRef.current > 0.05) {
+          const py = Math.max(0, h - Math.floor(pkRef.current * h) - 1);
+          ctx.fillStyle = pkRef.current > 0.80 ? "#e04040"
+            : pkRef.current > 0.60 ? "#d09030"
+            : "#00c8a8";
+          ctx.fillRect(x, py, bw, 1);
+        }
+      };
 
-      // ── Zone separator tick lines (subtle) ───────────────────
-      const tick60 = Math.floor(h * 0.40); // 60% fill level from top
-      const tick80 = Math.floor(h * 0.20); // 80% fill level from top
+      // ── MONO — single full-width bar for all decks ───────────
+      drawBar(0, w, levelL.current, peakL, peakLAt);
+
+      // Subtle zone ticks (60% and 80%)
       ctx.strokeStyle = "rgba(255,255,255,0.04)";
       ctx.lineWidth   = 1;
-      ctx.beginPath(); ctx.moveTo(0, tick60); ctx.lineTo(w, tick60); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, tick80); ctx.lineTo(w, tick80); ctx.stroke();
+      [0.40, 0.20].forEach(f => {
+        const y = Math.floor(h * f);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      });
 
-      // ── Glass / dome overlay ─────────────────────────────────
-      // Soft white-to-transparent gradient over top ~35% of canvas
-      const glass = ctx.createLinearGradient(0, 0, 0, h * 0.45);
-      glass.addColorStop(0,   "rgba(255,255,255,0.055)");
-      glass.addColorStop(0.5, "rgba(255,255,255,0.018)");
-      glass.addColorStop(1,   "rgba(255,255,255,0)");
-      ctx.fillStyle = glass;
-      ctx.fillRect(0, 0, w, h * 0.45);
-
-      // Very subtle vignette at edges
-      const vig = ctx.createRadialGradient(w/2, h/2, h * 0.35, w/2, h/2, w * 0.8);
-      vig.addColorStop(0, "rgba(0,0,0,0)");
-      vig.addColorStop(1, "rgba(0,0,0,0.22)");
-      ctx.fillStyle = vig;
-      ctx.fillRect(0, 0, w, h);
+      // Watermark — capped by both height (40%) and width so it never cramps
+      ctx.save();
+      ctx.globalAlpha = 0.06;
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      if (deckId === "mic") {
+        // "MIC" is 3 chars — cap width: font ≤ w * 0.55 so text fits with margin
+        const sz = Math.floor(Math.min(h * 0.40, w * 0.55));
+        ctx.font = `bold ${sz}px sans-serif`;
+        ctx.fillText("MIC", w / 2, h / 2);
+      } else if (/^[A-Z]$/.test(deckId)) {
+        // Single char — cap width: font ≤ w * 0.70 (char is ~0.6× font-size wide)
+        const sz = Math.floor(Math.min(h * 0.40, w * 0.70));
+        ctx.font = `bold ${sz}px sans-serif`;
+        ctx.fillText(deckId, w / 2, h / 2);
+      }
+      ctx.restore();
 
       rafRef.current = requestAnimationFrame(draw);
     };
 
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, isInIntro, isEnding, isCritical, hasTrack, deckId]);
+  }, [isPlaying, hasTrack, deckId]);
 
-  // Poll real audio levels
+  // ── External level (e.g. mic, bypasses IPC) ──────────────────
   useEffect(() => {
-    if (!isPlaying) { masterLevel.current = 0; return; }
-    const poll = async () => {
-      try {
-        const lvl = await invoke("get_levels") as { a: number; b: number; c: number };
-        const raw = deckId === "A" ? lvl.a : deckId === "C" ? lvl.c : lvl.b;
-        masterLevel.current = Math.max(0, Math.min(1, raw));
-      } catch {
-        masterLevel.current = 0.28 + 0.32 * Math.abs(Math.sin(Date.now() * 0.0018));
-      }
-    };
-    const id = setInterval(poll, 50);
-    return () => { clearInterval(id); masterLevel.current = 0; };
-  }, [isPlaying, deckId]);
+    if (externalLevel === undefined) return;
+    rawLevel.current = Math.max(0, Math.min(1, externalLevel));
+  }, [externalLevel]);
 
-  // HiDPI canvas sizing
+  // ── Real-time level subscription — 30fps push, no polling ─────
+  useEffect(() => {
+    if (externalLevel !== undefined) return; // skip IPC when caller provides level
+    if (!isPlaying) {
+      rawLevel.current = 0;
+      levelL.current   = 0;
+      peakL.current    = 0;
+      return;
+    }
+    const handle = (window as any).ether.audio.onLevels(
+      (lvl: { a: number; b: number; c: number; [k: string]: number }) => {
+        const raw = deckId === "A" ? lvl.a
+          : deckId === "C" ? lvl.c
+          : lvl.b;
+        rawLevel.current = Math.max(0, Math.min(1, raw || 0));
+      }
+    );
+    return () => {
+      (window as any).ether.audio.offLevels(handle);
+      rawLevel.current = 0;
+      levelL.current   = 0;
+      peakL.current    = 0;
+    };
+  }, [isPlaying, deckId, externalLevel]);
+
+  // ── HiDPI canvas sizing ────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -245,8 +210,7 @@ export default function VUMeter({
         canvas.height = Math.floor(height * dpr);
         canvas.style.width  = width  + "px";
         canvas.style.height = height + "px";
-        const c = canvas.getContext("2d");
-        if (c) c.scale(dpr, dpr);
+        // No ctx.scale() — draw loop uses raw device pixels
       }
     });
     ro.observe(canvas.parentElement!);
@@ -255,7 +219,7 @@ export default function VUMeter({
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden" }}>
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", background: "#080808" }} />
     </div>
   );
 }

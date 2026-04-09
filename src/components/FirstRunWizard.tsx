@@ -377,8 +377,8 @@ export default function FirstRunWizard({ onComplete }: Props) {
           </div>
         )}
 
-        {/* ── STEP 2: Ready ── */}
-        {step === 2 && selectedLabel && (
+        {/* ── STEP 3: Ready ── */}
+        {step === 3 && selectedLabel && (
           <div style={{ animation: "wiz-in 0.4s ease both", textAlign: "center" as any }}>
             {/* Animated checkmark */}
             <div style={{ marginBottom: 28 }}>

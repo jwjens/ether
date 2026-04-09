@@ -95,6 +95,13 @@ export default function SplashScreen({ onDone }: Props) {
         </div>
       </div>
 
+      {/* Built by Deniro */}
+      <div style={{
+        position: "absolute", bottom: 18,
+        fontSize: 9, color: "rgba(255,255,255,0.1)",
+        letterSpacing: "0.12em", fontFamily: "'DM Mono', monospace",
+      }}>BUILT BY DENIRO</div>
+
       {/* Progress area */}
       <div style={{ width: 280, animation: "splash-words 0.6s 0.3s ease both" }}>
         {/* Bar track */}

@@ -11,6 +11,30 @@ contextBridge.exposeInMainWorld("ether", {
     getLevels: () => ipcRenderer.invoke("audio:getLevels"),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
     watchdogSet: (a, t) => ipcRenderer.invoke("audio:watchdogSet", a, t),
+    setEq: (deck, bands) => ipcRenderer.invoke("audio:setEq", deck, bands),
+    // Push-based level subscription — 30fps from main process, no polling
+    onLevels:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:levels", h); return h; },
+    offLevels: (h)  => ipcRenderer.removeListener("audio:levels", h),
+  },
+  theme: {
+    export: (presetId, vars, font) => ipcRenderer.invoke("theme:export", { presetId, vars, font }),
+    import: ()                     => ipcRenderer.invoke("theme:import"),
+  },
+  station: {
+    uploadLogo: () => ipcRenderer.invoke("station:uploadLogo"),
+  },
+  spotify: {
+    setCredentials:       (clientId, clientSecret) => ipcRenderer.invoke("spotify:setCredentials", { clientId, clientSecret }),
+    getCredentialStatus:  ()                       => ipcRenderer.invoke("spotify:getCredentialStatus"),
+    getRecommendations:   (params)                 => ipcRenderer.invoke("spotify:getRecommendations", params),
+  },
+  musixmatch: {
+    setKey:       (key)            => ipcRenderer.invoke("musixmatch:setKey", { key }),
+    getKeyStatus: ()               => ipcRenderer.invoke("musixmatch:getKeyStatus"),
+    scanLyrics:   (title, artist)  => ipcRenderer.invoke("musixmatch:scanLyrics", { title, artist }),
+  },
+  library: {
+    writeTrack: (track) => ipcRenderer.invoke("library:writeTrack", track),
   },
   db: {
     query: (sql, p) => ipcRenderer.invoke("db:query", sql, p),

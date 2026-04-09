@@ -70,24 +70,24 @@ function VUMeter({ level, peak, recording }: { level: number; peak: number; reco
   const active = Math.min(BARS, Math.round(level * BARS * 10));
   const peakBar = Math.min(BARS - 1, Math.round(peak * BARS * 10));
   return (
-    <div style={{ padding: "10px 14px", background: "rgba(0,0,0,0.35)", borderRadius: 0, border: "1px solid rgba(255,255,255,0.05)" }}>
+    <div style={{ padding: "10px 14px", background: "#080808" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
         <span style={{ fontSize: 8, fontWeight: 700, color: "rgba(255,255,255,0.2)", letterSpacing: "0.15em", textTransform: "uppercase" }}>INPUT LEVEL</span>
-        <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", color: !recording ? "rgba(255,255,255,0.15)" : level > 0.7 ? "#f87171" : level > 0.35 ? "#fbbf24" : "#34d399" }}>
+        <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", color: !recording ? "rgba(255,255,255,0.15)" : level > 0.7 ? "#a02020" : level > 0.35 ? "#a07020" : "#008878" }}>
           {!recording ? "—" : level > 0.7 ? "HOT" : level > 0.35 ? "GOOD" : "LOW"}
         </span>
       </div>
       <div style={{ display: "flex", gap: 2.5, alignItems: "flex-end", height: 44 }}>
         {Array.from({ length: BARS }).map((_, i) => {
           const pct = i / BARS;
-          const color = pct > 0.85 ? "#f87171" : pct > 0.65 ? "#fbbf24" : "#34d399";
+          const color = pct > 0.80 ? "#a02020" : pct > 0.60 ? "#a07020" : "#008878";
           const barH = 16 + pct * 28;
           const isActive = i < active;
           const isPeak = i === peakBar && recording && peakBar > 0;
           return (
             <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", gap: 2 }}>
-              {isPeak && <div style={{ width: "100%", height: 2, borderRadius: 0, background: color, boxShadow: `0 0 6px ${color}` }} />}
-              <div style={{ width: "100%", height: barH, borderRadius: 0.5, background: isActive ? color : "rgba(255,255,255,0.04)", boxShadow: isActive ? `0 0 6px ${color}50` : "none", transition: "background 0.04s" }} />
+              {isPeak && <div style={{ width: "100%", height: 2, borderRadius: 0, background: color }} />}
+              <div style={{ width: "100%", height: barH, borderRadius: 0, background: isActive ? color : "#111116", transition: "background 0.04s" }} />
             </div>
           );
         })}

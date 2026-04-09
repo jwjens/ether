@@ -4,7 +4,7 @@ import { query, execute } from "../db/client";
 
 // ── Types ─────────────────────────────────────────────────────
 
-export type DeckType = "music" | "mic" | "guest" | "cart" | "desk";
+export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video";
 
 export interface DeckConfig {
   slot: string;       // "A" | "B" | "C" | "D" | "E" | "F"
@@ -29,11 +29,12 @@ export interface PlaylistTrack {
 const SLOT_ORDER = ["A", "B", "C", "D", "E", "F"];
 
 const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; desc: string }> = {
-  music:  { label: "Music",    icon: "🎵", color: "#34d399", desc: "Play tracks from library or playlist" },
-  mic:    { label: "Mic",      icon: "🎙",  color: "#ef4444", desc: "Live microphone input channel" },
-  guest:  { label: "Guest",    icon: "👤",  color: "#38bdf8", desc: "Remote guest audio (WebRTC)" },
-  cart:   { label: "Cart",     icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
-  desk:   { label: "Desk",     icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
+  music:  { label: "Music",        icon: "🎵", color: "#34d399", desc: "Play tracks from library or playlist" },
+  mic:    { label: "Mic",          icon: "🎙",  color: "#ef4444", desc: "Live microphone input channel" },
+  guest:  { label: "Guest",        icon: "👤",  color: "#38bdf8", desc: "Remote guest audio (WebRTC)" },
+  cart:   { label: "Cart",         icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
+  desk:   { label: "Desk",         icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
+  video:  { label: "Video Studio", icon: "🎥",  color: "#38bdf8", desc: "Live video camera, streaming & recording — spans 3 decks" },
 };
 
 // ── useDeckConfig ─────────────────────────────────────────────
@@ -92,6 +93,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
   const guestCount = enabled.filter(c => c.type === "guest").length;
   const cartCount = enabled.filter(c => c.type === "cart").length;
   const deskCount = enabled.filter(c => c.type === "desk").length;
+  const videoCount = enabled.filter(c => c.type === "video").length;
 
   const toggle = (slot: string) => {
     setConfigs(p => p.map(c => {
@@ -138,7 +140,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
 
         {/* Summary pills */}
         <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border-primary)", display: "flex", gap: 8, flexShrink: 0 }}>
-          {([["music", musicCount], ["mic", micCount], ["guest", guestCount], ["cart", cartCount], ["desk", deskCount]] as [DeckType, number][]).map(([type, count]) => (
+          {([["music", musicCount], ["mic", micCount], ["guest", guestCount], ["cart", cartCount], ["desk", deskCount], ["video", videoCount]] as [DeckType, number][]).map(([type, count]) => (
             <div key={type} style={{
               display: "flex", alignItems: "center", gap: 5,
               padding: "4px 10px", borderRadius: 0,
@@ -255,6 +257,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                         <option value="cart">Cart / SFX</option>
                         <option value="phone">Phone Line</option>
                         <option value="guest">Guest Feed</option>
+                        <option value="video">Video Studio</option>
                         <option value="custom">Custom</option>
                       </select>
                     </div>

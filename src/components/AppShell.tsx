@@ -620,7 +620,7 @@ export default function App() {
       <KeyboardHelp />
 
       {/* ── Header ── */}
-      <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "#080810", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
         {/* ── LEFT: Logo + Menu + Session ── */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, zIndex: 1 }}>
@@ -783,12 +783,12 @@ export default function App() {
               {panel === "autocue" && <AutoCue onClose={() => setPanel("live")} />}
               {panel === "health" && <HealthMonitor onClose={() => setPanel("live")} />}
               {panel === "cartwall" && (
-                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", background: "#0e0e12", borderRadius: 0, border: "none", overflow: "hidden" }}>
                   <CartWallPanel onClose={() => setPanel("live")} />
                 </div>
               )}
               {panel === "playlist" && (
-                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", background: "#0e0e12", borderRadius: 0, border: "none", overflow: "hidden" }}>
                   <PlaylistPanel onClose={() => setPanel("live")} />
                 </div>
               )}

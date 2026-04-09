@@ -28,6 +28,7 @@ import OnAirDeck from "./components/OnAirDeck";
 import CartWall from "./components/CartWall";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
+import MasterOutput, { consoleLog } from "./components/MasterOutput";
 import SmartScheduler from "./components/SmartScheduler";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
@@ -52,6 +53,9 @@ import ShowPrep from "./components/ShowPrep";
 import Announcements, { startAnnouncementEngine } from "./components/Announcements";
 import FirstRunWizard, { VenueProfile, VENUE_LABELS } from "./components/FirstRunWizard";
 import SplashScreen from "./components/SplashScreen";
+import OnShiftScreen from "./components/OnShiftScreen";
+import LibraryImport from "./components/LibraryImport";
+import SpotifyImport from "./components/SpotifyImport";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import PodcastStudio from "./components/PodcastStudio";
@@ -72,8 +76,9 @@ import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPic
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
+import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -99,10 +104,10 @@ function ToolbarBtn({ label, active, onClick, color }: { label: string; active: 
         fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
         cursor: "pointer", fontFamily: "'Inter', sans-serif",
         transition: "all 0.15s ease",
-        background: active ? color : "var(--bg-secondary)",
-        color: active ? "#000" : "var(--text-tertiary)",
-        border: active ? "none" : "1px solid var(--border-primary)",
-        boxShadow: active ? `0 2px 12px ${color}40` : "none",
+        background: active ? `${color}18` : "transparent",
+        color: active ? color : "var(--text-tertiary)",
+        border: active ? `1px solid ${color}60` : "1px solid var(--border-primary)",
+        boxShadow: active ? `0 0 8px ${color}30` : "none",
       }}
     >{label}</button>
   );
@@ -330,6 +335,8 @@ export default function App() {
   const [onAir, setOnAir] = useState(false);
   const [onAirOverride, setOnAirOverride] = useState(false);
   const onAirOverrideRef = useRef(false); // ref avoids stale closure in engine.on
+  const prevDeckStatus = useRef<Record<string, string>>({}); // track status transitions for console logging
+  const prevQueueLen = useRef(-1); // track queue length changes for console logging
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
@@ -353,6 +360,22 @@ export default function App() {
     }
   };
   const { configs: deckConfigs, save: saveDeckConfigs, enabled: enabledDecks } = useDeckConfig();
+
+  // Experience mode — controls deck visibility
+  type ExperienceMode = "solo" | "standard" | "live_radio";
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode>("live_radio");
+  const [shiftStarted, setShiftStarted] = useState(false);
+  const [hiddenDeckAudio, setHiddenDeckAudio] = useState<string | null>(null); // amber warning
+
+  // Compute which decks are visible given the current mode + per-deck purpose
+  const visibleEnabledDecks = React.useMemo(() => {
+    if (experienceMode === "live_radio") return enabledDecks;
+    const purposedSlots = new Set(deckConfigs.filter(c => c.purpose && c.purpose !== "").map(c => c.slot));
+    if (experienceMode === "solo")     return enabledDecks.filter(c => c.slot === "A" || purposedSlots.has(c.slot));
+    if (experienceMode === "standard") return enabledDecks.filter(c => c.slot === "A" || c.slot === "B" || purposedSlots.has(c.slot));
+    return enabledDecks;
+  }, [enabledDecks, deckConfigs, experienceMode]);
+
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
   const [editSong, setEditSong] = useState<any>(null);
@@ -371,15 +394,18 @@ export default function App() {
           setCurrentPlan(p);
           setPlanGlobally(p);
         }
+        const modeRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'");
+        if (modeRows.length > 0) setExperienceMode(modeRows[0].value as ExperienceMode);
       } catch {}
       setFirstRunChecked(true);
+      consoleLog("system", "ether started — engine ready");
     })();
   }, []);
 
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
@@ -475,6 +501,7 @@ export default function App() {
     return engine.onPlayStart(async (deckId, title, artist, _filePath) => {
       try { await logPlay(title, artist, deckId); }
       catch (e) { console.error('Log write error:', e); }
+      consoleLog("audio", `[DECK ${deckId}] Playing: ${title}${artist ? ` — ${artist}` : ""}`);
       // Keep Iris informed about what's on air
       try { (window as any).ether.emit("iris:nowplaying", { title, artist }); }
       catch {}
@@ -563,7 +590,27 @@ export default function App() {
       if (id === "A") setDeckA({...st});
       else if (id === "B") setDeckB({...st});
       else if (id === "C") setDeckC({...st});
-      setQueueLen(engine.getQueue().length);
+
+      // Console logging — status transitions
+      const prev = prevDeckStatus.current[id];
+      if (prev !== st.status) {
+        prevDeckStatus.current[id] = st.status;
+        if (st.status === "loading" && st.title) {
+          const dur = st.durationSec ? ` (${Math.floor(st.durationSec / 60)}:${String(Math.floor(st.durationSec % 60)).padStart(2, "0")})` : "";
+          consoleLog("audio", `[DECK ${id}] Loaded: ${st.title}${st.artist ? ` — ${st.artist}` : ""}${dur}`);
+        } else if ((st.status === "idle" || st.status === "ended") && (prev === "playing" || prev === "paused")) {
+          consoleLog("audio", `[DECK ${id}] Stopped`);
+        }
+      }
+
+      // Console logging — queue length changes
+      const newQLen = engine.getQueue().length;
+      if (newQLen !== prevQueueLen.current) {
+        if (prevQueueLen.current >= 0) consoleLog("rotation", `[QUEUE] ${newQLen} track${newQLen !== 1 ? "s" : ""} loaded`);
+        prevQueueLen.current = newQLen;
+      }
+      setQueueLen(newQLen);
+
       // Fire tour events
       if (id === "A" && st.filePath) window.dispatchEvent(new Event("ether:tour-deck-loaded"));
       if (st.status === "playing") window.dispatchEvent(new Event("ether:tour-deck-playing"));
@@ -784,9 +831,29 @@ export default function App() {
     }
   }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName]);
 
-  if (!splashDone) return <SplashScreen onDone={() => setSplashDone(true)} />;
-  if (firstRunChecked && !wizardDone) return <FirstRunWizard onComplete={handleWizardComplete} />;
-  if (!currentUser) return <UserLogin onLogin={setCurrentUser} />;
+  // Detect audio on hidden decks and show amber banner
+  // Must be before any early returns to comply with React rules of hooks
+  useEffect(() => {
+    if (experienceMode === "live_radio") { setHiddenDeckAudio(null); return; }
+    const visibleSlots = new Set(visibleEnabledDecks.map(c => c.slot));
+    const checkHidden = () => {
+      const hiddenPlaying = deckConfigs.filter(c => {
+        if (visibleSlots.has(c.slot)) return false;
+        const deck = engine.getDeck(c.slot);
+        const st = deck?.getState?.();
+        return st?.status === "playing";
+      });
+      setHiddenDeckAudio(hiddenPlaying.length > 0 ? hiddenPlaying[0].slot : null);
+    };
+    const id = setInterval(checkHidden, 500);
+    return () => clearInterval(id);
+  }, [experienceMode, visibleEnabledDecks, deckConfigs]);
+
+  // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
+  if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
+  if (firstRunChecked && !wizardDone) return <EtherErrorBoundary><FirstRunWizard onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
+  if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
   return (
     <EtherErrorBoundary>
@@ -794,7 +861,7 @@ export default function App() {
       <KeyboardHelp />
 
       {/* ── Header ── */}
-      <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "#080810", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
                 {/* LEFT: Logo + Session */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, zIndex: 1 }}>
@@ -906,6 +973,22 @@ export default function App() {
         </div>
 </header>
 
+      {/* Hidden-deck audio warning */}
+      {hiddenDeckAudio && (
+        <div style={{
+          padding: "6px 16px", background: "#8a5a10", borderBottom: "1px solid #b87020",
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", letterSpacing: "0.02em" }}>
+            Audio is playing on a hidden deck (Deck {hiddenDeckAudio}) — tap to show it
+          </span>
+          <button
+            onClick={() => setShowDeckConfig(true)}
+            style={{ padding: "3px 12px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0, letterSpacing: "0.06em" }}
+          >SHOW DECK</button>
+        </div>
+      )}
+
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "videostudio") ? 0 : 16, display: "flex", flexDirection: "column" }}>
@@ -931,7 +1014,7 @@ export default function App() {
                   toggleCarts={() => setShowCarts(!showCarts)}
                   inputDevice={inputDevice}
                   visiblePanels={visiblePanels}
-                  deckConfigs={enabledDecks}
+                  deckConfigs={visibleEnabledDecks}
                   onConfigureDecks={() => setShowDeckConfig(true)}
                   autoSilenceTrim={autoSilenceTrim}
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
@@ -1004,10 +1087,12 @@ export default function App() {
                   <PlaylistPanel onClose={() => setPanel("live")} />
                 </div>
               )}
-              {panel === "videostudio" && (
-                <div style={{ height: "100%", overflow: "hidden" }}>
-                  <VideoStudio />
-                </div>
+              {/* Video Studio is now a deck type — no standalone panel */}
+              {panel === "importlibrary" && (
+                <LibraryImport onClose={() => setPanel("live")} />
+              )}
+              {panel === "spotifyimport" && (
+                <SpotifyImport onClose={() => setPanel("library")} />
               )}
             </div>
           )}
@@ -1127,6 +1212,7 @@ export default function App() {
           onClose={() => setShowProducerDesk(false)}
           episodeTitle={nowPlayingTitle || undefined}
           nowPlaying={nowPlayingStr || undefined}
+          nowPlayingTrack={nowPlayingDeck ? { title: nowPlayingDeck.title || "", artist: nowPlayingDeck.artist || "" } : null}
         />
       )}
       {showDeckConfig && (
@@ -1300,7 +1386,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         {/* Production */}
         <Item label={L.voicetrack}         onClick={() => set("voicetrack")} />
         <Item label="Studio Editor"        onClick={() => set("studio")} />
-        <Item label="Video Studio"         onClick={() => set("videostudio")} />
+        {/* Video Studio lives as a deck type — configure via Deck Configurator */}
         <Item label="Production Editor"    onClick={() => set("broadcasteditor")} />
         <Item label="Cue Editor"           onClick={() => set("trackedit")} />
         <Item label="Auto-Cue Library"     onClick={() => set("autocue")} />
@@ -1627,9 +1713,14 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
           </div>
         )}
 
-        {/* VU Meter — single bar for all channels, monitoring only */}
-        <div style={{ flex: 1, padding: '4px 6px', minHeight: 0, display: 'flex', alignItems: 'stretch' }}>
-          <VUBar lv={isMic ? (muted ? 0 : level) : level} pk={isMic ? (muted ? 0 : peakHold) : peakHold} mono />
+        {/* VU Meter — shared canvas component, same as all other decks */}
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <VUMeter
+            deckId={isMic ? "mic" : (deckSlot || "A")}
+            isPlaying={isActive}
+            hasTrack={isActive}
+            externalLevel={isMic ? (muted ? 0 : level) : undefined}
+          />
         </div>
 
         {/* Time remaining for music */}
@@ -2127,6 +2218,17 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
+  const [masterLevel, setMasterLevel] = useState(0);
+
+  // Subscribe to master output level from push events
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.audio) return;
+    const h = ether.audio.onLevels((lvl: { master?: number }) => {
+      setMasterLevel(lvl.master ?? 0);
+    });
+    return () => ether.audio.offLevels(h);
+  }, []);
   // Panel widths — resizable via drag divider
   const [queueWidth, setQueueWidth] = useState(360);
   const resizingRef = useRef(false);
@@ -2345,7 +2447,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         transition: "opacity 0.15s, outline 0.1s",
       }}
     >
-      <div ref={deckRowRef} style={{ display: "flex", gap: 4, flex: 1, minHeight: 0, cursor: draggingDeck ? "grabbing" : "auto" }}>
+      <div ref={deckRowRef} style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, cursor: draggingDeck ? "grabbing" : "auto" }}>
         {activeDeckOrder.map((slot, i) => {
           const isDragging = draggingDeck === slot;
           const isDropTarget = dropDeck === slot;
@@ -2355,6 +2457,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           // Get this slot's type early so we can decide layout
           const slotConfig = deckConfigs?.find(d => d.slot === slot);
           const slotType = slotConfig?.type || (slot === "mic" ? "mic" : "music");
+
+          // Video deck: spans 3× width of a standard deck
+          const isVideoDeck = slotType === "video";
 
           // Compact strip when 4+ decks total — all slots get channel strip view
           const compact = activeDeckOrder.length >= 5;
@@ -2395,8 +2500,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           const stop    = () => engine.getDeck(slot)?.stop();
           const vol     = (v: number) => engine.getDeck(slot)?.setVolume(v);
 
-          const sizeStyle: React.CSSProperties = compact
-            ? deckType === "desk" ? { flex: 1, minWidth: 220 } : { flex: 1, minWidth: 75, maxWidth: 200 }   // all strips share space equally
+          const sizeStyle: React.CSSProperties = isVideoDeck
+            ? { flex: 3, minWidth: 320, aspectRatio: "16/9" }
+            : compact
+            ? deckType === "desk" ? { flex: 1, minWidth: 220 } : { flex: 1, minWidth: 75, maxWidth: 200 }
             : fixedW !== null
               ? { width: fixedW, flexShrink: 0 }
               : slot === "mic"
@@ -2417,8 +2524,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   outlineOffset: 2, borderRadius: 0,
                 }}
               >
-                {deckType === "cart" ? (
-                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                {deckType === "video" ? (
+                  <VideoStudio embedded />
+                ) : deckType === "cart" ? (
+                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "none", overflow: "hidden" }}>
                     <BoutiqueCartWall deckSlot={slot} compact={compact} />
                   </div>
                 ) : deckType === "desk" && compact ? (
@@ -2441,7 +2550,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 ) : deckType === "desk" ? (
                   <InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} />
                 ) : !["A","B","C"].includes(slot) ? (
-                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "none", overflow: "hidden" }}>
                     <PlaylistPlayer deckSlot={slot} color={config?.color || "#34d399"} />
                   </div>
                 ) : (
@@ -2452,6 +2561,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             </React.Fragment>
           );
         })}
+        {/* Master Output — permanent right column, always visible */}
+        <MasterOutput masterLevel={masterLevel} />
       </div>
 
       {/* Cart wall — shown when CARTS active or when a deck is configured as cart */}
@@ -2478,7 +2589,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       }}>
         <div style={{ display: "flex", gap: 2 }}>
           <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
-          <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#a78bfa" />
+          <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#6040c0" />
           <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
           {/* Crossfade duration control */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 6px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", height: 28 }}>
@@ -2486,7 +2597,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             <select
               value={xfadeDuration}
               onChange={e => { const v = Number(e.target.value); setXfadeDuration(v); engine.crossfadeDuration = v; }}
-              style={{ fontSize: 10, fontWeight: 700, background: "transparent", border: "none", color: "var(--accent-cyan)", cursor: "pointer", outline: "none", fontFamily: "'DM Mono', monospace" }}
+              style={{ fontSize: 10, fontWeight: 700, background: "transparent", border: "none", color: "var(--accent-purple)", cursor: "pointer", outline: "none", fontFamily: "'DM Mono', monospace" }}
             >
               {[1,2,3,4,5,6,8,10].map(s => <option key={s} value={s}>{s}s</option>)}
             </select>
@@ -2516,6 +2627,25 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
           </svg>
           DECKS
+          {deckConfigs && deckConfigs.filter(c => {
+            const deck = engine.getDeck(c.slot);
+            const st = deck?.getState?.();
+            return st?.status === "playing" || st?.status === "paused" || c.purpose;
+          }).length > 0 && (
+            <span style={{
+              minWidth: 14, height: 14, borderRadius: "50%",
+              background: "#6040c0", color: "#fff",
+              fontSize: 8, fontWeight: 800, lineHeight: "14px",
+              textAlign: "center", padding: "0 3px", display: "inline-flex",
+              alignItems: "center", justifyContent: "center",
+            }}>
+              {deckConfigs.filter(c => {
+                const deck = engine.getDeck(c.slot);
+                const st = deck?.getState?.();
+                return st?.status === "playing" || st?.status === "paused" || c.purpose;
+              }).length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -2560,8 +2690,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 // ── Library Panel ────────────────────────────────────────────
 
 function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void }) {
-  const [showImport, setShowImport] = useState(false);
-  const [showNexGen, setShowNexGen] = useState(false);
+  const [showImport, setShowImport]   = useState(false);
+  const [showNexGen, setShowNexGen]   = useState(false);
+  const [showSpotify, setShowSpotify] = useState(false);
   const [showCreateCat, setShowCreateCat] = useState(false);
   const [newCatCode, setNewCatCode] = useState("");
   const [newCatName, setNewCatName] = useState("");
@@ -2650,6 +2781,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
+      {/* Spotify import modal — rendered above everything else */}
+      {showSpotify && <SpotifyImport onClose={() => { setShowSpotify(false); load(); }} />}
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
@@ -2660,6 +2794,11 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
           </span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          {/* Spotify import button */}
+          <button onClick={() => setShowSpotify(true)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(29,185,84,0.08)", color: "#1db954", border: "1px solid rgba(29,185,84,0.3)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+            Import from Spotify
+          </button>
           <button onClick={relocateLibrary} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
             Relocate

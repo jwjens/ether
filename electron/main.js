@@ -401,6 +401,11 @@ function runMigrations() {
 
   // Part 1 — deck purpose (controls mode-based visibility)
   alterSafe("ALTER TABLE deck_configs ADD COLUMN purpose TEXT DEFAULT ''");
+  // Part 7 — per-operator theme + station logo
+  alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
+  // Part 8 — Spotify URI on songs
+  alterSafe("ALTER TABLE songs ADD COLUMN spotify_uri TEXT DEFAULT NULL");
+  // EQ settings stored in station_config_kv with keys eq_deck_A, eq_deck_B, eq_deck_C, eq_deck_mic, eq_master
   // Part 2 — operators and operator notes
   db.exec(`
     CREATE TABLE IF NOT EXISTS operators (
@@ -735,6 +740,9 @@ function processInviteFile() {
   }
 }
 
+// Module-level handle so before-quit can clear it
+let levelPushId = null;
+
 app.whenReady().then(() => {
   createSplash();
   initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
@@ -742,6 +750,20 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
   buildMenu();
+
+  // Start 30fps real-time audio level push to renderer
+  // Renderer subscribes via window.ether.audio.onLevels(cb) — no polling, no fake sim
+  mainWindow.webContents.on("did-finish-load", () => {
+    if (levelPushId) clearInterval(levelPushId);
+    levelPushId = setInterval(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      try {
+        const levels = JSON.parse(audio.audioGetLevels());
+        levels.master = Math.max(levels.a || 0, levels.b || 0, levels.c || 0);
+        mainWindow.webContents.send("audio:levels", levels);
+      } catch {}
+    }, 33);
+  });
 });
 
 app.on("window-all-closed", () => {
@@ -755,6 +777,7 @@ app.on("activate", () => {
 });
 
 app.on("before-quit", () => {
+  if (levelPushId) { clearInterval(levelPushId); levelPushId = null; }
   app.isQuitting = true;
 });
 
@@ -773,6 +796,12 @@ ipcMain.handle("audio:getState", () => JSON.parse(audio.audioGetState()));
 ipcMain.handle("audio:getLevels", () => JSON.parse(audio.audioGetLevels()));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
 ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec) => audio.watchdogSet(active, thresholdSec));
+// EQ — sends band gains to native engine. audioSetEq(deck, bandsJson) to be implemented in native addon.
+ipcMain.handle("audio:setEq", (_, deck, bands) => {
+  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(deck, JSON.stringify(bands)); }
+  catch(e) { console.warn("[EQ] audioSetEq not yet implemented in native addon:", e.message); }
+  return true;
+});
 
 // Database
 ipcMain.handle("db:query", (_, sql, params) => {
@@ -1589,3 +1618,225 @@ setInterval(() => {
     sendToAllWindows('iris:connected', false);
   }
 }, 5000);
+
+// ── Part 8 — Spotify Library Integration ─────────────────────
+// Credentials stored via safeStorage (same helper as AI keys).
+// Spotify token cached in memory; refreshed automatically.
+
+let _spotifyToken = null;
+let _spotifyTokenExpiry = 0;
+
+function getSpotifyConfig() {
+  const cfg = readAiConfig();
+  return {
+    clientId:     decryptKey(cfg.keys?.spotify_client_id)  || null,
+    clientSecret: decryptKey(cfg.keys?.spotify_client_secret) || null,
+  };
+}
+
+async function getSpotifyToken() {
+  if (_spotifyToken && Date.now() < _spotifyTokenExpiry) return _spotifyToken;
+  const { clientId, clientSecret } = getSpotifyConfig();
+  if (!clientId || !clientSecret) return null;
+  const res = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Authorization": "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64"),
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  _spotifyToken = data.access_token || null;
+  _spotifyTokenExpiry = Date.now() + (data.expires_in || 3600) * 1000 - 60000;
+  return _spotifyToken;
+}
+
+ipcMain.handle("spotify:setCredentials", (_, { clientId, clientSecret }) => {
+  const cfg = readAiConfig();
+  if (!cfg.keys) cfg.keys = {};
+  if (clientId)     cfg.keys.spotify_client_id     = encryptKey(clientId);
+  if (clientSecret) cfg.keys.spotify_client_secret = encryptKey(clientSecret);
+  writeAiConfig(cfg);
+  _spotifyToken = null; // force token refresh
+  return true;
+});
+
+ipcMain.handle("spotify:getCredentialStatus", () => {
+  const { clientId, clientSecret } = getSpotifyConfig();
+  return { hasClientId: !!clientId, hasClientSecret: !!clientSecret };
+});
+
+ipcMain.handle("spotify:getRecommendations", async (_, { seeds, valence, energy, speechiness, limit }) => {
+  try {
+    const token = await getSpotifyToken();
+    if (!token) return { ok: false, error: "No Spotify credentials — add Client ID and Secret in Settings > AI & Integrations" };
+
+    const params = new URLSearchParams({
+      limit: String(Math.min(limit || 100, 100)), // Spotify max per call is 100
+      seed_genres: (seeds || ["pop"]).slice(0, 5).join(","), // Spotify max 5 seeds
+      target_valence:    String(valence    ?? 0.7),
+      min_valence:       String(Math.max(0, (valence ?? 0.7) - 0.2)),
+      target_energy:     String(energy     ?? 0.7),
+      min_energy:        String(Math.max(0, (energy  ?? 0.7) - 0.2)),
+      max_speechiness:   String(speechiness ?? 0.05),
+      target_popularity: "60",
+    });
+
+    const res = await fetch(`https://api.spotify.com/v1/recommendations?${params}`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return { ok: false, error: err.error?.message || `Spotify API error ${res.status}` };
+    }
+    const data = await res.json();
+    const tracks = (data.tracks || [])
+      .filter(t => !t.explicit) // server-side explicit filter
+      .map(t => ({
+        title:       t.name,
+        artist:      t.artists?.map(a => a.name).join(", ") || "Unknown",
+        album:       t.album?.name || "",
+        durationMs:  t.duration_ms,
+        spotifyUri:  t.uri,
+        spotifyId:   t.id,
+        explicit:    t.explicit,
+        previewUrl:  t.preview_url || null,
+        imageUrl:    t.album?.images?.[2]?.url || t.album?.images?.[0]?.url || null,
+        valence:     null, // available in audio features, not recommendations response
+        energy:      null,
+        speechiness: null,
+      }));
+    return { ok: true, tracks };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Musixmatch lyric scan — fetches lyrics then checks for red-flag terms
+const LYRIC_FLAG_CATEGORIES = {
+  violence:    ["kill", "murder", "shoot", "gun", "knife", "blood", "dead", "death", "violent", "stab", "assault", "rape", "bomb", "terrorist", "weapon", "slaughter"],
+  sexual:      ["sex", "naked", "pussy", "dick", "cock", "fuck", "bitch", "ass", "booty", "twerk", "strip", "lust", "orgasm", "explicit", "erotic", "horny"],
+  hate_speech: ["nigger", "nigga", "faggot", "spic", "kike", "slut", "whore", "retard", "cunt"],
+  political:   ["trump", "biden", "democrat", "republican", "maga", "antifa", "blm", "protest", "revolution"],
+};
+
+ipcMain.handle("musixmatch:setKey", (_, { key }) => {
+  const cfg = readAiConfig();
+  if (!cfg.keys) cfg.keys = {};
+  cfg.keys.musixmatch = encryptKey(key);
+  writeAiConfig(cfg);
+  return true;
+});
+
+ipcMain.handle("musixmatch:getKeyStatus", () => {
+  const cfg = readAiConfig();
+  return { hasKey: !!(cfg.keys?.musixmatch) };
+});
+
+ipcMain.handle("musixmatch:scanLyrics", async (_, { title, artist }) => {
+  try {
+    const cfg = readAiConfig();
+    const apiKey = decryptKey(cfg.keys?.musixmatch);
+    if (!apiKey) return { ok: false, error: "No Musixmatch API key — add it in Settings > AI & Integrations" };
+
+    const searchUrl = `https://api.musixmatch.com/ws/1.1/matcher.lyrics.get?format=json&q_track=${encodeURIComponent(title)}&q_artist=${encodeURIComponent(artist)}&apikey=${apiKey}`;
+    const res = await fetch(searchUrl);
+    const data = await res.json();
+
+    const statusCode = data?.message?.header?.status_code;
+    if (statusCode !== 200) {
+      // 404 = lyrics not found — treat as clean (no lyrics = can't scan)
+      return { ok: true, found: false, flagged: false, matches: [] };
+    }
+
+    const lyrics = (data?.message?.body?.lyrics?.lyrics_body || "").toLowerCase();
+    if (!lyrics) return { ok: true, found: false, flagged: false, matches: [] };
+
+    const matches = [];
+    for (const [category, terms] of Object.entries(LYRIC_FLAG_CATEGORIES)) {
+      for (const term of terms) {
+        if (lyrics.includes(term)) {
+          matches.push({ category, term });
+        }
+      }
+    }
+    return { ok: true, found: true, flagged: matches.length > 0, matches };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Write a Spotify-imported track to the songs table
+ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spotifyUri }) => {
+  try {
+    // Upsert artist
+    db.prepare("INSERT OR IGNORE INTO artists (name) VALUES (?)").run(artist || "Unknown");
+    const artistRow = db.prepare("SELECT id FROM artists WHERE name = ?").get(artist || "Unknown");
+    const artistId = artistRow?.id || null;
+
+    // Upsert album
+    let albumId = null;
+    if (album && artistId) {
+      db.prepare("INSERT OR IGNORE INTO albums (title, artist_id) VALUES (?, ?)").run(album, artistId);
+      const albumRow = db.prepare("SELECT id FROM albums WHERE title = ? AND artist_id = ?").get(album, artistId);
+      albumId = albumRow?.id || null;
+    }
+
+    // Insert song — no file_path (stream-only via Spotify URI)
+    const existing = db.prepare("SELECT id FROM songs WHERE title = ? AND artist_id = ?").get(title, artistId);
+    if (existing) return { ok: true, id: existing.id, skipped: true };
+
+    const result = db.prepare(`
+      INSERT INTO songs (title, artist_id, album_id, duration_ms, is_explicit, spotify_uri, rotation_status, daypart_mask)
+      VALUES (?, ?, ?, ?, 0, ?, 'active', 16777215)
+    `).run(title, artistId, albumId, durationMs || 0, spotifyUri || null);
+    return { ok: true, id: result.lastInsertRowid, skipped: false };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Theme export / import (.ethertheme files) ─────────────────
+
+ipcMain.handle("theme:export", async (_, { presetId, vars, font }) => {
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: "Export Theme",
+      defaultPath: `ether-theme-${presetId || "custom"}.ethertheme`,
+      filters: [{ name: "Ether Theme", extensions: ["ethertheme"] }],
+    });
+    if (result.canceled || !result.filePath) return { ok: false };
+    const payload = { presetId, vars, font: font || null, version: 1 };
+    fs.writeFileSync(result.filePath, JSON.stringify(payload, null, 2), "utf8");
+    return { ok: true, filePath: result.filePath };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle("theme:import", async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Import Theme",
+      properties: ["openFile"],
+      filters: [{ name: "Ether Theme", extensions: ["ethertheme", "json"] }],
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false };
+    const raw = fs.readFileSync(result.filePaths[0], "utf8");
+    const data = JSON.parse(raw);
+    return { ok: true, data };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Station logo (base64 stored in station_config_kv) ─────────
+
+ipcMain.handle("station:uploadLogo", async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: "Choose Station Logo",
+      properties: ["openFile"],
+      filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "svg", "webp"] }],
+    });
+    if (result.canceled || !result.filePaths.length) return { ok: false };
+    const filePath = result.filePaths[0];
+    const buf = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase().slice(1);
+    const mime = ext === "svg" ? "image/svg+xml" : ext === "webp" ? "image/webp" : ext === "png" ? "image/png" : "image/jpeg";
+    const b64 = `data:${mime};base64,${buf.toString("base64")}`;
+    return { ok: true, dataUrl: b64 };
+  } catch (e) { return { ok: false, error: e.message }; }
+});

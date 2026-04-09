@@ -67,8 +67,12 @@ export default function ChannelStrip({
       const H = canvas.height;
       ctx.clearRect(0, 0, W, H);
 
+      // Background
+      ctx.fillStyle = "#0a0a0e";
+      ctx.fillRect(0, 0, W, H);
+
       const lvl = levelRef.current;
-      const barW = W / BAR_COUNT - 1;
+      const barW = Math.max(1, W / BAR_COUNT - 1);
 
       for (let i = 0; i < BAR_COUNT; i++) {
         const target = isPlaying
@@ -76,22 +80,40 @@ export default function ChannelStrip({
           : 0;
         bars[i] += (target - bars[i]) * 0.35;
         const h = bars[i] * H;
+        const x = i * (barW + 1);
 
-        // Color: green → yellow → red
-        const pct = i / BAR_COUNT;
-        const r = pct < 0.6 ? 52 : pct < 0.8 ? 250 : 239;
-        const g = pct < 0.6 ? 211 : pct < 0.8 ? 190 : 68;
-        const b = pct < 0.6 ? 153 : pct < 0.8 ? 22 : 68;
-        ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
-        ctx.fillRect(i * (barW + 1), H - h, barW, h);
+        // Unlit track
+        ctx.fillStyle = "#111116";
+        ctx.fillRect(x, 0, barW, H);
 
-        // Peak dots
+        // Gradient fill — teal bottom → amber → red top
+        if (h > 0) {
+          const grad = ctx.createLinearGradient(x, H, x, 0);
+          grad.addColorStop(0,    "#008878");
+          grad.addColorStop(0.60, "#a07020");
+          grad.addColorStop(0.80, "#a02020");
+          grad.addColorStop(1,    "#a02020");
+          ctx.fillStyle = grad;
+          ctx.fillRect(x, H - h, barW, h);
+        }
+
+        // Peak dot
         if (bars[i] > bPeaks[i]) { bPeaks[i] = bars[i]; bPeakTimes[i] = Date.now(); }
         else if (Date.now() - bPeakTimes[i] > 1200) bPeaks[i] *= 0.97;
-        const ph = bPeaks[i] * H;
-        ctx.fillStyle = `rgba(${r},${g},${b},1)`;
-        ctx.fillRect(i * (barW + 1), H - ph - 2, barW, 2);
+        if (bPeaks[i] > 0.05) {
+          const ph = bPeaks[i] * H;
+          ctx.fillStyle = bPeaks[i] > 0.80 ? "#e04040" : bPeaks[i] > 0.60 ? "#d09030" : "#00c8a8";
+          ctx.fillRect(x, H - ph - 2, barW, 2);
+        }
       }
+
+      // Zone ticks at 60% and 80%
+      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.lineWidth = 1;
+      [0.40, 0.20].forEach(f => {
+        const y = Math.floor(H * f);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+      });
 
       animRef.current = requestAnimationFrame(draw);
     };
@@ -126,10 +148,10 @@ export default function ChannelStrip({
       style={{
         width: "100%", height: "100%",
         display: "flex", flexDirection: "column",
-        background: "var(--bg-secondary)",
+        background: "#0e0e12",
         borderRadius: 0,
-        border: `1px solid ${isOnAir ? typeColor : "var(--border-primary)"}`,
-        boxShadow: isOnAir ? `0 0 0 1px ${typeColor}40` : "none",
+        border: "none",
+        boxShadow: "none",
         overflow: "hidden",
         userSelect: "none",
         transition: "border-color 0.2s, box-shadow 0.2s",
@@ -189,12 +211,12 @@ export default function ChannelStrip({
       </div>
 
       {/* ── VU Meter — takes remaining space ── */}
-      <div style={{ flex: 1, position: "relative", padding: "0 4px 4px", minHeight: 0 }}>
+      <div style={{ flex: 1, position: "relative", padding: "0 4px 4px", minHeight: 0, background: "#080808" }}>
         <canvas
           ref={canvasRef}
           width={120}
           height={200}
-          style={{ width: "100%", height: "100%", display: "block", borderRadius: 0 }}
+          style={{ width: "100%", height: "100%", display: "block" }}
         />
         {/* Time remaining overlay */}
         {isPlaying && remaining > 0 && (

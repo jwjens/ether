@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
@@ -64,6 +64,286 @@ function CodeBox({ value }: { value: string }) {
         style={{ padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", flexShrink: 0 }}>
         {copied ? "✓" : "Copy"}
       </button>
+    </div>
+  );
+}
+
+// ── Experience Mode selector ─────────────────────────────────
+
+const EXP_MODES = [
+  { id: "solo",       label: "Solo",       desc: "One deck · Simple play/pause · Beginner" },
+  { id: "standard",   label: "Standard",   desc: "Two decks · Crossfades · Independent broadcasters" },
+  { id: "live_radio", label: "Live Radio", desc: "All six decks · Full automation · Professional stations" },
+] as const;
+
+function StationLogoUploader() {
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [status, setStatus]   = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='station_logo'", []);
+        if (res.data?.length) setLogoUrl(res.data[0].value);
+      } catch {}
+    })();
+  }, []);
+
+  const upload = async () => {
+    const result = await (window as any).ether.station.uploadLogo();
+    if (result?.ok && result.dataUrl) {
+      setLogoUrl(result.dataUrl);
+      await (window as any).ether.db.execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('station_logo',?)", [result.dataUrl]);
+      setStatus("Saved");
+      setTimeout(() => setStatus(""), 2000);
+    }
+  };
+
+  const remove = async () => {
+    setLogoUrl(null);
+    await (window as any).ether.db.execute("DELETE FROM station_config_kv WHERE key='station_logo'", []);
+    setStatus("Removed");
+    setTimeout(() => setStatus(""), 2000);
+  };
+
+  const btnStyle: React.CSSProperties = {
+    height: 32, padding: "0 16px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+    background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)",
+  };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div style={{
+        width: 72, height: 72, background: "var(--bg-tertiary)",
+        border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "center",
+        overflow: "hidden", flexShrink: 0,
+      }}>
+        {logoUrl
+          ? <img src={logoUrl} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          : <span style={{ fontSize: 22, opacity: 0.25 }}>📻</span>}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <button onClick={upload} style={btnStyle}>{logoUrl ? "Replace Logo..." : "Upload Logo..."}</button>
+        {logoUrl && <button onClick={remove} style={{ ...btnStyle, color: "var(--accent-red)", border: "1px solid rgba(239,68,68,0.3)" }}>Remove</button>}
+        {status && <span style={{ fontSize: 11, color: "var(--accent-green)" }}>{status}</span>}
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>PNG, JPG, SVG — shown on On-Shift welcome screen and Theme Studio</div>
+      </div>
+    </div>
+  );
+}
+
+function ExperienceModeSelector() {
+  const [mode, setMode] = useState<string>("");
+  const [saved, setSaved] = useState(false);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+  const prevMode = useRef<string>("");
+
+  useEffect(() => {
+    query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'")
+      .then(rows => { const v = rows[0]?.value ?? "live_radio"; setMode(v); prevMode.current = v; })
+      .catch(() => {});
+  }, []);
+
+  const save = async (next: string) => {
+    if (prevMode.current === "standard" && next === "live_radio") setShowUpgrade(true);
+    prevMode.current = next;
+    setMode(next);
+    try {
+      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('experience_mode', ?)", [next]);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch {}
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", flexDirection: "column" as any, gap: 8 }}>
+        {EXP_MODES.map(m => (
+          <button key={m.id} onClick={() => save(m.id)} style={{
+            display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderRadius: 0, textAlign: "left" as any, cursor: "pointer",
+            background: mode === m.id ? "rgba(96,64,192,0.1)" : "var(--bg-tertiary)",
+            border: `1px solid ${mode === m.id ? "#6040c0" : "var(--border-primary)"}`,
+            transition: "all 0.12s",
+          }}>
+            <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${mode === m.id ? "#6040c0" : "var(--border-secondary)"}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {mode === m.id && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#6040c0" }} />}
+            </div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: mode === m.id ? "#9070e0" : "var(--text-primary)", marginBottom: 2 }}>{m.label}</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{m.desc}</div>
+            </div>
+            {saved && mode === m.id && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--accent-green)", fontFamily: "'DM Mono', monospace" }}>SAVED</span>}
+          </button>
+        ))}
+      </div>
+      {showUpgrade && (
+        <div style={{ marginTop: 12, padding: "12px 16px", background: "rgba(96,64,192,0.08)", border: "1px solid #6040c060", fontSize: 12, color: "#9070e0", lineHeight: 1.6 }}>
+          <strong>Live Radio unlocked.</strong> All six decks are now visible. Format clocks, hard transitions, and the full rotation engine are active. You can assign purposes to decks in the Deck Configurator.
+          <button onClick={() => setShowUpgrade(false)} style={{ float: "right" as any, background: "none", border: "none", color: "#6040c0", cursor: "pointer", fontSize: 11 }}>✕</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Invite generator ─────────────────────────────────────────
+
+function InviteGenerator() {
+  const [name, setName]         = useState("");
+  const [initials, setInitials] = useState("");
+  const [note, setNote]         = useState("");
+  const [mode, setMode]         = useState<"solo"|"standard"|"live_radio">("standard");
+  const [status, setStatus]     = useState<string | null>(null);
+
+  const generate = async () => {
+    if (!name.trim()) return;
+    try {
+      const result = await (window as any).ether.invoke("invite:generate", {
+        name: name.trim(),
+        initials: initials.trim() || name.trim().charAt(0),
+        note: note.trim(),
+        mode,
+        invitedBy: "Deniro",
+      });
+      if (result.ok) setStatus(`Saved to ${result.filePath}`);
+      else if (result.reason !== "cancelled") setStatus(`Error: ${result.reason}`);
+    } catch (e: any) { setStatus(`Error: ${e.message}`); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "8px 12px", borderRadius: 0,
+    background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+    color: "var(--text-primary)", fontSize: 12, outline: "none", boxSizing: "border-box",
+  };
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 8 }}>
+        <input value={name} onChange={e => setName(e.target.value)} placeholder="Operator name (e.g. Sarah Mitchell)" style={inputStyle} />
+        <input value={initials} onChange={e => setInitials(e.target.value.slice(0, 3))} placeholder="SM" style={{ ...inputStyle, width: 60, textAlign: "center" as any }} />
+      </div>
+      <textarea
+        value={note} onChange={e => setNote(e.target.value)}
+        placeholder="Personal note (optional) — shown on their first shift screen"
+        rows={2}
+        style={{ ...inputStyle, resize: "vertical" as any, fontFamily: "'Inter', system-ui, sans-serif", lineHeight: 1.5, marginBottom: 8 }}
+      />
+      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+        {(["solo", "standard", "live_radio"] as const).map(m => (
+          <button key={m} onClick={() => setMode(m)} style={{
+            padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+            background: mode === m ? "rgba(96,64,192,0.15)" : "var(--bg-tertiary)",
+            border: `1px solid ${mode === m ? "#6040c0" : "var(--border-primary)"}`,
+            color: mode === m ? "#9070e0" : "var(--text-tertiary)",
+          }}>{m.replace("_", " ").replace(/\b\w/g, c => c.toUpperCase())}</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button onClick={generate} disabled={!name.trim()} style={{
+          padding: "9px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, cursor: name.trim() ? "pointer" : "default",
+          background: name.trim() ? "#6040c0" : "var(--bg-tertiary)", border: "none", color: name.trim() ? "#fff" : "var(--text-tertiary)",
+        }}>Generate Invite File</button>
+        <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em" }}>BUILT BY DENIRO</span>
+      </div>
+      {status && <div style={{ marginTop: 8, fontSize: 11, color: status.startsWith("Error") ? "var(--accent-red)" : "var(--accent-green)", fontFamily: "'DM Mono', monospace", wordBreak: "break-all" as any }}>{status}</div>}
+    </div>
+  );
+}
+
+// ── Spotify credential form ───────────────────────────────────
+
+function SpotifyCredentialForm() {
+  const [clientId, setClientId]         = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [status, setStatus]             = useState<{ hasClientId: boolean; hasClientSecret: boolean } | null>(null);
+  const [saving, setSaving]             = useState(false);
+  const [saved, setSaved]               = useState(false);
+
+  useEffect(() => {
+    (window as any).ether.spotify.getCredentialStatus().then(setStatus).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!clientId.trim() && !clientSecret.trim()) return;
+    setSaving(true);
+    await (window as any).ether.spotify.setCredentials(clientId.trim(), clientSecret.trim());
+    setStatus({ hasClientId: true, hasClientSecret: true });
+    setClientId(""); setClientSecret("");
+    setSaving(false); setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12,
+    background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+    color: "var(--text-primary)", outline: "none", fontFamily: "monospace",
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {status && (
+        <div style={{ display: "flex", gap: 16, marginBottom: 4 }}>
+          <span style={{ fontSize: 11, color: status.hasClientId ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.hasClientId ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+            Client ID {status.hasClientId ? "saved" : "not set"}
+          </span>
+          <span style={{ fontSize: 11, color: status.hasClientSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.hasClientSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+            Client Secret {status.hasClientSecret ? "saved" : "not set"}
+          </span>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="password" placeholder="Client ID" value={clientId} onChange={e => setClientId(e.target.value)} style={inputStyle} />
+        <input type="password" placeholder="Client Secret" value={clientSecret} onChange={e => setClientSecret(e.target.value)} style={inputStyle} onKeyDown={e => { if (e.key === "Enter") save(); }} />
+        <button onClick={save} disabled={saving} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: saved ? "var(--accent-green)" : "#1db954", color: "#000", border: "none", cursor: "pointer" }}>
+          {saved ? "Saved ✓" : saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+        Credentials stored in Electron safeStorage — never in plain text. Requires Client Credentials flow (no user login needed).
+      </div>
+    </div>
+  );
+}
+
+// ── Musixmatch API key form ───────────────────────────────────
+
+function MusixmatchKeyForm() {
+  const [key, setKey]         = useState("");
+  const [hasKey, setHasKey]   = useState(false);
+  const [saving, setSaving]   = useState(false);
+  const [saved, setSaved]     = useState(false);
+
+  useEffect(() => {
+    (window as any).ether.musixmatch.getKeyStatus().then((s: { hasKey: boolean }) => setHasKey(s.hasKey)).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!key.trim()) return;
+    setSaving(true);
+    await (window as any).ether.musixmatch.setKey(key.trim());
+    setKey(""); setHasKey(true);
+    setSaving(false); setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 11, color: hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+        {hasKey ? "API key saved — Lyrics Scanner is active" : "No key set — Lyrics Scanner disabled"}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="password" placeholder="Musixmatch API Key" value={key} onChange={e => setKey(e.target.value)} onKeyDown={e => { if (e.key === "Enter") save(); }}
+          style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "monospace" }} />
+        <button onClick={save} disabled={saving} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: saved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+          {saved ? "Saved ✓" : saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+        Stored in Electron safeStorage. Free tier supports 2,000 lyrics lookups/day. Flags are advisory only — you approve or reject each track.
+      </div>
     </div>
   );
 }
@@ -544,6 +824,33 @@ export default function SettingsPanel() {
         {backups.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>No backups yet — click "Back up now" to create your first one</div>}
       </Section>
 
+      {/* ── Experience Mode ── */}
+      <Section
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>}
+        title="Experience Mode"
+        description="Controls which decks are visible by default. Decks with a purpose assigned are always shown."
+      >
+        <ExperienceModeSelector />
+      </Section>
+
+      {/* ── Send an Invite ── */}
+      <Section
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.9 10.66a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.8 0h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 7.91a16 16 0 0 0 6.29 6.29l1.18-1.18a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 14.92z"/></svg>}
+        title="Send an Invite"
+        description="Generate a personalised invite file for a new operator. Place it next to the installer and ether will configure their station automatically on first launch."
+      >
+        <InviteGenerator />
+      </Section>
+
+      {/* ── Station Identity ── */}
+      <Section
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>}
+        title="Station Identity"
+        description="Upload a station logo — displayed on the On-Shift welcome screen"
+      >
+        <StationLogoUploader />
+      </Section>
+
       </> /* end tab === "general" */}
 
       {tab === "ai" && <>
@@ -696,6 +1003,24 @@ export default function SettingsPanel() {
             {keyStatus.weather ? "Connected — Weather button is live" : "Not connected — Weather button will show a placeholder"}
           </div>
         </Section>
+      {/* ── Spotify Integration ── */}
+      <Section
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style={{ color: "#1db954" }}><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>}
+        title="Spotify Integration"
+        description="Connect your Spotify Developer credentials to import pre-screened music into your library. Create an app at developer.spotify.com — use Client Credentials flow."
+      >
+        <SpotifyCredentialForm />
+      </Section>
+
+      {/* ── Musixmatch Lyrics Scanner ── */}
+      <Section
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
+        title="Musixmatch Lyrics Scanner"
+        description="Scan imported song lyrics for thematic red flags — violence, explicit language, hate speech, political content. Flags are shown in amber for manual review. Free tier at developer.musixmatch.com."
+      >
+        <MusixmatchKeyForm />
+      </Section>
+
       </> /* end tab === "ai" */}
 
     </div>

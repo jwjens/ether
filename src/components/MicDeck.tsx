@@ -1,4 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import VUMeter from "./VUMeter";
+import GraphicEQ, { EQ_DEFAULT, EQ_FREQS } from "./GraphicEQ";
+import { query, execute } from "../db/client";
 
 // Inline stub — replace with full ProcessingPanel integration when ready
 function AudioProcessorPanel({ stream, compact, onLevel }: { stream: MediaStream; compact?: boolean; onLevel?: (level: number) => void }) {
@@ -8,9 +11,6 @@ function AudioProcessorPanel({ stream, compact, onLevel }: { stream: MediaStream
     </div>
   );
 }
-
-const BAR_COUNT = 32;
-const PEAK_HOLD_MS = 1200;
 
 interface Props {
   inputDeviceId?: string;
@@ -49,162 +49,56 @@ export default function MicDeck({ inputDeviceId }: Props) {
   const [micLive, setMicLive] = useState(false);
   const [showProcessing, setShowProcessing] = useState(false);
   const [level, setLevel] = useState(0);
-  const [peakHold, setPeakHold] = useState(0);
-  const streamRef = useRef<MediaStream | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const animRef = useRef<number>(0);
-  const peakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamRef    = useRef<MediaStream | null>(null);
+  const analyserRef  = useRef<AnalyserNode | null>(null);
+  const audioCtxRef  = useRef<AudioContext | null>(null);
+  const eqFiltersRef = useRef<BiquadFilterNode[]>([]);
+  const animRef      = useRef<number>(0);
 
-  // Canvas VU refs
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const levelsRef = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const peaksRef = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const peakTimesRef = useRef<number[]>(new Array(BAR_COUNT).fill(0));
-  const targetLevelRef = useRef(0);
-  const flatlinePhaseRef = useRef(0);
-  const rafRef = useRef<number>(0);
-  const micLiveRef = useRef(false);
+  // ── EQ state ─────────────────────────────────────────────────
+  const [eqOpen,  setEqOpen]  = useState(false);
+  const [eqBands, setEqBands] = useState<number[]>(EQ_DEFAULT);
+  const eqActive = eqBands.some(g => Math.abs(g) > 0.05);
 
-  // Keep ref in sync with state
-  useEffect(() => { micLiveRef.current = micLive; }, [micLive]);
-
-  // Canvas draw loop
+  // Load EQ from DB
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const draw = () => {
-      const w = canvas.width;
-      const h = canvas.height;
-      const now = Date.now();
-      ctx.clearRect(0, 0, w, h);
-
-      const barW = Math.max(2, Math.floor((w - BAR_COUNT + 1) / BAR_COUNT));
-      const gap = 1;
-      const totalW = BAR_COUNT * (barW + gap) - gap;
-      const offsetX = Math.floor((w - totalW) / 2);
-
-      if (!micLiveRef.current) {
-        // Idle flatline — slow red sine, same as song deck standby
-        flatlinePhaseRef.current += 0.018;
-        const phase = flatlinePhaseRef.current;
-        for (let i = 0; i < BAR_COUNT; i++) {
-          const x = offsetX + i * (barW + gap);
-          const wave = 0.04 * Math.sin(phase - i * 0.35) + 0.015 * Math.sin(phase * 1.7 - i * 0.6);
-          const barH = Math.max(2, Math.floor((0.055 + wave) * h));
-          const y = h / 2 - barH / 2;
-          ctx.fillStyle = "#ef4444";
-          ctx.globalAlpha = 0.45;
-          ctx.beginPath();
-          ctx.roundRect(x, y, barW, barH, 1);
-          ctx.fill();
-          ctx.globalAlpha = 1;
-        }
-        // Center dashed line
-        ctx.strokeStyle = "#ef4444";
-        ctx.globalAlpha = 0.25;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 5]);
-        ctx.beginPath();
-        ctx.moveTo(offsetX, h / 2);
-        ctx.lineTo(offsetX + totalW, h / 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.globalAlpha = 1;
-        // Label
-        ctx.fillStyle = "#ef4444";
-        ctx.globalAlpha = 0.45;
-        ctx.font = `700 9px 'Inter', sans-serif`;
-        ctx.textAlign = "center";
-        ctx.fillText("STANDBY", w / 2, h - 8);
-        ctx.globalAlpha = 1;
-        rafRef.current = requestAnimationFrame(draw);
-        return;
-      }
-
-      // Live — animated bars rising from bottom, red gradient
-      for (let i = 0; i < BAR_COUNT; i++) {
-        const x = offsetX + i * (barW + gap);
-        const target = targetLevelRef.current * (0.55 + Math.random() * 0.45);
-        const current = levelsRef.current[i];
-        const diff = target - current;
-        levelsRef.current[i] += diff * (diff > 0 ? 0.35 : 0.12);
-        const lv = levelsRef.current[i];
-        const barH = Math.max(2, Math.floor(lv * h));
-
-        // Peak hold
-        if (lv > peaksRef.current[i]) {
-          peaksRef.current[i] = lv;
-          peakTimesRef.current[i] = now;
-        } else if (now - peakTimesRef.current[i] > PEAK_HOLD_MS) {
-          peaksRef.current[i] = Math.max(0, peaksRef.current[i] - 0.015);
-        }
-
-        // Red gradient — light at bottom, dark at top (mirrors green song deck)
-        const barGrad = ctx.createLinearGradient(x, h, x, h - barH);
-        barGrad.addColorStop(0, "#fca5a5"); // light red at bottom
-        barGrad.addColorStop(0.5, "#ef4444"); // mid red
-        barGrad.addColorStop(1, "#991b1b"); // dark red at top
-
-        const radius = Math.min(2, barW / 2);
-        ctx.fillStyle = barGrad;
-        ctx.beginPath();
-        ctx.roundRect(x, h - barH, barW, barH, [radius, radius, 0, 0]);
-        ctx.fill();
-
-        // Floating peak dot — dark red
-        if (peaksRef.current[i] > 0.05) {
-          const peakY = h - Math.floor(peaksRef.current[i] * h) - 2;
-          ctx.fillStyle = "#7f1d1d";
-          ctx.fillRect(x, peakY, barW, 2);
-        }
-
-        // Empty track behind bar
-        if (barH < h) {
-          ctx.fillStyle = "rgba(0,0,0,0.04)";
-          ctx.beginPath();
-          ctx.roundRect(x, 0, barW, h - barH, [radius, radius, 0, 0]);
-          ctx.fill();
-        }
-      }
-
-      // Subtle grid lines
-      ctx.strokeStyle = "rgba(0,0,0,0.04)";
-      ctx.lineWidth = 1;
-      for (let i = 1; i < 4; i++) {
-        const y = Math.floor(h * (i / 4));
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      }
-
-      rafRef.current = requestAnimationFrame(draw);
-    };
-
-    rafRef.current = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(rafRef.current);
+    query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='eq_deck_mic'", [])
+      .then(rows => { if (rows[0]?.value) { try { setEqBands(JSON.parse(rows[0].value)); } catch {} } })
+      .catch(() => {});
   }, []);
 
-  // Resize observer
+  // Apply EQ gains to Web Audio filter nodes whenever bands change
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ro = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        const { width, height } = entry.contentRect;
-        const dpr = devicePixelRatio || 1;
-        canvas.width = Math.floor(width * dpr);
-        canvas.height = Math.floor(height * dpr);
-        canvas.style.width = width + "px";
-        canvas.style.height = height + "px";
-        const ctx = canvas.getContext("2d");
-        if (ctx) ctx.scale(dpr, dpr);
-      }
+    eqFiltersRef.current.forEach((f, i) => {
+      if (f) f.gain.setTargetAtTime(eqBands[i] ?? 0, f.context.currentTime, 0.01);
     });
-    ro.observe(canvas.parentElement!);
-    return () => ro.disconnect();
+  }, [eqBands]);
+
+  const handleEqChange = useCallback((bands: number[]) => {
+    setEqBands(bands);
+    execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('eq_deck_mic',?)",
+      [JSON.stringify(bands)]).catch(() => {});
+    // Also send to native engine for actual broadcast path
+    try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("mic", bands); } catch {}
   }, []);
+
+  // ── Build Web Audio EQ filter chain ──────────────────────────
+  const buildEqChain = (ctx: AudioContext): BiquadFilterNode[] => {
+    const filters: BiquadFilterNode[] = EQ_FREQS.map((freq, i) => {
+      const f = ctx.createBiquadFilter();
+      f.frequency.value = freq;
+      f.gain.value      = eqBands[i] ?? 0;
+      f.Q.value         = 1.4;
+      // lowest band = lowshelf, highest = highshelf, rest = peaking
+      f.type = i === 0 ? "lowshelf" : i === EQ_FREQS.length - 1 ? "highshelf" : "peaking";
+      return f;
+    });
+    // Chain: filters[0] → filters[1] → ... → filters[9]
+    for (let i = 0; i < filters.length - 1; i++) {
+      filters[i].connect(filters[i + 1]);
+    }
+    return filters;
+  };
 
   const startMic = async () => {
     try {
@@ -215,11 +109,17 @@ export default function MicDeck({ inputDeviceId }: Props) {
       streamRef.current = stream;
       const ctx = new AudioContext();
       audioCtxRef.current = ctx;
-      const source = ctx.createMediaStreamSource(stream);
+      const source  = ctx.createMediaStreamSource(stream);
+      const filters = buildEqChain(ctx);
+      eqFiltersRef.current = filters;
+
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 64;
       analyser.smoothingTimeConstant = 0.55;
-      source.connect(analyser);
+
+      // source → EQ chain → analyser (level metering reflects EQ)
+      source.connect(filters[0]);
+      filters[filters.length - 1].connect(analyser);
       analyserRef.current = analyser;
       setMicLive(true);
 
@@ -228,13 +128,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
         analyser.getByteFrequencyData(dataArray);
         const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         const norm = Math.min(1, avg / 100);
-        targetLevelRef.current = norm > 0.05 ? 0.2 + norm * 0.8 : 0;
-        setLevel(norm);
-        if (norm > peakHold) {
-          setPeakHold(norm);
-          if (peakTimerRef.current) clearTimeout(peakTimerRef.current);
-          peakTimerRef.current = setTimeout(() => setPeakHold(0), 1500);
-        }
+        setLevel(norm > 0.05 ? 0.2 + norm * 0.8 : 0);
         animRef.current = requestAnimationFrame(tick);
       };
       animRef.current = requestAnimationFrame(tick);
@@ -246,30 +140,23 @@ export default function MicDeck({ inputDeviceId }: Props) {
     streamRef.current?.getTracks().forEach(t => t.stop());
     streamRef.current = null;
     analyserRef.current = null;
+    eqFiltersRef.current = [];
     audioCtxRef.current?.close();
     audioCtxRef.current = null;
-    targetLevelRef.current = 0;
-    levelsRef.current = new Array(BAR_COUNT).fill(0);
-    peaksRef.current = new Array(BAR_COUNT).fill(0);
     setMicLive(false);
     setLevel(0);
-    setPeakHold(0);
   };
 
   useEffect(() => () => stopMic(), []);
 
   const accentBorder = micLive ? "rgba(239,68,68,0.3)" : "var(--border-primary)";
 
-  // dBFS conversion for display
-  const db = micLive && level > 0 ? Math.round(20 * Math.log10(level)) : null;
-  const peakDb = peakHold > 0 ? Math.round(20 * Math.log10(Math.max(peakHold, 0.001))) : null;
-
   return (
     <div style={{
       display: "flex", flexDirection: "column",
       background: "var(--bg-secondary)",
       borderRadius: 0,
-      border: "1px solid #1e1e28",
+      border: "none",
       overflow: "hidden",
       height: "100%",
       transition: "box-shadow 0.3s ease",
@@ -287,7 +174,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
       }} />
 
       {/* Channel strip header */}
-      <div style={{ padding: "12px 14px 8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ padding: "12px 14px 8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           {/* Mic icon — channel strip style */}
           <div style={{
@@ -309,6 +196,30 @@ export default function MicDeck({ inputDeviceId }: Props) {
             </div>
           </div>
         </div>
+
+        {/* EQ toggle button */}
+        <button
+          onClick={() => setEqOpen(o => !o)}
+          title="Mono EQ"
+          style={{
+            width: 28, height: 28, borderRadius: 0, flexShrink: 0,
+            background: eqOpen ? "rgba(96,64,192,0.18)" : "var(--bg-tertiary)",
+            border: `1px solid ${eqOpen ? "#6040c0" : "var(--border-primary)"}`,
+            color: eqOpen ? "#8060e0" : "var(--text-tertiary)",
+            cursor: "pointer", display: "flex", alignItems: "center",
+            justifyContent: "center", flexDirection: "column" as const, gap: 1,
+            transition: "all 0.15s", position: "relative" as const,
+          }}
+        >
+          <span style={{ fontSize: 7, fontWeight: 800, letterSpacing: "0.04em" }}>EQ</span>
+          {eqActive && (
+            <div style={{
+              position: "absolute", top: 2, right: 2,
+              width: 3, height: 3, borderRadius: "50%",
+              background: "#c07820", boxShadow: "0 0 3px #c07820",
+            }} />
+          )}
+        </button>
 
         {/* Live indicator badge */}
         <div style={{
@@ -348,42 +259,9 @@ export default function MicDeck({ inputDeviceId }: Props) {
         </div>
       </div>
 
-      {/* dBFS meters — professional channel strip readout */}
-      <div style={{ padding: "0 14px 8px", display: "flex", gap: 12, alignItems: "flex-end", flexShrink: 0 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 7, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const, marginBottom: 4 }}>INPUT</div>
-          {/* Segmented level bar */}
-          <div style={{ display: "flex", gap: 1.5, height: 8, alignItems: "flex-end" }}>
-            {Array.from({ length: 20 }).map((_, i) => {
-              const threshold = i / 20;
-              const active = micLive && level > threshold;
-              const color = i < 14 ? "var(--accent-green)" : i < 17 ? "var(--accent-amber)" : "#ef4444";
-              return (
-                <div key={i} style={{
-                  flex: 1, height: active ? "100%" : "30%",
-                  borderRadius: 0, background: active ? color : "var(--bg-tertiary)",
-                  transition: "height 0.05s, background 0.05s",
-                }} />
-              );
-            })}
-          </div>
-        </div>
-        <div style={{ textAlign: "right" as const, flexShrink: 0 }}>
-          <div style={{ fontSize: 7, color: "var(--text-tertiary)", letterSpacing: "0.1em", marginBottom: 4 }}>PEAK</div>
-          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 500, color: (peakDb !== null && peakDb > -3) ? "#ef4444" : "var(--text-secondary)", letterSpacing: "-0.02em" }}>
-            {peakDb !== null ? `${peakDb} dB` : "—"}
-          </div>
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      <div style={{ margin: "0 14px 8px", height: 2, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", flexShrink: 0 }}>
-        <div style={{ height: "100%", width: micLive ? Math.round(level * 100) + "%" : "0%", background: level > 0.85 ? "#ef4444" : "var(--accent-green)", borderRadius: 0, transition: "width 0.05s linear" }} />
-      </div>
-
-      {/* Canvas VU */}
-      <div style={{ margin: "0 14px 8px", height: 40, maxHeight: 40, flexShrink: 0, borderRadius: 0, overflow: "hidden", background: "var(--bg-tertiary)" }}>
-        <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+      {/* VU Meter */}
+      <div style={{ height: 80, flexShrink: 0, margin: "0 14px 8px", overflow: "hidden" }}>
+        <VUMeter deckId="mic" isPlaying={micLive} hasTrack={micLive} externalLevel={level} />
       </div>
 
       {/* Auto-duck toggle */}
@@ -410,6 +288,16 @@ export default function MicDeck({ inputDeviceId }: Props) {
         )}
       </div>
       <DuckToggle />
+
+      {/* EQ panel — slides up */}
+      <div style={{
+        maxHeight: eqOpen ? 130 : 0,
+        overflow: "hidden",
+        transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
+        flexShrink: 0,
+      }}>
+        <GraphicEQ bands={eqBands} onChange={handleEqChange} label="MONO EQ" />
+      </div>
 
       {/* Controls */}
       <div style={{ padding: "8px 14px 14px", borderTop: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", display: "flex", gap: 7, flexShrink: 0 }}>
