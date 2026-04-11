@@ -102,7 +102,7 @@ function LevelMeter({ level, peak }: { level: number; peak: number }) {
   const db      = dbFromLinear(level);
   const peakDb  = dbFromLinear(peak);
   const pct     = (v: number) => Math.max(0, Math.min(100, ((v + 60) / 60) * 100));
-  const color   = db > -6 ? "#ef4444" : db > -18 ? "#fb923c" : "#22d3ee";
+  const color   = db > -6 ? "#ef4444" : db > -18 ? "#fb923c" : "#008878";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3, width: "100%" }}>
@@ -111,7 +111,7 @@ function LevelMeter({ level, peak }: { level: number; peak: number }) {
         <div style={{
           position: "absolute", left: 0, top: 0, bottom: 0,
           width: pct(db) + "%",
-          background: `linear-gradient(90deg, #22d3ee, ${color})`,
+          background: `linear-gradient(90deg, #008878, ${color})`,
           borderRadius: 0,
           transition: "width 0.05s linear",
         }} />
@@ -190,15 +190,15 @@ function WaveformView({
       const x     = i * barW;
       const barH  = peaks[i] * mid * 0.88;
       const inReg = x >= inX && x <= outX;
-      ctx.fillStyle = inReg ? "#22d3ee" : "#27272a";
+      ctx.fillStyle = inReg ? "#008878" : "#27272a";
       ctx.fillRect(x, mid - barH, Math.max(1, barW - 0.5), barH * 2);
     }
 
     // Cue In handle
-    ctx.strokeStyle = "#22d3ee";
+    ctx.strokeStyle = "#008878";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(inX, 0); ctx.lineTo(inX, H); ctx.stroke();
-    ctx.fillStyle = "#22d3ee";
+    ctx.fillStyle = "#008878";
     ctx.fillRect(inX, 0, 28, 14);
     ctx.fillStyle = "#000";
     ctx.font = "bold 8px 'DM Mono', monospace";
@@ -218,7 +218,7 @@ function WaveformView({
     // Playhead
     if (playhead > 0 && playhead < duration) {
       const phX = (playhead / duration) * W;
-      ctx.strokeStyle = "#fff";
+      ctx.strokeStyle = "#c07820";
       ctx.lineWidth = 1.5;
       ctx.setLineDash([3, 3]);
       ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, H); ctx.stroke();
@@ -610,6 +610,70 @@ export default function PhoneDesk({ onClose }: Props) {
     }
   }, [recPCM, sendTarget, sending]);
 
+  // ── Save recording to disk ──
+  const [saving, setSaving]     = useState(false);
+  const [savedPath, setSavedPath] = useState("");
+
+  const saveRecording = useCallback(async () => {
+    if (!recPCM || saving) return;
+    setSaving(true);
+    try {
+      const now   = new Date();
+      const stamp = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}-${String(now.getMinutes()).padStart(2,"0")}-${String(now.getSeconds()).padStart(2,"0")}`;
+      const fileName = `phone-recording-${stamp}.wav`;
+
+      const wavBuf = encodeWAV(recPCM, SAMPLE_RATE);
+      const bytes  = new Uint8Array(wavBuf);
+
+      // Try Electron fs.writeFile first, fall back to browser download
+      try {
+        const appDir = await (window as any).ether.system.getAppDataDir();
+        const dir    = appDir + "/phone-recordings";
+        await (window as any).ether.fs.mkdir(dir).catch(() => {});
+        const filePath = dir + "/" + fileName;
+        await (window as any).ether.fs.writeFile(filePath, Array.from(bytes));
+        setSavedPath(filePath);
+      } catch {
+        // Browser download fallback
+        const blob = new Blob([wavBuf], { type: "audio/wav" });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement("a");
+        a.href = url; a.download = fileName; a.click();
+        URL.revokeObjectURL(url);
+        setSavedPath(fileName);
+      }
+      setTimeout(() => setSavedPath(""), 4000);
+    } finally {
+      setSaving(false);
+    }
+  }, [recPCM, saving]);
+
+  // ── VoxPro keyboard shortcuts ──
+  // Left arrow → snap to beginning, Space → play/stop, Right arrow → snap to end
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Only fire when phone desk is focused / active — skip if user is typing in an input
+      if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "SELECT") return;
+      const clipReady = recPCM !== null && recState === "stopped";
+      if (!clipReady) return;
+
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (previewing) stopPreview(); else startPreview();
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault();
+        setPlayhead(cueInRef.current);
+        if (previewing) { stopPreview(); startPreview(cueInRef.current); }
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault();
+        setPlayhead(cueOutRef.current);
+        stopPreview();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [recPCM, recState, previewing, startPreview, stopPreview]);
+
   // ── Cleanup on unmount ──
   useEffect(() => {
     return () => {
@@ -650,7 +714,7 @@ export default function PhoneDesk({ onClose }: Props) {
         {/* Indicator dot */}
         <div style={{
           width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-          background: isRecording ? "#ef4444" : isArmed ? "#fb923c" : hasClip ? "#22d3ee" : "#3f3f46",
+          background: isRecording ? "#ef4444" : isArmed ? "#fb923c" : hasClip ? "#008878" : "#3f3f46",
           boxShadow: isRecording ? "0 0 12px #ef444488" : isArmed ? "0 0 10px #fb923c88" : "none",
           animation: isRecording ? "phone-blink 1s ease-in-out infinite" : "none",
         }} />
@@ -824,8 +888,8 @@ export default function PhoneDesk({ onClose }: Props) {
                 <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", color: "var(--text-primary)" }}>{fmtTime(clipDuration)}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                <span style={{ fontSize: 10, color: "#22d3ee" }}>Cue In</span>
-                <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", color: "#22d3ee" }}>{fmtTime(cueIn)}</span>
+                <span style={{ fontSize: 10, color: "#008878" }}>Cue In</span>
+                <span style={{ fontSize: 11, fontFamily: "'IBM Plex Mono', monospace", color: "#008878" }}>{fmtTime(cueIn)}</span>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
                 <span style={{ fontSize: 10, color: "#f87171" }}>Cue Out</span>
@@ -847,6 +911,11 @@ export default function PhoneDesk({ onClose }: Props) {
               <div>① Record the full call</div>
               <div>② Drag IN / OUT handles to trim</div>
               <div>③ Preview, then fire to a deck</div>
+              <div style={{ marginTop: 6, opacity: 0.6 }}>
+                <div>⌨ Space — play / stop</div>
+                <div>⌨ ← — snap to start</div>
+                <div>⌨ → — snap to end</div>
+              </div>
             </div>
           </div>
         </div>
@@ -912,7 +981,7 @@ export default function PhoneDesk({ onClose }: Props) {
             }}>
               {/* IN / OUT nudge */}
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", color: "#22d3ee" }}>CUE IN</div>
+                <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.12em", color: "#008878" }}>CUE IN</div>
                 <div style={{ display: "flex", gap: 3 }}>
                   {[
                     { label: "◀◀", d: -1    },
@@ -921,12 +990,12 @@ export default function PhoneDesk({ onClose }: Props) {
                     { label: "▶▶", d:  1    },
                   ].map(({ label, d }) => (
                     <button key={label} onClick={() => setCueIn(v => Math.max(0, Math.min(v + d, cueOutRef.current - 0.1)))}
-                      style={{ width: 26, height: 24, borderRadius: 0, border: "1px solid #22d3ee30", background: "#22d3ee10", color: "#22d3ee", fontSize: 9, cursor: "pointer", fontWeight: 700 }}>
+                      style={{ width: 26, height: 24, borderRadius: 0, border: "1px solid #00887830", background: "#00887810", color: "#008878", fontSize: 9, cursor: "pointer", fontWeight: 700 }}>
                       {label}
                     </button>
                   ))}
                 </div>
-                <div style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", color: "#22d3ee", letterSpacing: "-0.02em" }}>{fmtTime(cueIn)}</div>
+                <div style={{ fontSize: 13, fontFamily: "'IBM Plex Mono', monospace", color: "#008878", letterSpacing: "-0.02em" }}>{fmtTime(cueIn)}</div>
               </div>
 
               <div style={{ width: 1, height: 48, background: "var(--border-primary)" }} />
@@ -1026,6 +1095,30 @@ export default function PhoneDesk({ onClose }: Props) {
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                       FIRE
                     </>
+                  )}
+                </button>
+
+                {/* Save to disk */}
+                <button
+                  onClick={saveRecording}
+                  disabled={saving || !hasClip}
+                  title="Save recording to disk"
+                  style={{
+                    height: 40, padding: "0 14px", borderRadius: 0,
+                    border: "1px solid var(--border-primary)",
+                    background: savedPath ? "rgba(0,136,120,0.15)" : "var(--bg-tertiary)",
+                    color: savedPath ? "#008878" : "var(--text-tertiary)",
+                    fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                    cursor: (!hasClip || saving) ? "not-allowed" : "pointer",
+                    opacity: !hasClip ? 0.4 : 1,
+                    transition: "all 0.2s",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  {savedPath ? (
+                    <><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg> SAVED</>
+                  ) : saving ? "SAVING..." : (
+                    <><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> SAVE</>
                   )}
                 </button>
               </div>
