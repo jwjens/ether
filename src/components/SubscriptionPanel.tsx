@@ -17,27 +17,30 @@ interface PlanFeature {
   pro: boolean;
   station: boolean;
   comingSoon?: boolean;
+  isNew?: boolean;
 }
 
 const FEATURES: PlanFeature[] = [
-  { label: "Unlimited song library",         pro: true,  station: true  },
-  { label: "Rotation + scheduling",          pro: true,  station: true  },
-  { label: "Clock builder + logs",           pro: true,  station: true  },
-  { label: "Spot inventory",                 pro: true,  station: true  },
-  { label: "Live assist + automation",       pro: true,  station: true  },
-  { label: "Voice tracking",                 pro: true,  station: true  },
-  { label: "Show prep platform",             pro: true,  station: true  },
-  { label: "Track editor (cue points)",      pro: true,  station: true  },
-  { label: "Live mic deck",                  pro: true,  station: true  },
-  { label: "Cloud log backup",               pro: true,  station: true  },
-  { label: "Remote web dashboard",           pro: true,  station: true  },
-  { label: "Mobile emergency override",      pro: true,  station: true  },
-  { label: "PDF traffic reports",            pro: true,  station: true  },
-  { label: "Listener analytics",             pro: true,  station: true  },
-  { label: "Multi-output audio (ASIO)",      pro: true,  station: true  },
-  { label: "Multi-station console",          pro: false, station: true  },
-  { label: "NexGen / ENCO import",           pro: false, station: true  },
-  { label: "User accounts + roles",          pro: false, station: true, comingSoon: true },
+  { label: "Unlimited song library",                             pro: true,  station: true  },
+  { label: "Rotation + scheduling",                             pro: true,  station: true  },
+  { label: "Clock builder + logs",                              pro: true,  station: true  },
+  { label: "Spot inventory",                                    pro: true,  station: true  },
+  { label: "Live assist + automation",                          pro: true,  station: true  },
+  { label: "Voice tracking",                                    pro: true,  station: true  },
+  { label: "Show prep platform",                                pro: true,  station: true  },
+  { label: "Track editor (cue points)",                         pro: true,  station: true  },
+  { label: "Live mic deck",                                     pro: true,  station: true  },
+  { label: "Cloud log backup",                                  pro: true,  station: true  },
+  { label: "Remote web dashboard",                              pro: true,  station: true  },
+  { label: "Mobile emergency override",                         pro: true,  station: true  },
+  { label: "PDF traffic reports",                               pro: true,  station: true  },
+  { label: "Listener analytics",                                pro: true,  station: true  },
+  { label: "Multi-output audio (ASIO)",                         pro: true,  station: true  },
+  { label: "Iris AI voice assistant (500 conversations/month)", pro: true,  station: false, isNew: true },
+  { label: "Multi-station console",                             pro: false, station: true  },
+  { label: "NexGen / ENCO import",                              pro: false, station: true  },
+  { label: "Iris AI voice assistant (unlimited)",               pro: false, station: true,  isNew: true },
+  { label: "User accounts + roles",                             pro: false, station: true, comingSoon: true },
 ];
 
 export default function SubscriptionPanel() {
@@ -142,7 +145,7 @@ export default function SubscriptionPanel() {
             color: planColor(currentPlan),
             border: `1px solid ${planColor(currentPlan)}40`,
           }}>
-            {currentPlan === "free" ? "Free" : currentPlan === "pro" ? "Ether Pro" : "Ether Station"}
+            {currentPlan === "free" ? "Free" : currentPlan === "pro" ? "Ether Creator" : "Ether Station"}
           </span>
           {licenseSuccess && <span style={{ fontSize: 12, color: "#34d399", fontWeight: 600 }}>✓ License activated!</span>}
         </div>
@@ -239,6 +242,9 @@ export default function SubscriptionPanel() {
                 <span style={{ color: "#34d399", flexShrink: 0 }}>✓</span>{f.label}
               </div>
             ))}
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ color: "#34d399", flexShrink: 0 }}>✓</span>Iris AI assistant (limited — 50 conversations/month)
+            </div>
           </div>
         </div>
 
@@ -250,16 +256,16 @@ export default function SubscriptionPanel() {
           boxShadow: "0 0 32px rgba(34,211,238,0.08)",
         }}>
           <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "#22d3ee", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Pro</div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Creator</div>
           <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 40, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 24 }}>per month · small station</div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 24 }}>per month · solo creator / podcaster / streamer</div>
           {currentPlan === "pro" ? (
             <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#22d3ee", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 24 }}>
               ✓ Active — Cancel Plan
             </button>
           ) : (
             <button onClick={() => openCheckout("pro")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "#22d3ee", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 24, boxShadow: "0 0 24px rgba(34,211,238,0.3)", fontFamily: "'Syne', sans-serif" }}>
-              {currentPlan === "station" ? "Downgrade to Pro" : "Upgrade to Pro →"}
+              {currentPlan === "station" ? "Downgrade to Creator" : "Upgrade to Creator →"}
             </button>
           )}
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
@@ -268,6 +274,7 @@ export default function SubscriptionPanel() {
               <div key={f.label} style={{ fontSize: 11, color: f.comingSoon ? "var(--text-tertiary)" : "var(--text-secondary)", display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ color: "#22d3ee", flexShrink: 0 }}>✓</span>
                 {f.label}
+                {f.isNew && <span style={{ fontSize: 8, background: "rgba(34,211,238,0.2)", color: "#22d3ee", padding: "1px 5px", borderRadius: 0, fontWeight: 800, letterSpacing: "0.06em", flexShrink: 0 }}>NEW</span>}
                 {f.comingSoon && <span style={{ fontSize: 9, background: "rgba(34,211,238,0.15)", color: "#22d3ee", padding: "1px 6px", borderRadius: 0, fontWeight: 700 }}>SOON</span>}
               </div>
             ))}
@@ -294,11 +301,12 @@ export default function SubscriptionPanel() {
             </button>
           )}
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 8 }}>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Pro, plus:</div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Creator, plus:</div>
             {FEATURES.filter(f => f.station && !f.pro).map(f => (
               <div key={f.label} style={{ fontSize: 11, color: f.comingSoon ? "var(--text-tertiary)" : "var(--text-secondary)", display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ color: "#a78bfa", flexShrink: 0 }}>✓</span>
                 {f.label}
+                {f.isNew && <span style={{ fontSize: 8, background: "rgba(167,139,250,0.2)", color: "#a78bfa", padding: "1px 5px", borderRadius: 0, fontWeight: 800, letterSpacing: "0.06em", flexShrink: 0 }}>NEW</span>}
                 {f.comingSoon && <span style={{ fontSize: 9, background: "rgba(167,139,250,0.15)", color: "#a78bfa", padding: "1px 6px", borderRadius: 0, fontWeight: 700 }}>SOON</span>}
               </div>
             ))}
@@ -312,10 +320,10 @@ export default function SubscriptionPanel() {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "rgba(124,58,237,0.07)", border: "1px solid rgba(124,58,237,0.25)", borderRadius: 0, marginBottom: 0 }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Syne', sans-serif" }}>You're on the Free plan</div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Pro for cloud backup, remote dashboard, PDF traffic reports, and more</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Creator for Iris AI assistant, cloud backup, remote dashboard, and more</div>
           </div>
           <button onClick={() => openCheckout("pro")} style={{ flexShrink: 0, marginLeft: 20, padding: "10px 20px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" as const }}>
-            Upgrade — $19/mo
+            Upgrade to Creator — $19/mo
           </button>
         </div>
       )}

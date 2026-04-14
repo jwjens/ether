@@ -6,6 +6,9 @@
     "output": "dist-electron",
     "buildResources": "build-resources"
   },
+  "asarUnpack": [
+    "node_modules/ffmpeg-static/**"
+  ],
   "files": [
     "dist/**/*",
     "electron/**/*",
@@ -31,7 +34,10 @@
       { "target": "dmg", "arch": ["x64", "arm64"] }
     ],
     "icon": "build-resources/icon.icns",
-    "category": "public.app-category.music"
+    "category": "public.app-category.music",
+    "entitlements": "build-resources/entitlements.mac.plist",
+    "entitlementsInherit": "build-resources/entitlements.mac.plist",
+    "hardenedRuntime": true
   },
   "linux": {
     "target": [

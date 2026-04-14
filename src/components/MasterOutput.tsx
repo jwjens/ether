@@ -5,13 +5,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { query, execute } from "../db/client";
 import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
+import { engine } from "../audio/engine-rodio";
 
 // ── Constants ────────────────────────────────────────────────
-const BG   = "#0e0e12";
-const BG1  = "#080810";
-const BOR  = "#1e1e28";
-const TXT  = "#c0c0d0";
-const TXT2 = "#606070";
+// Accent colors only — backgrounds/text use CSS variables
 const TEAL = "#00c8a8";
 const AMB  = "#c07820";
 const RED  = "#c02828";
@@ -64,6 +61,11 @@ function MasterVU({ master }: { master: number }) {
     });
     ro.observe(canvas);
 
+    // Cache theme colors — read from canvas element to inherit theme class
+    let cachedBg   = "#080810";
+    let cachedTxt2 = "#606070";
+    let colorCacheTs = 0;
+
     const draw = () => {
       const ctx = canvas.getContext("2d");
       if (!ctx) { rafRef.current = requestAnimationFrame(draw); return; }
@@ -71,8 +73,16 @@ function MasterVU({ master }: { master: number }) {
       const h = canvas.height;
       const now = Date.now();
 
+      // Refresh theme colors at most every 2 seconds
+      if (now - colorCacheTs > 2000) {
+        const cs = getComputedStyle(canvas);
+        cachedBg   = cs.getPropertyValue("--bg-primary").trim()     || "#080810";
+        cachedTxt2 = cs.getPropertyValue("--text-secondary").trim() || "#606070";
+        colorCacheTs = now;
+      }
+
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = BG1;
+      ctx.fillStyle = cachedBg;
       ctx.fillRect(0, 0, w, h);
 
       const m = masterRef.current;
@@ -94,7 +104,7 @@ function MasterVU({ master }: { master: number }) {
         const barH = Math.floor(lv * h);
         const fillY = h - barH;
 
-        ctx.fillStyle = "#111118";
+        ctx.fillStyle = cachedBg;
         ctx.fillRect(x, 0, barW, h);
 
         if (barH > 0) {
@@ -135,7 +145,7 @@ function MasterVU({ master }: { master: number }) {
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
       });
 
-      ctx.fillStyle = TXT2;
+      ctx.fillStyle = cachedTxt2;
       ctx.font = `700 8px system-ui`;
       ctx.textAlign = "center";
       ctx.fillText("L", barW / 2, h - 2);
@@ -160,9 +170,9 @@ function Fader({
   label, value, onChange,
 }: { label: string; value: number; onChange: (v: number) => void }) {
   return (
-    <div style={{ padding: "6px 10px", borderBottom: `1px solid ${BOR}` }}>
+    <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border-primary)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", color: TXT2, textTransform: "uppercase" as const }}>{label}</span>
+        <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>{label}</span>
         <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: TEAL }}>{Math.round(value * 100)}</span>
       </div>
       <input
@@ -177,10 +187,10 @@ function Fader({
 // ── StatusRow ────────────────────────────────────────────────
 function StatusRow({ dot, label, value }: { dot?: string; label: string; value: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 10px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 14px" }}>
       {dot && <div style={{ width: 5, height: 5, borderRadius: "50%", background: dot, flexShrink: 0 }} />}
-      <span style={{ fontSize: 8.5, color: TXT2, flex: 1, letterSpacing: "0.03em", textTransform: "uppercase" as const }}>{label}</span>
-      <span style={{ fontSize: 9, color: TXT, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{value}</span>
+      <span style={{ fontSize: 8.5, color: "var(--text-secondary)", flex: 1, letterSpacing: "0.03em", textTransform: "uppercase" as const }}>{label}</span>
+      <span style={{ fontSize: 9, color: "var(--text-primary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{value}</span>
     </div>
   );
 }
@@ -283,24 +293,24 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       {/* Console header */}
-      <div style={{ padding: "5px 8px 4px", borderBottom: `1px solid ${BOR}`, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ padding: "6px 10px 5px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
         <div style={{ width: 5, height: 5, borderRadius: "50%", background: engineOk ? "#22c55e" : "#c02828", flexShrink: 0, animation: engineOk ? "none" : "con-blink 1s step-start infinite" }} />
-        <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: "0.14em", color: TXT2, textTransform: "uppercase" as const, flex: 1 }}>Console</span>
+        <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, flex: 1 }}>Console</span>
         <button
           onClick={() => { setLines([]); userScrolled.current = false; }}
-          style={{ fontSize: 7, color: "#3a3a4a", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+          style={{ fontSize: 7, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
           title="Clear console"
         >CLR</button>
       </div>
 
       {/* Filter buttons */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${BOR}`, flexShrink: 0 }}>
+      <div style={{ display: "flex", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         {FILTERS.map(f => (
           <button key={f.id} onClick={() => setFilter(f.id)} style={{
             flex: 1, padding: "3px 0", fontSize: 7, fontWeight: 700,
             letterSpacing: "0.06em", background: "none", border: "none",
-            borderRight: f.id !== "audio" ? `1px solid ${BOR}` : "none",
-            color: filter === f.id ? TEAL : TXT2,
+            borderRight: f.id !== "audio" ? "1px solid var(--border-primary)" : "none",
+            color: filter === f.id ? TEAL : "var(--text-secondary)",
             cursor: "pointer",
             borderBottom: filter === f.id ? `1px solid ${TEAL}` : "none",
             marginBottom: filter === f.id ? -1 : 0,
@@ -313,26 +323,26 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
         ref={scrollRef}
         onScroll={handleScroll}
         style={{
-          flex: 1, overflowY: "auto", background: "#060608",
+          flex: 1, overflowY: "auto", background: "var(--bg-primary)",
           padding: "4px 0",
           fontSize: 9, fontFamily: "var(--font-mono, 'DM Mono', 'Courier New', monospace)",
           lineHeight: 1.5,
           // thin scrollbar
           scrollbarWidth: "thin" as const,
-          scrollbarColor: "#1e1e28 transparent",
+          scrollbarColor: "var(--border-primary) transparent",
         }}
       >
         {visible.length === 0 ? (
-          <div style={{ padding: "8px 8px", color: "#2a2a3a", fontSize: 8, fontStyle: "italic" }}>Waiting for events…</div>
+          <div style={{ padding: "8px 10px", color: "var(--text-tertiary)", opacity: 0.4, fontSize: 8, fontStyle: "italic" }}>Waiting for events…</div>
         ) : visible.map(line => (
           <div key={line.id} style={{
             display: "flex", gap: 4,
-            padding: "1px 6px",
+            padding: "1px 10px",
             borderBottom: "none",
             whiteSpace: "nowrap" as const,
             overflow: "hidden",
           }}>
-            <span style={{ color: "#303040", flexShrink: 0, fontSize: 8 }}>{fmtTime(line.ts)}</span>
+            <span style={{ color: "var(--text-tertiary)", opacity: 0.5, flexShrink: 0, fontSize: 8 }}>{fmtTime(line.ts)}</span>
             <span style={{ color: TYPE_COLOR[line.type], overflow: "hidden", textOverflow: "ellipsis" }}>{line.msg}</span>
           </div>
         ))}
@@ -349,13 +359,83 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
 }
 
 // ── MasterOutput ─────────────────────────────────────────────
-export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
+// ── Expanded-mode helpers ─────────────────────────────────────
+
+function fmtSec(s: number): string {
+  const t = Math.max(0, Math.floor(s));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+
+/** SVG stroke-dasharray arc, starts at 12 o'clock */
+function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
+  pct: number; size?: number; stroke?: number; color?: string; label?: string;
+}) {
+  const r = (size - stroke * 2) / 2;
+  const circ = 2 * Math.PI * r;
+  const offset = circ * (1 - Math.max(0, Math.min(1, pct)));
+  const c = size / 2;
+  return (
+    <svg width={size} height={size} style={{ display: "block", transform: "rotate(-90deg)" }}>
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--bg-tertiary)" strokeWidth={stroke} />
+      <circle cx={c} cy={c} r={r} fill="none" stroke={color} strokeWidth={stroke}
+        strokeDasharray={circ} strokeDashoffset={offset}
+        strokeLinecap="butt" style={{ transition: "stroke-dashoffset 0.8s ease" }}
+      />
+      {label && (
+        <text x={c} y={c + 1} textAnchor="middle" dominantBaseline="middle"
+          style={{ fontSize: 9, fill: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", transform: "rotate(90deg)", transformOrigin: `${c}px ${c}px` }}>
+          {label}
+        </text>
+      )}
+    </svg>
+  );
+}
+
+// ── MasterOutput ─────────────────────────────────────────────
+export default function MasterOutput({ masterLevel, expanded }: { masterLevel: number; expanded?: boolean }) {
   const [masterVol,  setMasterVol]  = useState(1.0);
   const [monitorVol, setMonitorVol] = useState(0.8);
   const [nextBreak,  setNextBreak]  = useState("—");
   const [onAir,      setOnAir]      = useState(false);
   const [uptime,     setUptime]     = useState("0:00");
   const sessionStart = useRef<number>(0);
+
+  // ── Expanded-mode state ───────────────────────────────────────
+  const [activeDeck,  setActiveDeck]  = useState<{ title: string; artist: string; positionSec: number; durationSec: number } | null>(null);
+  const [queueItems,  setQueueItems]  = useState<{ title: string; artist: string; durationSec?: number }[]>([]);
+  const [currentShow, setCurrentShow] = useState<{ name: string; startH: number; endH: number } | null>(null);
+  const [nowSec,      setNowSec]      = useState(() => { const n = new Date(); return n.getHours() * 3600 + n.getMinutes() * 60 + n.getSeconds(); });
+
+  useEffect(() => {
+    if (!expanded) return;
+    const pull = () => {
+      const decks = (["A", "B", "C"] as const).map(id => engine.getDeck(id)?.getState?.());
+      const playing = decks.find(d => d?.status === "playing") ?? decks.find(d => d?.status === "paused") ?? null;
+      setActiveDeck(playing && playing.title ? { title: playing.title, artist: playing.artist || "", positionSec: playing.positionSec ?? 0, durationSec: playing.durationSec ?? 0 } : null);
+      setQueueItems((engine.getQueue() as any[]).slice(0, 3).map(q => ({ title: q.title || "", artist: q.artist || "", durationSec: q.durationSec })));
+    };
+    pull();
+    const unsub = engine.on(() => pull());
+    const tick = setInterval(() => { pull(); setNowSec(s => s + 10); }, 10_000);
+    return () => { unsub(); clearInterval(tick); };
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    const load = async () => {
+      try {
+        const h = new Date().getHours();
+        const rows = await query<{ name: string; start_hour: number; end_hour: number }>(
+          "SELECT name, start_hour, end_hour FROM shows WHERE is_active=1 AND start_hour <= ? ORDER BY start_hour DESC LIMIT 1", [h]
+        );
+        if (rows.length > 0) setCurrentShow({ name: rows[0].name, startH: rows[0].start_hour, endH: rows[0].end_hour });
+        else setCurrentShow(null);
+      } catch { setCurrentShow(null); }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, [expanded]);
 
   // ── Master EQ ────────────────────────────────────────────────
   const [eqOpen,  setEqOpen]  = useState(false);
@@ -430,21 +510,48 @@ export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
     ? -((masterLevel - 0.85) / 0.15 * 6).toFixed(1)
     : "0.0";
 
+  // Expanded-mode computed values
+  const playPct = activeDeck && activeDeck.durationSec > 0
+    ? Math.max(0, Math.min(1, activeDeck.positionSec / activeDeck.durationSec)) : 0;
+  const timeRemaining = activeDeck && activeDeck.durationSec > 0
+    ? activeDeck.durationSec - activeDeck.positionSec : null;
+  const showPct = currentShow ? (() => {
+    const endH = currentShow.endH === 0 ? 24 : currentShow.endH <= currentShow.startH ? currentShow.endH + 24 : currentShow.endH;
+    const total = (endH - currentShow.startH) * 3600;
+    const elapsed = nowSec - currentShow.startH * 3600;
+    return Math.max(0, Math.min(1, elapsed / total));
+  })() : 0;
+
   return (
     <div style={{
-      width: 168, flexShrink: 0, display: "flex", flexDirection: "column",
-      background: BG, borderLeft: `1px solid ${BOR}`,
-      fontSize: 11, color: TXT, overflow: "hidden",
+      width: expanded ? undefined : 220,
+      flex: expanded ? 1 : undefined,
+      minWidth: expanded ? 280 : undefined,
+      flexShrink: 0, display: "flex", flexDirection: "column",
+      background: "var(--bg-secondary)", borderLeft: "1px solid var(--border-primary)",
+      fontSize: 11, color: "var(--text-primary)", overflow: "hidden",
       userSelect: "none",
     }}>
       {/* Header */}
-      <div style={{ padding: "7px 10px", borderBottom: `1px solid ${BOR}`, flexShrink: 0 }}>
-        <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: "0.14em", color: TXT2, textTransform: "uppercase" as const }}>Master Out</span>
+      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Master out</span>
+        <button
+          title="Pop out to separate window"
+          onClick={() => (window as any).ether?.invoke("window:popout", "master")}
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "1px 2px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0 }}
+          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
+          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
+        >
+          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </button>
       </div>
 
       {/* VU meters */}
-      <div style={{ padding: "8px 10px 6px", borderBottom: `1px solid ${BOR}`, flexShrink: 0 }}>
-        <div style={{ fontSize: 8, color: TXT2, letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const }}>Output Level</div>
+      <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        <div style={{ fontSize: 7, color: "var(--text-secondary)", letterSpacing: "0.02em", marginBottom: 6, opacity: 0.5 }}>Output level</div>
         <MasterVU master={masterLevel * masterVol} />
       </div>
 
@@ -453,8 +560,8 @@ export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
       <Fader label="Monitor" value={monitorVol} onChange={setMonitorVol} />
 
       {/* Limiter */}
-      <div style={{ padding: "5px 10px", borderBottom: `1px solid ${BOR}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
-        <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.08em", color: TXT2, textTransform: "uppercase" as const }}>Limiter</span>
+      <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+        <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Limiter</span>
         <span style={{
           fontSize: 9, fontFamily: "'DM Mono', monospace",
           color: masterLevel > 0.85 ? AMB : TEAL,
@@ -462,15 +569,15 @@ export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
       </div>
 
       {/* Master EQ toggle */}
-      <div style={{ padding: "4px 10px", borderBottom: `1px solid ${BOR}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ padding: "5px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{
             width: 5, height: 5, borderRadius: "50%",
-            background: eqActive ? AMB : "#303040",
+            background: eqActive ? AMB : "var(--border-primary)",
             boxShadow: eqActive ? `0 0 4px ${AMB}` : "none",
             transition: "all 0.2s",
           }} />
-          <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: "0.12em", color: TXT2, textTransform: "uppercase" as const }}>Master EQ</span>
+          <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Master EQ</span>
         </div>
         <button
           onClick={() => setEqOpen(o => !o)}
@@ -478,8 +585,8 @@ export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
             fontSize: 7, fontWeight: 700, letterSpacing: "0.1em",
             padding: "2px 8px", borderRadius: 0,
             background: eqOpen ? "rgba(96,64,192,0.18)" : "none",
-            border: `1px solid ${eqOpen ? "#6040c0" : BOR}`,
-            color: eqOpen ? "#8060e0" : TXT2,
+            border: `1px solid ${eqOpen ? "#6040c0" : "var(--border-primary)"}`,
+            color: eqOpen ? "#8060e0" : "var(--text-secondary)",
             cursor: "pointer", transition: "all 0.15s",
           }}
         >{eqOpen ? "CLOSE" : "OPEN"}</button>
@@ -491,14 +598,14 @@ export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
         overflow: "hidden",
         transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
         flexShrink: 0,
-        borderBottom: eqOpen ? `1px solid ${BOR}` : "none",
+        borderBottom: eqOpen ? "1px solid var(--border-primary)" : "none",
       }}>
         <GraphicEQ bands={eqBands} onChange={handleMasterEqChange} label="MASTER EQ" />
       </div>
 
       {/* Station status */}
-      <div style={{ padding: "5px 0", borderBottom: `1px solid ${BOR}`, flexShrink: 0 }}>
-        <div style={{ padding: "2px 10px 4px", fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: TXT2, textTransform: "uppercase" as const }}>Station</div>
+      <div style={{ padding: "6px 0", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        <div style={{ padding: "2px 14px 5px", fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Station</div>
         <StatusRow
           dot={onAir ? "#22c55e" : "#3a3a4a"}
           label="On Air"
@@ -508,6 +615,75 @@ export default function MasterOutput({ masterLevel }: { masterLevel: number }) {
         <StatusRow label="Uptime" value={uptime} />
         <StatusRow label="Next Break" value={nextBreak} />
       </div>
+
+      {/* ── Expanded sections — only when cart wall is hidden ── */}
+      {expanded && (
+        <>
+          {/* NOW PLAYING */}
+          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+            <div style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, marginBottom: 7 }}>Now playing</div>
+            {activeDeck ? (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, letterSpacing: "-0.01em", marginBottom: 2 }}>
+                  {activeDeck.title}
+                </div>
+                <div style={{ fontSize: 9, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 7 }}>
+                  {activeDeck.artist || "—"}
+                </div>
+                {/* Progress bar */}
+                <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
+                  <div style={{ height: "100%", width: `${playPct * 100}%`, background: TEAL, transition: "width 1s linear" }} />
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>{fmtSec(activeDeck.positionSec)}</span>
+                  <span style={{ fontSize: 8, color: timeRemaining !== null && timeRemaining < 30 ? AMB : "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
+                    -{fmtSec(timeRemaining ?? 0)}
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No track playing</div>
+            )}
+          </div>
+
+          {/* NEXT UP */}
+          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+            <div style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, marginBottom: 6 }}>Next up</div>
+            {queueItems.length > 0 ? queueItems.map((item, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "3px 0", borderBottom: i < queueItems.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
+                <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", flexShrink: 0, minWidth: 10 }}>{i + 1}</span>
+                <span style={{ fontSize: 9, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontWeight: 500 }}>{item.title}</span>
+                <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>{item.durationSec ? fmtSec(item.durationSec) : "—"}</span>
+              </div>
+            )) : (
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>Queue empty</div>
+            )}
+          </div>
+
+          {/* SHOW ARC */}
+          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+            <div style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, marginBottom: 7 }}>Show progress</div>
+            {currentShow ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <ArcProgress pct={showPct} size={50} stroke={4} color={TEAL} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 2 }}>
+                    {currentShow.name}
+                  </div>
+                  <div style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
+                    {Math.round(showPct * 100)}% elapsed
+                  </div>
+                  <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>
+                    Ends {currentShow.endH === 0 ? "12 AM" : currentShow.endH < 12 ? `${currentShow.endH} AM` : currentShow.endH === 12 ? "12 PM" : `${currentShow.endH - 12} PM`}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No active show</div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Live console — fills all remaining space */}
       <LiveConsole masterLevel={masterLevel} />

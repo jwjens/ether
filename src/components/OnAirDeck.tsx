@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { DeckState } from "../audio/engine-rodio";
 import { query } from "../db/client";
 import { execute } from "../db/client";
+import { fetchArt } from "./UpNext";
 
 interface Props {
   deck: DeckState | null;
@@ -25,12 +26,6 @@ function fmt(sec: number): string {
   return Math.floor(sec / 60) + ":" + String(Math.floor(sec % 60)).padStart(2, "0");
 }
 
-function fmtMs(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  const ms = Math.floor((sec % 1) * 10);
-  return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0") + "." + ms;
-}
 
 
 export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume, onDragStart, bpm, introEndSec }: Props) {
@@ -96,7 +91,19 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
 
   const isPlaying = status === "playing";
 
-  // ── Album artwork ──────────────────────────────────────────
+  // ── Album artwork (iTunes song entity — 60×60 thumb + idle bg) ────────────
+  const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
+  const albumArtFetchedFor = useRef<string>("");
+
+  useEffect(() => {
+    if (!title) return;
+    const key = `${title}::${artist}`;
+    if (albumArtFetchedFor.current === key) return;
+    albumArtFetchedFor.current = key;
+    fetchArt(title, artist).then(url => setAlbumArtUrl(url));
+  }, [title, artist]);
+
+  // ── Artist photo (Wikipedia/iTunes artist) for blurred bg ──────────────
   const [artUrl, setArtUrl] = useState<string | null>(null);
   const [artPulse, setArtPulse] = useState(false);
   const [artReady, setArtReady] = useState(false);
@@ -231,14 +238,14 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   let statusLabel = "IDLE";
   let statusColor = "var(--text-tertiary)";
   let topBarColor = identityColor;
-  let cardBg = "#0e0e12";
+  let cardBg = "var(--bg-primary)";
   let cardShadow = "none";
 
   if (isPlaying) {
     if (isCritical) {
       accent = "var(--accent-red)"; statusLabel = "ENDING"; statusColor = "var(--accent-red)";
       topBarColor = "var(--accent-red)";
-      cardBg = blink ? "rgba(248,113,113,0.04)" : "#0e0e12";
+      cardBg = "var(--bg-primary)";
       cardShadow = "0 0 12px rgba(248,113,113,0.18)";
     } else if (isEnding) {
       accent = "var(--accent-orange)"; statusLabel = "OUTRO"; statusColor = "var(--accent-orange)";
@@ -286,20 +293,25 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   const playBtnLabel = isPlaying ? "PAUSE" : isPaused ? "RESUME" : "PLAY";
 
   return (
-    <div style={{
-      background: cardBg,
-      backdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
-      WebkitBackdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
-      borderRadius: 0,
-      border: "none",
-      boxShadow: cardShadow,
-      display: "flex",
-      flexDirection: "column",
-      height: "100%",
-      overflow: "hidden",
-      transition: "background 0.4s ease, box-shadow 0.4s ease, border-color 0.4s ease",
-      fontFamily: "'Inter', system-ui, sans-serif",
-    }}>
+    <div
+      className={isPlaying ? "pulse-border" : ""}
+      style={{
+        "--pulse-rgb": deckHueRaw,
+        background: cardBg,
+        backdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
+        WebkitBackdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
+        borderRadius: 0,
+        border: "none",
+        // When playing, CSS animation owns box-shadow; otherwise use static state shadow
+        boxShadow: isPlaying ? undefined : cardShadow,
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
+        transition: "background 0.4s ease, border-color 0.4s ease",
+        fontFamily: "'Inter', system-ui, sans-serif",
+      } as React.CSSProperties}
+    >
 
       {/* ── Top accent bar ── */}
       <div style={{
@@ -310,13 +322,15 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         flexShrink: 0,
       }} />
 
-      {/* ── Track info ── */}
-      <div style={{ padding: "10px 16px 8px", flexShrink: 0, display: "flex", alignItems: "flex-start", gap: 8 }}>
+      {/* ── Header: art + track info + countdown ── */}
+      <div style={{ padding: "10px 12px 8px", flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>
+
+        {/* Drag handle */}
         {onDragStart && (
           <div
             onMouseDown={onDragStart}
             title="Drag to reorder"
-            style={{ cursor: "grab", paddingTop: 4, color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.3 }}
+            style={{ cursor: "grab", color: "var(--text-tertiary)", display: "flex", alignItems: "center", flexShrink: 0, opacity: 0.3 }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "0.7"; }}
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "0.3"; }}
           >
@@ -327,22 +341,35 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             </svg>
           </div>
         )}
+
+        {/* Album art — 56×56 */}
+        {title && albumArtUrl && (
+          <div style={{
+            width: 56, height: 56, flexShrink: 0,
+            border: "1px solid rgba(255,255,255,0.06)",
+            overflow: "hidden",
+            borderRadius: 2,
+          }}>
+            <img src={albumArtUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+          </div>
+        )}
+
+        {/* Title + artist */}
         <div style={{ minWidth: 0, flex: 1 }}>
           <div
             key={title}
             style={{
-              fontSize: 13,
-              color: isIdle ? "var(--text-tertiary)" : "#c0c0d0",
+              fontSize: 18,
+              fontWeight: 700,
+              color: isIdle ? "var(--text-tertiary)" : "var(--text-primary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              letterSpacing: "-0.02em",
-              lineHeight: 1.2,
+              letterSpacing: "-0.03em",
+              lineHeight: 1.15,
               fontFamily: "'Inter', system-ui, sans-serif",
               fontStyle: isIdle ? "italic" : "normal",
-              fontWeight: isIdle ? 400 : 500,
               animation: title ? "deck-slide-in 0.35s cubic-bezier(0.34,1.56,0.64,1) both" : "none",
-              transition: "color 0.2s ease",
             }}>
             {title ? (() => {
               const remaster = title.match(/\s*[-–]\s*([\d]{4}\s*remaster(?:ed)?|remaster(?:ed)?|re-?master(?:ed)?.*)/i);
@@ -351,41 +378,31 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
               return (
                 <>
                   {cleanTitle}
-                  {remasterTag && <span style={{ fontSize: "0.55em", fontWeight: 400, opacity: 0.4, marginLeft: 6 }}>{remasterTag}</span>}
+                  {remasterTag && <span style={{ fontSize: "0.45em", fontWeight: 400, opacity: 0.4, marginLeft: 6 }}>{remasterTag}</span>}
                 </>
               );
             })() : "No track loaded"}
           </div>
           <div style={{
-            fontSize: 11,
+            fontSize: 13,
             fontWeight: 400,
-            color: "#606070",
-            marginTop: 3,
+            color: "var(--text-secondary)",
+            marginTop: 4,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
-            letterSpacing: "-0.005em",
             opacity: isIdle ? 0 : 1,
             transition: "opacity 0.2s",
           }}>
             {artist || ""}
           </div>
         </div>
-      </div>
 
-      {/* ── Timers ── */}
-      <div style={{
-        padding: "0 16px 8px",
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "space-between",
-        flexShrink: 0,
-      }}>
-        {/* Remaining — hero number */}
-        <div>
+        {/* Countdown — single large timer, right-aligned */}
+        <div style={{ flexShrink: 0, textAlign: "right" as const }}>
           <div style={{
             fontFamily: "'DM Mono', 'SF Mono', monospace",
-            fontSize: dur > 0 ? 40 : 36,
+            fontSize: 36,
             fontWeight: 300,
             fontVariantNumeric: "tabular-nums",
             letterSpacing: "-0.04em",
@@ -393,43 +410,15 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             color: dur > 0 ? accent : "var(--text-tertiary)",
             transition: "color 0.3s ease",
           }}>
-            {dur > 0 ? fmt(remaining) : "—:——"}
+            {dur > 0 ? `\u2212${fmt(remaining)}` : "\u2014:\u2014\u2014"}
           </div>
         </div>
 
-        {/* Elapsed — minimal, no label */}
-        <div style={{ textAlign: "right" as const, paddingBottom: 6 }}>
-          <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "flex-end", gap: 3 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 7, fontWeight: 600, letterSpacing: "0.14em", color: "var(--text-tertiary)", opacity: 0.5, textTransform: "uppercase" as const }}>elapsed</span>
-              <span style={{
-                fontFamily: "'DM Mono', 'SF Mono', monospace",
-                fontSize: 11, fontWeight: 300,
-                fontVariantNumeric: "tabular-nums",
-                letterSpacing: "-0.02em",
-                color: "var(--text-tertiary)",
-              }}>
-                {dur > 0 ? fmtMs(pos) : ""}
-              </span>
-            </div>
-            {bpm && bpm > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                <svg width="7" height="8" viewBox="0 0 10 12" fill="var(--accent-amber)" opacity="0.6">
-                  <rect x="0" y="4" width="3" height="8" rx="1"/>
-                  <rect x="3.5" y="2" width="3" height="10" rx="1"/>
-                  <rect x="7" y="0" width="3" height="12" rx="1"/>
-                </svg>
-                <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-amber)", fontFamily: "'DM Mono', monospace", opacity: 0.8 }}>{Math.round(bpm)}</span>
-                <span style={{ fontSize: 7, color: "var(--text-tertiary)", opacity: 0.5, letterSpacing: "0.08em" }}>BPM</span>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* ── Progress bar ── */}
       <div style={{
-        margin: "0 16px 10px",
+        margin: "0 12px 8px",
         height: 3,
         background: "var(--bg-tertiary)",
         borderRadius: 0,
@@ -439,10 +428,10 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         <div style={{
           height: "100%",
           width: dur > 0 ? pct + "%" : "0%",
-          background: accent,
+          background: "var(--accent-cyan)",
           borderRadius: 0,
-          transition: "width 0.15s linear, background 0.3s ease",
-          boxShadow: isPlaying ? `0 0 6px ${accent}` : "none",
+          transition: "width 0.15s linear",
+          boxShadow: isPlaying ? "0 0 6px var(--accent-cyan)" : "none",
         }} />
       </div>
 
@@ -452,6 +441,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
         minHeight: 44,
         position: "relative",
         overflow: "hidden",
+        background: "var(--bg-primary)",
       }}>
         {/* Artwork background for standby decks */}
         {!isPlaying && artUrl && artReady && (
@@ -479,6 +469,69 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
 
         <VUMeter deckId={deckId} isPlaying={isPlaying} />
 
+        {/* ── Idle state: animated sine-wave — rendered after VUMeter so it sits on top ── */}
+        {isIdle && (
+          <>
+            <style>{`
+              @keyframes idle-bar {
+                0%   { height: 3px;  opacity: 0.25; }
+                100% { height: 20px; opacity: 0.55; }
+              }
+              @keyframes idle-art-fade {
+                from { opacity: 0; }
+                to   { opacity: 0.3; }
+              }
+            `}</style>
+            <div style={{
+              position: "absolute", inset: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              pointerEvents: "none",
+              zIndex: 2,
+              background: "var(--bg-primary)",
+            }}>
+              {/* Last-played album art — dimmed full-bleed background */}
+              {albumArtUrl && (
+                <img
+                  src={albumArtUrl}
+                  alt=""
+                  style={{
+                    position: "absolute", inset: 0,
+                    width: "100%", height: "100%",
+                    objectFit: "cover",
+                    opacity: 0.3,
+                    pointerEvents: "none",
+                    animation: "idle-art-fade 0.8s ease both",
+                  }}
+                />
+              )}
+
+              {/* Small deck letter — bottom-right ghost */}
+              <span style={{
+                position: "absolute", bottom: 8, right: 10,
+                fontSize: 48, fontWeight: 800, letterSpacing: "-0.04em",
+                color: deckHue, opacity: 0.06,
+                fontFamily: "'Syne', sans-serif",
+                lineHeight: 1,
+              }}>{deckId}</span>
+
+              {/* Pulsing sine-wave bars */}
+              <div style={{ display: "flex", gap: 3, alignItems: "center", height: 28 }}>
+                {[0.3,0.55,0.75,0.9,1,0.9,0.75,0.55,0.3,0.15,0.3,0.55,0.75,0.9,1,0.9,0.75,0.55,0.3].map((amp, i) => (
+                  <div key={i} style={{
+                    width: 2,
+                    background: `rgba(${deckHueRaw}, 0.5)`,
+                    borderRadius: 1,
+                    animation: `idle-bar ${1.6 + amp * 0.6}s ease-in-out ${i * 0.07}s infinite alternate`,
+                    maxHeight: `${Math.round(amp * 22)}px`,
+                    minHeight: 3,
+                    height: `${Math.round(amp * 22)}px`,
+                  }} />
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
         {/* Countdown overlay */}
         {showOverlay && (
           <div style={{
@@ -497,20 +550,12 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
             {isInIntro ? (
               <>
                 {/* Artist + title at top */}
-                <div style={{
-                  position: "absolute", top: 12, left: 14, right: 14,
-                  zIndex: 1,
-                  animation: "deck-slide-in 0.4s ease both",
-                }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{title}</div>
-                  <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 2 }}>{artist}</div>
-                </div>
                 {/* Big countdown */}
                 <div style={{ position: "relative", zIndex: 1, textAlign: "center" as const }}>
                   <div style={{
                     fontFamily: "'DM Mono', monospace",
-                    fontSize: 96, fontWeight: 700,
-                    color: "var(--accent-cyan)",
+                    fontSize: 64, fontWeight: 700,
+                    color: "var(--text-secondary)",
                     lineHeight: 1,
                     letterSpacing: "-0.06em",
                     transform: artPulse ? "scale(1.05)" : "scale(1)",
@@ -571,7 +616,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       {/* ── Controls ── */}
       <div style={{
         padding: "10px 16px 14px",
-        borderTop: "1px solid var(--border-primary)",
+        borderTop: "1px solid rgba(255,255,255,0.04)",
         background: "var(--bg-tertiary)",
         display: "flex",
         alignItems: "center",

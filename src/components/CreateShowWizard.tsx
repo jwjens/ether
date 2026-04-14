@@ -11,7 +11,7 @@ interface Category {
 }
 
 interface Clock {
-  id: number; name: string; daypart: string;
+  id: number; name: string;
 }
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -117,7 +117,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
 
   const loadClocks = useCallback(async () => {
     try {
-      const rows = await query<Clock>("SELECT id, name, daypart FROM format_clocks ORDER BY name");
+      const rows = await query<Clock>("SELECT id, name FROM clocks ORDER BY name");
       setClocks(rows);
     } catch {}
   }, []);
@@ -143,11 +143,11 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     setCreatingClock(true);
     try {
       await execute(
-        "INSERT INTO format_clocks (name, daypart, slots_json) VALUES (?,?,?)",
-        [newClockName.trim(), "Custom", "[]"]
+        "INSERT INTO clocks (name) VALUES (?)",
+        [newClockName.trim()]
       );
       await loadClocks();
-      const updated = await query<Clock>("SELECT id, name, daypart FROM format_clocks ORDER BY id DESC LIMIT 1");
+      const updated = await query<Clock>("SELECT id, name FROM clocks ORDER BY id DESC LIMIT 1");
       if (updated.length) setSelectedClockId(updated[0].id);
       setNewClockName("");
       setClockCreated(true);
@@ -321,7 +321,6 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
                       }}>
                         <span style={{ color: "var(--accent-blue)", fontSize: 14 }}>{selectedClockId === c.id ? "●" : "○"}</span>
                         {c.name}
-                        <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: "auto" }}>{c.daypart}</span>
                       </button>
                     ))}
                   </div>

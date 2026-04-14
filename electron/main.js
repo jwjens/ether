@@ -27,8 +27,10 @@ try { require("dotenv").config(); } catch (e) { /* dotenv optional */ }
 app.setAppUserModelId("ether");
 
 // ── Fix DPI scaling on Windows ────────────────────────────────
-app.commandLine.appendSwitch("high-dpi-support", "1");
-app.commandLine.appendSwitch("force-device-scale-factor", "1");
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("high-dpi-support", "1");
+  app.commandLine.appendSwitch("force-device-scale-factor", "1");
+}
 
 // ── Environment ───────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
@@ -339,14 +341,29 @@ function runMigrations() {
     CREATE TABLE IF NOT EXISTS format_clocks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      slots TEXT DEFAULT '[]',
+      daypart TEXT NOT NULL DEFAULT 'Morning Drive',
+      slots_json TEXT NOT NULL DEFAULT '[]',
       created_at INTEGER DEFAULT (unixepoch())
     );
 
     CREATE TABLE IF NOT EXISTS crash_recovery (
       id INTEGER PRIMARY KEY DEFAULT 1,
       data TEXT,
+      queue_json TEXT DEFAULT '[]',
+      deck_a_path TEXT,
+      deck_a_title TEXT,
+      deck_a_artist TEXT,
+      deck_a_position INTEGER DEFAULT 0,
+      was_playing INTEGER DEFAULT 0,
       saved_at INTEGER DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'jock',
+      pin_hash TEXT,
+      color TEXT NOT NULL DEFAULT '#22d3ee'
     );
 
     CREATE TABLE IF NOT EXISTS rtmp_destinations (
@@ -405,6 +422,27 @@ function runMigrations() {
   alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
   // Part 8 — Spotify URI on songs
   alterSafe("ALTER TABLE songs ADD COLUMN spotify_uri TEXT DEFAULT NULL");
+  // Format clock columns missing from early migration (slots → slots_json + daypart)
+  alterSafe("ALTER TABLE format_clocks ADD COLUMN daypart TEXT NOT NULL DEFAULT 'Morning Drive'");
+  alterSafe("ALTER TABLE format_clocks ADD COLUMN slots_json TEXT NOT NULL DEFAULT '[]'");
+  // crash_recovery columns added after initial schema
+  alterSafe("ALTER TABLE crash_recovery ADD COLUMN queue_json TEXT DEFAULT '[]'");
+  alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_path TEXT");
+  alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_title TEXT");
+  alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_artist TEXT");
+  alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_position INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE crash_recovery ADD COLUMN was_playing INTEGER DEFAULT 0");
+  // Ensure the single crash_recovery sentinel row exists
+  db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
+  // Seed default users if table is empty
+  const userCount = db.prepare("SELECT COUNT(*) as n FROM users").get();
+  if (userCount.n === 0) {
+    db.exec(`
+      INSERT INTO users (name, role, pin_hash, color) VALUES ('Admin', 'admin', '1234', '#f87171');
+      INSERT INTO users (name, role, pin_hash, color) VALUES ('Jock', 'jock', NULL, '#22d3ee');
+      INSERT INTO users (name, role, pin_hash, color) VALUES ('Music Director', 'music_director', '1234', '#a78bfa');
+    `);
+  }
   // EQ settings stored in station_config_kv with keys eq_deck_A, eq_deck_B, eq_deck_C, eq_deck_mic, eq_master
   // Part 2 — operators and operator notes
   db.exec(`
@@ -604,6 +642,31 @@ function buildMenu() {
     const win = BrowserWindow.getFocusedWindow() || mainWindow;
     if (win) win.webContents.send("menu-action", cmd);
   };
+  const popout = (panel) => {
+    // Re-use the same handler logic as the IPC "window:popout" handler
+    const tag = `popout:${panel}`;
+    const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
+    if (existing) { existing.show(); existing.focus(); return; }
+    const { screen } = require("electron");
+    const size = POPOUT_SIZES[panel] || { width: 640, height: 520 };
+    const displays = screen.getAllDisplays();
+    const primary = screen.getPrimaryDisplay();
+    const secondary = displays.find(d => d.id !== primary.id);
+    const x = secondary ? secondary.workArea.x + 60 : undefined;
+    const y = secondary ? secondary.workArea.y + 60 : undefined;
+    const win = new BrowserWindow({
+      width: size.width, height: size.height,
+      minWidth: 320, minHeight: 200, x, y,
+      title: tag, frame: false, transparent: false,
+      backgroundColor: "#0e0e14", resizable: true,
+      webPreferences: {
+        preload: path.join(__dirname, "preload.js"),
+        contextIsolation: true, nodeIntegration: false, webSecurity: false,
+      },
+    });
+    if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
+    else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
+  };
   const template = [
     { label: "File", submenu: [
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
@@ -658,6 +721,19 @@ function buildMenu() {
       { label: "Station Manager", click: () => send("nav:stationmanager") },
       { type: "separator" },
       { label: "System Health", click: () => send("nav:health") },
+      { type: "separator" },
+      { label: "Monitors", submenu: [
+        { label: "Decks",          click: () => popout("decks") },
+        { label: "Video Studio",   click: () => popout("videostudio") },
+        { label: "Camera",         click: () => popout("camera") },
+        { label: "Queue / Up Next",click: () => popout("upnext") },
+        { label: "Station Health", click: () => popout("health") },
+        { type: "separator" },
+        { label: "Mic",            click: () => popout("mic") },
+        { label: "Master Output",  click: () => popout("master") },
+        { label: "Phone Desk",     click: () => popout("phone") },
+        { label: "Voice Tracker",  click: () => popout("voicetrack") },
+      ]},
     ]},
     { label: "Help", submenu: [
       { label: "Keyboard Shortcuts", click: () => send("help:shortcuts") },
@@ -760,7 +836,7 @@ app.whenReady().then(() => {
       try {
         const levels = JSON.parse(audio.audioGetLevels());
         levels.master = Math.max(levels.a || 0, levels.b || 0, levels.c || 0);
-        mainWindow.webContents.send("audio:levels", levels);
+        sendToAllWindows("audio:levels", levels);
       } catch {}
     }, 33);
   });
@@ -1063,6 +1139,102 @@ ipcMain.on("desk-send-to-queue", (_, payload) => {
 
 // ── Relaunch ──────────────────────────────────────────────────
 ipcMain.handle("relaunch", () => { app.relaunch(); app.exit(0); });
+
+// ── Multi-monitor pop-out windows — Tony Stark mode ──────────
+// Each popped panel gets a frameless BrowserWindow loading #popout/<panel>
+const POPOUT_SIZES = {
+  "decks":       { width: 1320, height: 460 },  // all visible decks in a row
+  "mic":         { width: 400,  height: 300 },
+  "master":      { width: 800,  height: 600 },
+  "upnext":      { width: 480,  height: 640 },
+  "phone":       { width: 720,  height: 520 },
+  "voicetrack":  { width: 860,  height: 540 },
+  "videostudio": { width: 1024, height: 640 },
+  "camera":      { width: 640,  height: 480 },
+  "health":      { width: 720,  height: 540 },
+};
+
+ipcMain.handle("window:popout", async (_, panel) => {
+  const tag = `popout:${panel}`;
+  const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
+  if (existing) { existing.show(); existing.focus(); return; }
+
+  const { screen } = require("electron");
+  const size = POPOUT_SIZES[panel] || { width: 640, height: 520 };
+  const displays = screen.getAllDisplays();
+  const primary  = screen.getPrimaryDisplay();
+  const secondary = displays.find(d => d.id !== primary.id);
+  // Place on secondary monitor if available, else offset from center
+  const x = secondary ? secondary.workArea.x + 60 : undefined;
+  const y = secondary ? secondary.workArea.y + 60 : undefined;
+
+  const win = new BrowserWindow({
+    width:  size.width,
+    height: size.height,
+    minWidth:  320,
+    minHeight: 200,
+    x, y,
+    title: tag,
+    frame: false,
+    transparent: false,
+    backgroundColor: "#0e0e14",
+    resizable: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+  });
+
+  if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
+  else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
+});
+
+// ── Guest Editor pop-out window ───────────────────────────────
+ipcMain.handle("window:guesteditor", async () => {
+  const title = "Ether — Guest Editor";
+  const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === title);
+  if (existing) { existing.show(); existing.focus(); return; }
+
+  const { screen } = require("electron");
+  const displays  = screen.getAllDisplays();
+  const primary   = screen.getPrimaryDisplay();
+  const secondary = displays.find(d => d.id !== primary.id);
+  const x = secondary ? secondary.workArea.x + 60 : undefined;
+  const y = secondary ? secondary.workArea.y + 60 : undefined;
+
+  const win = new BrowserWindow({
+    width: 800, height: 600,
+    minWidth: 400, minHeight: 300,
+    x, y,
+    title,
+    frame: false,
+    transparent: false,
+    backgroundColor: "#0e0e14",
+    resizable: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+  });
+
+  if (isDev) win.loadURL(VITE_DEV_URL + "#guesteditor");
+  else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: "guesteditor" });
+});
+
+// ── Cross-window broadcast relay ─────────────────────────────
+// Renderer: ether.emit("ether:broadcast", { channel, data })
+// All other windows receive: ether.on(channel, cb)
+ipcMain.on("ether:broadcast", (event, { channel, data }) => {
+  BrowserWindow.getAllWindows().forEach(win => {
+    if (win.webContents.id !== event.sender.id) {
+      win.webContents.send(channel, data);
+    }
+  });
+});
 
 ipcMain.handle("open_nowplaying_window", async () => {
   const existing = BrowserWindow.getAllWindows().find(w => w.getTitle().includes("Now Playing"));
@@ -1394,6 +1566,26 @@ ipcMain.handle("studio:signal-to-guest", (_, { to, type, payload }) => {
   return true;
 });
 
+// ── localtunnel — public guest URL ───────────────────────────
+let _tunnel = null;
+
+ipcMain.handle("studio:startTunnel", async () => {
+  try {
+    if (_tunnel) { try { _tunnel.close(); } catch {} _tunnel = null; }
+    const localtunnel = require("localtunnel");
+    _tunnel = await localtunnel({ port: 9091 });
+    _tunnel.on("error", () => { _tunnel = null; });
+    return { url: _tunnel.url, error: null };
+  } catch (e) {
+    return { url: null, error: e.message };
+  }
+});
+
+ipcMain.handle("studio:stopTunnel", () => {
+  if (_tunnel) { try { _tunnel.close(); } catch {} _tunnel = null; }
+  return true;
+});
+
 ipcMain.handle("studio:getLocalIp", () => {
   try {
     const { networkInterfaces } = require("os");
@@ -1433,6 +1625,109 @@ ipcMain.handle("studio:rtmp:save", (_, { id, name, url, key }) => {
 ipcMain.handle("studio:rtmp:delete", (_, id) => {
   db.prepare("UPDATE rtmp_destinations SET is_active=0 WHERE id=?").run(id);
   return { ok: true };
+});
+
+// ── VoxPro / FFmpeg ───────────────────────────────────────────
+let ffmpegBin = null;
+try {
+  ffmpegBin = require("ffmpeg-static");
+  // When bundled in asar, the binary lives in app.asar.unpacked
+  if (ffmpegBin && ffmpegBin.includes("app.asar") && !ffmpegBin.includes("unpacked")) {
+    ffmpegBin = ffmpegBin.replace("app.asar", "app.asar.unpacked");
+  }
+  console.log("[FFMPEG] Binary:", ffmpegBin);
+} catch (e) {
+  console.warn("[FFMPEG] ffmpeg-static not available:", e.message);
+}
+
+function runFFmpeg(args) {
+  const { execFile } = require("child_process");
+  return new Promise((resolve, reject) => {
+    if (!ffmpegBin) return reject(new Error("FFmpeg not bundled"));
+    execFile(ffmpegBin, args, { maxBuffer: 256 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error(stderr || err.message));
+      else resolve(true);
+    });
+  });
+}
+
+// Write raw binary (Uint8Array / Buffer) to disk — used by VoxPro to persist recorded audio
+ipcMain.handle("voxpro:writeAudio", (_, { data, filePath }) => {
+  try {
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, Buffer.from(data));
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Encode a WAV/WebM/OGG source file to MP3 or WAV via FFmpeg
+ipcMain.handle("ffmpeg:bounce-audio", async (_, { inputPath, outputPath, format }) => {
+  const args = format === "mp3"
+    ? ["-y", "-i", inputPath, "-codec:a", "libmp3lame", "-q:a", "2", outputPath]
+    : ["-y", "-i", inputPath, "-codec:a", "pcm_s16le", outputPath];
+  await runFFmpeg(args);
+  return outputPath;
+});
+
+// Mix voice + music bed with per-track gain and music fade in/out
+ipcMain.handle("ffmpeg:mix-audio", async (_, { voicePath, musicPath, voiceGain, musicGain, fadeDuration, outputPath }) => {
+  const vg = Number(voiceGain) || 1;
+  const mg = Number(musicGain) || 0.3;
+  const fd = Number(fadeDuration) || 2;
+  // Get voice duration for fade-out timing
+  const { execFile } = require("child_process");
+  let duration = 30;
+  try {
+    const probe = await new Promise((res) => {
+      execFile(ffmpegBin, ["-i", voicePath], { maxBuffer: 1024 * 1024 }, (_, __, stderr) => {
+        const m = stderr && stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+        res(m ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : 30);
+      });
+    });
+    duration = Number(probe) || 30;
+  } catch {}
+  const fadeOutStart = Math.max(0, duration - fd);
+  const filter = [
+    `[1:a]volume=${mg},afade=t=in:st=0:d=${fd},afade=t=out:st=${fadeOutStart}:d=${fd}[music]`,
+    `[0:a]volume=${vg}[voice]`,
+    `[voice][music]amix=inputs=2:duration=first:dropout_transition=2[out]`,
+  ].join(";");
+  await runFFmpeg(["-y", "-i", voicePath, "-i", musicPath, "-filter_complex", filter, "-map", "[out]", "-codec:a", "libmp3lame", "-q:a", "2", outputPath]);
+  return outputPath;
+});
+
+// Mux audio + video into MP4
+ipcMain.handle("ffmpeg:bounce-video", async (_, { audioPath, videoPath, outputPath }) => {
+  await runFFmpeg(["-y", "-i", videoPath, "-i", audioPath, "-c:v", "copy", "-c:a", "aac", "-shortest", outputPath]);
+  return outputPath;
+});
+
+// Export: open save dialog and copy the rendered file there
+ipcMain.handle("ffmpeg:export", async (_, { sourcePath, defaultName, filters }) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: path.join(app.getPath("downloads"), defaultName || "voxpro-export"),
+    filters: filters || [{ name: "Audio Files", extensions: ["mp3"] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  fs.copyFileSync(sourcePath, result.filePath);
+  return result.filePath;
+});
+
+// Return the VoxPro auto-save directory path
+ipcMain.handle("voxpro:getSaveDir", () => {
+  const dir = path.join(app.getPath("userData"), "voxpro");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+});
+
+// Return a temp directory path for intermediate files
+ipcMain.handle("voxpro:getTempDir", () => {
+  const dir = path.join(app.getPath("temp"), "ether-voxpro");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
 });
 
 // ── RTMP stream via ffmpeg ────────────────────────────────────

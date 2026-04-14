@@ -79,6 +79,15 @@ contextBridge.exposeInMainWorld("ether", {
     onNextTrack: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('iris:next-track', h); return h; },
     offNextTrack:(h)  => ipcRenderer.removeListener('iris:next-track', h),
   },
+  ffmpeg: {
+    bounceAudio:  (inputPath, outputPath, format) => ipcRenderer.invoke("ffmpeg:bounce-audio", { inputPath, outputPath, format }),
+    mixAudio:     (opts) => ipcRenderer.invoke("ffmpeg:mix-audio", opts),
+    bounceVideo:  (audioPath, videoPath, outputPath) => ipcRenderer.invoke("ffmpeg:bounce-video", { audioPath, videoPath, outputPath }),
+    export:       (sourcePath, defaultName, filters) => ipcRenderer.invoke("ffmpeg:export", { sourcePath, defaultName, filters }),
+    writeAudio:   (data, filePath) => ipcRenderer.invoke("voxpro:writeAudio", { data, filePath }),
+    getSaveDir:   () => ipcRenderer.invoke("voxpro:getSaveDir"),
+    getTempDir:   () => ipcRenderer.invoke("voxpro:getTempDir"),
+  },
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   on: (channel, cb) => {
     const h = (_, ...a) => cb(...a);

@@ -101,7 +101,8 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
       position: "fixed" as const,
       left: pos.x, top: pos.y,
       width: minimized ? 280 : size.w,
-      height: minimized ? "auto" : size.h,
+      height: "auto",
+      maxHeight: minimized ? undefined : "80vh",
       zIndex: 11500,
       borderRadius: 0,
       background: "linear-gradient(160deg, rgba(14,14,22,0.97) 0%, rgba(8,8,14,0.98) 100%)",
@@ -145,7 +146,7 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
 
       {/* Content */}
       {!minimized && (
-        <div style={{ flex: 1, padding: 10, display: "flex", flexDirection: "column" as const, gap: 8, overflow: "hidden", minHeight: 0 }}>
+        <div style={{ flex: 1, padding: 10, display: "flex", flexDirection: "column" as const, gap: 8, overflowY: "auto", minHeight: 0 }}>
           {guests.length === 0 ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 10 }}>
               <div style={{ width: 44, height: 44, borderRadius: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👥</div>
@@ -155,15 +156,22 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
           ) : (
             <div style={{
               flex: 1, display: "grid",
-              gridTemplateColumns: guests.length === 1 ? "1fr" : "1fr 1fr",
+              gridTemplateColumns: guests.length === 1 ? "1fr" : guests.length <= 4 ? "1fr 1fr" : "1fr 1fr 1fr",
               gap: 8, minHeight: 0,
             }}>
-              {guests.map(g => (
-                <GuestTile key={g.id} guest={g}
-                  onMute={() => setGuests(p => p.map(x => x.id === g.id ? { ...x, muted: !x.muted } : x))}
-                  onHide={() => setGuests(p => p.map(x => x.id === g.id ? { ...x, hidden: !x.hidden } : x))}
-                />
-              ))}
+              {guests.map((g, i) => {
+                const tile = (
+                  <GuestTile key={g.id} guest={g}
+                    onMute={() => setGuests(p => p.map(x => x.id === g.id ? { ...x, muted: !x.muted } : x))}
+                    onHide={() => setGuests(p => p.map(x => x.id === g.id ? { ...x, hidden: !x.hidden } : x))}
+                  />
+                );
+                // 3 guests: third card spans both columns
+                if (guests.length === 3 && i === 2) {
+                  return <div key={g.id} style={{ gridColumn: "1 / -1" }}>{tile}</div>;
+                }
+                return tile;
+              })}
             </div>
           )}
         </div>

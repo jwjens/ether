@@ -92,6 +92,7 @@ function ShowsTab() {
   const [clocks, setClocks] = useState<Clock[]>([]);
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState("");
 
   const load = async () => {
     setShows(await query<Show>("SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour"));
@@ -101,22 +102,27 @@ function ShowsTab() {
 
   const save = async () => {
     if (!editing || !editing.name) return;
+    setSaveError("");
     const days = editing.days ?? "0123456";
     const isActive = editing.is_active ?? 1;
-    if (editing.id) {
-      await execute(
-        "UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=?, days=?, is_active=? WHERE id=?",
-        [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive, editing.id]
-      );
-    } else {
-      await execute(
-        "INSERT INTO shows (name, start_hour, end_hour, color, description, days, is_active) VALUES (?,?,?,?,?,?,?)",
-        [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive]
-      );
+    try {
+      if (editing.id) {
+        await execute(
+          "UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=?, days=?, is_active=? WHERE id=?",
+          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive, editing.id]
+        );
+      } else {
+        await execute(
+          "INSERT INTO shows (name, start_hour, end_hour, color, description, days, is_active) VALUES (?,?,?,?,?,?,?)",
+          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive]
+        );
+      }
+      setSaved(true);
+      load();
+      setTimeout(() => { setSaved(false); setEditing(null); }, 1400);
+    } catch (e: any) {
+      setSaveError(e?.message || "Save failed");
     }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    setEditing(null); load();
   };
 
   const assignClock = async (showId: number, clockId: number | null) => {
@@ -187,12 +193,13 @@ function ShowsTab() {
             </label>
           </div>
           <div className="flex gap-2 items-center">
-            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save Show</button>
-            <button onClick={() => setEditing(null)} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
-            {saved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
+            <button onClick={save} disabled={saved} className={`px-3 py-1 rounded text-xs font-bold text-white transition-colors ${saved ? "bg-emerald-600" : "bg-blue-600 hover:bg-blue-500"}`}>{saved ? "✓ Saved" : "Save Show"}</button>
+            <button onClick={() => { setEditing(null); setSaveError(""); }} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
+            {saveError && <span style={{ fontSize: 11, color: "#ef4444", fontWeight: 600 }}>{saveError}</span>}
           </div>
         </div>
       )}
+      {saved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
 
       {/* Show list with clock dropdowns */}
       <div className="space-y-1.5">
@@ -289,8 +296,8 @@ function CategoriesTab() {
           [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0]);
       }
       setCatSaved(true);
-      setTimeout(() => setCatSaved(false), 2000);
-      setEditing(null); load();
+      load();
+      setTimeout(() => { setCatSaved(false); setEditing(null); }, 1400);
     } catch (e: any) {
       setSaveError(e?.message || "Save failed");
     }
@@ -324,13 +331,13 @@ function CategoriesTab() {
             <input type="color" className="h-8 w-full bg-zinc-800 border border-zinc-700 rounded" value={editing.color || "#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})} />
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={save} className="px-3 py-1 bg-blue-600 rounded text-xs font-bold text-white">Save Category</button>
+            <button onClick={save} disabled={catSaved} className={`px-3 py-1 rounded text-xs font-bold text-white transition-colors ${catSaved ? "bg-emerald-600" : "bg-blue-600 hover:bg-blue-500"}`}>{catSaved ? "✓ Saved" : "Save Category"}</button>
             <button onClick={() => { setEditing(null); setSaveError(""); }} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
-            {catSaved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
             {saveError && <span className="text-xs text-red-400">{saveError}</span>}
           </div>
         </div>
       )}
+      {catSaved && <span style={{ fontSize: 11, color: "#34d399", fontWeight: 600 }}>✓ Saved</span>}
       <div className="bg-zinc-900 rounded-none border border-zinc-800 overflow-hidden">
         <table className="w-full text-xs">
           <thead><tr className="text-left text-[10px] text-zinc-500 uppercase border-b border-zinc-800">

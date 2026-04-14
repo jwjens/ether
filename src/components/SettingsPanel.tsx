@@ -350,7 +350,7 @@ function MusixmatchKeyForm() {
 
 // ── Main Settings Panel ──────────────────────────────────────
 
-export default function SettingsPanel() {
+export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
   const [tab, setTab] = useState<"general" | "ai">("general");
 
   // Station
@@ -663,6 +663,20 @@ export default function SettingsPanel() {
         <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>
           ↻ Rescan Devices
         </button>
+        {setXfadeDuration && (
+          <SettingRow label="Crossfade Duration" hint="How long a crossfade takes — triggered by X key or AUTO-X">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input
+                type="range" min={1} max={10} step={1} value={xfadeDuration}
+                onChange={e => setXfadeDuration(Number(e.target.value))}
+                style={{ width: 110, accentColor: "#a78bfa", cursor: "pointer" }}
+              />
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "#a78bfa", minWidth: 28, textAlign: "right" as const }}>
+                {xfadeDuration}s
+              </span>
+            </div>
+          </SettingRow>
+        )}
       </Section>
 
       {/* ── Music Scheduling Rules ── */}

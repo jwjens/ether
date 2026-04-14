@@ -156,6 +156,17 @@ function encodeWav(buffer: AudioBuffer): ArrayBuffer {
   return ab;
 }
 
+
+
+// ── Shared button style ────────────────────────────────────────
+
+const btnStyle: React.CSSProperties = {
+  padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600,
+  background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+  border: "1px solid var(--border-primary)", cursor: "pointer",
+  display: "flex", alignItems: "center", gap: 4,
+};
+
 // ── StudioEditor ───────────────────────────────────────────────
 
 interface Props {
@@ -600,7 +611,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
             position: "relative" as const,
             minWidth: totalPx,
             minHeight: RULER_H + tracks.length * (TRACK_H + 4) + 32,
-            background: "rgba(8,8,14,0.98)",
+            background: "var(--bg-primary)",
             cursor: "crosshair",
           }}
         >
@@ -608,7 +619,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
           <div style={{
             position: "sticky" as const, top: 0, zIndex: 10,
             height: RULER_H, display: "flex", alignItems: "flex-end",
-            background: "rgba(12,12,20,0.98)", borderBottom: "1px solid rgba(255,255,255,0.06)",
+            background: "var(--bg-secondary)", borderBottom: "1px solid var(--border-primary)",
             paddingLeft: LABEL_W,
           }}>
             {Array.from({ length: Math.ceil(totalMs / 1000) + 1 }, (_, i) => {
@@ -650,8 +661,8 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
                   position: "absolute" as const, left: 0, top: 0,
                   width: LABEL_W, height: TRACK_H,
                   display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center",
-                  borderRight: `1px solid rgba(255,255,255,0.05)`,
-                  background: "rgba(12,12,20,0.98)",
+                  borderRight: `1px solid var(--border-primary)`,
+                  background: "var(--bg-secondary)",
                   zIndex: 5, gap: 3,
                 }}>
                   <div style={{
@@ -814,7 +825,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
               left: 4, fontSize: 8,
               color: "#ef4444", fontFamily: "monospace",
               whiteSpace: "nowrap" as const,
-              background: "rgba(8,8,14,0.8)",
+              background: "var(--bg-primary)",
               padding: "1px 3px", borderRadius: 0,
             }}>
               {fmtMs(playheadMs)}
@@ -855,11 +866,4 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
   );
 }
 
-// ── Shared button style ────────────────────────────────────────
 
-const btnStyle: React.CSSProperties = {
-  padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600,
-  background: "var(--bg-tertiary)", color: "var(--text-secondary)",
-  border: "1px solid var(--border-primary)", cursor: "pointer",
-  display: "flex", alignItems: "center", gap: 4,
-};

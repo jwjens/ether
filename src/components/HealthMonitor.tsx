@@ -34,7 +34,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
       return (
         <div style={{
           position: "fixed", inset: 0, zIndex: 99999,
-          background: "#0a0a18",
+          background: "var(--bg-primary)",
           display: "flex", flexDirection: "column" as const,
           alignItems: "center", justifyContent: "center",
           fontFamily: "'Inter', system-ui, sans-serif",
@@ -48,7 +48,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           </div>
 
           <div style={{ textAlign: "center" as const }}>
-            <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: "#fff", fontFamily: "'Syne', sans-serif" }}>
+            <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>
               Ether encountered an issue
             </h2>
             <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.5)", maxWidth: 400, lineHeight: 1.6 }}>
@@ -72,7 +72,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
             </button>
             <button
               onClick={() => this.setState({ hasError: false, error: null })}
-              style={{ padding: "10px 24px", borderRadius: 0, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#fff", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+              style={{ padding: "10px 24px", borderRadius: 0, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "var(--text-primary)", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
             >
               Try to Continue
             </button>
@@ -166,7 +166,7 @@ function HealthDot({ status }: { status: "ok" | "warn" | "error" }) {
 
 function HealthRow({ label, value, status, sub }: { label: string; value: string; status: "ok" | "warn" | "error"; sub?: string }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--border-primary)" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--border-primary)" }}>
       <HealthDot status={status} />
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>{label}</div>
@@ -270,9 +270,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       height: "100%", display: "flex", flexDirection: "column" as const,
       fontFamily: "'Inter', system-ui, sans-serif",
       background: "var(--bg-primary)",
+      minWidth: 420,
     }}>
       {/* Header */}
-      <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+      <div style={{ padding: "24px 32px 20px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-green)", boxShadow: "0 0 8px var(--accent-green)" }} />
@@ -287,10 +288,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </p>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" as const, padding: "0 24px" }}>
+      <div style={{ flex: 1, overflowY: "auto" as const, padding: "0 32px" }}>
         {/* Core systems */}
-        <div style={{ paddingTop: 16, marginBottom: 8 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>Core Systems</div>
+        <div style={{ paddingTop: 20, marginBottom: 8 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>Core Systems</div>
           {health ? (
             <>
               <HealthRow label="Audio Engine" value={health.audioEngine === "ok" ? "Running" : "Error"} status={health.audioEngine} sub="Rodio audio backend" />
@@ -317,8 +318,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         )}
 
         {/* Play log export */}
-        <div style={{ paddingTop: 8, paddingBottom: 16, borderTop: "1px solid var(--border-primary)", marginTop: 8 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 12 }}>DMCA Play Log Export</div>
+        <div style={{ paddingTop: 16, paddingBottom: 20, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 14 }}>DMCA Play Log Export</div>
           <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.6 }}>
             Export a complete CSV of all played tracks with timestamps for DMCA/performance rights reporting. Includes title, artist, deck, and exact play time.
           </div>
@@ -351,9 +352,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Infrastructure badge */}
-        <div style={{ padding: "12px 14px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 16 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 8, textTransform: "uppercase" as const }}>Ether Infrastructure</div>
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: 6 }}>
+        <div style={{ padding: "16px 18px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 20 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 12, textTransform: "uppercase" as const }}>Ether Infrastructure</div>
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
             {[
               ["SQLite Database", "Local, encrypted, zero cloud dependency"],
               ["Rust Audio Engine", "Sub-10ms latency, hardware-level reliability"],

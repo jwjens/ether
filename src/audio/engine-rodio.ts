@@ -67,16 +67,28 @@ export class AudioEngine {
   private queue: { filePath: string; title: string; artist: string; gainDb?: number }[] = [];
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
 
-  autoAdvance = false;
+  private _autoAdvance = false;
+  get autoAdvance() { return this._autoAdvance; }
+  set autoAdvance(v: boolean) {
+    this._autoAdvance = v;
+    if (v) this.processingEnd = false;  // clear any stuck flag when AUTO-X is enabled
+  }
   shuffle = false;
   continuous = false;
   outroCrossfade = false;
   crossfadeDuration = 3;
-  private advancing = false;
+  // advancePromise serializes advance operations. Any handler chains onto this promise
+  // so that concurrent same-tick callers await the in-flight advance rather than
+  // spawning a second one.
+  private advancePromise: Promise<void> = Promise.resolve();
+  // processingEnd prevents multiple deck-end events from firing in the same poll tick.
+  // It is set true when the first end is detected, then cleared at the end of poll().
+  private processingEnd = false;
   private endTriggered = new Set<DeckId>();
 
   init() {
     if (this.pollTimer) return;
+    this.processingEnd = false;  // clear any flag left over from a previous session
     this.pollTimer = setInterval(() => this.poll(), 100);
   }
 
@@ -110,6 +122,8 @@ export class AudioEngine {
       this.checkEndByPosition("A", posA, durA, prevA);
       this.checkEndByPosition("B", posB, durB, prevB);
       this.checkEndByPosition("C", posC, durC, prevC);
+      // Reset per-tick end gate — only one deck end is processed per 100ms poll cycle.
+      this.processingEnd = false;
 
     } catch (e) {
       console.error("[ENGINE] Poll error:", e);
@@ -117,7 +131,10 @@ export class AudioEngine {
   }
 
   private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus) {
+    // Only one end event per poll tick — if another deck already fired this tick, skip.
+    if (this.processingEnd) return;
     if (prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3 && !this.endTriggered.has(deckId)) {
+      this.processingEnd = true;
       this.endTriggered.add(deckId);
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
@@ -134,57 +151,90 @@ export class AudioEngine {
     }
   }
 
-  private async handleRotate(fromId: DeckId, toId: DeckId) {
-    if (this.advancing) return;
-    this.advancing = true;
-    try {
-      await invoke("audio_play", { deck: toId });
-      if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
-      if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
-      if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
-      this.endTriggered.delete(toId);
-      if (this.queue.length > 0) this.dequeue();
-      if (toId === "B") { setTimeout(() => this.preloadDeck("C", 0), 800); }
-      else if (toId === "C") { setTimeout(() => this.preloadDeck("A", 0), 800); }
-      else if (toId === "A") { setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
-    } catch (e) { console.error("[ENGINE] handleRotate error:", e); }
-    finally { this.advancing = false; }
+  private handleRotate(fromId: DeckId, toId: DeckId) {
+    this.advancePromise = this.advancePromise.then(async () => {
+      try {
+        // Check the Rust backend: if the DESTINATION deck is already playing, bail.
+        // We only check toId — fromId is expected to still be playing at this point
+        // (checkEndByPosition fires 300ms before the track ends, so the from-deck
+        // hasn't stopped yet). Checking "any deck playing" would always bail here.
+        const liveState = await invoke("audio_get_state");
+        if (liveState) {
+          const liveTo = toId === "A" ? liveState.deckA : toId === "B" ? liveState.deckB : liveState.deckC;
+          if (liveTo?.status === "playing") return;  // destination already playing — skip
+        }
+        await invoke("audio_play", { deck: toId });
+        if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
+        if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
+        if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
+        const toState2 = toId === "A" ? this.stateA : toId === "B" ? this.stateB : this.stateC;
+        this.notifyPlayStart(toId, toState2.title, toState2.artist, toState2.filePath);
+        // Only clear the destination deck's end-trigger — we want to allow toId to end
+        // naturally later. Do NOT clear fromId here: the native backend may still report
+        // fromId as "playing" for a tick or two while the OS drains the audio buffer.
+        // Clearing fromId now lets checkEndByPosition re-fire on that stale "playing"
+        // status before the deck reaches position 0 with a fresh track, causing a second
+        // spurious rotation. fromId's endTriggered entry is cleared safely by loadToDeck
+        // when preloadDeck loads the next song into it (position resets to 0 first).
+        this.endTriggered.delete(toId);
+        if (this.queue.length > 0) this.dequeue();
+        if (toId === "B") { setTimeout(() => this.preloadDeck("C", 0), 800); }
+        else if (toId === "C") { setTimeout(() => this.preloadDeck("A", 0), 800); }
+        else if (toId === "A") { setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
+      } catch (e) { console.error("[ENGINE] handleRotate error:", e); }
+    });
   }
 
-  private async handleRotateCtoA() {
-    if (this.advancing) return;
-    this.advancing = true;
-    try {
-      await this.refillIfNeeded();
-      if (this.queue.length === 0) return;
-      const next = this.dequeue();
-      await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
-      await invoke("audio_play", { deck: "A" });
-      this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
-      this.endTriggered.delete("A");
-      setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800);
-    } catch (e) { console.error("[ENGINE] handleRotateCtoA error:", e); }
-    finally { this.advancing = false; }
+  private handleRotateCtoA() {
+    this.advancePromise = this.advancePromise.then(async () => {
+      try {
+        // Check the Rust backend: if deck A (the destination) is already playing, bail.
+        // C may still be playing when this fires (300ms before end), so we only check A.
+        const liveState = await invoke("audio_get_state");
+        if (liveState) {
+          if (liveState.deckA?.status === "playing") return;  // A already playing — skip
+        }
+        await this.refillIfNeeded();
+        if (this.queue.length === 0) return;
+        const next = this.dequeue();
+        await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
+        await invoke("audio_play", { deck: "A" });
+        this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
+        this.notifyPlayStart("A", next.title, next.artist, next.filePath);
+        this.endTriggered.delete("A");
+        this.endTriggered.delete("C");
+        setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800);
+      } catch (e) { console.error("[ENGINE] handleRotateCtoA error:", e); }
+    });
   }
 
-  private async handleLoadNextToDeck(deckId: DeckId) {
-    if (this.advancing) return;
-    this.advancing = true;
-    try {
-      await this.refillIfNeeded();
-      if (this.queue.length === 0) return;
-      const next = this.dequeue();
-      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
-      await invoke("audio_play", { deck: deckId });
-      if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
-      if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
-      if (deckId === "C") { this.stateC = { ...this.stateC, status: "playing", positionSec: 0 }; this.endTriggered.delete("C"); }
-    } catch (e) { console.error("[ENGINE] handleLoadNextToDeck error:", e); }
-    finally { this.advancing = false; }
+  private handleLoadNextToDeck(deckId: DeckId) {
+    this.advancePromise = this.advancePromise.then(async () => {
+      try {
+        // Check the Rust backend: if the destination deck is already playing, bail.
+        const liveState = await invoke("audio_get_state");
+        if (liveState) {
+          const liveDeck = deckId === "A" ? liveState.deckA : deckId === "B" ? liveState.deckB : liveState.deckC;
+          if (liveDeck?.status === "playing") return;  // already playing — skip
+        }
+        await this.refillIfNeeded();
+        if (this.queue.length === 0) return;
+        const next = this.dequeue();
+        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
+        await invoke("audio_play", { deck: deckId });
+        if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
+        if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
+        if (deckId === "C") { this.stateC = { ...this.stateC, status: "playing", positionSec: 0 }; this.endTriggered.delete("C"); }
+        this.notifyPlayStart(deckId, next.title, next.artist, next.filePath);
+      } catch (e) { console.error("[ENGINE] handleLoadNextToDeck error:", e); }
+    });
   }
 
   private async preloadDeck(deckId: DeckId, queueIndex = 0) {
     if (this.queue.length <= queueIndex) return;
+    // Never clobber a deck that is actively playing or paused — it would interrupt audio
+    const deckState = deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
+    if (deckState?.status === "playing" || deckState?.status === "paused") return;
     const next = this.queue[queueIndex];
     try {
       await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
@@ -256,7 +306,9 @@ export class AudioEngine {
       if (id === "B") this.stateB = { ...this.stateB, durationSec: dur };
       if (id === "C") this.stateC = { ...this.stateC, durationSec: dur };
     }).catch(() => {});
-    this.playStartCallbacks.forEach(fn => fn(id as DeckId, title, artist, filePath));
+    // NOTE: playStartCallbacks are NOT fired here — loadToDeck is also used for
+    // preloading standby decks. Callers that actually start playback must call
+    // notifyPlayStart() after audio_play succeeds.
   }
 
   notifyPlayStart(deckId: DeckId, title: string, artist: string, filePath: string) {
@@ -266,6 +318,8 @@ export class AudioEngine {
   addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number }[]) { this.queue.push(...songs); }
   clearQueue() { this.queue = []; }
   getQueue() { return [...this.queue]; }
+  /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
+  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number }[]) { this.queue = [...songs]; }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
   async setOutputDevice(_id: string) {}
 
@@ -276,12 +330,14 @@ export class AudioEngine {
    */
   async jumpToNextSong(): Promise<boolean> {
     if (this.queue.length === 0) return false;
-    this.advancing = false; // clear any stale lock from the previous show
+    // Reset the advance chain — show transitions are imperative, bypass the queue
+    this.advancePromise = Promise.resolve();
     const next = this.dequeue();
     try {
       await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
       await invoke("audio_play", { deck: "A" });
       this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
+      this.notifyPlayStart("A", next.title, next.artist, next.filePath);
       this.endTriggered.delete("A");
       // Preload next two songs into B and C so rotation is seamless
       setTimeout(async () => {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import etherLogoDark from "../assets/ether-logo-dark.svg";
 
 interface Props {
   onDone: () => void;
@@ -63,23 +64,18 @@ export default function SplashScreen({ onDone }: Props) {
 
       {/* Logo mark */}
       <div style={{ position: "relative", marginBottom: 32 }}>
-        {/* Gradient circle icon */}
-        <div style={{
-          width: 80, height: 80, borderRadius: 0,
-          background: "linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 0 40px rgba(34,211,238,0.35), 0 0 80px rgba(167,139,250,0.2)",
-          marginBottom: 24,
-          animation: "splash-logo 0.6s cubic-bezier(0.34,1.56,0.64,1) both",
-        }}>
-          {/* Sine wave cut-out */}
-          <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
-            <path
-              d="M4 22 C9 12 14 12 19 22 C24 32 29 32 34 22 C39 12 40 12 40 22"
-              stroke="#080810" strokeWidth="3.5" strokeLinecap="round"
-            />
-          </svg>
-        </div>
+        <img
+          src={etherLogoDark}
+          width={80}
+          height={80}
+          alt=""
+          style={{
+            display: "block",
+            boxShadow: "0 0 40px rgba(34,211,238,0.35), 0 0 80px rgba(167,139,250,0.2)",
+            marginBottom: 24,
+            animation: "splash-logo 0.6s cubic-bezier(0.34,1.56,0.64,1) both",
+          }}
+        />
 
         {/* Wordmark */}
         <div style={{ textAlign: "center" as any, animation: "splash-words 0.6s 0.15s ease both" }}>

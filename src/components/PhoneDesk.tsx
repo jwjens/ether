@@ -648,7 +648,7 @@ export default function PhoneDesk({ onClose }: Props) {
     }
   }, [recPCM, saving]);
 
-  // ── VoxPro keyboard shortcuts ──
+  // ── Clip keyboard shortcuts ──
   // Left arrow → snap to beginning, Space → play/stop, Right arrow → snap to end
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -691,6 +691,12 @@ export default function PhoneDesk({ onClose }: Props) {
   const clipLen     = cueOut - cueIn;
   const isRecording = recState === "recording";
   const isArmed     = recState === "armed";
+
+  // ─── Pop-out ─────────────────────────────────────────────────
+
+  const openGuestEditorWindow = async () => {
+    await (window as any).ether.invoke("window:guesteditor");
+  };
 
   // ─── Render ─────────────────────────────────────────────────
 
@@ -745,6 +751,21 @@ export default function PhoneDesk({ onClose }: Props) {
         <div style={{ width: 200, flexShrink: 0 }}>
           <LevelMeter level={level} peak={peak} />
         </div>
+
+        {/* Pop-out button */}
+        <button
+          title="Pop out to separate window"
+          onClick={openGuestEditorWindow}
+          style={{ background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", padding: "0 10px", height: 26, display: "flex", alignItems: "center", gap: 5, transition: "all 0.12s", borderRadius: 0, flexShrink: 0, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", fontFamily: "'DM Mono', monospace" }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(96,128,192,0.4)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border-primary)"; }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+          Pop Out
+        </button>
 
         {onClose && (
           <button onClick={onClose} style={{

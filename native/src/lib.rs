@@ -228,8 +228,10 @@ pub fn get_local_ip() -> String {
 pub fn open_url(url: String) -> bool {
     #[cfg(target_os = "windows")]
     return std::process::Command::new("cmd").args(["/c", "start", "", &url]).spawn().is_ok();
-    #[cfg(not(target_os = "windows"))]
-    return false;
+    #[cfg(target_os = "macos")]
+    return std::process::Command::new("open").arg(&url).spawn().is_ok();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    return std::process::Command::new("xdg-open").arg(&url).spawn().is_ok();
 }
 
 #[napi]
@@ -238,8 +240,15 @@ pub fn open_sound_settings() -> bool {
     return std::process::Command::new("ms-settings:sound").spawn()
         .or_else(|_| std::process::Command::new("mmsys.cpl").spawn())
         .is_ok();
-    #[cfg(not(target_os = "windows"))]
-    return false;
+    #[cfg(target_os = "macos")]
+    return std::process::Command::new("open")
+        .arg("/System/Library/PreferencePanes/Sound.prefPane")
+        .spawn()
+        .is_ok();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    return std::process::Command::new("pavucontrol").spawn()
+        .or_else(|_| std::process::Command::new("gnome-control-center").args(["sound"]).spawn())
+        .is_ok();
 }
 
 fn deck_meta_mut<'a>(audio: &'a mut AudioState, deck: &str) -> &'a mut DeckMeta {

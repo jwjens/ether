@@ -26,9 +26,10 @@ export default function Waveform({ peaks, progress, color, playedColor, height =
     ctx.clearRect(0, 0, w, h);
 
     if (peaks.length === 0) {
-      ctx.fillStyle = "#27272a";
+      const cs = getComputedStyle(canvas);
+      ctx.fillStyle = cs.getPropertyValue("--bg-primary").trim() || "#27272a";
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = "#3f3f46";
+      ctx.fillStyle = cs.getPropertyValue("--text-tertiary").trim() || "#3f3f46";
       ctx.font = "11px sans-serif";
       ctx.textAlign = "center";
       ctx.fillText("No track loaded", w / 2, mid + 4);
@@ -58,7 +59,7 @@ export default function Waveform({ peaks, progress, color, playedColor, height =
       ref={canvasRef}
       width={600}
       height={height}
-      style={{ width: "100%", height: height + "px", borderRadius: "6px", background: "#18181b" }}
+      style={{ width: "100%", height: height + "px", borderRadius: "6px", background: "var(--bg-primary)" }}
     />
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import etherLogoDark from "../assets/ether-logo-dark.svg";
 import { query, execute } from "../db/client";
 
 export interface AppUser {
@@ -42,7 +43,17 @@ export default function UserLogin({ onLogin }: Props) {
     (async () => {
       try {
         const rows = await query<AppUser>("SELECT * FROM users ORDER BY id");
-        if (rows.length > 0) setUsers(rows);
+        if (rows.length > 0) {
+          setUsers(rows);
+        } else {
+          // First run — no users in DB. Create a default admin and log in immediately.
+          await execute(
+            "INSERT INTO users (name, role, pin_hash, color) VALUES (?,?,?,?)",
+            ["Admin", "admin", null, "#f87171"]
+          );
+          const created = await query<AppUser>("SELECT * FROM users ORDER BY id LIMIT 1");
+          if (created.length > 0) onLogin(created[0]);
+        }
       } catch {}
     })();
   }, []);
@@ -79,19 +90,7 @@ export default function UserLogin({ onLogin }: Props) {
 
       {/* Logo */}
       <div style={{ marginBottom: 40, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
-        <svg width="72" height="72" viewBox="0 0 512 512" style={{ borderRadius: 0 }}>
-          <defs>
-            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#06b6d4"/>
-              <stop offset="100%" stopColor="#8b5cf6"/>
-            </linearGradient>
-          </defs>
-          <rect width="512" height="512" rx="112" fill="url(#lg)"/>
-          <rect x="128" y="136" width="256" height="56" rx="16" fill="#0a0a18"/>
-          <rect x="128" y="228" width="192" height="52" rx="16" fill="#0a0a18"/>
-          <rect x="128" y="320" width="256" height="56" rx="16" fill="#0a0a18"/>
-          <rect x="128" y="136" width="56" height="240" rx="16" fill="#0a0a18"/>
-        </svg>
+        <img src={etherLogoDark} width={72} height={72} alt="" style={{ borderRadius: 0 }} />
         <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
         <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const }}>Technologies</div>
       </div>

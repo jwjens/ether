@@ -31,6 +31,11 @@ export default function VUMeter({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
+    // Cache theme colors — read from canvas element (inherits theme class from DOM ancestors)
+    // Refreshed every 2s so theme switches are reflected without restarting the loop
+    let cachedBg = "#0e0e12";
+    let bgCacheTs = 0;
+
     const draw = () => {
       const ctx = canvas.getContext("2d");
       if (!ctx) { rafRef.current = requestAnimationFrame(draw); return; }
@@ -39,10 +44,16 @@ export default function VUMeter({
       const h   = canvas.height;
       const now = Date.now();
 
+      // Refresh theme color at most every 2 seconds
+      if (now - bgCacheTs > 2000) {
+        cachedBg = getComputedStyle(canvas).getPropertyValue("--bg-primary").trim() || "#0e0e12";
+        bgCacheTs = now;
+      }
+
       ctx.clearRect(0, 0, w, h);
 
-      // Background — #080808, barely darker than deck surface #0e0e12
-      ctx.fillStyle = "#080808";
+      // Background — matches var(--bg-primary)
+      ctx.fillStyle = cachedBg;
       ctx.fillRect(0, 0, w, h);
 
       // ── STANDBY ───────────────────────────────────────────────
@@ -99,8 +110,8 @@ export default function VUMeter({
         const barH = Math.floor(lv * h);
         const fillY = h - barH;
 
-        // Unlit track — #080808, same as bg, invisible when silent
-        ctx.fillStyle = "#080808";
+        // Unlit track — same as bg, invisible when silent
+        ctx.fillStyle = cachedBg;
         ctx.fillRect(x, 0, bw, h);
 
         // Lit fill — gradient: teal at bottom → amber at 60% → red at top
@@ -219,7 +230,7 @@ export default function VUMeter({
 
   return (
     <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden" }}>
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", background: "#080808" }} />
+      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block", background: "var(--bg-primary)" }} />
     </div>
   );
 }

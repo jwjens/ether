@@ -14,9 +14,15 @@ napi-derive = "2"
 
 # Audio playback — same as Tauri version, unchanged
 rodio     = { version = "0.19", features = ["mp3", "flac", "wav", "vorbis"] }
-cpal      = { version = "0.15", features = ["asio"] }
 symphonia = { version = "0.5",  features = ["mp3", "flac", "ogg", "wav", "aac", "isomp4"] }
 ebur128   = "0.1"
+
+# cpal — ASIO enabled on Windows only (ASIO is Windows-specific and breaks Mac/Linux builds)
+[target.'cfg(windows)'.dependencies]
+cpal = { version = "0.15", features = ["asio"] }
+
+[target.'cfg(not(windows))'.dependencies]
+cpal = { version = "0.15" }
 
 # DSP
 rustfft  = "6"

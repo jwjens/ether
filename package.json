@@ -38,6 +38,8 @@
         "react-router-dom": "^6.26.0",
         "uuid": "^10.0.0",
         "ws": "^8.20.0",
+        "ffmpeg-static": "^5.2.0",
+        "localtunnel": "^2.0.2",
         "zustand": "^5.0.0"
     },
     "devDependencies": {

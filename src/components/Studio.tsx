@@ -523,15 +523,34 @@ function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove }: {
   onMute: (id: string) => void;
   onRemove: (id: string) => void;
 }) {
-  const [localIp, setLocalIp] = useState("127.0.0.1");
-  const [copied, setCopied]   = useState(false);
+  const [localIp, setLocalIp]       = useState("127.0.0.1");
+  const [copied, setCopied]         = useState(false);
+  const [tunnelUrl, setTunnelUrl]   = useState<string | null>(null);
+  const [tunnelLoading, setTunnelLoading] = useState(false);
   const token = useMemo(() => Math.random().toString(36).slice(2, 10), []);
 
   useEffect(() => {
     invoke("studio:getLocalIp").then((ip: string) => setLocalIp(ip || "127.0.0.1"));
   }, []);
 
-  const link = `http://${localIp}:9091/join?s=${token}`;
+  useEffect(() => {
+    if (enabled) {
+      setTunnelLoading(true);
+      invoke("studio:startTunnel")
+        .then((res: { url: string | null; error: string | null }) => {
+          setTunnelUrl(res?.url ?? null);
+          setTunnelLoading(false);
+        })
+        .catch(() => { setTunnelUrl(null); setTunnelLoading(false); });
+    } else {
+      invoke("studio:stopTunnel").catch(() => {});
+      setTunnelUrl(null);
+      setTunnelLoading(false);
+    }
+  }, [enabled]);
+
+  const localLink = `http://${localIp}:9091/join?s=${token}`;
+  const link = tunnelUrl ? `${tunnelUrl}/join?s=${token}` : localLink;
 
   const copy = () => {
     navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
@@ -549,13 +568,19 @@ function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove }: {
         </div>
         {enabled && (
           <div>
-            <div style={{ ...label, marginBottom: 3 }}>Invite Link</div>
-            <div style={{ display: "flex", gap: 4 }}>
-              <input readOnly value={link} style={{ ...inp, fontSize: 9, color: "#7090e8", flex: 1 }} />
-              <button onClick={copy} style={{ ...btn(copied, GRN), whiteSpace: "nowrap" }}>
-                {copied ? "✓" : "Copy"}
-              </button>
+            <div style={{ ...label, marginBottom: 3 }}>
+              Invite Link{tunnelUrl ? "" : tunnelLoading ? "" : " (local)"}
             </div>
+            {tunnelLoading ? (
+              <div style={{ fontSize: 9, color: BOR, padding: "4px 0" }}>Getting public link…</div>
+            ) : (
+              <div style={{ display: "flex", gap: 4 }}>
+                <input readOnly value={link} style={{ ...inp, fontSize: 9, color: "#7090e8", flex: 1 }} />
+                <button onClick={copy} style={{ ...btn(copied, GRN), whiteSpace: "nowrap" }}>
+                  {copied ? "✓" : "Copy"}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

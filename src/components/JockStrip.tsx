@@ -64,39 +64,41 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
 
   return (
     <div style={{ position: "relative" }}>
-      {/* Search input */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 10,
-        padding: "10px 16px",
-        background: focused ? "var(--bg-secondary)" : "var(--bg-tertiary)",
-        transition: "background 0.15s ease",
-        borderRadius: 0,
-      }}>
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, opacity: 0.35, color: "var(--text-primary)" }}>
-          <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
-          <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-        <input
-          type="text"
-          placeholder="Quick search — type to find a song..."
-          value={search}
-          onChange={e => { setSearch(e.target.value); onSearchChange?.(e.target.value); }}
-          onFocus={() => { setFocused(true); if (results.length > 0) setShowResults(true); }}
-          onBlur={() => { setFocused(false); setTimeout(() => setShowResults(false), 300); }}
-          style={{
-            flex: 1, background: "transparent", border: "none", outline: "none",
-            fontSize: 13, color: "var(--text-primary)",
-            fontFamily: "'Inter', system-ui, sans-serif",
-            letterSpacing: "-0.01em",
-          }}
-        />
-        {search && (
-          <button
-            onMouseDown={e => { e.preventDefault(); setSearch(""); setShowResults(false); onSearchChange?.(""); }}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
-          >×</button>
-        )}
-      </div>
+      {/* Search input — hidden when parent supplies externalSearch */}
+      {externalSearch === undefined && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10,
+          padding: "10px 16px",
+          background: focused ? "var(--bg-secondary)" : "var(--bg-tertiary)",
+          transition: "background 0.15s ease",
+          borderRadius: 0,
+        }}>
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, opacity: 0.35, color: "var(--text-primary)" }}>
+            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
+            <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
+          <input
+            type="text"
+            placeholder="Quick search — type to find a song..."
+            value={search}
+            onChange={e => { setSearch(e.target.value); onSearchChange?.(e.target.value); }}
+            onFocus={() => { setFocused(true); if (results.length > 0) setShowResults(true); }}
+            onBlur={() => { setFocused(false); setTimeout(() => setShowResults(false), 300); }}
+            style={{
+              flex: 1, background: "transparent", border: "none", outline: "none",
+              fontSize: 13, color: "var(--text-primary)",
+              fontFamily: "'Inter', system-ui, sans-serif",
+              letterSpacing: "-0.01em",
+            }}
+          />
+          {search && (
+            <button
+              onMouseDown={e => { e.preventDefault(); setSearch(""); setShowResults(false); onSearchChange?.(""); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
+            >×</button>
+          )}
+        </div>
+      )}
 
       {/* Results dropdown — opens upward so it doesn't get clipped by bottom of screen */}
       {showResults && results.length > 0 && (

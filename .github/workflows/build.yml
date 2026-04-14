@@ -42,6 +42,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
 
+      - name: Generate icon.icns (Mac)
+        if: matrix.platform == 'mac'
+        run: |
+          mkdir -p build-resources/icon.iconset
+          sips -z 16 16     build-resources/icon.png --out build-resources/icon.iconset/icon_16x16.png
+          sips -z 32 32     build-resources/icon.png --out build-resources/icon.iconset/icon_16x16@2x.png
+          sips -z 32 32     build-resources/icon.png --out build-resources/icon.iconset/icon_32x32.png
+          sips -z 64 64     build-resources/icon.png --out build-resources/icon.iconset/icon_32x32@2x.png
+          sips -z 128 128   build-resources/icon.png --out build-resources/icon.iconset/icon_128x128.png
+          sips -z 256 256   build-resources/icon.png --out build-resources/icon.iconset/icon_128x128@2x.png
+          sips -z 256 256   build-resources/icon.png --out build-resources/icon.iconset/icon_256x256.png
+          sips -z 512 512   build-resources/icon.png --out build-resources/icon.iconset/icon_256x256@2x.png
+          sips -z 512 512   build-resources/icon.png --out build-resources/icon.iconset/icon_512x512.png
+          sips -z 1024 1024 build-resources/icon.png --out build-resources/icon.iconset/icon_512x512@2x.png
+          iconutil -c icns build-resources/icon.iconset --output build-resources/icon.icns
+
       - name: Rename cargo.toml on Unix
         if: matrix.platform != 'win'
         working-directory: native
@@ -72,6 +88,9 @@ jobs:
 
       - name: Install Node dependencies
         run: npm install
+
+      - name: Rebuild native Node modules for Electron
+        run: npx electron-rebuild -f -w better-sqlite3
 
       - name: Build Vite
         run: npm run build

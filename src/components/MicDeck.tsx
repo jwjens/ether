@@ -175,7 +175,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
 
       {/* Channel strip header */}
       <div style={{ padding: "12px 14px 8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flex: 1 }}>
           {/* Mic icon — channel strip style */}
           <div style={{
             width: 26, height: 26, borderRadius: 0,
@@ -219,6 +219,20 @@ export default function MicDeck({ inputDeviceId }: Props) {
               background: "#c07820", boxShadow: "0 0 3px #c07820",
             }} />
           )}
+        </button>
+
+        {/* Pop-out button */}
+        <button
+          title="Pop out to separate window"
+          onClick={() => (window as any).ether?.invoke("window:popout", "mic")}
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "2px 3px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0, flexShrink: 0 }}
+          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
+          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
         </button>
 
         {/* Live indicator badge */}

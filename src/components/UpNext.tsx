@@ -1,20 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { engine } from "../audio/engine-rodio";
 import { query } from "../db/client";
-import { getNextTransition, NextTransition } from "../audio/showClock";
 
 // ── Types ─────────────────────────────────────────────────────
 
-interface ShowInfo { name: string; start_hour: number; end_hour: number; days: string; }
 interface CategoryInfo { id: number; code: string; name: string; color: string; }
-
-// ── Helpers ───────────────────────────────────────────────────
-
-function fmtHour(h: number): string {
-  const suffix = h >= 12 ? "PM" : "AM";
-  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${h12}:00 ${suffix}`;
-}
 
 function fmtDur(ms: number): string {
   if (!ms || ms <= 0) return "";
@@ -23,9 +13,9 @@ function fmtDur(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-// Tiny artwork cache
-const artCache: Record<string, string> = {};
-async function fetchArt(title: string, artist: string): Promise<string | null> {
+// Tiny artwork cache — exported so OnAirDeck can share it
+export const artCache: Record<string, string> = {};
+export async function fetchArt(title: string, artist: string): Promise<string | null> {
   const key = `${title}::${artist}`;
   if (artCache[key] !== undefined) return artCache[key] || null;
   try {
@@ -36,192 +26,6 @@ async function fetchArt(title: string, artist: string): Promise<string | null> {
     artCache[key] = url || "";
     return url;
   } catch { artCache[key] = ""; return null; }
-}
-
-// ── ShowTicker (embedded in panel) ───────────────────────────
-
-function NowPlayingBlock() {
-  const [now, setNow]               = useState(() => new Date());
-  const [currentShow, setCurrentShow] = useState<ShowInfo | null>(null);
-  const [nextTransition, setNextTrans] = useState<NextTransition | null>(null);
-  const [nextShow, setNextShow]     = useState<ShowInfo | null>(null);
-
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const loadShows = useCallback(async () => {
-    try {
-      const shows = await query<ShowInfo>("SELECT name, start_hour, end_hour, days FROM shows WHERE is_active = 1 ORDER BY start_hour");
-      const hour = new Date().getHours();
-      const curr = shows.find(s => {
-        if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
-        if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
-        return hour >= s.start_hour || hour < s.end_hour;
-      }) ?? null;
-      setCurrentShow(curr);
-      const nx = await getNextTransition();
-      setNextTrans(nx);
-      if (nx) {
-        const nxShow = shows.find(s => s.name === nx.showName) ?? null;
-        setNextShow(nxShow);
-      }
-    } catch {}
-  }, []);
-
-  useEffect(() => { loadShows(); const id = setInterval(loadShows, 30_000); return () => clearInterval(id); }, [loadShows]);
-
-  const hasTransition = nextTransition !== null;
-  const transitionSecs = hasTransition
-    ? Math.max(0, Math.round((nextTransition!.startsAt.getTime() - now.getTime()) / 1000))
-    : null;
-  const elapsed = now.getMinutes() * 60 + now.getSeconds();
-  const hourRemaining = 3600 - elapsed;
-  const displaySecs = transitionSecs !== null ? transitionSecs : hourRemaining;
-
-  const mm = String(Math.floor(displaySecs / 60)).padStart(2, "0");
-  const ss = String(displaySecs % 60).padStart(2, "0");
-
-  const critical = hasTransition
-    ? transitionSecs !== null && transitionSecs <= 600
-    : hourRemaining <= 600;
-
-  // Show progress bar
-  const showDurationSecs = currentShow
-    ? (() => {
-        const endH = currentShow.end_hour === 0 ? 24 : currentShow.end_hour;
-        return (endH - currentShow.start_hour) * 3600;
-      })()
-    : 3600;
-  const showElapsedSecs = currentShow
-    ? (now.getHours() - currentShow.start_hour) * 3600 + elapsed
-    : elapsed;
-  const barProgress = Math.min(1, Math.max(0, showElapsedSecs / showDurationSecs));
-  const barAmber = barProgress > 0.85 || critical;
-
-  const countdownLabel = hasTransition
-    ? `until ${nextTransition!.showName}`
-    : "remaining in hour";
-
-  const nextStartTime = nextTransition
-    ? nextTransition.startsAt.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
-    : null;
-
-  return (
-    <>
-      {/* Now playing block */}
-      <div style={{
-        background: "#111118",
-        borderLeft: "2px solid #6040c0",
-        padding: "12px 14px",
-        marginBottom: 1,
-      }}>
-        {/* Live dot + label */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-          <span className="ether-live-dot" />
-          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", color: "#6040c0", textTransform: "uppercase" as const }}>Now playing</span>
-        </div>
-
-        {/* Show name */}
-        <div style={{ fontSize: 12, fontWeight: 500, color: "#c0c0d0", marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-          {currentShow?.name ?? "Unscheduled"}
-        </div>
-
-        {/* Countdown */}
-        <div style={{ marginBottom: 6 }}>
-          <span style={{
-            fontFamily: "'DM Mono', 'Courier New', monospace",
-            fontSize: 36, fontWeight: 300,
-            color: critical ? "#c87828" : "#e0e0f0",
-            letterSpacing: "-0.02em", lineHeight: 1,
-            fontVariantNumeric: "tabular-nums",
-            transition: "color 2s",
-            display: "inline-block",
-          }}>
-            <span>{mm}:</span>
-            <span className="ether-tick">{ss}</span>
-          </span>
-        </div>
-
-        {/* Label */}
-        <div style={{ fontSize: 10, color: "#5050a0", marginBottom: 10, letterSpacing: "0.02em" }}>
-          {critical && <span style={{ color: "#c87828", marginRight: 4 }}>⚡</span>}
-          {countdownLabel}
-        </div>
-
-        {/* Progress bar */}
-        <div style={{ height: 2, background: "#1a1a2a", overflow: "hidden", position: "relative" as const }}>
-          <div style={{
-            height: "100%",
-            width: `${barProgress * 100}%`,
-            background: barAmber ? "#8a5a10" : "#6040c0",
-            position: "relative" as const,
-            transition: "width 1s linear, background 2s",
-          }}>
-            <span className={barAmber ? "ether-glow-amber" : "ether-glow-purple"} />
-          </div>
-        </div>
-      </div>
-
-      {/* Next show block */}
-      {nextTransition && (
-        <div style={{
-          background: "#0e0e14",
-          borderLeft: "1px solid #252535",
-          padding: "10px 14px",
-          marginBottom: 1,
-        }}>
-          <div style={{ fontSize: 9, color: "#6060a0", letterSpacing: "0.1em", textTransform: "uppercase" as const, marginBottom: 4 }}>↳ Next show</div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, color: "#505060" }}>{nextStartTime}</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "#808090", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 }}>{nextTransition.showName}</span>
-          </div>
-        </div>
-      )}
-
-      {/* CSS keyframes */}
-      <style>{`
-        @keyframes ether-pulse {
-          0%,100%{opacity:1;transform:scale(1);}
-          50%{opacity:0.4;transform:scale(0.85);}
-        }
-        @keyframes ether-tick {
-          0%{opacity:1;}50%{opacity:0.6;}100%{opacity:1;}
-        }
-        @keyframes ether-glow {
-          0%,100%{box-shadow:0 0 4px 1px #6040c060;}
-          50%{box-shadow:0 0 8px 2px #6040c090;}
-        }
-        @keyframes ether-glow-amber {
-          0%,100%{box-shadow:0 0 4px 1px #8a5a1060;}
-          50%{box-shadow:0 0 8px 2px #8a5a1090;}
-        }
-        .ether-live-dot {
-          display:inline-block;
-          width:6px;height:6px;border-radius:50%;
-          background:#8060e0;
-          animation:ether-pulse 1.8s ease-in-out infinite;
-        }
-        .ether-tick {
-          animation:ether-tick 1s steps(1,end) infinite;
-          display:inline-block;
-        }
-        .ether-glow-purple::after {
-          content:'';
-          position:absolute;top:0;right:0;
-          width:3px;height:100%;
-          animation:ether-glow 2s ease-in-out infinite;
-        }
-        .ether-glow-amber::after {
-          content:'';
-          position:absolute;top:0;right:0;
-          width:3px;height:100%;
-          animation:ether-glow-amber 1.2s ease-in-out infinite;
-        }
-      `}</style>
-    </>
-  );
 }
 
 // ── UpNext (main component) ────────────────────────────────────
@@ -239,6 +43,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [artUrls, setArtUrls]         = useState<Record<string, string>>({});
   const [totalDuration, setTotalDuration] = useState(0);
 
+  const [anyPlaying, setAnyPlaying] = useState(false);
+
   const dragIdxRef     = useRef<number | null>(null);
   const dragOverIdxRef = useRef<number | null>(null);
   const isDraggingRef  = useRef(false);
@@ -246,6 +52,14 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [dragVisual, setDragVisual] = useState<{ from: number | null; over: number | null }>({ from: null, over: null });
 
   const queue = engine.getQueue();
+
+  useEffect(() => {
+    const update = () => setAnyPlaying(
+      (["A", "B", "C"] as const).some(s => engine.getDeck(s)?.status === "playing")
+    );
+    update();
+    return engine.on(update);
+  }, []);
 
   useEffect(() => {
     queue.forEach(item => {
@@ -289,8 +103,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   };
 
   const rebuild = (newQ: any[]) => {
-    engine.clearQueue();
-    engine.addToQueue(newQ);
+    engine.replaceQueue(newQ);
     onQueueChange();
     setTimeout(() => engine.triggerPreload(), 100);
   };
@@ -360,44 +173,47 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
   return (
     <div
-      style={{ background: "#0e0e12", border: "1px solid #1e1e2e", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }}
+      style={{ background: "var(--bg-primary)", border: "none", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }}
       onClick={closeContext}
     >
-      {/* Panel header */}
-      <div style={{ padding: "10px 14px", borderBottom: "1px solid #1e1e2e", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#505070", textTransform: "uppercase" as const }}>Up Next</span>
-          <span style={{ fontSize: 9, color: "#505070", fontFamily: "'DM Mono', monospace" }}>({queueLen})</span>
+      {/* ── NEXT UP header ── */}
+      <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="next-up-glow" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.1em", color: "#f97316", textTransform: "uppercase" as const, lineHeight: 1 }}>Next Up</span>
+          <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>({queueLen})</span>
           {totalDurStr && (
-            <span style={{ fontSize: 9, color: "#505070", fontFamily: "'DM Mono', monospace", background: "#111118", padding: "1px 6px", border: "1px solid #1e1e2e" }}>{totalDurStr}</span>
+            <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", background: "var(--bg-secondary)", padding: "1px 6px" }}>{totalDurStr}</span>
           )}
         </div>
-        {queue.length > 0 && (
-          <button onClick={() => { engine.clearQueue(); onQueueChange(); }}
-            style={{ fontSize: 9, color: "#505070", background: "none", border: "none", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase" as const }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "#505070"}
-          >Clear All</button>
-        )}
-      </div>
-
-      {/* Now playing + next show */}
-      <div style={{ flexShrink: 0 }}>
-        <NowPlayingBlock />
-      </div>
-
-      {/* Queue section */}
-      <div style={{ padding: "8px 14px 4px", borderBottom: "1px solid #1e1e2e", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#505070", textTransform: "uppercase" as const }}>Queue</span>
-        <span style={{ fontSize: 9, color: "#505070", fontFamily: "'DM Mono', monospace" }}>{queue.length}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button
+            title="Pop out to separate window"
+            onClick={() => (window as any).ether?.invoke("window:popout", "upnext")}
+            style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "2px 3px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0 }}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
+            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+          </button>
+          {queue.length > 0 && (
+            <button onClick={() => { engine.clearQueue(); onQueueChange(); }}
+              style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase" as const }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
+              onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
+            >Clear All</button>
+          )}
+        </div>
       </div>
 
       {/* Queue list */}
       <div style={{ flex: 1, overflowY: "auto" as any }} onDragOver={handleCartDragOver} onDrop={handleCartDrop}>
         {queue.length === 0 ? (
           <div style={{ padding: "28px 14px", textAlign: "center" as any }}>
-            <div style={{ fontSize: 11, color: "#505070", marginBottom: 4 }}>Queue empty</div>
-            <div style={{ fontSize: 10, color: "#1e1e2e" }}>Drag carts here or use GEN LOG</div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>Queue empty</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", opacity: 0.4 }}>Drag carts here or use GEN LOG</div>
           </div>
         ) : queue.slice(0, 50).map((item, i) => {
           const color = getItemColor(item);
@@ -407,88 +223,103 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
           const isBeingDragged = dragVisual.from === i;
           const isDropTarget = dragVisual.over === i && dragVisual.from !== null && dragVisual.from !== i;
 
+          const isOnDeck = i === 0 && anyPlaying && !isBeingDragged;
+
           return (
             <div
               key={i}
               data-queue-item={i}
               onMouseDown={e => handleMouseDown(e, i)}
               onContextMenu={e => handleContext(e, i)}
+              className={isOnDeck ? "pulse-border" : ""}
               style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "8px 14px",
-                borderBottom: "1px solid #1e1e2e",
+                "--pulse-rgb": "34, 211, 153",
+                display: "flex", alignItems: "stretch",
+                borderBottom: "1px solid rgba(255,255,255,0.04)",
                 borderTop: isDropTarget ? "2px solid #6040c0" : "none",
                 background: isBeingDragged ? "rgba(96,64,192,0.06)" : "transparent",
                 opacity: isBeingDragged ? 0.4 : 1,
                 cursor: isBeingDragged ? "grabbing" : "grab",
                 userSelect: "none" as any,
                 transition: "background 0.1s",
-              }}
+              } as React.CSSProperties}
             >
-              {/* Position */}
-              <span style={{ fontSize: 9, color: "#505070", width: 14, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 1}</span>
+              {/* 4px left category color strip */}
+              <div style={{ width: 4, flexShrink: 0, background: color, opacity: 0.75 }} />
 
-              {/* Artwork */}
-              <div style={{ width: 28, height: 28, flexShrink: 0, background: `${color}12`, border: `1px solid ${color}20`, overflow: "hidden" }}>
-                {artUrls[artKey]
-                  ? <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: color }}>♪</div>
-                }
+              {/* Main content */}
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, padding: "10px 10px 10px 8px", minWidth: 0 }}>
+                {/* Position */}
+                <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 12, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 1}</span>
+
+                {/* Album art thumbnail */}
+                <div style={{ width: 36, height: 36, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                  {artUrls[artKey] && (
+                    <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  )}
+                </div>
+
+                {/* Cat badge */}
+                {catLabel && (
+                  <span style={{ fontSize: 7, fontWeight: 800, color: "#000", background: color, padding: "1px 4px", letterSpacing: "0.06em", flexShrink: 0 }}>{catLabel}</span>
+                )}
+
+                {/* Title + artist */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, letterSpacing: "-0.01em" }}>{item.title}</div>
+                  <div style={{ fontSize: 9, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
+                </div>
+
+                {/* Right side: duration + BPM badge + remove */}
+                <div style={{ display: "flex", flexDirection: "column" as any, alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
+                  {ms > 0 && (
+                    <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)" }}>{fmtDur(ms)}</span>
+                  )}
+                  {(item as any).bpm > 0 && (
+                    <span style={{ fontSize: 7, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "0 3px", letterSpacing: "0.04em" }}>
+                      {Math.round((item as any).bpm)} bpm
+                    </span>
+                  )}
+                </div>
+
+                {/* Remove */}
+                <button
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={e => { e.stopPropagation(); removeItem(i); }}
+                  style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "0 2px", flexShrink: 0 }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+                >✕</button>
               </div>
-
-              {/* Cat badge */}
-              {catLabel && (
-                <span style={{ fontSize: 7, fontWeight: 800, color: "#000", background: color, padding: "1px 4px", letterSpacing: "0.06em", flexShrink: 0 }}>{catLabel}</span>
-              )}
-
-              {/* Title + artist */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: "#c0c0d0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, letterSpacing: "-0.01em" }}>{item.title}</div>
-                <div style={{ fontSize: 9, color: "#606070", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
-              </div>
-
-              {/* Duration */}
-              {ms > 0 && (
-                <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "#505070", flexShrink: 0 }}>{fmtDur(ms)}</span>
-              )}
-
-              {/* Remove */}
-              <button
-                onMouseDown={e => e.stopPropagation()}
-                onClick={e => { e.stopPropagation(); removeItem(i); }}
-                style={{ fontSize: 9, color: "#505070", background: "none", border: "none", cursor: "pointer", padding: "0 2px", flexShrink: 0 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "#505070"; }}
-              >✕</button>
             </div>
           );
         })}
         {queue.length > 50 && (
-          <div style={{ padding: 8, fontSize: 9, color: "#505070", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 50} more</div>
+          <div style={{ padding: 8, fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 50} more</div>
         )}
       </div>
 
       {/* Context menu */}
       {contextMenu && (
         <div
-          style={{ position: "fixed" as any, zIndex: 50, background: "#111118", border: "1px solid #1e1e2e", padding: "4px 0", minWidth: 180, left: contextMenu.x, top: contextMenu.y }}
+          style={{ position: "fixed" as any, zIndex: 50, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "4px 0", minWidth: 180, left: contextMenu.x, top: contextMenu.y }}
           onClick={e => e.stopPropagation()}
         >
-          <div style={{ padding: "4px 12px", fontSize: 9, color: "#505070", borderBottom: "1px solid #1e1e2e", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontFamily: "'DM Mono', monospace" }}>{queue[contextMenu.idx]?.title}</div>
+          <div style={{ padding: "4px 12px", fontSize: 9, color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontFamily: "'DM Mono', monospace" }}>{queue[contextMenu.idx]?.title}</div>
           {[
             { label: "Play Next", fn: () => moveToTop(contextMenu.idx) },
             { label: "Move Up",   fn: () => moveUp(contextMenu.idx) },
             { label: "Move Down", fn: () => moveDown(contextMenu.idx) },
             { label: "Move to Bottom", fn: () => moveToBottom(contextMenu.idx) },
           ].map(item => (
-            <button key={item.label} onClick={item.fn} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 11, color: "#9090b0", background: "none", border: "none", cursor: "pointer" }}
-              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "#1a1a2a"}
+            <button key={item.label} onClick={item.fn} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 11, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer" }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"}
               onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}
             >{item.label}</button>
           ))}
-          <div style={{ borderTop: "1px solid #1e1e2e" }} />
+          <div style={{ borderTop: "1px solid var(--border-primary)" }} />
           <button onClick={() => removeItem(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 11, color: "#ef4444", background: "none", border: "none", cursor: "pointer" }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "#1a1a2a"}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"}
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}
           >Remove</button>
         </div>

@@ -1,5 +1,5 @@
 /* ── Fonts ─────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&family=Rajdhani:wght@400;500;600;700&family=Barlow+Condensed:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -13,9 +13,9 @@
   --bg-elevated: #18181e;
   --bg-hover: #1e1e26;
   --bg-active: #22222c;
-  --text-primary: #c0c0d0;
+  --text-primary: #e8e8f0;
   --text-secondary: #8878c0;
-  --text-tertiary: #303048;
+  --text-tertiary: #6060a0;
   --text-inverse: #0e0e12;
   --border-primary: #1a1a22;
   --border-secondary: #1e1e2e;
@@ -50,9 +50,9 @@
   --bg-elevated: #18181e;
   --bg-hover: #1e1e26;
   --bg-active: #22222c;
-  --text-primary: #c0c0d0;
+  --text-primary: #e8e8f0;
   --text-secondary: #8878c0;
-  --text-tertiary: #303048;
+  --text-tertiary: #6060a0;
   --text-inverse: #0e0e12;
   --border-primary: #1a1a22;
   --border-secondary: #1e1e2e;
@@ -498,6 +498,30 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
 @keyframes mic-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+/* ── NEXT UP heading glow ────────────────────────────────────── */
+@keyframes next-up-glow {
+  0%, 100% { text-shadow: 0 0 6px rgba(249,115,22,0.30); }
+  50%       { text-shadow: 0 0 16px rgba(249,115,22,0.85); }
+}
+.next-up-glow {
+  animation: next-up-glow 2s ease-in-out infinite;
+}
+
+/* ── Deck / queue pulse — heartbeat glow on active elements ─── */
+@keyframes pulse-border {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(var(--pulse-rgb), 0.35),
+                0 0 10px rgba(var(--pulse-rgb), 0.10);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(var(--pulse-rgb), 0.80),
+                0 0 22px rgba(var(--pulse-rgb), 0.28);
+  }
+}
+.pulse-border {
+  animation: pulse-border 2s ease-in-out infinite;
 }
 
 /* ── Grain overlay ───────────────────────────────────────────── */

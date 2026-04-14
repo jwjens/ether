@@ -30,6 +30,7 @@ import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
 import SmartScheduler from "./components/SmartScheduler";
+import BroadcastCalendar from "./components/BroadcastCalendar";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
@@ -78,7 +79,7 @@ import StudioEditor from "./components/StudioEditor";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -348,6 +349,10 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerUsage, setDrawerUsage] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem("ether_drawer_usage") || "{}"); } catch { return {}; }
+  });
   const [showDeckConfig, setShowDeckConfig] = useState(false);
   const [showProducerDesk, setShowProducerDesk] = useState(false);
 
@@ -355,9 +360,19 @@ export default function App() {
     try {
       await (window as any).ether.invoke("open_desk_window");
     } catch (e) {
-      // Fallback: show inline if window API unavailable (dev mode)
       setShowProducerDesk(p => !p);
     }
+  };
+
+  // Track which drawer items are used most (persisted to localStorage)
+  const drawerClick = (key: string, fn: () => void) => {
+    setDrawerUsage(prev => {
+      const next = { ...prev, [key]: (prev[key] || 0) + 1 };
+      localStorage.setItem("ether_drawer_usage", JSON.stringify(next));
+      return next;
+    });
+    fn();
+    setDrawerOpen(false);
   };
   const { configs: deckConfigs, save: saveDeckConfigs, enabled: enabledDecks } = useDeckConfig();
 
@@ -548,7 +563,14 @@ export default function App() {
     });
   }, []);
 
-  const [xfadeDuration, setXfadeDuration] = useState(3);
+  const [xfadeDuration, setXfadeDurationState] = useState(() => {
+    try { const v = parseInt(localStorage.getItem("ether_xfade_duration") || "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(1, v)); } catch { return 3; }
+  });
+  const setXfadeDuration = (v: number) => {
+    setXfadeDurationState(v);
+    localStorage.setItem("ether_xfade_duration", String(v));
+    engine.crossfadeDuration = v;
+  };
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -575,7 +597,7 @@ export default function App() {
         case "KeyG": setPanel("logs"); break;
         case "KeyA": e.preventDefault(); toggleAuto(); break;
         case "Slash": if (e.shiftKey) { e.preventDefault(); setShowShortcuts(s => !s); } break;
-        case "Escape": dA?.stop(); dB?.stop(); setShowShortcuts(false); break;
+        case "Escape": dA?.stop(); dB?.stop(); setShowShortcuts(false); setDrawerOpen(false); break;
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -610,6 +632,8 @@ export default function App() {
         prevQueueLen.current = newQLen;
       }
       setQueueLen(newQLen);
+      // Broadcast queue length to any pop-out windows (e.g. StandaloneUpNext)
+      (window as any).ether?.emit("ether:broadcast", { channel: "queue:sync", data: newQLen });
 
       // Fire tour events
       if (id === "A" && st.filePath) window.dispatchEvent(new Event("ether:tour-deck-loaded"));
@@ -861,94 +885,67 @@ export default function App() {
       <KeyboardHelp />
 
       {/* ── Header ── */}
-      <header style={{ height: 44, display: "flex", alignItems: "center", padding: "0 16px", background: "#080810", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      <header style={{ height: 48, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
-                {/* LEFT: Logo + Session */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, zIndex: 1 }}>
-          <img src={etherMarkSvg} height={28} width={28} alt="ether" style={{ flexShrink: 0, display: "block" }} />
-          <div style={{ width: 1, height: 16, background: "var(--border-primary)" }} />
-          <SessionNameBar
-            name={canvasEngine.activeLayoutName}
-            onChange={canvasEngine.renameActive}
-            onSave={async (name: string) => { await canvasEngine.saveCurrentLayout(name); if (name !== "Live Assist") setUseCanvas(true); }}
-            layouts={canvasEngine.layouts}
-            onLoadLayout={(id: string) => { canvasEngine.loadLayout(id); setUseCanvas(true); }}
-            onDeleteLayout={(id: string) => canvasEngine.deleteLayout(id)}
+        {/* LEFT: Search bar */}
+        <div style={{ width: 280, flexShrink: 0, zIndex: 1, position: "relative" as const }}>
+          <svg style={{ position: "absolute" as const, left: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "var(--text-tertiary)" }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            type="text"
+            placeholder="Search library..."
+            value={globalSearch}
+            onChange={e => setGlobalSearch(e.target.value)}
+            style={{ width: "100%", height: 30, paddingLeft: 28, paddingRight: globalSearch ? 28 : 8, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 0, color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" as const }}
           />
-        </div>
-
-        {/* CENTER: Schedule + Clock + Dark mode */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 auto", zIndex: 1 }}>
-          {panel !== "live" && (
-            <button
-              onClick={() => setPanel("live")}
-              style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
-            >
-              <svg width="7" height="9" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
-              Go Live
-            </button>
+          {globalSearch && (
+            <button onClick={() => setGlobalSearch("")} style={{ position: "absolute" as const, right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0, display: "flex", alignItems: "center" }}>×</button>
           )}
-          <button
-            onClick={() => setPanel("clocks")}
-            style={{
-              height: 28, padding: "0 10px", borderRadius: 0,
-              background: panel === "clocks" ? "rgba(56,189,248,0.2)" : "var(--bg-tertiary)",
-              border: `1px solid ${panel === "clocks" ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`,
-              color: panel === "clocks" ? "var(--accent-cyan)" : "var(--text-secondary)",
-              fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 5,
-            }}
-          >
-            📋 Schedule
-          </button>
-          <button
-            onClick={() => setPanel("programlog")}
-            style={{
-              height: 28, padding: "0 10px", borderRadius: 0,
-              background: panel === "programlog" ? "rgba(167,139,250,0.2)" : "var(--bg-tertiary)",
-              border: `1px solid ${panel === "programlog" ? "rgba(167,139,250,0.4)" : "var(--border-primary)"}`,
-              color: panel === "programlog" ? "#a78bfa" : "var(--text-secondary)",
-              fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 5,
-            }}
-          >
-            📜 Program Log
-          </button>
-          <ClockDisplay />
-          <button onClick={() => setDarkMode(!darkMode)} style={{ width: 30, height: 30, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {darkMode ? (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-            ) : (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-            )}
-          </button>
         </div>
 
-        {/* RIGHT: Desk + Now Playing + Pro + Admin + ON AIR */}
+        {/* CENTER: Clock — absolutely centered */}
+        <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0 }}>
+          <ClockDisplay onToggleDark={() => setDarkMode(!darkMode)} darkMode={darkMode} />
+        </div>
+
+        {/* RIGHT: Status + Pro + Admin + ☰ menu + ON AIR */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1 }}>
-          <button onClick={openDeskWindow} style={{ height: 30, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
-            onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background="rgba(167,139,250,0.15)";(e.currentTarget as HTMLElement).style.color="#a78bfa";(e.currentTarget as HTMLElement).style.borderColor="rgba(167,139,250,0.3)";}}
-            onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background="var(--bg-tertiary)";(e.currentTarget as HTMLElement).style.color="var(--text-secondary)";(e.currentTarget as HTMLElement).style.borderColor="var(--border-primary)";}}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-            Desk
-          </button>
-          <button onClick={() => openNowPlayingWindow()} style={{ height: 30, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.02em", display: "flex", alignItems: "center", gap: 6 }}>
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ opacity: 0.6 }}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-            Now Playing
-          </button>
+          <HealthStatusDot onClick={() => setPanel("health")} />
+          <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />
           {currentPlan === "free" && (
-            <button onClick={() => setPanel("subscription")} style={{ height: 30, padding: "0 10px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 4 }}>
+            <button onClick={() => setPanel("subscription")} style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 4 }}>
               <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
               Pro
             </button>
           )}
-          <button onClick={() => setCurrentUser(null)} style={{ height: 30, padding: "0 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", gap: 5 }}>
+          <button onClick={() => setCurrentUser(null)} style={{ height: 28, padding: "0 8px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", gap: 5 }}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             {currentUser?.name}
           </button>
-          <HealthStatusDot onClick={() => setPanel("health")} />
-          <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />
+
+          {/* ☰ Menu button */}
+          <button
+            onClick={() => setDrawerOpen(d => !d)}
+            title="Menu"
+            style={{
+              width: 32, height: 32, borderRadius: 0, cursor: "pointer",
+              background: drawerOpen ? "var(--bg-tertiary)" : "transparent",
+              border: `1px solid ${drawerOpen ? "var(--border-primary)" : "transparent"}`,
+              color: drawerOpen ? "var(--text-primary)" : "var(--text-secondary)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexDirection: "column", gap: 4, transition: "all 0.15s",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+            onMouseLeave={e => {
+              if (!drawerOpen) { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.borderColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }
+            }}
+          >
+            <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+              <line x1="0" y1="1" x2="14" y2="1"/>
+              <line x1="0" y1="5.5" x2="14" y2="5.5"/>
+              <line x1="0" y1="10" x2="14" y2="10"/>
+            </svg>
+          </button>
+
           <button
             data-tour="onair-btn"
             onClick={async () => {
@@ -971,6 +968,102 @@ export default function App() {
             {onAir ? "● ON AIR" : "OFF AIR"}
           </button>
         </div>
+
+        {/* ── Slide-out Drawer ── */}
+        {drawerOpen && (
+          <>
+            <style>{`@keyframes ether-drawer-in { from { transform: translateX(100%); } to { transform: translateX(0); } }`}</style>
+            {/* Backdrop */}
+            <div
+              onClick={() => setDrawerOpen(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 490, background: "rgba(0,0,0,0.45)", backdropFilter: "blur(1px)" }}
+            />
+            {/* Panel */}
+            <div style={{
+              position: "fixed", top: 0, right: 0, bottom: 0, width: 250, zIndex: 491,
+              background: "var(--bg-secondary)",
+              borderLeft: "1px solid var(--border-primary)",
+              display: "flex", flexDirection: "column",
+              boxShadow: "-12px 0 40px rgba(0,0,0,0.4)",
+              animation: "ether-drawer-in 0.18s cubic-bezier(0.25,0.46,0.45,0.94) both",
+              fontFamily: "var(--font-ui, 'Inter', sans-serif)",
+            }}>
+              {/* Drawer header */}
+              <div style={{ height: 48, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+                <img src={etherMarkSvg} height={22} alt="ether" style={{ opacity: 0.7 }} />
+                <button onClick={() => setDrawerOpen(false)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "2px 4px", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+              </div>
+
+              {/* Drawer body */}
+              <div style={{ flex: 1, overflowY: "auto", padding: "10px 0 16px" }}>
+
+                {/* ── NAVIGATE ── */}
+                <div style={{ padding: "2px 16px 6px", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)" }}>NAVIGATE</div>
+                {([
+                  { key: "schedule",   emoji: "📋", label: "Schedule",    action: () => setPanel("clocks"),      active: panel === "clocks"      },
+                  { key: "calendar",   emoji: "📅", label: "Calendar",    action: () => setPanel("calendar"),    active: panel === "calendar"    },
+                  { key: "programlog", emoji: "📜", label: "Program Log", action: () => setPanel("programlog"), active: panel === "programlog"  },
+                ] as const).map(item => (
+                  <button
+                    key={item.key}
+                    onClick={() => drawerClick(item.key, item.action)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 11, width: "100%",
+                      padding: "10px 16px", background: item.active ? "rgba(56,189,248,0.08)" : "transparent",
+                      border: "none",
+                      borderLeft: `3px solid ${item.active ? "var(--accent-cyan)" : "transparent"}`,
+                      color: item.active ? "var(--accent-cyan)" : "var(--text-secondary)",
+                      fontSize: 12, fontWeight: (drawerUsage[item.key] || 0) >= 3 ? 700 : 500,
+                      cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s",
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = item.active ? "rgba(56,189,248,0.08)" : "transparent"; }}
+                  >
+                    <span style={{ fontSize: 15, lineHeight: 1 }}>{item.emoji}</span>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {(drawerUsage[item.key] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                  </button>
+                ))}
+
+                <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 16px" }} />
+
+                {/* ── WINDOWS ── */}
+                <div style={{ padding: "2px 16px 6px", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)" }}>WINDOWS</div>
+                <button
+                  onClick={() => drawerClick("desk", openDeskWindow)}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 12, fontWeight: (drawerUsage["desk"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                  <span style={{ flex: 1 }}>Desk</span>
+                  {(drawerUsage["desk"] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
+                <button
+                  onClick={() => drawerClick("nowplaying", () => openNowPlayingWindow())}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 12, fontWeight: (drawerUsage["nowplaying"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                  <span style={{ flex: 1 }}>Now Playing</span>
+                  {(drawerUsage["nowplaying"] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
+                <button
+                  onClick={() => drawerClick("phone", () => setPanel("phonedesk"))}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent", border: "none", borderLeft: `3px solid ${panel === "phonedesk" ? "#00c8a8" : "transparent"}`, color: panel === "phonedesk" ? "#00c8a8" : "var(--text-secondary)", fontSize: 12, fontWeight: (drawerUsage["phone"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.35 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.34 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                  <span style={{ flex: 1 }}>Phone</span>
+                  {(drawerUsage["phone"] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
+
+              </div>
+            </div>
+          </>
+        )}
 </header>
 
       {/* Hidden-deck audio warning */}
@@ -1020,6 +1113,8 @@ export default function App() {
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
                   xfadeDuration={xfadeDuration}
                   setXfadeDuration={setXfadeDuration}
+                  globalSearch={globalSearch}
+                  setGlobalSearch={setGlobalSearch}
                   nowPlaying={nowPlayingStr || undefined}
                 />
               )}
@@ -1031,10 +1126,12 @@ export default function App() {
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "studio" && (
-                <StudioEditor
-                  deckAPath={null} deckATitle={undefined}
-                  deckBPath={null} deckBTitle={undefined}
-                />
+                <EtherErrorBoundary>
+                  <StudioEditor
+                    deckAPath={null} deckATitle={undefined}
+                    deckBPath={null} deckBTitle={undefined}
+                  />
+                </EtherErrorBoundary>
               )}
               {panel === "broadcasteditor" && (
                 <BroadcastEditor
@@ -1048,7 +1145,7 @@ export default function App() {
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
-              {panel === "settings" && <SettingsPanel />}
+              {panel === "settings" && <SettingsPanel xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}
@@ -1077,6 +1174,9 @@ export default function App() {
               {panel === "smartschedule" && (
                 <SmartScheduler onClose={() => setPanel("live")} />
               )}
+              {panel === "calendar" && (
+                <BroadcastCalendar onShowClick={() => { setPanel("clocks"); setSchedulerTab("shows"); }} />
+              )}
               {panel === "cartwall" && (
                 <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
                   <CartWallPanel onClose={() => setPanel("live")} />
@@ -1087,7 +1187,7 @@ export default function App() {
                   <PlaylistPanel onClose={() => setPanel("live")} />
                 </div>
               )}
-              {/* Video Studio is now a deck type — no standalone panel */}
+              {panel === "videostudio" && <VideoStudio />}
               {panel === "importlibrary" && (
                 <LibraryImport onClose={() => setPanel("live")} />
               )}
@@ -1733,7 +1833,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
         {/* Progress bar — music only */}
         {!isMic && (
           <div style={{ height: 2, background: 'var(--bg-tertiary)', flexShrink: 0, margin: '0 6px' }}>
-            <div style={{ height: '100%', width: `${pct*100}%`, background: color, borderRadius: 0, transition: 'width 0.5s linear' }} />
+            <div style={{ height: '100%', width: `${pct*100}%`, background: 'var(--accent-cyan)', borderRadius: 0, transition: 'width 0.5s linear' }} />
           </div>
         )}
 
@@ -2213,12 +2313,24 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   setAutoSilenceTrim?: (v: boolean) => void;
   xfadeDuration: number;
   setXfadeDuration: (v: number) => void;
+  globalSearch: string;
+  setGlobalSearch: (v: string) => void;
   nowPlaying?: string;
 }) {
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
   const [masterLevel, setMasterLevel] = useState(0);
+  const [toolsCollapsed, setToolsCollapsed] = useState(() =>
+    localStorage.getItem("ether_tools_collapsed") === "1"
+  );
+  const toggleToolsCollapsed = () => {
+    setToolsCollapsed(c => {
+      const next = !c;
+      localStorage.setItem("ether_tools_collapsed", next ? "1" : "0");
+      return next;
+    });
+  };
 
   // Subscribe to master output level from push events
   useEffect(() => {
@@ -2230,7 +2342,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     return () => ether.audio.offLevels(h);
   }, []);
   // Panel widths — resizable via drag divider
-  const [queueWidth, setQueueWidth] = useState(360);
+  const [queueWidth, setQueueWidth] = useState(320);
   const resizingRef = useRef(false);
 
   const startResizeQueue = (e: React.MouseEvent) => {
@@ -2242,7 +2354,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     const onMove = (ev: MouseEvent) => {
       // If queue is on the left, dragging right = wider; if on the right, dragging left = wider
       const dir = panelOrder[0] === "queue" ? 1 : -1;
-      const next = Math.max(220, Math.min(560, startW + (ev.clientX - startX) * dir));
+      const next = Math.max(320, Math.min(560, startW + (ev.clientX - startX) * dir));
       setQueueWidth(next);
     };
     const onUp = () => {
@@ -2561,8 +2673,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             </React.Fragment>
           );
         })}
-        {/* Master Output — permanent right column, always visible */}
-        <MasterOutput masterLevel={masterLevel} />
+        {/* Master Output — permanent right column, expands when cart wall is hidden */}
+        <MasterOutput masterLevel={masterLevel} expanded={!showCarts} />
       </div>
 
       {/* Cart wall — shown when CARTS active or when a deck is configured as cart */}
@@ -2577,76 +2689,126 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const panels: Record<string, JSX.Element> = { queue: showQueue ? queuePanel : <></>, decks: decksPanel };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
 
-      {/* Toolbar — refined pill strip */}
+      {/* Toolbar */}
       <div style={{
         display: "flex", alignItems: "center", flexShrink: 0, gap: 4,
-        background: "var(--bg-secondary)",
-        border: "1px solid var(--border-primary)",
+        background: "transparent",
         borderRadius: 0,
         padding: "4px 8px",
+        marginBottom: 8,
       }}>
-        <div style={{ display: "flex", gap: 2 }}>
-          <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
-          <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#6040c0" />
-          <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
-          {/* Crossfade duration control */}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 6px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", height: 28 }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>XF</span>
-            <select
-              value={xfadeDuration}
-              onChange={e => { const v = Number(e.target.value); setXfadeDuration(v); engine.crossfadeDuration = v; }}
-              style={{ fontSize: 10, fontWeight: 700, background: "transparent", border: "none", color: "var(--accent-purple)", cursor: "pointer", outline: "none", fontFamily: "'DM Mono', monospace" }}
-            >
-              {[1,2,3,4,5,6,8,10].map(s => <option key={s} value={s}>{s}s</option>)}
-            </select>
-          </div>
-        </div>
-        <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
-        <div style={{ flex: 1, minWidth: 0, position: "relative" as const }}>
+
+        {/* Chevron toggle — always visible */}
+        <button
+          onClick={toggleToolsCollapsed}
+          title={toolsCollapsed ? "Show tools" : "Hide tools"}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 22, height: 22, flexShrink: 0,
+            background: "transparent", border: "none",
+            color: "var(--text-tertiary)", cursor: "pointer",
+            transition: "color 0.15s",
+            fontSize: 12,
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+        >
+          {toolsCollapsed ? (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3,2 7,5 3,8"/></svg>
+          ) : (
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="2,3 5,7 8,3"/></svg>
+          )}
+        </button>
+
+        {/* Collapsible tools group */}
+        {!toolsCollapsed && (
+          <>
+            <div style={{ display: "flex", gap: 2 }}>
+              <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#6040c0" />
+              <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
+            </div>
+            <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
+          </>
+        )}
+
+        {/* JockStrip — always visible */}
+        <div style={{ flex: 1, minWidth: 0, maxWidth: 480, position: "relative" as const }}>
           {!showCarts && <JockStrip deckA={deckA} deckB={deckB} dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />}
         </div>
-        <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
-        <button
-          onClick={onConfigureDecks}
-          title="Configure deck layout"
-          style={{
-            display: "flex", alignItems: "center", gap: 5,
-            padding: "5px 11px", borderRadius: 0, border: "none",
-            background: "var(--bg-tertiary)", color: "var(--text-secondary)",
-            fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
-            cursor: "pointer", fontFamily: "'Syne', sans-serif",
-            transition: "all 0.12s",
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
-        >
-          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-            <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-          </svg>
-          DECKS
-          {deckConfigs && deckConfigs.filter(c => {
-            const deck = engine.getDeck(c.slot);
-            const st = deck?.getState?.();
-            return st?.status === "playing" || st?.status === "paused" || c.purpose;
-          }).length > 0 && (
-            <span style={{
-              minWidth: 14, height: 14, borderRadius: "50%",
-              background: "#6040c0", color: "#fff",
-              fontSize: 8, fontWeight: 800, lineHeight: "14px",
-              textAlign: "center", padding: "0 3px", display: "inline-flex",
-              alignItems: "center", justifyContent: "center",
-            }}>
-              {deckConfigs.filter(c => {
+
+        {/* Collapsible right tools: MONITORS + DECKS */}
+        {!toolsCollapsed && (
+          <>
+            <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
+            {/* Monitors pop-out */}
+            <button
+              title="Pop out all decks to a second monitor"
+              onClick={() => (window as any).ether?.invoke("window:popout", "decks")}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "5px 11px", borderRadius: 0,
+                background: "var(--bg-tertiary)",
+                border: "1px solid var(--border-primary)",
+                color: "var(--text-secondary)",
+                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                cursor: "pointer",
+                transition: "all 0.12s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(96,128,192,0.15)"; (e.currentTarget as HTMLElement).style.color = "#6080c0"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(96,128,192,0.35)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+              MONITORS
+            </button>
+
+            <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
+
+            <button
+              onClick={onConfigureDecks}
+              title="Configure deck layout"
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "5px 11px", borderRadius: 0, border: "none",
+                background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                cursor: "pointer", fontFamily: "'Syne', sans-serif",
+                transition: "all 0.12s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+              </svg>
+              DECKS
+              {deckConfigs && deckConfigs.filter(c => {
                 const deck = engine.getDeck(c.slot);
                 const st = deck?.getState?.();
                 return st?.status === "playing" || st?.status === "paused" || c.purpose;
-              }).length}
-            </span>
-          )}
-        </button>
+              }).length > 0 && (
+                <span style={{
+                  minWidth: 14, height: 14, borderRadius: "50%",
+                  background: "#6040c0", color: "#fff",
+                  fontSize: 8, fontWeight: 800, lineHeight: "14px",
+                  textAlign: "center", padding: "0 3px", display: "inline-flex",
+                  alignItems: "center", justifyContent: "center",
+                }}>
+                  {deckConfigs.filter(c => {
+                    const deck = engine.getDeck(c.slot);
+                    const st = deck?.getState?.();
+                    return st?.status === "playing" || st?.status === "paused" || c.purpose;
+                  }).length}
+                </span>
+              )}
+            </button>
+          </>
+        )}
       </div>
 
       {/* Main layout — drag-reorderable + resizable */}
@@ -2816,17 +2978,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
         </div>
       </div>
 
-      {/* Search + filters row */}
+      {/* Filters row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "8px 14px" }}>
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style={{ opacity: 0.35, flexShrink: 0, color: "var(--text-primary)" }}>
-            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          <input type="text" placeholder="Quick search — type to find a song..." value={search} onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 13, color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }} />
-          {search && <button onMouseDown={e => { e.preventDefault(); setSearch(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 16 }}>×</button>}
-        </div>
         {/* Category filter */}
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
@@ -2925,11 +3078,27 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   );
 }
 
-function ClockDisplay() {
-  const [time, setTime] = useState(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+function ClockDisplay({ onToggleDark, darkMode }: { onToggleDark: () => void; darkMode: boolean }) {
+  const [now, setNow] = useState(new Date());
   useEffect(() => {
-    const id = setInterval(() => setTime(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })), 1000);
+    const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  return <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-secondary)", letterSpacing: "0.05em" }}>{time}</span>;
+  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const day = now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return (
+    <div style={{ textAlign: "center", lineHeight: 1 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 26, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums" }}>{time}</span>
+        <button onClick={onToggleDark} title="Toggle dark mode" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--text-tertiary)", display: "flex", alignItems: "center", lineHeight: 1 }}>
+          {darkMode ? (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          )}
+        </button>
+      </div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: "var(--text-secondary)", marginTop: 3, letterSpacing: "0.02em" }}>{day}</div>
+    </div>
+  );
 }

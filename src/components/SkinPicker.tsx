@@ -64,8 +64,10 @@ export const FONT_OPTIONS: FontOption[] = [
   { id: "inter",     label: "Inter",             stack: "'Inter', system-ui, sans-serif" },
   { id: "segoe",     label: "Segoe UI",          stack: "'Segoe UI', system-ui, sans-serif" },
   { id: "georgia",   label: "Broadcast Serif",   stack: "Georgia, 'Times New Roman', serif" },
-  { id: "trebuchet", label: "Trebuchet MS",       stack: "'Trebuchet MS', system-ui, sans-serif" },
-  { id: "mono",      label: "Tech Mono",          stack: "'Courier New', 'Consolas', monospace" },
+  { id: "trebuchet",        label: "Trebuchet MS",       stack: "'Trebuchet MS', system-ui, sans-serif" },
+  { id: "mono",             label: "Tech Mono",          stack: "'Courier New', 'Consolas', monospace" },
+  { id: "rajdhani",         label: "Rajdhani",           stack: "'Rajdhani', sans-serif" },
+  { id: "barlow-condensed", label: "Barlow Condensed",   stack: "'Barlow Condensed', sans-serif" },
 ];
 
 // ─── Preset themes ─────────────────────────────────────────────
@@ -85,9 +87,9 @@ export const PRESETS: Preset[] = [
       "--bg-secondary":  "#111116",
       "--bg-tertiary":   "#141420",
       "--bg-hover":      "#1e1e26",
-      "--text-primary":  "#c0c0d0",
+      "--text-primary":  "#e8e8f0",
       "--text-secondary":"#8878c0",
-      "--text-tertiary": "#303048",
+      "--text-tertiary": "#6060a0",
       "--border-primary":  "#1a1a22",
       "--border-secondary":"#1e1e2e",
       "--accent-blue":  "#0ea5e9",
@@ -349,7 +351,10 @@ export function useSkin() {
     return () => { _setThemeEditorOpen = null; };
   }, []);
 
-  // Load saved theme on mount — auto-reset if a light theme was saved
+  // Load saved theme on mount — auto-reset if a light theme was saved.
+  // For named presets, always apply the CURRENT vars from code (not the DB snapshot)
+  // so that any color updates to presets take effect on the next app start without
+  // requiring the user to re-select the theme.
   useEffect(() => {
     loadTheme().then(saved => {
       if (saved) {
@@ -364,7 +369,12 @@ export function useSkin() {
         setSkinIdState(saved.presetId);
         setFontIdState(saved.fontId || "system");
         const fontStack = FONT_OPTIONS.find(f => f.id === saved.fontId)?.stack;
-        applyTheme(saved.vars, fontStack);
+        // For named presets use the current code-side vars — this ensures any preset
+        // color updates (e.g. Dark Studio text colors) take effect immediately on
+        // restart rather than being overridden by the stale DB snapshot.
+        const livePreset = PRESETS.find(p => p.id === saved.presetId);
+        const varsToApply = livePreset ? livePreset.vars : saved.vars;
+        applyTheme(varsToApply, fontStack);
       } else {
         applyTheme(DEFAULT_PRESET.vars);
       }

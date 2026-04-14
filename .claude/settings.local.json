@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('deps:', list\\(d.get\\('dependencies',{}\\).keys\\(\\)\\)[:30]\\); print\\('devdeps:', list\\(d.get\\('devDependencies',{}\\).keys\\(\\)\\)[:30]\\)\")",
+      "Bash(node:*)",
+      "Bash(del:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(findstr MasterOutput)"
+    ]
+  }
+}

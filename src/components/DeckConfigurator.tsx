@@ -563,48 +563,47 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
             onDragLeave={() => setDragOver(null)}
             onDrop={e => handleDrop(e, cart.key)}
             style={{
-              padding: "10px 10px 8px",
               borderRadius: 0,
-              background: cart.playing ? cart.color : dragOver === cart.key ? `${cart.color}20` : cart.filePath ? `${cart.color}10` : "var(--bg-tertiary)",
-              border: `1px solid ${cart.playing ? cart.color : dragOver === cart.key ? cart.color + "60" : cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
+              background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",
+              border: `1px solid ${cart.playing ? cart.color + "80" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "28" : "var(--border-primary)"}`,
               cursor: cart.filePath ? "pointer" : "default",
-              transition: "all 0.12s",
-              boxShadow: cart.playing ? `0 0 16px ${cart.color}50` : "none",
-              animation: cart.playing ? "on-air-breathe 0.8s ease-in-out infinite" : "none",
+              transition: "all 0.1s",
+              boxShadow: cart.playing ? `0 0 8px ${cart.color}40` : "none",
               position: "relative" as const,
-              minHeight: 70,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column" as const,
+              height: 46,
             }}
           >
-            {/* Hotkey badge */}
-            <div style={{
-              position: "absolute" as const, top: 6, right: 7,
-              fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace",
-              color: cart.playing ? "rgba(0,0,0,0.7)" : cart.filePath ? cart.color : "var(--text-tertiary)",
-              letterSpacing: "0.06em",
-            }}>{cart.key}</div>
+            {/* 4px color strip */}
+            <div style={{ height: 4, background: cart.filePath ? cart.color : "var(--border-primary)", flexShrink: 0, opacity: cart.playing ? 1 : 0.7 }} />
 
-            {/* Label */}
-            <div style={{
-              fontSize: 11, fontWeight: cart.filePath ? 700 : 400,
-              color: cart.playing ? "#000" : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
-              lineHeight: 1.3, paddingRight: 16,
-              fontStyle: cart.filePath ? "normal" : "italic",
-            }}>
-              {cart.filePath ? cart.label : "Empty"}
+            {/* Name row */}
+            <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "2px 22px 2px 6px", minWidth: 0 }}>
+              <span style={{
+                fontSize: 9, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.25,
+                color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
+                overflow: "hidden",
+                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+                fontStyle: cart.filePath ? "normal" : "italic",
+                wordBreak: "break-word" as const,
+              }}>
+                {cart.filePath ? cart.label : "Empty"}
+              </span>
             </div>
 
-            {/* Playing indicator */}
-            {cart.playing && (
-              <div style={{ marginTop: 4, display: "flex", gap: 2, alignItems: "flex-end", height: 12 }}>
-                {[0.6, 1, 0.8, 1, 0.6].map((h, i) => (
-                  <div key={i} style={{ flex: 1, height: `${h * 100}%`, background: "rgba(0,0,0,0.5)", borderRadius: 0 }} />
-                ))}
-              </div>
-            )}
-
-            {!cart.filePath && (
-              <div style={{ marginTop: 4, fontSize: 9, color: "var(--text-tertiary)" }}>Drop audio here</div>
-            )}
+            {/* Key badge — top-right */}
+            <div style={{
+              position: "absolute" as const, top: 6, right: 5,
+              fontSize: 8, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+              color: cart.playing ? cart.color : cart.filePath ? cart.color + "cc" : "var(--text-tertiary)",
+              letterSpacing: "0.04em",
+              background: "var(--bg-primary)",
+              padding: "0px 3px",
+              border: `1px solid ${cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
+              lineHeight: "14px",
+            }}>{cart.key}</div>
           </div>
         ))}
       </div>

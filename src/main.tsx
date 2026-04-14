@@ -12,6 +12,7 @@ import App from "./App";
 import NowPlaying from "./components/NowPlaying";
 import ProducerDeskWindow from "./components/ProducerDeskWindow";
 import CueEditorWindow from "./components/CueEditorWindow";
+import PopoutRenderer from "./components/PopoutRenderer";
 import "./index.css";
 import { runMigrations } from "./db/client";
 
@@ -59,7 +60,10 @@ async function boot() {
   const isNowPlaying  = hash === "#nowplaying";
   const isDesk        = hash === "#desk";
   const isCueEditor   = hash.startsWith("#cueeditor");
+  const isPopout      = hash.startsWith("#popout/");
+  const popoutPanel   = isPopout ? hash.slice("#popout/".length) : "";
 
+  // Pop-outs need migrations for DB-backed features (EQ, etc.)
   if (!isNowPlaying && !isDesk && !isCueEditor) {
     await runMigrations();
   }
@@ -69,6 +73,7 @@ async function boot() {
       {isNowPlaying  ? <NowPlaying /> :
        isDesk        ? <ProducerDeskWindow /> :
        isCueEditor   ? <CueEditorWindow /> :
+       isPopout      ? <PopoutRenderer panel={popoutPanel} /> :
        <App />}
     </RootBoundary>
   );

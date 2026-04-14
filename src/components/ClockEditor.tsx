@@ -164,10 +164,12 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
           [clock.name, clock.daypart, json, clock.id]
         );
       } else {
-        await execute(
+        const result = await execute(
           "INSERT INTO format_clocks (name, daypart, slots_json) VALUES (?,?,?)",
           [clock.name, clock.daypart, json]
         );
+        const newId = result?.lastInsertRowid != null ? Number(result.lastInsertRowid) : null;
+        if (newId) setClock(prev => ({ ...prev, id: newId }));
       }
       setStatus("✓ Clock saved");
       setSavedFlash(true);
