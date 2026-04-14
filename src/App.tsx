@@ -349,6 +349,8 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [toolsCollapsed, setToolsCollapsed] = useState(() => localStorage.getItem("ether_tools_collapsed") === "1");
+  const toggleToolsCollapsed = () => setToolsCollapsed(c => { const next = !c; localStorage.setItem("ether_tools_collapsed", next ? "1" : "0"); return next; });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerUsage, setDrawerUsage] = useState<Record<string, number>>(() => {
     try { return JSON.parse(localStorage.getItem("ether_drawer_usage") || "{}"); } catch { return {}; }
@@ -885,30 +887,54 @@ export default function App() {
       <KeyboardHelp />
 
       {/* ── Header ── */}
-      <header style={{ height: 48, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      <header style={{ height: 96, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
-        {/* LEFT: Search bar */}
-        <div style={{ width: 280, flexShrink: 0, zIndex: 1, position: "relative" as const }}>
-          <svg style={{ position: "absolute" as const, left: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "var(--text-tertiary)" }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input
-            type="text"
-            placeholder="Search library..."
-            value={globalSearch}
-            onChange={e => setGlobalSearch(e.target.value)}
-            style={{ width: "100%", height: 30, paddingLeft: 28, paddingRight: globalSearch ? 28 : 8, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 0, color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" as const }}
-          />
-          {globalSearch && (
-            <button onClick={() => setGlobalSearch("")} style={{ position: "absolute" as const, right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0, display: "flex", alignItems: "center" }}>×</button>
-          )}
+        {/* LEFT: Chevron + Search */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, zIndex: 1 }}>
+          <button
+            onClick={toggleToolsCollapsed}
+            title={toolsCollapsed ? "Show tools" : "Hide tools"}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, flexShrink: 0, background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", transition: "color 0.15s" }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+          >
+            {toolsCollapsed ? (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3,2 7,5 3,8"/></svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="2,3 5,7 8,3"/></svg>
+            )}
+          </button>
+          <div style={{ position: "relative" as const, width: 260 }}>
+            <svg style={{ position: "absolute" as const, left: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "var(--text-tertiary)" }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input
+              type="text"
+              placeholder="Search library..."
+              value={globalSearch}
+              onChange={e => setGlobalSearch(e.target.value)}
+              style={{ width: "100%", height: 30, paddingLeft: 28, paddingRight: globalSearch ? 28 : 8, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 0, color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" as const }}
+            />
+            {globalSearch && (
+              <button onClick={() => setGlobalSearch("")} style={{ position: "absolute" as const, right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
+            )}
+          </div>
         </div>
 
-        {/* CENTER: Clock — absolutely centered */}
-        <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0 }}>
-          <ClockDisplay onToggleDark={() => setDarkMode(!darkMode)} darkMode={darkMode} />
+        {/* CENTER: Go Live + Clock — absolutely centered */}
+        <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0, display: "flex", alignItems: "center", gap: 8 }}>
+          {panel !== "live" && (
+            <button
+              onClick={() => setPanel("live")}
+              style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+            >
+              <svg width="7" height="9" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
+              Go Live
+            </button>
+          )}
+          <ClockDisplay />
         </div>
 
         {/* RIGHT: Status + Pro + Admin + ☰ menu + ON AIR */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1, marginLeft: "auto" }}>
           <HealthStatusDot onClick={() => setPanel("health")} />
           <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />
           {currentPlan === "free" && (
@@ -1116,6 +1142,8 @@ export default function App() {
                   globalSearch={globalSearch}
                   setGlobalSearch={setGlobalSearch}
                   nowPlaying={nowPlayingStr || undefined}
+                  toolsCollapsed={toolsCollapsed}
+                  toggleToolsCollapsed={toggleToolsCollapsed}
                 />
               )}
             </div>
@@ -2300,7 +2328,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -2316,21 +2344,13 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   globalSearch: string;
   setGlobalSearch: (v: string) => void;
   nowPlaying?: string;
+  toolsCollapsed: boolean;
+  toggleToolsCollapsed: () => void;
 }) {
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
   const [masterLevel, setMasterLevel] = useState(0);
-  const [toolsCollapsed, setToolsCollapsed] = useState(() =>
-    localStorage.getItem("ether_tools_collapsed") === "1"
-  );
-  const toggleToolsCollapsed = () => {
-    setToolsCollapsed(c => {
-      const next = !c;
-      localStorage.setItem("ether_tools_collapsed", next ? "1" : "0");
-      return next;
-    });
-  };
 
   // Subscribe to master output level from push events
   useEffect(() => {
@@ -2700,27 +2720,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         marginBottom: 8,
       }}>
 
-        {/* Chevron toggle — always visible */}
-        <button
-          onClick={toggleToolsCollapsed}
-          title={toolsCollapsed ? "Show tools" : "Hide tools"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 22, height: 22, flexShrink: 0,
-            background: "transparent", border: "none",
-            color: "var(--text-tertiary)", cursor: "pointer",
-            transition: "color 0.15s",
-            fontSize: 12,
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
-        >
-          {toolsCollapsed ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3,2 7,5 3,8"/></svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="2,3 5,7 8,3"/></svg>
-          )}
-        </button>
 
         {/* Collapsible tools group */}
         {!toolsCollapsed && (
@@ -3078,7 +3077,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   );
 }
 
-function ClockDisplay({ onToggleDark, darkMode }: { onToggleDark: () => void; darkMode: boolean }) {
+function ClockDisplay() {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -3088,17 +3087,8 @@ function ClockDisplay({ onToggleDark, darkMode }: { onToggleDark: () => void; da
   const day = now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
   return (
     <div style={{ textAlign: "center", lineHeight: 1 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-        <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 26, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums" }}>{time}</span>
-        <button onClick={onToggleDark} title="Toggle dark mode" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--text-tertiary)", display: "flex", alignItems: "center", lineHeight: 1 }}>
-          {darkMode ? (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-          ) : (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-          )}
-        </button>
-      </div>
-      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, color: "var(--text-secondary)", marginTop: 3, letterSpacing: "0.02em" }}>{day}</div>
+      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 52, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums" }}>{time}</div>
+      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "var(--text-secondary)", marginTop: 5, letterSpacing: "0.02em" }}>{day}</div>
     </div>
   );
 }
