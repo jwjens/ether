@@ -381,7 +381,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 // 4. HEALTH STATUS BAR INDICATOR (for footer)
 // ═══════════════════════════════════════════════════════════════
 
-export function HealthStatusDot({ onClick }: { onClick: () => void }) {
+export function HealthStatusDot({ onClick, compact = false }: { onClick: () => void; compact?: boolean }) {
   const [status, setStatus] = useState<"ok" | "warn" | "error">("ok");
 
   useEffect(() => {
@@ -401,6 +401,7 @@ export function HealthStatusDot({ onClick }: { onClick: () => void }) {
 
   const color = status === "ok" ? "var(--accent-green)" : status === "warn" ? "var(--accent-amber)" : "var(--accent-red)";
   const label = status === "ok" ? "All systems normal" : status === "warn" ? "Queue empty" : "System error";
+  const shortLabel = status === "ok" ? "NOMINAL" : status === "warn" ? "WARN" : "ERROR";
 
   return (
     <button
@@ -413,13 +414,15 @@ export function HealthStatusDot({ onClick }: { onClick: () => void }) {
       }}
     >
       <div style={{
-        width: 6, height: 6, borderRadius: "50%", background: color,
+        width: compact ? 8 : 6, height: compact ? 8 : 6, borderRadius: "50%", background: color,
         boxShadow: status === "ok" ? `0 0 4px ${color}` : "none",
         animation: status === "error" ? "onair-pulse 1s ease-in-out infinite" : "none",
       }} />
-      <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>
-        {status === "ok" ? "NOMINAL" : status === "warn" ? "WARN" : "ERROR"}
-      </span>
+      {!compact && (
+        <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.06em" }}>
+          {shortLabel}
+        </span>
+      )}
     </button>
   );
 }

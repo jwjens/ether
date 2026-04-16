@@ -19,53 +19,75 @@ interface Props {
   onMount?:    (canvas: HTMLCanvasElement) => void;
 }
 
+// Glow padding — each bar extends slightly beyond the actual amplitude so the
+// fragment shader can draw a neon falloff around the waveform edge.  The extra
+// geometry is cheap (same draw call, same vertex count) and keeps the per-peak
+// bar structure 100% intact.
+const GLOW_PAD = 0.07;
+
 const VERT = `#version 300 es
 precision highp float;
 uniform sampler2D u_peaks;
 uniform int  u_n;
 uniform float u_vs, u_ve;
-out float v_t, v_amp;
+out float v_t, v_amp, v_y;
 void main() {
-  // 6 vertices per peak: 2 triangles forming a quad
-  // tri0: TL, TR, BL   tri1: TR, BR, BL
   int pi  = gl_VertexID / 6;
   int sub = gl_VertexID % 6;
   if (pi >= u_n) { gl_Position = vec4(2.0,2.0,0.0,1.0); return; }
 
-  // col: 0=left edge of peak, 1=right edge
-  // row: 0=top, 1=bottom
   int col, row;
-  if      (sub == 0) { col = 0; row = 0; }  // TL
-  else if (sub == 1) { col = 1; row = 0; }  // TR
-  else if (sub == 2) { col = 0; row = 1; }  // BL
-  else if (sub == 3) { col = 1; row = 0; }  // TR
-  else if (sub == 4) { col = 1; row = 1; }  // BR
-  else               { col = 0; row = 1; }  // BL
+  if      (sub == 0) { col = 0; row = 0; }
+  else if (sub == 1) { col = 1; row = 0; }
+  else if (sub == 2) { col = 0; row = 1; }
+  else if (sub == 3) { col = 1; row = 0; }
+  else if (sub == 4) { col = 1; row = 1; }
+  else               { col = 0; row = 1; }
 
   float t    = u_vs + (float(pi) + float(col)) / float(u_n) * (u_ve - u_vs);
   float peak = texture(u_peaks, vec2(t, 0.5)).r;
   float amp  = peak * 0.92;
-  float y    = (row == 0) ? amp : -amp;
+  // Extend quad beyond actual amplitude for the glow region
+  float extent = amp + ${GLOW_PAD.toFixed(4)};
+  float y    = (row == 0) ? extent : -extent;
   float x    = (t - u_vs) / (u_ve - u_vs) * 2.0 - 1.0;
   gl_Position = vec4(x, y, 0.0, 1.0);
   v_t   = t;
   v_amp = amp;
+  v_y   = y;   // interpolated across the quad — tells the frag where it is
 }`;
 
 const FRAG = `#version 300 es
 precision highp float;
-in float v_t, v_amp;
+in float v_t, v_amp, v_y;
 uniform float u_ci, u_co, u_ie, u_os;
 out vec4 color;
 void main() {
   float t = v_t;
+
+  // Zone colors — same as before, track colors are sacred
   vec3 c;
-  if (t < u_ci || t > u_co)   c = vec3(0.4, 0.45, 0.5);
-  else if (t < u_ie)           c = vec3(0.13, 0.83, 0.93);
-  else if (t > u_os)           c = vec3(0.98, 0.57, 0.24);
-  else                         c = vec3(0.98, 0.75, 0.14);
-  float alpha = 0.7 + v_amp * 0.3;
-  color = vec4(c * alpha, alpha);
+  if (t < u_ci || t > u_co)   c = vec3(0.4, 0.45, 0.5);   // outside cue — gray
+  else if (t < u_ie)           c = vec3(0.13, 0.83, 0.93);  // intro — cyan
+  else if (t > u_os)           c = vec3(0.98, 0.57, 0.24);  // outro — orange
+  else                         c = vec3(0.98, 0.75, 0.14);  // body — gold
+
+  // Distance from the waveform edge (negative = inside, positive = glow zone)
+  float dist = abs(v_y) - v_amp;
+
+  if (dist > 0.0) {
+    // ── Glow zone — neon falloff outside the waveform ──
+    float glow = exp(-dist * 28.0);       // exponential decay
+    float a = glow * 0.35 * v_amp;        // brighter glow on louder peaks
+    color = vec4(c * a, a);
+  } else {
+    // ── Inside the waveform — solid bars + bright edge ──
+    float edgeDist = -dist;               // distance INTO the waveform (from edge)
+    float edgeGlow = exp(-edgeDist * 18.0) * 0.25;  // subtle inner brightness at edges
+    float base = 0.7 + v_amp * 0.3;
+    float a = base + edgeGlow;
+    color = vec4(c * a, min(a, 1.0));
+  }
 }`;
 
 export default function WaveformGL({
@@ -147,7 +169,7 @@ export default function WaveformGL({
     }
     gl.viewport(0, 0, can.width, can.height);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
     gl.useProgram(prog); gl.bindVertexArray(vao);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(u.u_peaks, 0); gl.uniform1i(u.u_n, s.n);

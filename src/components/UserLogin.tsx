@@ -65,9 +65,17 @@ export default function UserLogin({ onLogin }: Props) {
     if (!user.pin_hash) onLogin(user);
   };
 
-  const submitPin = () => {
+  const submitPin = async () => {
     if (!selected) return;
-    if (pin === selected.pin_hash || pin === "1234") {
+    const ether = (window as any).ether;
+    let ok = false;
+    if (ether?.users?.verifyPin) {
+      ok = await ether.users.verifyPin(pin, selected.pin_hash);
+    } else {
+      // Fallback for legacy / no preload bridge
+      ok = pin === selected.pin_hash;
+    }
+    if (ok) {
       onLogin(selected);
     } else {
       setError("Incorrect PIN");
@@ -196,14 +204,15 @@ export default function UserLogin({ onLogin }: Props) {
                 const next = pin + k;
                 setPin(next);
                 if (next.length === 4) {
-                  if (next === selected.pin_hash || next === "1234") {
-                    onLogin(selected);
-                  } else {
-                    setError("Incorrect PIN");
-                    setShake(true);
-                    setPin("");
-                    setTimeout(() => setShake(false), 500);
-                  }
+                  // Verify via async IPC — supports both hashed and legacy plaintext PINs
+                  const ether = (window as any).ether;
+                  const verify = ether?.users?.verifyPin
+                    ? ether.users.verifyPin(next, selected.pin_hash)
+                    : Promise.resolve(next === selected.pin_hash);
+                  verify.then((ok: boolean) => {
+                    if (ok) { onLogin(selected); }
+                    else { setError("Incorrect PIN"); setShake(true); setPin(""); setTimeout(() => setShake(false), 500); }
+                  });
                 }
               }} style={{
                 height: 52, borderRadius: 0,

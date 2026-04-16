@@ -88,6 +88,49 @@ contextBridge.exposeInMainWorld("ether", {
     getSaveDir:   () => ipcRenderer.invoke("voxpro:getSaveDir"),
     getTempDir:   () => ipcRenderer.invoke("voxpro:getTempDir"),
   },
+  // ── Video engine (renderer composites; main spawns ffmpeg for RTMP/MP4) ─
+  video: {
+    listSources:    (kinds) => ipcRenderer.invoke("video:list-sources", kinds),
+    setDesktopSource: (id)  => ipcRenderer.invoke("video:set-desktop-source", id),
+    listEncoders:   () => ipcRenderer.invoke("video:list-encoders"),
+    startStream:    (dest) => ipcRenderer.invoke("video:start-stream", dest),
+    stopStream:     (sinkId) => ipcRenderer.invoke("video:stop-stream", sinkId),
+    startRecording: (opts) => ipcRenderer.invoke("video:start-recording", opts),
+    stopRecording:  () => ipcRenderer.invoke("video:stop-recording"),
+    pushChunk:      (uint8) => ipcRenderer.invoke("video:chunk", uint8),
+    getStatus:      () => ipcRenderer.invoke("video:get-status"),
+  },
+  // ── GPIO hardware I/O ───────────────────────────────────────
+  gpio: {
+    listDevices:    ()             => ipcRenderer.invoke("gpio:list-devices"),
+    addDevice:      (d)            => ipcRenderer.invoke("gpio:add-device", d),
+    updateDevice:   (id, d)        => ipcRenderer.invoke("gpio:update-device", id, d),
+    deleteDevice:   (id)           => ipcRenderer.invoke("gpio:delete-device", id),
+    connect:        (id)           => ipcRenderer.invoke("gpio:connect", id),
+    disconnect:     (id)           => ipcRenderer.invoke("gpio:disconnect", id),
+    listMappings:   (deviceId)     => ipcRenderer.invoke("gpio:list-mappings", deviceId),
+    addMapping:     (m)            => ipcRenderer.invoke("gpio:add-mapping", m),
+    updateMapping:  (id, m)        => ipcRenderer.invoke("gpio:update-mapping", id, m),
+    deleteMapping:  (id)           => ipcRenderer.invoke("gpio:delete-mapping", id),
+    sendGpo:        (devId, pin, state) => ipcRenderer.invoke("gpio:send-gpo", devId, pin, state),
+    getStatus:      ()             => ipcRenderer.invoke("gpio:get-status"),
+  },
+  // ── Site replication ────────────────────────────────────────
+  repl: {
+    getConfig:   ()           => ipcRenderer.invoke("repl:get-config"),
+    addPeer:     (p)          => ipcRenderer.invoke("repl:add-peer", p),
+    removePeer:  (id)         => ipcRenderer.invoke("repl:remove-peer", id),
+    updatePeer:  (id, d)      => ipcRenderer.invoke("repl:update-peer", id, d),
+    syncNow:     (peerId)     => ipcRenderer.invoke("repl:sync-now", peerId),
+    startAuto:   (min)        => ipcRenderer.invoke("repl:start-auto", min),
+    stopAuto:    ()           => ipcRenderer.invoke("repl:stop-auto"),
+    getSiteId:   ()           => ipcRenderer.invoke("repl:get-site-id"),
+  },
+  // ── User / PIN security ─────────────────────────────────────
+  users: {
+    hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),
+    verifyPin: (pin, stored) => ipcRenderer.invoke("user:verify-pin", pin, stored),
+  },
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   on: (channel, cb) => {
     const h = (_, ...a) => cb(...a);

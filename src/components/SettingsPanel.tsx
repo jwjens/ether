@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
@@ -351,7 +351,7 @@ function MusixmatchKeyForm() {
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
-  const [tab, setTab] = useState<"general" | "ai">("general");
+  const [tab, setTab] = useState<"general" | "ai" | "security">("general");
 
   // Station
   const [timezone, setTimezone] = useState("");
@@ -587,6 +587,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       <div style={{ display: "flex", gap: 4, marginBottom: 20, padding: "4px", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", width: "fit-content" }}>
         <button style={tabStyle("general")} onClick={() => setTab("general")}>General</button>
         <button style={tabStyle("ai")} onClick={() => setTab("ai")}>AI &amp; Integrations</button>
+        <button style={tabStyle("security")} onClick={() => setTab("security")}>Users &amp; Security</button>
       </div>
 
       {tab === "general" && <>
@@ -1037,6 +1038,211 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
 
       </> /* end tab === "ai" */}
 
+      {tab === "security" && <>
+        <UserManagement />
+      </> /* end tab === "security" */}
+
     </div>
+  );
+}
+
+// ── Users & Security ──────────────────────────────────────────
+interface ManagedUser { id: number; name: string; role: string; pin_hash: string | null; color: string; }
+const ROLES = [
+  { value: "admin",          label: "Administrator" },
+  { value: "jock",           label: "On-Air Jock" },
+  { value: "music_director", label: "Music Director" },
+];
+const ROLE_COLORS = ["#f87171", "#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#fb923c", "#e879f9", "#38bdf8"];
+
+function UserManagement() {
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [editUser, setEditUser] = useState<ManagedUser | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [pinModal, setPinModal] = useState<ManagedUser | null>(null);
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [pinError, setPinError] = useState("");
+  // Add form
+  const [addName, setAddName] = useState("");
+  const [addRole, setAddRole] = useState("jock");
+  const [addColor, setAddColor] = useState("#22d3ee");
+  const [addPin, setAddPin] = useState("");
+
+  const ether = (window as any).ether;
+
+  const loadUsers = useCallback(async () => {
+    const rows = await query<ManagedUser>("SELECT * FROM users ORDER BY id");
+    setUsers(rows || []);
+  }, []);
+  useEffect(() => { loadUsers(); }, [loadUsers]);
+
+  const handleAddUser = async () => {
+    if (!addName.trim()) return;
+    let pinHash: string | null = null;
+    if (addPin.length === 4 && ether?.users?.hashPin) {
+      pinHash = await ether.users.hashPin(addPin);
+    } else if (addPin.length === 4) {
+      pinHash = addPin;
+    }
+    await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor]);
+    setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("#22d3ee");
+    loadUsers();
+  };
+
+  const handleEditUser = async () => {
+    if (!editUser || !editUser.name.trim()) return;
+    await execute("UPDATE users SET name = ?, role = ?, color = ? WHERE id = ?", [editUser.name.trim(), editUser.role, editUser.color, editUser.id]);
+    setEditUser(null); loadUsers();
+  };
+
+  const handleDeleteUser = async (u: ManagedUser) => {
+    const adminCount = users.filter(x => x.role === "admin").length;
+    if (u.role === "admin" && adminCount <= 1) { alert("Cannot delete the last administrator."); return; }
+    if (!confirm(`Delete user "${u.name}"?`)) return;
+    await execute("DELETE FROM users WHERE id = ?", [u.id]);
+    loadUsers();
+  };
+
+  const handleChangePin = async () => {
+    if (!pinModal) return;
+    if (newPin.length > 0 && newPin.length !== 4) { setPinError("PIN must be exactly 4 digits"); return; }
+    if (newPin !== confirmPin) { setPinError("PINs do not match"); return; }
+    let pinHash: string | null = null;
+    if (newPin.length === 4 && ether?.users?.hashPin) {
+      pinHash = await ether.users.hashPin(newPin);
+    } else if (newPin.length === 4) {
+      pinHash = newPin;
+    }
+    await execute("UPDATE users SET pin_hash = ? WHERE id = ?", [pinHash, pinModal.id]);
+    setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError("");
+    loadUsers();
+  };
+
+  const handleRemovePin = async (u: ManagedUser) => {
+    if (!confirm(`Remove PIN for "${u.name}"? They can log in without a PIN.`)) return;
+    await execute("UPDATE users SET pin_hash = NULL WHERE id = ?", [u.id]);
+    loadUsers();
+  };
+
+  const inputStyle: React.CSSProperties = { padding: "6px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", width: "100%" };
+  const btnStyle: React.CSSProperties = { padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", letterSpacing: "0.04em" };
+
+  return (
+    <Section
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
+      title="Users & Security"
+      description="Manage user profiles, roles, and PINs"
+    >
+      {/* User list */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+        {users.map(u => (
+          <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+            <div style={{ width: 32, height: 32, background: u.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#000", flexShrink: 0 }}>
+              {u.name[0]?.toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{u.name}</div>
+              <div style={{ fontSize: 10, color: u.color }}>
+                {ROLES.find(r => r.value === u.role)?.label || u.role}
+                <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>{u.pin_hash ? "PIN set" : "No PIN"}</span>
+              </div>
+            </div>
+            <button onClick={() => setPinModal(u)} style={{ ...btnStyle, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>
+              {u.pin_hash ? "Change PIN" : "Set PIN"}
+            </button>
+            {u.pin_hash && (
+              <button onClick={() => handleRemovePin(u)} style={{ ...btnStyle, background: "var(--bg-secondary)", color: "var(--accent-amber)", border: "1px solid var(--border-primary)" }}>
+                Remove PIN
+              </button>
+            )}
+            <button onClick={() => setEditUser({ ...u })} style={{ ...btnStyle, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>
+              Edit
+            </button>
+            <button onClick={() => handleDeleteUser(u)} style={{ ...btnStyle, background: "rgba(239,68,68,0.1)", color: "var(--accent-red)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              Delete
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <button onClick={() => setShowAdd(true)} style={{ ...btnStyle, background: "var(--accent-blue)", color: "#fff", width: "100%" }}>
+        + Add User
+      </button>
+
+      {/* Add User modal */}
+      {showAdd && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setShowAdd(false)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 20, minWidth: 360 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 16 }}>Add User</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input value={addName} onChange={e => setAddName(e.target.value)} placeholder="Name" style={inputStyle} />
+              <select value={addRole} onChange={e => setAddRole(e.target.value)} style={{ ...inputStyle, colorScheme: "dark" }}>
+                {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Color</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {ROLE_COLORS.map(c => (
+                    <div key={c} onClick={() => setAddColor(c)} style={{ width: 22, height: 22, background: c, cursor: "pointer", border: addColor === c ? "2px solid #fff" : "2px solid transparent" }} />
+                  ))}
+                </div>
+              </div>
+              <input value={addPin} onChange={e => setAddPin(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="PIN (4 digits, optional)" type="password" maxLength={4} style={inputStyle} />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button onClick={handleAddUser} disabled={!addName.trim()} style={{ ...btnStyle, flex: 1, background: "var(--accent-blue)", color: "#fff", opacity: addName.trim() ? 1 : 0.4 }}>Create User</button>
+                <button onClick={() => setShowAdd(false)} style={{ ...btnStyle, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User modal */}
+      {editUser && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => setEditUser(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 20, minWidth: 360 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 16 }}>Edit User</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input value={editUser.name} onChange={e => setEditUser({ ...editUser, name: e.target.value })} placeholder="Name" style={inputStyle} />
+              <select value={editUser.role} onChange={e => setEditUser({ ...editUser, role: e.target.value })} style={{ ...inputStyle, colorScheme: "dark" }}>
+                {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Color</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {ROLE_COLORS.map(c => (
+                    <div key={c} onClick={() => setEditUser({ ...editUser, color: c })} style={{ width: 22, height: 22, background: c, cursor: "pointer", border: editUser.color === c ? "2px solid #fff" : "2px solid transparent" }} />
+                  ))}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button onClick={handleEditUser} disabled={!editUser.name.trim()} style={{ ...btnStyle, flex: 1, background: "var(--accent-blue)", color: "#fff", opacity: editUser.name.trim() ? 1 : 0.4 }}>Save</button>
+                <button onClick={() => setEditUser(null)} style={{ ...btnStyle, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change PIN modal */}
+      {pinModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => { setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError(""); }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 20, minWidth: 320 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{pinModal.pin_hash ? "Change" : "Set"} PIN for {pinModal.name}</div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 16 }}>Enter a 4-digit PIN or leave blank to remove</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <input value={newPin} onChange={e => { setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setPinError(""); }} placeholder="New PIN (4 digits)" type="password" maxLength={4} style={inputStyle} autoFocus />
+              <input value={confirmPin} onChange={e => { setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setPinError(""); }} placeholder="Confirm PIN" type="password" maxLength={4} style={inputStyle} />
+              {pinError && <div style={{ fontSize: 11, color: "var(--accent-red)" }}>{pinError}</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button onClick={handleChangePin} style={{ ...btnStyle, flex: 1, background: "var(--accent-blue)", color: "#fff" }}>Save PIN</button>
+                <button onClick={() => { setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError(""); }} style={{ ...btnStyle, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
   );
 }

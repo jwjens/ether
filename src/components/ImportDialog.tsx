@@ -4,6 +4,7 @@ const open = (opts?: { directory?: boolean; title?: string }) =>
   opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (path: string) => (window as any).ether.fs.readDir(path);
 import { readID3 } from "../audio/id3";
+import { analyzeAndSave } from "../audio/songAnalysis";
 
 interface Category {
   id: number;
@@ -115,6 +116,13 @@ export default function ImportDialog({ onDone }: Props) {
           "INSERT INTO songs (title, file_path, artist_id, category_id, genre, created_at, updated_at) VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())",
           [title, filePath, artist?.id || null, selectedCat, tags.genre || null]
         );
+
+        // Auto-analyze: BPM, LUFS, energy, cue points — runs in Rust background thread.
+        // Non-blocking: we don't await so import stays fast; analysis happens in parallel.
+        const inserted = await queryOne<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]);
+        if (inserted) {
+          analyzeAndSave(inserted.id, filePath).catch(e => console.warn("[Import] analysis skipped:", title, e));
+        }
 
         count++;
         setProgress({ done: count, total: files.length, current: title });

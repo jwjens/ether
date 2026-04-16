@@ -402,7 +402,13 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
       return 0;
     }
 
-    console.log(`[loggen] Queuing ${songs.length} songs: ${songs.map(s => `"${s.title}"`).join(", ")}`);
+    // ── BPM/energy flow ordering (GSelector-style) ─────────────
+    // Reorder the selected songs so adjacent tracks transition smoothly.
+    // Each next song should be within ±15 BPM of the previous one when possible.
+    // Songs without BPM data are placed anywhere (no penalty).
+    songs = orderByBpmFlow(songs);
+
+    console.log(`[loggen] Queuing ${songs.length} songs: ${songs.map(s => `"${s.title}" (${s.bpm ? Math.round(s.bpm) + 'bpm' : '?'})`).join(", ")}`);
 
     const items = songs.map(s => ({
       filePath:    s.file_path,
@@ -425,6 +431,45 @@ export async function refillFromSchedule(): Promise<void> {
   if (queueLen < 5) {
     await fillQueueFromSchedule(20 - queueLen);
   }
+}
+
+// ── BPM flow ordering ─────────────────────────────────────────
+//
+// Reorders a song list so adjacent tracks are within ±15 BPM.
+// Uses a greedy nearest-neighbor approach starting from the first song.
+// Songs without BPM data slot in anywhere (treated as compatible).
+
+function orderByBpmFlow(songs: Song[]): Song[] {
+  if (songs.length <= 2) return songs;
+  const hasBpm = songs.filter(s => s.bpm && s.bpm > 0);
+  const noBpm  = songs.filter(s => !s.bpm || s.bpm <= 0);
+  if (hasBpm.length <= 1) return songs;
+
+  // Greedy nearest-neighbor by BPM
+  const ordered: Song[] = [hasBpm[0]];
+  const remaining = new Set(hasBpm.slice(1));
+
+  while (remaining.size > 0) {
+    const lastBpm = ordered[ordered.length - 1].bpm!;
+    let best: Song | null = null;
+    let bestDist = Infinity;
+    for (const s of remaining) {
+      const dist = Math.abs(s.bpm! - lastBpm);
+      if (dist < bestDist) { best = s; bestDist = dist; }
+    }
+    if (best) { ordered.push(best); remaining.delete(best); }
+  }
+
+  // Interleave no-BPM songs evenly throughout the ordered list
+  if (noBpm.length > 0) {
+    const step = Math.max(1, Math.floor(ordered.length / (noBpm.length + 1)));
+    for (let i = 0; i < noBpm.length; i++) {
+      const pos = Math.min(ordered.length, (i + 1) * step);
+      ordered.splice(pos, 0, noBpm[i]);
+    }
+  }
+
+  return ordered;
 }
 
 // ── Queue status info for the UI ──────────────────────────────

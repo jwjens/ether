@@ -1,0 +1,5408 @@
+// StudioPro.tsx — GarageBand-style DAW assembled from existing Ether studio components.
+// This file is an INTEGRATION layer. It does not modify WaveformGL, VoiceTracker,
+// SmartSegueEditor, StudioEditor, or Waveform. It copies `extractPeaks` and
+// `encodeWav` verbatim from StudioEditor.tsx (per the "do not modify existing
+// components" directive) and imports WaveformGL + VoiceTracker as-is.
+//
+// DATA MODEL
+//   Track owns N Regions. Each region carries its own AudioBuffer, peaks,
+//   timeline offset, trim, and fade envelope. Track owns its own FX state:
+//   7-band EQ, compressor, reverb, saturation, sidechain, automation lanes.
+//
+// AUDIO CHAIN (per track, conventional order)
+//   regionSrc → regionFadeGain → trackGain → pan
+//             → eq[0..6] (7 BiquadFilters, low-shelf / 5×peaking / high-shelf)
+//             → optional saturation (WaveShaper)
+//             → optional compressor (Dynamics + makeup gain)
+//             → sidechain duck gain
+//             → master gain → optional limiter → analyser → destination
+//   Reverb runs as a PARALLEL send: post-comp tap → reverbWetGain → ConvolverNode → master
+//
+// FX WINDOWS
+//   One floating draggable window per track. Window open/closed/position state
+//   lives in StudioPro local state (NOT on the track), because the prompt says
+//   "FX window state ... not persisted."
+//
+// AUTOMATION
+//   Each track can expand N automation lanes. Each lane targets one parameter
+//   (volume / pan / eq band / comp threshold / reverb wet) and holds a list
+//   of breakpoints. On play(), all upcoming points are pre-scheduled on the
+//   actual AudioParam via linearRampToValueAtTime — sample-accurate, no
+//   per-frame JS work.
+
+import React, {
+  useCallback, useEffect, useMemo, useReducer, useRef, useState,
+} from "react";
+import WaveformGL from "./WaveformGL";
+import VoiceTracker from "./VoiceTracker";
+
+// ── File-URL shim ────────────────────────────────────────────────
+
+const convertFileSrc = (p: string) => `file:///${p.replace(/\\/g, "/")}`;
+
+// ── Palette ──────────────────────────────────────────────────────
+
+const PALETTE = [
+  "#ef4444", "#f97316", "#f59e0b", "#eab308",
+  "#84cc16", "#22c55e", "#10b981", "#06b6d4",
+  "#3b82f6", "#8b5cf6", "#d946ef", "#ec4899",
+];
+
+// ── Layout constants ─────────────────────────────────────────────
+
+const TOOLBAR_H        = 48;
+const HEADER_W         = 220;
+const INSPECTOR_W      = 260;
+const TRACK_H          = 72;
+const RULER_H          = 24;
+const HANDLE_W         = 6;
+const FADE_ZONE        = 12;
+const DRAWER_H         = 320;
+const BASE_PPS         = 80;
+const MAX_UNDO         = 50;
+const AUTOMATION_LANE_H = 64;
+const AUTOMATION_BAR_H  = 28;        // per-track header bar above stacked auto-lanes
+
+// ── EQ definition (frequencies in Hz) ────────────────────────────
+
+const EQ_FREQS = [60, 150, 400, 1000, 2400, 6000, 15000];
+const EQ_LABELS = ["60", "150", "400", "1k", "2.4k", "6k", "15k"];
+const EQ_DB_RANGE = 15;     // ±15 dB
+
+// ── Reverb defs ──────────────────────────────────────────────────
+
+type ReverbType = "room" | "hall" | "plate" | "spring";
+
+// ── Automation params ───────────────────────────────────────────
+
+type AutomationParam =
+  | "volume" | "pan"
+  | "eq60" | "eq150" | "eq400" | "eq1k" | "eq2400" | "eq6k" | "eq15k"
+  | "comp_threshold" | "reverb_wet";
+
+const EQ_PARAM_TO_BAND_IDX: Record<string, number> = {
+  eq60: 0, eq150: 1, eq400: 2, eq1k: 3, eq2400: 4, eq6k: 5, eq15k: 6,
+};
+
+interface AutomationParamSpec { label: string; min: number; max: number; defaultValue: number; }
+const AUTOMATION_SPECS: Record<AutomationParam, AutomationParamSpec> = {
+  volume:         { label: "Volume",         min: -48, max: 6,   defaultValue: 0 },
+  pan:            { label: "Pan",            min: -1,  max: 1,   defaultValue: 0 },
+  eq60:           { label: "EQ 60Hz",        min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  eq150:          { label: "EQ 150Hz",       min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  eq400:          { label: "EQ 400Hz",       min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  eq1k:           { label: "EQ 1kHz",        min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  eq2400:         { label: "EQ 2.4kHz",      min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  eq6k:           { label: "EQ 6kHz",        min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  eq15k:          { label: "EQ 15kHz",       min: -EQ_DB_RANGE, max: EQ_DB_RANGE, defaultValue: 0 },
+  comp_threshold: { label: "Comp Threshold", min: -60, max: 0,   defaultValue: -18 },
+  reverb_wet:     { label: "Reverb Wet",     min: 0,   max: 1,   defaultValue: 0 },
+};
+
+// ── Types ────────────────────────────────────────────────────────
+
+interface StudioRegion {
+  id:          string;
+  buffer:      AudioBuffer | null;
+  peaks:       Float32Array | null;
+  filePath:    string | null;
+  offsetMs:    number;
+  trimStartMs: number;
+  trimEndMs:   number;
+  fadeInMs:    number;
+  fadeOutMs:   number;
+  clipGainDb:  number;   // per-region gain (post-fade, pre-track)
+}
+
+interface AutomationPoint { id: string; timeMs: number; value: number; }
+interface AutomationLane  { id: string; param: AutomationParam; points: AutomationPoint[]; }
+
+interface TrackCompressor {
+  on: boolean;
+  threshold: number;   // dB
+  ratio: number;       // n:1
+  attack: number;      // ms
+  release: number;     // ms
+  makeup: number;      // dB (post-compressor gain)
+}
+
+interface TrackReverb {
+  on: boolean;
+  type: ReverbType;
+  wet: number;         // 0..1
+  size: number;        // 0..1, scales IR length
+}
+
+interface TrackSaturation {
+  on: boolean;
+  drive: number;       // dB drive (0..24)
+}
+
+interface StudioTrack {
+  id:        string;
+  name:      string;
+  color:     string;
+  regions:   StudioRegion[];
+  gainDb:    number;
+  pan:       number;
+  muted:     boolean;
+  solo:      boolean;
+  armed:     boolean;
+  eq7:       number[];               // length 7, dB per band
+  compressor: TrackCompressor;
+  reverb:     TrackReverb;
+  saturation: TrackSaturation;
+  sidechainSourceId: string | null;
+  sidechainAmountDb: number;
+  automationOpen:    boolean;
+  automationLanes:   AutomationLane[];
+}
+
+type TrackPatch = Partial<Omit<StudioTrack, "id" | "regions">>;
+type RegionPatch = Partial<Omit<StudioRegion, "id">>;
+
+type Action =
+  | { type: "ADD_TRACK"; name?: string }
+  | { type: "DELETE_TRACK"; id: string }
+  | { type: "UPDATE_TRACK"; id: string; patch: TrackPatch }
+  | { type: "CLEAR_TRACK"; id: string }
+  | { type: "ADD_REGION"; trackId: string; region: StudioRegion; replaceAll?: boolean }
+  | { type: "DELETE_REGION"; trackId: string; regionId: string }
+  | { type: "UPDATE_REGION"; trackId: string; regionId: string; patch: RegionPatch }
+  | { type: "MOVE_REGION"; trackId: string; regionId: string; offsetMs: number }
+  | { type: "MOVE_REGION_TO_TRACK"; srcTrackId: string; destTrackId: string; regionId: string; offsetMs: number }
+  | { type: "TRIM_REGION"; trackId: string; regionId: string; trimStartMs?: number; trimEndMs?: number; offsetMs?: number }
+  | { type: "SPLIT_REGION"; trackId: string; regionId: string; atMs: number; bufA: AudioBuffer; peaksA: Float32Array; bufB: AudioBuffer; peaksB: Float32Array; newRightId: string }
+  | { type: "ADD_MARKER"; marker: TimelineMarker }
+  | { type: "DELETE_MARKER"; id: string }
+  | { type: "RENAME_MARKER"; id: string; label: string }
+  | { type: "DUPLICATE_REGION"; trackId: string; regionId: string; offsetMs: number; newId: string }
+  | { type: "PASTE_REGION"; trackId: string; offsetMs: number; region: StudioRegion }
+  | { type: "AUTO_CROSSFADE"; trackId: string; updates: Array<{ regionId: string; fadeInMs?: number; fadeOutMs?: number }> }
+  | { type: "ADD_AUTOMATION_LANE"; trackId: string; param: AutomationParam }
+  | { type: "REMOVE_AUTOMATION_LANE"; trackId: string; laneId: string }
+  | { type: "SET_AUTOMATION_PARAM"; trackId: string; laneId: string; param: AutomationParam }
+  | { type: "ADD_AUTO_POINT"; trackId: string; laneId: string; point: AutomationPoint }
+  | { type: "MOVE_AUTO_POINT"; trackId: string; laneId: string; pointId: string; timeMs: number; value: number }
+  | { type: "DELETE_AUTO_POINT"; trackId: string; laneId: string; pointId: string }
+  | { type: "REPLACE"; tracks: StudioTrack[] }
+  ;
+
+interface TimelineMarker {
+  id: string;
+  timeMs: number;
+  label: string;
+  color: string;
+}
+
+interface MixerSnapshot {
+  id: string;
+  name: string;
+  takenAt: number;
+  tracksJson: any;     // shallow snapshot of all tracks (FX state, gain/pan/etc.; not buffers)
+  master: { masterGainDb: number; limiterEnabled: boolean; limiterThresh: number; masterEq7: number[]; masterComp: TrackCompressor };
+}
+
+interface State {
+  tracks: StudioTrack[];
+  markers: TimelineMarker[];
+}
+
+// ── Module-level cache: survives unmount/remount cycles so switching to
+//    Live and back doesn't wipe the studio session. AudioBuffers/peaks/blob
+//    URLs all live in this object too. Cleared only on full page reload. ──
+
+interface StudioCache {
+  tracks: StudioTrack[];
+  markers: TimelineMarker[];
+  masterGainDb: number;
+  limiterEnabled: boolean;
+  limiterThresh: number;
+  masterEq7: number[];
+  masterComp: TrackCompressor;
+  bpm: number;
+  zoom: number;
+  loopRange: { startMs: number; endMs: number } | null;
+  loopEnabled: boolean;
+  clickEnabled: boolean;
+  gridEnabled: boolean;
+  playheadMs: number;
+  selection: { trackId: string; regionId: string | null } | null;
+  snapshots: MixerSnapshot[];
+}
+let studioCache: StudioCache | null = null;
+let studioClipboard: StudioRegion | null = null;   // module-level so it survives unmount
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+const uuid = () =>
+  (typeof crypto !== "undefined" && (crypto as any).randomUUID)
+    ? (crypto as any).randomUUID()
+    : "t_" + Math.random().toString(36).slice(2, 10);
+
+function fmtTimecode(ms: number): string {
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  const f = Math.floor(ms % 1000);
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(f).padStart(3, "0")}`;
+}
+function fmtDuration(ms: number): string {
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+function dbToLinear(db: number): number { return Math.pow(10, db / 20); }
+function linearToDb(v: number): number { return 20 * Math.log10(Math.max(1e-6, v)); }
+function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)); }
+
+function regionDurMs(r: StudioRegion): number {
+  if (!r.buffer) return 0;
+  return Math.max(0, r.buffer.duration * 1000 - r.trimStartMs - r.trimEndMs);
+}
+function regionEndMs(r: StudioRegion): number { return r.offsetMs + regionDurMs(r); }
+function trackEndMs(t: StudioTrack): number {
+  let end = 0;
+  for (const r of t.regions) { const e = regionEndMs(r); if (e > end) end = e; }
+  return end;
+}
+
+function newRegion(init: Partial<StudioRegion> = {}): StudioRegion {
+  return {
+    id: uuid(), buffer: null, peaks: null, filePath: null,
+    offsetMs: 0, trimStartMs: 0, trimEndMs: 0,
+    fadeInMs: 0, fadeOutMs: 0,
+    clipGainDb: 0,
+    ...init,
+  };
+}
+
+function newTrack(name: string, color: string): StudioTrack {
+  return {
+    id: uuid(), name, color,
+    regions: [],
+    gainDb: 0, pan: 0,
+    muted: false, solo: false, armed: false,
+    eq7: [0, 0, 0, 0, 0, 0, 0],
+    compressor: { on: false, threshold: -18, ratio: 3, attack: 20, release: 200, makeup: 0 },
+    reverb:     { on: false, type: "plate", wet: 0.25, size: 0.5 },
+    saturation: { on: false, drive: 6 },
+    sidechainSourceId: null,
+    sidechainAmountDb: 12,
+    automationOpen: false,
+    automationLanes: [],
+  };
+}
+
+function nextColor(tracks: StudioTrack[]): string {
+  return PALETTE[tracks.length % PALETTE.length];
+}
+
+// ── Linear interpolation of an automation lane at a given timeMs ──
+function interpolateLane(lane: AutomationLane, timeMs: number): number | null {
+  if (lane.points.length === 0) return null;
+  const sorted = [...lane.points].sort((a, b) => a.timeMs - b.timeMs);
+  if (timeMs <= sorted[0].timeMs) return sorted[0].value;
+  const last = sorted[sorted.length - 1];
+  if (timeMs >= last.timeMs) return last.value;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i], b = sorted[i + 1];
+    if (timeMs >= a.timeMs && timeMs <= b.timeMs) {
+      const t = (timeMs - a.timeMs) / Math.max(1, b.timeMs - a.timeMs);
+      return a.value + t * (b.value - a.value);
+    }
+  }
+  return last.value;
+}
+
+// ── DSP: reverb IR generators ────────────────────────────────────
+
+function makeReverbIR(ctx: BaseAudioContext, type: ReverbType, size: number): AudioBuffer {
+  const sr = ctx.sampleRate;
+  // Per-type base seconds
+  const baseSeconds = type === "room"   ? 0.7
+                    : type === "hall"   ? 3.0
+                    : type === "plate"  ? 2.2
+                    :                     1.6;     // spring
+  const sizeFactor = 0.5 + size * 1.5;             // 0.5..2.0
+  const seconds = baseSeconds * sizeFactor;
+  const len = Math.max(1, Math.floor(sr * seconds));
+  const ir = (ctx as AudioContext).createBuffer(2, len, sr);
+  const preMs = type === "hall" ? 25 : type === "plate" ? 8 : type === "spring" ? 2 : 5;
+  const pre = Math.floor(sr * preMs / 1000);
+
+  for (let ch = 0; ch < 2; ch++) {
+    const data = ir.getChannelData(ch);
+    for (let i = 0; i < len; i++) {
+      if (i < pre) { data[i] = 0; continue; }
+      const t = (i - pre) / sr;
+      // Decay shape per type
+      let env = 0;
+      if (type === "room") {
+        env = Math.pow(1 - (i - pre) / (len - pre), 2.0);     // fast decay
+      } else if (type === "hall") {
+        env = Math.exp(-3.5 * t / seconds);                    // long exp
+      } else if (type === "plate") {
+        env = Math.exp(-3.0 * t / seconds);                    // bright dense
+      } else {
+        // spring: shorter, with a low-frequency flutter
+        const flutter = 0.6 + 0.4 * Math.sin(2 * Math.PI * 3 * t);
+        env = Math.exp(-3.5 * t / seconds) * flutter;
+      }
+      // Stereo decorrelation; plate slightly brighter (more high content)
+      let n = (Math.random() * 2 - 1) * env * 0.6;
+      if (type === "plate" && i > 0) {
+        // Soft high boost via simple difference
+        n = n * 0.7 + (n - data[i - 1]) * 0.3;
+      } else if (type === "room" && i > 1) {
+        // Soft low pass
+        n = n * 0.5 + data[i - 1] * 0.35 + data[i - 2] * 0.15;
+      }
+      data[i] = n;
+    }
+  }
+  return ir;
+}
+
+// Tanh saturation curve
+function makeSatCurve(driveDb: number, samples = 4096): Float32Array {
+  const k = Math.pow(10, driveDb / 20);
+  const curve = new Float32Array(samples);
+  for (let i = 0; i < samples; i++) {
+    const x = (i / (samples - 1)) * 2 - 1;
+    curve[i] = Math.tanh(k * x) / Math.tanh(k);
+  }
+  return curve;
+}
+
+// ── Copied verbatim from StudioEditor.tsx ────────────────────────
+
+function extractPeaks(buffer: AudioBuffer, resolution = 2000): Float32Array {
+  const data    = buffer.getChannelData(0);
+  const step    = Math.max(1, Math.floor(data.length / resolution));
+  const peaks   = new Float32Array(resolution);
+  for (let i = 0; i < resolution; i++) {
+    let max = 0;
+    for (let j = 0; j < step; j++) {
+      const v = Math.abs(data[i * step + j] || 0);
+      if (v > max) max = v;
+    }
+    peaks[i] = max;
+  }
+  return peaks;
+}
+
+function encodeWav(buffer: AudioBuffer): ArrayBuffer {
+  const numCh    = buffer.numberOfChannels;
+  const sr       = buffer.sampleRate;
+  const samples  = buffer.length;
+  const bitsPerSample = 16;
+  const byteRate = (sr * numCh * bitsPerSample) / 8;
+  const blockAlign = (numCh * bitsPerSample) / 8;
+  const dataSize = samples * numCh * 2;
+  const ab = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(ab);
+  const write = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+  write(0,  "RIFF");
+  view.setUint32(4,  36 + dataSize, true);
+  write(8,  "WAVE"); write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1,  true);
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sr,    true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitsPerSample, true);
+  write(36, "data");
+  view.setUint32(40, dataSize, true);
+  let offset = 44;
+  for (let i = 0; i < samples; i++) {
+    for (let ch = 0; ch < numCh; ch++) {
+      const s = Math.max(-1, Math.min(1, buffer.getChannelData(ch)[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      offset += 2;
+    }
+  }
+  return ab;
+}
+
+// ── Reducer ──────────────────────────────────────────────────────
+
+function mapRegion(t: StudioTrack, rid: string, f: (r: StudioRegion) => StudioRegion): StudioTrack {
+  return { ...t, regions: t.regions.map(r => r.id === rid ? f(r) : r) };
+}
+function mapLane(t: StudioTrack, lid: string, f: (l: AutomationLane) => AutomationLane): StudioTrack {
+  return { ...t, automationLanes: t.automationLanes.map(l => l.id === lid ? f(l) : l) };
+}
+
+function reducer(s: State, a: Action): State {
+  switch (a.type) {
+    case "ADD_TRACK": {
+      const n = s.tracks.length + 1;
+      return { tracks: [...s.tracks, newTrack(a.name || `Track ${n}`, nextColor(s.tracks))] };
+    }
+    case "DELETE_TRACK": {
+      return { tracks: s.tracks.filter(t => t.id !== a.id) };
+    }
+    case "UPDATE_TRACK": {
+      return { tracks: s.tracks.map(t => t.id === a.id ? { ...t, ...a.patch } : t) };
+    }
+    case "CLEAR_TRACK": {
+      return { tracks: s.tracks.map(t => t.id === a.id ? { ...t, regions: [] } : t) };
+    }
+    case "ADD_REGION": {
+      return { tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        const regions = a.replaceAll ? [a.region] : [...t.regions, a.region];
+        return { ...t, regions };
+      }) };
+    }
+    case "DELETE_REGION": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? { ...t, regions: t.regions.filter(r => r.id !== a.regionId) } : t) };
+    }
+    case "UPDATE_REGION": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? mapRegion(t, a.regionId, r => ({ ...r, ...a.patch })) : t) };
+    }
+    case "MOVE_REGION": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? mapRegion(t, a.regionId, r => ({ ...r, offsetMs: Math.max(0, a.offsetMs) })) : t) };
+    }
+    case "MOVE_REGION_TO_TRACK": {
+      if (a.srcTrackId === a.destTrackId) {
+        return reducer(s, { type: "MOVE_REGION", trackId: a.srcTrackId, regionId: a.regionId, offsetMs: a.offsetMs });
+      }
+      const srcTrack = s.tracks.find(t => t.id === a.srcTrackId);
+      if (!srcTrack) return s;
+      const region = srcTrack.regions.find(r => r.id === a.regionId);
+      if (!region) return s;
+      const moved: StudioRegion = { ...region, offsetMs: Math.max(0, a.offsetMs) };
+      return { tracks: s.tracks.map(t => {
+        if (t.id === a.srcTrackId) return { ...t, regions: t.regions.filter(r => r.id !== a.regionId) };
+        if (t.id === a.destTrackId) return { ...t, regions: [...t.regions, moved] };
+        return t;
+      }) };
+    }
+    case "TRIM_REGION": {
+      return { tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        return mapRegion(t, a.regionId, r => {
+          const dur = r.buffer ? r.buffer.duration * 1000 : 0;
+          const ts = a.trimStartMs !== undefined ? Math.max(0, Math.min(a.trimStartMs, dur - 50 - r.trimEndMs)) : r.trimStartMs;
+          const te = a.trimEndMs   !== undefined ? Math.max(0, Math.min(a.trimEndMs,   dur - 50 - ts))         : r.trimEndMs;
+          let of = r.offsetMs;
+          if (a.trimStartMs !== undefined && a.offsetMs !== undefined) {
+            const tsDelta = ts - r.trimStartMs;
+            of = Math.max(0, r.offsetMs + tsDelta);
+          } else if (a.offsetMs !== undefined) {
+            of = Math.max(0, a.offsetMs);
+          }
+          return { ...r, trimStartMs: ts, trimEndMs: te, offsetMs: of };
+        });
+      }) };
+    }
+    case "SPLIT_REGION": {
+      return { tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        const idx = t.regions.findIndex(r => r.id === a.regionId);
+        if (idx < 0) return t;
+        const src = t.regions[idx];
+        const durA = a.bufA.duration * 1000;
+        const left:  StudioRegion = { ...src, buffer: a.bufA, peaks: a.peaksA, trimStartMs: 0, trimEndMs: 0, fadeOutMs: 0 };
+        const right: StudioRegion = { ...src, id: a.newRightId, buffer: a.bufB, peaks: a.peaksB, offsetMs: src.offsetMs + durA, trimStartMs: 0, trimEndMs: 0, fadeInMs: 0 };
+        const regions = [...t.regions];
+        regions.splice(idx, 1, left, right);
+        return { ...t, regions };
+      }) };
+    }
+    case "ADD_AUTOMATION_LANE": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? { ...t, automationOpen: true, automationLanes: [...t.automationLanes, { id: uuid(), param: a.param, points: [] }] }
+        : t) };
+    }
+    case "REMOVE_AUTOMATION_LANE": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? { ...t, automationLanes: t.automationLanes.filter(l => l.id !== a.laneId) }
+        : t) };
+    }
+    case "SET_AUTOMATION_PARAM": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? mapLane(t, a.laneId, l => ({ ...l, param: a.param, points: [] /* clear when changing param */ }))
+        : t) };
+    }
+    case "ADD_AUTO_POINT": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? mapLane(t, a.laneId, l => ({ ...l, points: [...l.points, a.point].sort((x, y) => x.timeMs - y.timeMs) }))
+        : t) };
+    }
+    case "MOVE_AUTO_POINT": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? mapLane(t, a.laneId, l => ({
+            ...l,
+            points: l.points
+              .map(p => p.id === a.pointId ? { ...p, timeMs: Math.max(0, a.timeMs), value: a.value } : p)
+              .sort((x, y) => x.timeMs - y.timeMs),
+          }))
+        : t) };
+    }
+    case "DELETE_AUTO_POINT": {
+      return { tracks: s.tracks.map(t => t.id === a.trackId
+        ? mapLane(t, a.laneId, l => ({ ...l, points: l.points.filter(p => p.id !== a.pointId) }))
+        : t) };
+    }
+    case "ADD_MARKER": {
+      return { ...s, markers: [...s.markers, a.marker].sort((x, y) => x.timeMs - y.timeMs) };
+    }
+    case "DELETE_MARKER": {
+      return { ...s, markers: s.markers.filter(m => m.id !== a.id) };
+    }
+    case "RENAME_MARKER": {
+      return { ...s, markers: s.markers.map(m => m.id === a.id ? { ...m, label: a.label } : m) };
+    }
+    case "DUPLICATE_REGION": {
+      return { ...s, tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        const src = t.regions.find(r => r.id === a.regionId);
+        if (!src) return t;
+        const dup: StudioRegion = { ...src, id: a.newId, offsetMs: Math.max(0, a.offsetMs) };
+        return { ...t, regions: [...t.regions, dup] };
+      }) };
+    }
+    case "PASTE_REGION": {
+      return { ...s, tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        return { ...t, regions: [...t.regions, { ...a.region, offsetMs: Math.max(0, a.offsetMs) }] };
+      }) };
+    }
+    case "AUTO_CROSSFADE": {
+      return { ...s, tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        return { ...t, regions: t.regions.map(r => {
+          const u = a.updates.find(x => x.regionId === r.id);
+          if (!u) return r;
+          return {
+            ...r,
+            ...(u.fadeInMs  !== undefined ? { fadeInMs:  u.fadeInMs  } : {}),
+            ...(u.fadeOutMs !== undefined ? { fadeOutMs: u.fadeOutMs } : {}),
+          };
+        }) };
+      }) };
+    }
+    case "REPLACE": {
+      return { ...s, tracks: a.tracks };
+    }
+  }
+}
+
+// ── Props ────────────────────────────────────────────────────────
+
+interface Props {
+  deckAPath:  string | null;
+  deckATitle: string | undefined;
+  deckBPath:  string | null;
+  deckBTitle: string | undefined;
+}
+
+type EditTool = "select" | "blade" | "trim" | "fade";
+type FxWindowType = "eq" | "comp" | "reverb";
+
+const FX_WINDOW_LABELS: Record<FxWindowType, string> = {
+  eq:     "7-Band EQ",
+  comp:   "Compressor",
+  reverb: "Reverb / Saturation / Sidechain",
+};
+
+// Default offsets so different window types don't pile up on each other when opened together
+const FX_WINDOW_DEFAULT_X: Record<FxWindowType, number> = { eq: 100, comp: 440, reverb: 780 };
+
+// ── Per-track audio param set returned by buildAndStart ───────────
+interface TrackAudioParams {
+  trackGainParam: AudioParam;
+  panParam:       AudioParam;
+  eqGainParams:   AudioParam[];   // 7 entries
+  compThresholdParam?: AudioParam;
+  reverbWetParam: AudioParam;
+  compNode?:      DynamicsCompressorNode;   // for reduction metering (live only)
+}
+
+// ── Main component ───────────────────────────────────────────────
+
+export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle }: Props) {
+  const [state, dispatch] = useReducer(reducer, undefined, () => ({
+    tracks: studioCache?.tracks ?? [
+      newTrack("Track 1", PALETTE[0]),
+      newTrack("Track 2", PALETTE[1]),
+    ],
+    markers: studioCache?.markers ?? [],
+  }));
+  const tracks = state.tracks;
+
+  // Selection (rehydrated from cache)
+  const [selection, setSelection] = useState<{ trackId: string; regionId: string | null } | null>(
+    () => studioCache?.selection ?? null
+  );
+
+  // Transport
+  const [playing, setPlaying]         = useState(false);
+  const [playheadMs, setPlayheadMs]   = useState(() => studioCache?.playheadMs ?? 0);
+  const [recordArmed, setRecordArmed] = useState(false);
+  const [recording, setRecording]     = useState(false);
+  const [zoom, setZoom]               = useState(() => studioCache?.zoom ?? 1);
+  const [bpm, setBpm]                 = useState(() => studioCache?.bpm ?? 120);
+  const [vtOpen, setVtOpen]           = useState(false);
+  const [status, setStatus]           = useState("");
+  const [paletteForTrack, setPaletteForTrack] = useState<string | null>(null);
+
+  // Edit tool
+  const [tool, setTool] = useState<EditTool>("select");
+  const [bladeHover, setBladeHover] = useState<{ trackId: string; regionId: string; ms: number } | null>(null);
+  const [snapMs, setSnapMs] = useState<number | null>(null);
+
+  // Master bus (rehydrated from cache)
+  const [masterGainDb, setMasterGainDb] = useState(() => studioCache?.masterGainDb ?? 0);
+  const [limiterEnabled, setLimiterEnabled] = useState(() => studioCache?.limiterEnabled ?? true);
+  const [limiterThresh, setLimiterThresh] = useState(() => studioCache?.limiterThresh ?? -1);
+  const [masterEq7, setMasterEq7] = useState<number[]>(() => studioCache?.masterEq7 ?? [0, 0, 0, 0, 0, 0, 0]);
+  const [masterComp, setMasterComp] = useState<TrackCompressor>(() => studioCache?.masterComp ?? {
+    on: false, threshold: -12, ratio: 2, attack: 30, release: 250, makeup: 0,
+  });
+
+  // Loop / click / grid (rehydrated)
+  const [loopRange, setLoopRange] = useState<{ startMs: number; endMs: number } | null>(() => studioCache?.loopRange ?? null);
+  const [loopEnabled, setLoopEnabled] = useState(() => studioCache?.loopEnabled ?? false);
+  const [clickEnabled, setClickEnabled] = useState(() => studioCache?.clickEnabled ?? false);
+  const [gridEnabled, setGridEnabled] = useState(() => studioCache?.gridEnabled ?? false);
+
+  // Master FX window state
+  const [masterFxOpen, setMasterFxOpen] = useState(false);
+  const [masterFxPos, setMasterFxPos]   = useState<{ x: number; y: number; z: number }>({ x: 200, y: 80, z: 0 });
+
+  // Snapshots (rehydrated)
+  const [snapshots, setSnapshots] = useState<MixerSnapshot[]>(() => studioCache?.snapshots ?? []);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+
+  // Keyboard help overlay
+  const [helpOpen, setHelpOpen] = useState(false);
+
+  // Right-click context menu
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void; danger?: boolean; separator?: boolean }[] } | null>(null);
+
+  // FX windows: keyed by `${trackId}:${type}`. One window per (track, type).
+  // type ∈ "eq" | "comp" | "reverb". The reverb window also holds sidechain + saturation.
+  const [openFxWindows, setOpenFxWindows] = useState<Map<string, { trackId: string; type: FxWindowType; x: number; y: number; z: number }>>(new Map());
+  const fxZRef = useRef(1);
+
+  // Selected automation point — for visual highlight + delete
+  const [selectedAutoPoint, setSelectedAutoPoint] = useState<{ trackId: string; laneId: string; pointId: string } | null>(null);
+
+  // Live recording
+  const liveRecRef = useRef<{
+    trackId: string; startMs: number; startedAt: number;
+    peaks: number[]; samplePeriodMs: number;
+    analyser: AnalyserNode; source: MediaStreamAudioSourceNode; rafId: number;
+  } | null>(null);
+  const [liveRecTick, setLiveRecTick] = useState(0);
+
+  // Audio engine refs
+  const audioCtxRef        = useRef<AudioContext | null>(null);
+  const sourcesRef         = useRef<AudioBufferSourceNode[]>([]);
+  const trackAnalysersRef  = useRef<Map<string, AnalyserNode>>(new Map());
+  const trackParamsRef     = useRef<Map<string, TrackAudioParams>>(new Map());
+  const masterAnalyserRef  = useRef<AnalyserNode | null>(null);
+  const masterLAnalyserRef = useRef<AnalyserNode | null>(null);
+  const masterRAnalyserRef = useRef<AnalyserNode | null>(null);
+  const masterKWeightedRef = useRef<AnalyserNode | null>(null);
+  const sidechainGainsRef  = useRef<Map<string, GainNode>>(new Map());
+  const sidechainFollowRef = useRef<Map<string, AnalyserNode>>(new Map());
+  const compReductionRef   = useRef<Map<string, number>>(new Map());   // trackId → current dB reduction
+  const lufsMomentaryRef   = useRef<number>(-Infinity);
+  const correlationRef     = useRef<number>(0);
+  const meterLevelsRef     = useRef<{ master: number; perTrack: Map<string, number> }>({
+    master: 0, perTrack: new Map(),
+  });
+  const [, setMeterTick]   = useState(0);
+  const rafRef             = useRef<number | null>(null);
+  const playStartRef       = useRef<number>(0);
+  const playFromRef        = useRef<number>(0);
+  const timelineRef        = useRef<HTMLDivElement>(null);
+  const recRef             = useRef<{ mr: MediaRecorder; chunks: Blob[]; trackId: string; startMs: number } | null>(null);
+  const stateRef           = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  // ── Auto-crossfade on overlap ─────────────────────────────────
+  // When two regions on the same track overlap, set both regions' fades to
+  // match the overlap duration. Recomputes lazily on tracks change. We avoid
+  // dispatching when no change is needed to prevent a render loop.
+  const crossfadeRunningRef = useRef(false);
+  useEffect(() => {
+    if (crossfadeRunningRef.current) return;
+    crossfadeRunningRef.current = true;
+    try {
+      for (const t of state.tracks) {
+        const sorted = [...t.regions]
+          .filter(r => r.buffer)
+          .map(r => ({ id: r.id, start: r.offsetMs, end: r.offsetMs + regionDurMs(r) }))
+          .sort((a, b) => a.start - b.start);
+        const updates: { regionId: string; fadeInMs?: number; fadeOutMs?: number }[] = [];
+        // First pass: clear any existing auto-fades. We only set fades from overlaps.
+        // But we shouldn't blow away USER-set fades. Heuristic: only adjust fades
+        // when an overlap exists; never reduce a user's larger fade.
+        for (let i = 0; i < sorted.length - 1; i++) {
+          const cur  = sorted[i];
+          const next = sorted[i + 1];
+          const overlap = cur.end - next.start;
+          if (overlap > 50) {
+            const xfade = Math.min(overlap, 2000);     // cap at 2s
+            const cReg = t.regions.find(r => r.id === cur.id)!;
+            const nReg = t.regions.find(r => r.id === next.id)!;
+            if (cReg.fadeOutMs < xfade) updates.push({ regionId: cur.id,  fadeOutMs: xfade });
+            if (nReg.fadeInMs  < xfade) updates.push({ regionId: next.id, fadeInMs:  xfade });
+          }
+        }
+        if (updates.length > 0) {
+          dispatch({ type: "AUTO_CROSSFADE", trackId: t.id, updates });
+        }
+      }
+    } finally {
+      crossfadeRunningRef.current = false;
+    }
+  }, [state.tracks]);
+
+  // ── Stop playback + recording on unmount, but KEEP state in cache ──
+  useEffect(() => {
+    return () => {
+      sourcesRef.current.forEach(s => { try { s.stop(); } catch {} });
+      sourcesRef.current = [];
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (recRef.current) { try { recRef.current.mr.stop(); } catch {} }
+      if (liveRecRef.current) {
+        cancelAnimationFrame(liveRecRef.current.rafId);
+        try { liveRecRef.current.source.disconnect(); } catch {}
+        liveRecRef.current = null;
+      }
+    };
+  }, []);
+
+  // ── Persist to module-level cache so unmount/remount doesn't wipe ──
+  useEffect(() => {
+    studioCache = {
+      tracks: state.tracks,
+      markers: state.markers,
+      masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp,
+      bpm, zoom,
+      loopRange, loopEnabled, clickEnabled, gridEnabled,
+      playheadMs, selection,
+      snapshots,
+    };
+  }, [
+    state.tracks, state.markers,
+    masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp,
+    bpm, zoom, loopRange, loopEnabled, clickEnabled, gridEnabled, playheadMs, selection,
+    snapshots,
+  ]);
+
+  // ── Auto-save every 5 min to localStorage (lightweight backup) ──
+  useEffect(() => {
+    const id = setInterval(() => {
+      try {
+        const tracksJson = state.tracks.map(t => ({
+          ...t,
+          regions: t.regions
+            .filter(r => r.filePath && !r.filePath.startsWith("blob:"))
+            .map(r => ({
+              id: r.id, filePath: r.filePath,
+              offsetMs: r.offsetMs, trimStartMs: r.trimStartMs, trimEndMs: r.trimEndMs,
+              fadeInMs: r.fadeInMs, fadeOutMs: r.fadeOutMs, clipGainDb: r.clipGainDb,
+            })),
+        }));
+        const data = JSON.stringify({
+          version: 1, savedAt: Date.now(),
+          tracks: tracksJson, markers: state.markers,
+          master: { masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp },
+          bpm, zoom,
+        });
+        localStorage.setItem("studiopro_autosave", data);
+      } catch {}
+    }, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [state.tracks, state.markers, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp, bpm, zoom]);
+
+  // Click scheduler refs
+  const clickNextBeatTimeRef = useRef<number>(0);
+  const clickNextBeatIdxRef  = useRef<number>(0);
+  const clickEnabledRef      = useRef(clickEnabled);
+  useEffect(() => { clickEnabledRef.current = clickEnabled; }, [clickEnabled]);
+  const bpmRef = useRef(bpm);
+  useEffect(() => { bpmRef.current = bpm; }, [bpm]);
+
+  // Track height (variable due to automation)
+  const trackHeights = useMemo(() => tracks.map(t =>
+    TRACK_H + (t.automationOpen ? AUTOMATION_BAR_H + t.automationLanes.length * AUTOMATION_LANE_H : 0)
+  ), [tracks]);
+  const trackTops = useMemo(() => {
+    const tops: number[] = [];
+    let acc = 0;
+    for (const h of trackHeights) { tops.push(acc); acc += h; }
+    return tops;
+  }, [trackHeights]);
+  const totalLanesHeight = useMemo(() => trackHeights.reduce((a, b) => a + b, 0), [trackHeights]);
+
+  const pps = BASE_PPS * zoom;
+  const msToX = useCallback((ms: number) => (ms / 1000) * pps, [pps]);
+  const xToMs = useCallback((x: number) => (x / pps) * 1000, [pps]);
+
+  const getCtx = () => {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext({ sampleRate: 44100 });
+    return audioCtxRef.current;
+  };
+
+  const totalDurMs = useMemo(() => {
+    let max = 60000;
+    for (const t of tracks) {
+      const e = trackEndMs(t);
+      if (e > max) max = e;
+    }
+    return max;
+  }, [tracks]);
+
+  const anySolo = useMemo(() => tracks.some(t => t.solo), [tracks]);
+
+  const selectedTrack = useMemo(
+    () => selection ? tracks.find(t => t.id === selection.trackId) || null : null,
+    [tracks, selection],
+  );
+  const selectedRegion = useMemo(() => {
+    if (!selectedTrack || !selection?.regionId) return null;
+    return selectedTrack.regions.find(r => r.id === selection.regionId) || null;
+  }, [selectedTrack, selection]);
+
+  // ── Load audio into a track ───────────────────────────────────
+
+  const loadAudio = useCallback(async (
+    trackId: string, filePath: string,
+    opts: { title?: string; atMs?: number; replaceAll?: boolean } = {},
+  ) => {
+    const name = filePath.split(/[\\/]/).pop() || filePath;
+    setStatus(`Loading ${opts.title || name}...`);
+    try {
+      const ctx = getCtx();
+      const url = filePath.startsWith("http") || filePath.startsWith("blob:") ? filePath : convertFileSrc(filePath);
+      const resp = await fetch(url);
+      const ab = await resp.arrayBuffer();
+      const buffer = await ctx.decodeAudioData(ab);
+      const peaks = extractPeaks(buffer);
+      const t = stateRef.current.tracks.find(t => t.id === trackId);
+      const atMs = opts.atMs ?? (t && !opts.replaceAll ? trackEndMs(t) : 0);
+      const region = newRegion({ buffer, peaks, filePath, offsetMs: atMs });
+      dispatch({ type: "ADD_REGION", trackId, region, replaceAll: !!opts.replaceAll });
+      if (opts.title) dispatch({ type: "UPDATE_TRACK", id: trackId, patch: { name: opts.title } });
+      setStatus(`✓ Loaded: ${opts.title || name}`);
+    } catch (e: any) {
+      setStatus(`✗ Failed: ${e?.message || e}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (deckAPath && tracks[0]) loadAudio(tracks[0].id, deckAPath, { title: deckATitle, replaceAll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckAPath]);
+  useEffect(() => {
+    if (deckBPath && tracks[1]) loadAudio(tracks[1].id, deckBPath, { title: deckBTitle, replaceAll: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckBPath]);
+
+  // ── Custom events ─────────────────────────────────────────────
+
+  useEffect(() => {
+    const onSend = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      if (!d.filePath) return;
+      let id = d.trackId as string | undefined;
+      if (!id) {
+        dispatch({ type: "ADD_TRACK", name: d.filePath.split(/[\\/]/).pop() });
+        setTimeout(() => {
+          const newest = (stateRef.current?.tracks || []).slice(-1)[0];
+          if (newest) loadAudio(newest.id, d.filePath, { title: d.title });
+        }, 0);
+      } else {
+        loadAudio(id, d.filePath, { title: d.title });
+      }
+    };
+    const onLoadDeck = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      if (!d.filePath) return;
+      const idx = d.deck === "A" ? 0 : d.deck === "B" ? 1 : d.deck === "C" ? 2 : 0;
+      while ((stateRef.current?.tracks.length || 0) <= idx) dispatch({ type: "ADD_TRACK" });
+      setTimeout(() => {
+        const t = stateRef.current?.tracks[idx];
+        if (t) loadAudio(t.id, d.filePath, { title: d.title });
+      }, 0);
+    };
+    window.addEventListener("ether:send-to-studio", onSend as EventListener);
+    window.addEventListener("ether:studio-load-deck", onLoadDeck as EventListener);
+    return () => {
+      window.removeEventListener("ether:send-to-studio", onSend as EventListener);
+      window.removeEventListener("ether:studio-load-deck", onLoadDeck as EventListener);
+    };
+  }, [loadAudio]);
+
+  // ── Undo / Redo ───────────────────────────────────────────────
+
+  const historyRef = useRef<{ past: StudioTrack[][]; future: StudioTrack[][] }>({ past: [], future: [] });
+  const lastTracksRef = useRef<StudioTrack[]>(state.tracks);
+  useEffect(() => {
+    if (lastTracksRef.current !== state.tracks) {
+      historyRef.current.past.push(lastTracksRef.current);
+      if (historyRef.current.past.length > MAX_UNDO) historyRef.current.past.shift();
+      historyRef.current.future = [];
+      lastTracksRef.current = state.tracks;
+    }
+  }, [state.tracks]);
+
+  const doUndo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.past.length) return;
+    const prev = h.past.pop()!;
+    h.future.unshift(lastTracksRef.current);
+    lastTracksRef.current = prev;
+    dispatch({ type: "REPLACE", tracks: prev });
+  }, []);
+  const doRedo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.future.length) return;
+    const nxt = h.future.shift()!;
+    h.past.push(lastTracksRef.current);
+    lastTracksRef.current = nxt;
+    dispatch({ type: "REPLACE", tracks: nxt });
+  }, []);
+
+  // ── Blade: split region at timeline ms ────────────────────────
+
+  const splitRegion = useCallback((trackId: string, regionId: string, atMs: number) => {
+    const t = stateRef.current.tracks.find(x => x.id === trackId);
+    if (!t) return;
+    const r = t.regions.find(x => x.id === regionId);
+    if (!r || !r.buffer) return;
+    const regionStart = r.offsetMs;
+    const regionEnd   = r.offsetMs + regionDurMs(r);
+    const MIN = 50;
+    const clamped = Math.max(regionStart + MIN, Math.min(regionEnd - MIN, atMs));
+    if (clamped <= regionStart || clamped >= regionEnd) return;
+    const sr    = r.buffer.sampleRate;
+    const nCh   = r.buffer.numberOfChannels;
+    const srcLen = r.buffer.length;
+    const trimStartS = Math.floor((r.trimStartMs / 1000) * sr);
+    const trimEndS   = Math.floor((r.trimEndMs   / 1000) * sr);
+    const splitWithinRegionMs = clamped - regionStart;
+    const splitSample = Math.max(
+      trimStartS + 1,
+      Math.min(srcLen - trimEndS - 1,
+        trimStartS + Math.floor((splitWithinRegionMs / 1000) * sr)),
+    );
+    const ctx = getCtx();
+    const lenA = splitSample - trimStartS;
+    const lenB = (srcLen - trimEndS) - splitSample;
+    if (lenA <= 0 || lenB <= 0) return;
+    const bufA = ctx.createBuffer(nCh, lenA, sr);
+    const bufB = ctx.createBuffer(nCh, lenB, sr);
+    for (let c = 0; c < nCh; c++) {
+      const src = r.buffer.getChannelData(c);
+      bufA.copyToChannel(src.subarray(trimStartS, splitSample), c);
+      bufB.copyToChannel(src.subarray(splitSample, srcLen - trimEndS), c);
+    }
+    const peaksA = extractPeaks(bufA);
+    const peaksB = extractPeaks(bufB);
+    const newRightId = uuid();
+    dispatch({ type: "SPLIT_REGION", trackId, regionId, atMs: clamped, bufA, peaksA, bufB, peaksB, newRightId });
+    setSelection({ trackId, regionId });
+    setBladeHover(null);
+  }, []);
+
+  // ── Refs that bridge keydown and later-defined functions ──────
+
+  const playRef    = useRef<(() => void) | null>(null);
+  const stopRef    = useRef<(() => void) | null>(null);
+  const playingRef = useRef(false);
+  useEffect(() => { playingRef.current = playing; }, [playing]);
+
+  // ── Keyboard ──────────────────────────────────────────────────
+
+  // Helper used by both keyboard shortcut and context menu
+  const copySelectedRegion = useCallback(() => {
+    if (!selection?.regionId) return;
+    const t = stateRef.current.tracks.find(x => x.id === selection.trackId);
+    const r = t?.regions.find(x => x.id === selection.regionId);
+    if (r) studioClipboard = { ...r };
+  }, [selection]);
+  const pasteAtPlayhead = useCallback(() => {
+    if (!studioClipboard) return;
+    const dest = selection?.trackId || stateRef.current.tracks[0]?.id;
+    if (!dest) return;
+    const newId = uuid();
+    dispatch({ type: "PASTE_REGION", trackId: dest, offsetMs: playheadMs, region: { ...studioClipboard, id: newId } });
+    setSelection({ trackId: dest, regionId: newId });
+  }, [selection, playheadMs]);
+  const duplicateSelectedRegion = useCallback(() => {
+    if (!selection?.regionId) return;
+    const t = stateRef.current.tracks.find(x => x.id === selection.trackId);
+    const r = t?.regions.find(x => x.id === selection.regionId);
+    if (!r) return;
+    const newId = uuid();
+    const offset = r.offsetMs + regionDurMs(r);
+    dispatch({ type: "DUPLICATE_REGION", trackId: selection.trackId, regionId: r.id, offsetMs: offset, newId });
+    setSelection({ trackId: selection.trackId, regionId: newId });
+  }, [selection]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.shiftKey) doRedo(); else doUndo();
+        return;
+      }
+      // Copy / paste / duplicate
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        copySelectedRegion();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "v") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        pasteAtPlayhead();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        duplicateSelectedRegion();
+        return;
+      }
+      const tgt = e.target as HTMLElement | null;
+      if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if ((k === "backspace" || k === "delete")) {
+        if (selectedAutoPoint) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          dispatch({ type: "DELETE_AUTO_POINT", trackId: selectedAutoPoint.trackId, laneId: selectedAutoPoint.laneId, pointId: selectedAutoPoint.pointId });
+          setSelectedAutoPoint(null);
+          return;
+        }
+        if (selection?.regionId) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          dispatch({ type: "DELETE_REGION", trackId: selection.trackId, regionId: selection.regionId });
+          setSelection({ trackId: selection.trackId, regionId: null });
+          return;
+        }
+      }
+      if (e.key === " " || k === "spacebar") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (playingRef.current) stopRef.current?.(); else playRef.current?.();
+        return;
+      }
+      // Markers: M drops a marker at the playhead
+      if (k === "m") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        const label = prompt("Marker label:") || "Marker";
+        dispatch({ type: "ADD_MARKER", marker: { id: uuid(), timeMs: playheadMs, label, color: "#fde047" } });
+        return;
+      }
+      // Help overlay (? or shift+/)
+      if (k === "?" || (e.shiftKey && k === "/")) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setHelpOpen(v => !v);
+        return;
+      }
+      // Escape closes overlays
+      if (k === "escape") {
+        if (helpOpen)        { setHelpOpen(false);    e.preventDefault(); return; }
+        if (snapshotsOpen)   { setSnapshotsOpen(false); e.preventDefault(); return; }
+        if (ctxMenu)         { setCtxMenu(null);     e.preventDefault(); return; }
+      }
+      if (k === "v" || k === "c" || k === "t" || k === "f") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (k === "v") { setTool("select"); return; }
+        if (k === "t") { setTool("trim");   return; }
+        if (k === "f") { setTool("fade");   return; }
+        if (tool !== "blade") { setTool("blade"); return; }
+        const hv = bladeHover;
+        if (!hv) { setStatus("Hover a region to cut"); return; }
+        splitRegion(hv.trackId, hv.regionId, hv.ms);
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [doUndo, doRedo, tool, bladeHover, splitRegion, selection, selectedAutoPoint,
+      copySelectedRegion, pasteAtPlayhead, duplicateSelectedRegion,
+      playheadMs, helpOpen, snapshotsOpen, ctxMenu]);
+
+  // ── Click scheduler helper ────────────────────────────────────
+
+  const scheduleClickAt = (ctx: BaseAudioContext, time: number, accent: boolean) => {
+    const osc = (ctx as AudioContext).createOscillator();
+    const g   = (ctx as AudioContext).createGain();
+    osc.type = "sine";
+    osc.frequency.value = accent ? 1500 : 900;
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(accent ? 0.45 : 0.28, time + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+    osc.connect(g).connect((ctx as AudioContext).destination);
+    osc.start(time);
+    osc.stop(time + 0.06);
+  };
+
+  // ── Build full audio graph (online or offline) ─────────────────
+
+  const buildAndStart = (
+    ctx: BaseAudioContext,
+    startCtxTime: number,
+    headMs: number,
+    durLimitMs: number | null,
+    options: { withMeters: boolean },
+  ): {
+    sources: AudioBufferSourceNode[];
+    trackAnalysers: Map<string, AnalyserNode>;
+    masterAnalyser: AnalyserNode | null;
+    masterLAnalyser: AnalyserNode | null;
+    masterRAnalyser: AnalyserNode | null;
+    masterKWeightedAnalyser: AnalyserNode | null;
+    sidechainGains: Map<string, GainNode>;
+    sidechainFollowAnalysers: Map<string, AnalyserNode>;
+    trackParams: Map<string, TrackAudioParams>;
+  } => {
+    const sources: AudioBufferSourceNode[] = [];
+    const trackAnalysers = new Map<string, AnalyserNode>();
+    let masterAnalyser: AnalyserNode | null = null;
+    let masterLAnalyser: AnalyserNode | null = null;
+    let masterRAnalyser: AnalyserNode | null = null;
+    let masterKWeightedAnalyser: AnalyserNode | null = null;
+    const sidechainGains = new Map<string, GainNode>();
+    const sidechainFollowAnalysers = new Map<string, AnalyserNode>();
+    const trackParams = new Map<string, TrackAudioParams>();
+
+    // Master bus: gain → master 7-band EQ → optional master comp → optional limiter → analyser → destination
+    const master = (ctx as AudioContext).createGain();
+    master.gain.value = dbToLinear(masterGainDb);
+    let masterTail: AudioNode = master;
+    // Master EQ
+    const masterEqNodes: BiquadFilterNode[] = EQ_FREQS.map((f, i) => {
+      const node = (ctx as AudioContext).createBiquadFilter();
+      node.type = i === 0 ? "lowshelf" : i === 6 ? "highshelf" : "peaking";
+      node.frequency.value = f;
+      if (node.type === "peaking") node.Q.value = 1;
+      node.gain.value = clamp(masterEq7[i] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+      return node;
+    });
+    for (const e of masterEqNodes) { masterTail.connect(e); masterTail = e; }
+    // Master compressor
+    if (masterComp.on) {
+      const mc = (ctx as AudioContext).createDynamicsCompressor();
+      mc.threshold.value = masterComp.threshold;
+      mc.ratio.value     = masterComp.ratio;
+      mc.attack.value    = masterComp.attack / 1000;
+      mc.release.value   = masterComp.release / 1000;
+      mc.knee.value      = 6;
+      masterTail.connect(mc);
+      const mkup = (ctx as AudioContext).createGain();
+      mkup.gain.value = dbToLinear(masterComp.makeup);
+      mc.connect(mkup);
+      masterTail = mkup;
+    }
+    if (limiterEnabled) {
+      const lim = (ctx as AudioContext).createDynamicsCompressor();
+      lim.threshold.value = limiterThresh;
+      lim.ratio.value = 20;
+      lim.attack.value = 0.003;
+      lim.release.value = 0.25;
+      lim.knee.value = 0;
+      masterTail.connect(lim);
+      masterTail = lim;
+    }
+    if (options.withMeters && "createAnalyser" in ctx) {
+      masterAnalyser = (ctx as AudioContext).createAnalyser();
+      masterAnalyser.fftSize = 2048;
+      masterTail.connect(masterAnalyser);
+      masterAnalyser.connect((ctx as AudioContext).destination);
+
+      // L/R split for correlation + goniometer
+      const splitter = (ctx as AudioContext).createChannelSplitter(2);
+      masterTail.connect(splitter);
+      const lAn = (ctx as AudioContext).createAnalyser(); lAn.fftSize = 1024;
+      const rAn = (ctx as AudioContext).createAnalyser(); rAn.fftSize = 1024;
+      splitter.connect(lAn, 0);
+      splitter.connect(rAn, 1);
+      masterLAnalyser = lAn;
+      masterRAnalyser = rAn;
+
+      // K-weighted sidechain for LUFS (BS.1770 simplified):
+      //   high-pass ≈38 Hz, then high-shelf +4 dB at 1.5 kHz
+      const hp = (ctx as AudioContext).createBiquadFilter();
+      hp.type = "highpass"; hp.frequency.value = 38;
+      const shelf = (ctx as AudioContext).createBiquadFilter();
+      shelf.type = "highshelf"; shelf.frequency.value = 1500; shelf.gain.value = 4;
+      const kAn = (ctx as AudioContext).createAnalyser();
+      kAn.fftSize = 2048;
+      masterTail.connect(hp).connect(shelf).connect(kAn);
+      masterKWeightedAnalyser = kAn;
+    } else {
+      masterTail.connect((ctx as AudioContext).destination);
+    }
+
+    const effSolo = stateRef.current.tracks.some(t => t.solo);
+    const trackTaps = new Map<string, AudioNode>();   // for sidechain follower wiring
+
+    stateRef.current.tracks.forEach(t => {
+      if (!t.regions.length) return;
+      const effMuted = t.muted || (effSolo && !t.solo);
+      if (effMuted) return;
+
+      // Track gain → pan
+      const trackGain = (ctx as AudioContext).createGain();
+      trackGain.gain.value = dbToLinear(t.gainDb);
+      const panNode = (ctx as AudioContext).createStereoPanner();
+      panNode.pan.value = clamp(t.pan, -1, 1);
+
+      // 7-band EQ
+      const eqBands: BiquadFilterNode[] = EQ_FREQS.map((f, i) => {
+        const node = (ctx as AudioContext).createBiquadFilter();
+        node.type = i === 0 ? "lowshelf" : i === 6 ? "highshelf" : "peaking";
+        node.frequency.value = f;
+        if (node.type === "peaking") node.Q.value = 1;
+        node.gain.value = clamp(t.eq7[i] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+        return node;
+      });
+
+      // Wire gain → pan → eq[0] → ... → eq[6]
+      let chainTail: AudioNode = trackGain;
+      trackGain.connect(panNode); chainTail = panNode;
+      for (const e of eqBands) { chainTail.connect(e); chainTail = e; }
+
+      // Saturation (conventional position: pre-comp)
+      if (t.saturation.on && t.saturation.drive > 0) {
+        const ws = (ctx as AudioContext).createWaveShaper();
+        ws.curve = makeSatCurve(t.saturation.drive);
+        ws.oversample = "2x";
+        chainTail.connect(ws); chainTail = ws;
+      }
+
+      // Compressor + makeup gain
+      let compNode: DynamicsCompressorNode | undefined;
+      let compThresholdParam: AudioParam | undefined;
+      if (t.compressor.on) {
+        compNode = (ctx as AudioContext).createDynamicsCompressor();
+        compNode.threshold.value = t.compressor.threshold;
+        compNode.ratio.value     = t.compressor.ratio;
+        compNode.attack.value    = t.compressor.attack / 1000;
+        compNode.release.value   = t.compressor.release / 1000;
+        compNode.knee.value      = 6;
+        chainTail.connect(compNode);
+        compThresholdParam = compNode.threshold;
+        const makeup = (ctx as AudioContext).createGain();
+        makeup.gain.value = dbToLinear(t.compressor.makeup);
+        compNode.connect(makeup);
+        chainTail = makeup;
+      }
+
+      // Per-track meter analyser (post-FX)
+      if (options.withMeters && "createAnalyser" in ctx) {
+        const an = (ctx as AudioContext).createAnalyser();
+        an.fftSize = 256;
+        chainTail.connect(an);
+        trackAnalysers.set(t.id, an);
+      }
+
+      // Sidechain duck gain (between FX tail and master)
+      const duckGain = (ctx as AudioContext).createGain();
+      duckGain.gain.value = 1;
+      chainTail.connect(duckGain).connect(master);
+      sidechainGains.set(t.id, duckGain);
+
+      // Reverb send (parallel) — per-track ConvolverNode
+      const reverbWetGain = (ctx as AudioContext).createGain();
+      reverbWetGain.gain.value = t.reverb.on ? clamp(t.reverb.wet, 0, 1) : 0;
+      const conv = (ctx as AudioContext).createConvolver();
+      conv.buffer = makeReverbIR(ctx, t.reverb.type, t.reverb.size);
+      // tap the post-comp signal (chainTail before duck)
+      chainTail.connect(reverbWetGain).connect(conv).connect(master);
+
+      trackTaps.set(t.id, chainTail);
+
+      trackParams.set(t.id, {
+        trackGainParam: trackGain.gain,
+        panParam:       panNode.pan,
+        eqGainParams:   eqBands.map(e => e.gain),
+        compThresholdParam,
+        reverbWetParam: reverbWetGain.gain,
+        compNode,
+      });
+
+      // Schedule region playback
+      t.regions.forEach(r => {
+        if (!r.buffer) return;
+        const dur = regionDurMs(r) / 1000;
+        const regionStartMs = r.offsetMs;
+        const regionEndMs   = r.offsetMs + regionDurMs(r);
+        const playEndMs = durLimitMs !== null ? Math.min(regionEndMs, headMs + durLimitMs) : regionEndMs;
+        if (playEndMs <= headMs) return;
+        const startWithinMs = Math.max(0, headMs - regionStartMs);
+        const whenDelayMs   = Math.max(0, regionStartMs - headMs);
+        const offsetIntoBuf = (r.trimStartMs + startWithinMs) / 1000;
+        const remaining = Math.min(
+          dur - startWithinMs / 1000,
+          (playEndMs - Math.max(regionStartMs, headMs)) / 1000,
+        );
+        if (remaining <= 0) return;
+        const src = (ctx as AudioContext).createBufferSource();
+        src.buffer = r.buffer;
+        const rg = (ctx as AudioContext).createGain();
+        const peak = dbToLinear(r.clipGainDb || 0);
+        const regionStartTime = startCtxTime + whenDelayMs / 1000;
+        const regionEndTime   = regionStartTime + remaining;
+        const fadeInS  = Math.min(r.fadeInMs  / 1000, remaining);
+        const fadeOutS = Math.min(r.fadeOutMs / 1000, remaining);
+        const fadeInConsumedS = Math.max(0, Math.min(fadeInS, startWithinMs / 1000));
+        if (fadeInS > fadeInConsumedS) {
+          rg.gain.setValueAtTime(0.0001, regionStartTime);
+          rg.gain.exponentialRampToValueAtTime(peak, regionStartTime + (fadeInS - fadeInConsumedS));
+        } else {
+          rg.gain.setValueAtTime(peak, regionStartTime);
+        }
+        if (fadeOutS > 0) {
+          const fadeOutStart = Math.max(regionStartTime, regionEndTime - fadeOutS);
+          rg.gain.setValueAtTime(peak, fadeOutStart);
+          rg.gain.exponentialRampToValueAtTime(0.0001, regionEndTime);
+        }
+        src.connect(rg).connect(trackGain);
+        src.start(regionStartTime, offsetIntoBuf, remaining);
+        sources.push(src);
+      });
+    });
+
+    // Sidechain follower analysers (second pass)
+    stateRef.current.tracks.forEach(t => {
+      if (!t.sidechainSourceId) return;
+      const srcTap = trackTaps.get(t.sidechainSourceId);
+      if (!srcTap) return;
+      if (sidechainFollowAnalysers.has(t.sidechainSourceId)) return;
+      const an = (ctx as AudioContext).createAnalyser();
+      an.fftSize = 256;
+      srcTap.connect(an);
+      sidechainFollowAnalysers.set(t.sidechainSourceId, an);
+    });
+
+    return { sources, trackAnalysers, masterAnalyser, masterLAnalyser, masterRAnalyser, masterKWeightedAnalyser, sidechainGains, sidechainFollowAnalysers, trackParams };
+  };
+
+  // ── Schedule automation on the actual AudioParams ──────────────
+
+  const scheduleAutomation = (
+    ctx: BaseAudioContext,
+    startCtxTime: number,
+    headMs: number,
+    durLimitMs: number | null,
+    trackParams: Map<string, TrackAudioParams>,
+  ) => {
+    const segEnd = durLimitMs !== null ? headMs + durLimitMs : Infinity;
+    stateRef.current.tracks.forEach(t => {
+      const params = trackParams.get(t.id);
+      if (!params) return;
+      for (const lane of t.automationLanes) {
+        if (lane.points.length === 0) continue;
+        const param = automationParamForLane(lane.param, params);
+        if (!param) continue;
+        // Automation values are stored in the "natural" units of the param spec.
+        // For volume (dB) we need to convert to linear gain.
+        // For everything else (pan, eq dB band gains, comp threshold dB, reverb wet 0..1)
+        // the AudioParam expects the same units as we store.
+        const toAudio = lane.param === "volume"
+          ? (v: number) => dbToLinear(v)
+          : (v: number) => v;
+
+        // Initial value at headMs
+        const initVal = interpolateLane(lane, headMs);
+        if (initVal === null) continue;
+        try { param.cancelScheduledValues(startCtxTime); } catch {}
+        param.setValueAtTime(toAudio(initVal), startCtxTime);
+        const sorted = [...lane.points].sort((a, b) => a.timeMs - b.timeMs);
+        for (const p of sorted) {
+          if (p.timeMs <= headMs) continue;
+          if (p.timeMs > segEnd) break;
+          const targetCtxTime = startCtxTime + (p.timeMs - headMs) / 1000;
+          param.linearRampToValueAtTime(toAudio(p.value), targetCtxTime);
+        }
+      }
+    });
+  };
+
+  const automationParamForLane = (param: AutomationParam, p: TrackAudioParams): AudioParam | null => {
+    switch (param) {
+      case "volume": return p.trackGainParam;
+      case "pan":    return p.panParam;
+      case "comp_threshold": return p.compThresholdParam || null;
+      case "reverb_wet":     return p.reverbWetParam;
+      default: {
+        const idx = EQ_PARAM_TO_BAND_IDX[param];
+        if (idx === undefined) return null;
+        return p.eqGainParams[idx] || null;
+      }
+    }
+  };
+
+  // ── Playback ──────────────────────────────────────────────────
+
+  const stop = useCallback(() => {
+    sourcesRef.current.forEach(s => { try { s.stop(); } catch {} });
+    sourcesRef.current = [];
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    setPlaying(false);
+    meterLevelsRef.current.master = 0;
+    meterLevelsRef.current.perTrack.clear();
+    compReductionRef.current.clear();
+    setMeterTick(n => n + 1);
+  }, []);
+  useEffect(() => { stopRef.current = stop; }, [stop]);
+
+  const play = useCallback(() => {
+    const ctx = getCtx();
+    if (ctx.state === "suspended") ctx.resume();
+    stop();
+    const now = ctx.currentTime;
+    playStartRef.current = now;
+
+    let head = playheadMs;
+    const useLoop = loopEnabled && loopRange && loopRange.endMs > loopRange.startMs;
+    if (useLoop && (head < loopRange!.startMs || head >= loopRange!.endMs)) {
+      head = loopRange!.startMs;
+      setPlayheadMs(head);
+    }
+    playFromRef.current = head;
+    const segmentDurMs = useLoop ? loopRange!.endMs - head : null;
+
+    const built = buildAndStart(ctx, now, head, segmentDurMs, { withMeters: true });
+    sourcesRef.current = built.sources;
+    trackAnalysersRef.current = built.trackAnalysers;
+    masterAnalyserRef.current = built.masterAnalyser;
+    masterLAnalyserRef.current = built.masterLAnalyser;
+    masterRAnalyserRef.current = built.masterRAnalyser;
+    masterKWeightedRef.current = built.masterKWeightedAnalyser;
+    sidechainGainsRef.current = built.sidechainGains;
+    sidechainFollowRef.current = built.sidechainFollowAnalysers;
+    trackParamsRef.current = built.trackParams;
+
+    // Pre-schedule automation
+    scheduleAutomation(ctx, now, head, segmentDurMs, built.trackParams);
+
+    if (clickEnabledRef.current) {
+      const beatMs = 60000 / bpmRef.current;
+      const nextBeatIdx = Math.ceil(head / beatMs);
+      clickNextBeatIdxRef.current = nextBeatIdx;
+      clickNextBeatTimeRef.current = now + (nextBeatIdx * beatMs - head) / 1000;
+    }
+
+    setPlaying(true);
+
+    const tdBuf = new Uint8Array(1024);
+    const masterBuf = new Uint8Array(1024);
+
+    const tick = () => {
+      const ctx2 = audioCtxRef.current;
+      if (!ctx2) return;
+      const elapsed = (ctx2.currentTime - playStartRef.current) * 1000;
+      let head2 = playFromRef.current + elapsed;
+
+      // Loop wrap
+      if (useLoop && head2 >= loopRange!.endMs) {
+        sourcesRef.current.forEach(s => { try { s.stop(); } catch {} });
+        sourcesRef.current = [];
+        const newStart = ctx2.currentTime;
+        playStartRef.current = newStart;
+        playFromRef.current = loopRange!.startMs;
+        head2 = loopRange!.startMs;
+        const seg = loopRange!.endMs - loopRange!.startMs;
+        const built2 = buildAndStart(ctx2, newStart, loopRange!.startMs, seg, { withMeters: true });
+        sourcesRef.current = built2.sources;
+        trackAnalysersRef.current = built2.trackAnalysers;
+        masterAnalyserRef.current = built2.masterAnalyser;
+        masterLAnalyserRef.current = built2.masterLAnalyser;
+        masterRAnalyserRef.current = built2.masterRAnalyser;
+        masterKWeightedRef.current = built2.masterKWeightedAnalyser;
+        sidechainGainsRef.current = built2.sidechainGains;
+        sidechainFollowRef.current = built2.sidechainFollowAnalysers;
+        trackParamsRef.current = built2.trackParams;
+        scheduleAutomation(ctx2, newStart, loopRange!.startMs, seg, built2.trackParams);
+        if (clickEnabledRef.current) {
+          const beatMs = 60000 / bpmRef.current;
+          const nextBeatIdx = Math.ceil(loopRange!.startMs / beatMs);
+          clickNextBeatIdxRef.current = nextBeatIdx;
+          clickNextBeatTimeRef.current = newStart + (nextBeatIdx * beatMs - loopRange!.startMs) / 1000;
+        }
+      }
+
+      setPlayheadMs(head2);
+
+      // Click scheduler
+      if (clickEnabledRef.current) {
+        const beatMs = 60000 / bpmRef.current;
+        const beatS  = beatMs / 1000;
+        const horizon = ctx2.currentTime + 0.5;
+        while (clickNextBeatTimeRef.current < horizon) {
+          const accent = clickNextBeatIdxRef.current % 4 === 0;
+          scheduleClickAt(ctx2, clickNextBeatTimeRef.current, accent);
+          clickNextBeatTimeRef.current += beatS;
+          clickNextBeatIdxRef.current  += 1;
+        }
+      }
+
+      // Meters
+      const ma = masterAnalyserRef.current;
+      if (ma) {
+        ma.getByteTimeDomainData(masterBuf);
+        let m = 0;
+        for (let i = 0; i < masterBuf.length; i++) {
+          const v = Math.abs(masterBuf[i] - 128) / 128;
+          if (v > m) m = v;
+        }
+        meterLevelsRef.current.master = m;
+      }
+      const sourceLevels = new Map<string, number>();
+      trackAnalysersRef.current.forEach((an, tid) => {
+        an.getByteTimeDomainData(tdBuf);
+        let m = 0;
+        for (let i = 0; i < an.fftSize; i++) {
+          const v = Math.abs(tdBuf[i] - 128) / 128;
+          if (v > m) m = v;
+        }
+        meterLevelsRef.current.perTrack.set(tid, m);
+        sourceLevels.set(tid, m);
+      });
+      // Compressor reduction (per-track)
+      trackParamsRef.current.forEach((p, tid) => {
+        if (p.compNode) compReductionRef.current.set(tid, (p.compNode as any).reduction || 0);
+      });
+
+      // LUFS momentary (BS.1770 simplified — K-weighted mean square)
+      const kAn = masterKWeightedRef.current;
+      if (kAn) {
+        const buf = new Float32Array(kAn.fftSize);
+        kAn.getFloatTimeDomainData(buf);
+        let sumSq = 0;
+        for (let i = 0; i < buf.length; i++) sumSq += buf[i] * buf[i];
+        const meanSq = sumSq / buf.length;
+        const lufs = meanSq > 1e-10 ? -0.691 + 10 * Math.log10(meanSq) : -Infinity;
+        lufsMomentaryRef.current = lufs;
+      }
+      // Stereo correlation (mean(L*R) / sqrt(mean(L²)*mean(R²)))
+      const lAn = masterLAnalyserRef.current, rAn = masterRAnalyserRef.current;
+      if (lAn && rAn) {
+        const lBuf = new Float32Array(lAn.fftSize);
+        const rBuf = new Float32Array(rAn.fftSize);
+        lAn.getFloatTimeDomainData(lBuf);
+        rAn.getFloatTimeDomainData(rBuf);
+        let sumLR = 0, sumLL = 0, sumRR = 0;
+        for (let i = 0; i < lBuf.length; i++) {
+          sumLR += lBuf[i] * rBuf[i];
+          sumLL += lBuf[i] * lBuf[i];
+          sumRR += rBuf[i] * rBuf[i];
+        }
+        const denom = Math.sqrt(sumLL * sumRR);
+        correlationRef.current = denom > 1e-12 ? sumLR / denom : 0;
+      }
+      // Sidechain duck
+      stateRef.current.tracks.forEach(t => {
+        if (!t.sidechainSourceId) return;
+        const duck = sidechainGainsRef.current.get(t.id);
+        if (!duck) return;
+        const srcLevel = sourceLevels.get(t.sidechainSourceId) || 0;
+        const driveAmt = Math.max(0, Math.min(1, (srcLevel - 0.05) / 0.45));
+        const reductionDb = -t.sidechainAmountDb * driveAmt;
+        const targetGain = dbToLinear(reductionDb);
+        duck.gain.setTargetAtTime(targetGain, ctx2.currentTime, 0.03);
+      });
+      setMeterTick(n => (n + 1) & 0x3fffffff);
+
+      if (!useLoop && head2 >= totalDurMs) {
+        stop();
+        setPlayheadMs(totalDurMs);
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, [stop, playheadMs, totalDurMs, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp, loopEnabled, loopRange]);
+
+  useEffect(() => { playRef.current = play; }, [play]);
+
+  const returnToStart = useCallback(() => {
+    stop();
+    setPlayheadMs(loopEnabled && loopRange ? loopRange.startMs : 0);
+  }, [stop, loopEnabled, loopRange]);
+
+  // ── Recording (punch-in allowed) ──────────────────────────────
+
+  const toggleRecord = useCallback(async () => {
+    if (recording) {
+      const r = recRef.current;
+      if (r) r.mr.stop();
+      return;
+    }
+    const armed = tracks.find(t => t.armed);
+    if (!armed) { setStatus("Arm a track first (⏺ button)."); return; }
+    if (!recordArmed) { setStatus("Record-arm is off. Toggle ⏺ in toolbar."); return; }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      const chunks: Blob[] = [];
+      mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      mr.onstop = async () => {
+        if (liveRecRef.current) {
+          cancelAnimationFrame(liveRecRef.current.rafId);
+          try { liveRecRef.current.source.disconnect(); } catch {}
+          liveRecRef.current = null;
+          setLiveRecTick(n => n + 1);
+        }
+        stream.getTracks().forEach(t => t.stop());
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        const ab = await blob.arrayBuffer();
+        const ctx = getCtx();
+        try {
+          const buffer = await ctx.decodeAudioData(ab);
+          const peaks  = extractPeaks(buffer);
+          const url = URL.createObjectURL(blob);
+          const atMs = recRef.current?.startMs || 0;
+          const region = newRegion({ buffer, peaks, filePath: url, offsetMs: atMs });
+          dispatch({ type: "ADD_REGION", trackId: armed.id, region });
+          setStatus("✓ Recording placed");
+        } catch (err: any) {
+          setStatus(`✗ Decode failed: ${err?.message || err}`);
+        }
+        setRecording(false);
+        recRef.current = null;
+      };
+      recRef.current = { mr, chunks, trackId: armed.id, startMs: playheadMs };
+
+      const ctx = getCtx();
+      if (ctx.state === "suspended") await ctx.resume();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      const sampleBuf = new Float32Array(analyser.fftSize);
+      const samplePeriodMs = 33;
+      const startedAt = performance.now();
+      liveRecRef.current = {
+        trackId: armed.id, startMs: playheadMs, startedAt,
+        peaks: [], samplePeriodMs, analyser, source, rafId: 0,
+      };
+      let nextSampleAt = startedAt;
+      const tickRec = () => {
+        const lr = liveRecRef.current;
+        if (!lr) return;
+        const now = performance.now();
+        if (now >= nextSampleAt) {
+          analyser.getFloatTimeDomainData(sampleBuf);
+          let max = 0;
+          for (let i = 0; i < sampleBuf.length; i++) {
+            const v = Math.abs(sampleBuf[i]);
+            if (v > max) max = v;
+          }
+          lr.peaks.push(max);
+          nextSampleAt += samplePeriodMs;
+          setLiveRecTick(n => n + 1);
+        }
+        lr.rafId = requestAnimationFrame(tickRec);
+      };
+      tickRec();
+
+      mr.start();
+      setRecording(true);
+      setStatus("● Recording...");
+    } catch (e: any) {
+      setStatus(`✗ Mic error: ${e?.message || e}`);
+    }
+  }, [recording, tracks, recordArmed, playheadMs]);
+
+  // ── Export WAV (mirrors live chain + bakes automation + sidechain) ──
+
+  const exportWav = useCallback(async () => {
+    const liveTracks = tracks.filter(t => t.regions.some(r => r.buffer) && !t.muted && (!anySolo || t.solo));
+    if (!liveTracks.length) { setStatus("Nothing to export."); return; }
+    const sr = 44100;
+    const totalSec = totalDurMs / 1000;
+
+    // Pre-pass: compute sidechain envelopes
+    const sidechainSourceIds = new Set<string>();
+    for (const t of liveTracks) if (t.sidechainSourceId) sidechainSourceIds.add(t.sidechainSourceId);
+    const envelopes = new Map<string, Float32Array>();
+    if (sidechainSourceIds.size > 0) {
+      setStatus("Computing sidechain envelopes...");
+      for (const srcId of sidechainSourceIds) {
+        const src = liveTracks.find(t => t.id === srcId);
+        if (!src) continue;
+        const srcCtx = new OfflineAudioContext(1, Math.ceil(totalSec * sr), sr);
+        const g = srcCtx.createGain(); g.gain.value = 1;
+        g.connect(srcCtx.destination);
+        src.regions.forEach(r => {
+          if (!r.buffer) return;
+          const node = srcCtx.createBufferSource(); node.buffer = r.buffer;
+          node.connect(g);
+          node.start(r.offsetMs / 1000, r.trimStartMs / 1000, regionDurMs(r) / 1000);
+        });
+        const srcRendered = await srcCtx.startRendering();
+        const data = srcRendered.getChannelData(0);
+        const envBuf = new Float32Array(data.length);
+        let env = 0;
+        const atk = Math.exp(-1 / (sr * 0.005));
+        const rel = Math.exp(-1 / (sr * 0.150));
+        for (let i = 0; i < data.length; i++) {
+          const x = Math.abs(data[i]);
+          env = x > env ? atk * env + (1 - atk) * x : rel * env + (1 - rel) * x;
+          envBuf[i] = env;
+        }
+        envelopes.set(srcId, envBuf);
+      }
+    }
+
+    setStatus("Rendering mix...");
+    const offline = new OfflineAudioContext(2, Math.ceil(totalSec * sr), sr);
+
+    // Master: gain → EQ → optional comp → optional limiter → destination
+    const master = offline.createGain();
+    master.gain.value = dbToLinear(masterGainDb);
+    let masterTail: AudioNode = master;
+    EQ_FREQS.forEach((f, i) => {
+      const node = offline.createBiquadFilter();
+      node.type = i === 0 ? "lowshelf" : i === 6 ? "highshelf" : "peaking";
+      node.frequency.value = f;
+      if (node.type === "peaking") node.Q.value = 1;
+      node.gain.value = clamp(masterEq7[i] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+      masterTail.connect(node); masterTail = node;
+    });
+    if (masterComp.on) {
+      const mc = offline.createDynamicsCompressor();
+      mc.threshold.value = masterComp.threshold;
+      mc.ratio.value     = masterComp.ratio;
+      mc.attack.value    = masterComp.attack / 1000;
+      mc.release.value   = masterComp.release / 1000;
+      mc.knee.value      = 6;
+      masterTail.connect(mc);
+      const mkup = offline.createGain();
+      mkup.gain.value = dbToLinear(masterComp.makeup);
+      mc.connect(mkup);
+      masterTail = mkup;
+    }
+    if (limiterEnabled) {
+      const lim = offline.createDynamicsCompressor();
+      lim.threshold.value = limiterThresh; lim.ratio.value = 20;
+      lim.attack.value = 0.003; lim.release.value = 0.25; lim.knee.value = 0;
+      masterTail.connect(lim); masterTail = lim;
+    }
+    masterTail.connect(offline.destination);
+
+    // Per-track AudioParam map for offline automation scheduling
+    const offlineParams = new Map<string, TrackAudioParams>();
+
+    liveTracks.forEach(t => {
+      const trackGain = offline.createGain();
+      trackGain.gain.value = dbToLinear(t.gainDb);
+      const panNode = offline.createStereoPanner(); panNode.pan.value = clamp(t.pan, -1, 1);
+      const eqBands: BiquadFilterNode[] = EQ_FREQS.map((f, i) => {
+        const node = offline.createBiquadFilter();
+        node.type = i === 0 ? "lowshelf" : i === 6 ? "highshelf" : "peaking";
+        node.frequency.value = f;
+        if (node.type === "peaking") node.Q.value = 1;
+        node.gain.value = clamp(t.eq7[i] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+        return node;
+      });
+      let chainTail: AudioNode = trackGain;
+      trackGain.connect(panNode); chainTail = panNode;
+      for (const e of eqBands) { chainTail.connect(e); chainTail = e; }
+      if (t.saturation.on && t.saturation.drive > 0) {
+        const ws = offline.createWaveShaper();
+        ws.curve = makeSatCurve(t.saturation.drive);
+        ws.oversample = "2x";
+        chainTail.connect(ws); chainTail = ws;
+      }
+      let compThresholdParam: AudioParam | undefined;
+      if (t.compressor.on) {
+        const comp = offline.createDynamicsCompressor();
+        comp.threshold.value = t.compressor.threshold;
+        comp.ratio.value     = t.compressor.ratio;
+        comp.attack.value    = t.compressor.attack / 1000;
+        comp.release.value   = t.compressor.release / 1000;
+        comp.knee.value      = 6;
+        chainTail.connect(comp);
+        compThresholdParam = comp.threshold;
+        const makeup = offline.createGain();
+        makeup.gain.value = dbToLinear(t.compressor.makeup);
+        comp.connect(makeup);
+        chainTail = makeup;
+      }
+      // Sidechain (baked envelope)
+      const duckGain = offline.createGain();
+      duckGain.gain.value = 1;
+      if (t.sidechainSourceId && envelopes.has(t.sidechainSourceId)) {
+        const env = envelopes.get(t.sidechainSourceId)!;
+        const stride = Math.max(1, Math.floor(sr / 200));
+        const downLen = Math.floor(env.length / stride);
+        const curve = new Float32Array(downLen);
+        for (let i = 0; i < downLen; i++) {
+          const srcLevel = env[i * stride];
+          const driveAmt = Math.max(0, Math.min(1, (srcLevel - 0.05) / 0.45));
+          curve[i] = dbToLinear(-t.sidechainAmountDb * driveAmt);
+        }
+        duckGain.gain.setValueCurveAtTime(curve, 0, totalSec);
+      }
+      chainTail.connect(duckGain).connect(master);
+
+      // Per-track parallel reverb send
+      const reverbWetGain = offline.createGain();
+      reverbWetGain.gain.value = t.reverb.on ? clamp(t.reverb.wet, 0, 1) : 0;
+      const conv = offline.createConvolver();
+      conv.buffer = makeReverbIR(offline, t.reverb.type, t.reverb.size);
+      chainTail.connect(reverbWetGain).connect(conv).connect(master);
+
+      offlineParams.set(t.id, {
+        trackGainParam: trackGain.gain,
+        panParam:       panNode.pan,
+        eqGainParams:   eqBands.map(e => e.gain),
+        compThresholdParam,
+        reverbWetParam: reverbWetGain.gain,
+      });
+
+      // Region playback
+      t.regions.forEach(r => {
+        if (!r.buffer) return;
+        const src = offline.createBufferSource(); src.buffer = r.buffer;
+        const rg = offline.createGain();
+        const peak = dbToLinear(r.clipGainDb || 0);
+        const startS = r.offsetMs / 1000;
+        const durS   = regionDurMs(r) / 1000;
+        const endS   = startS + durS;
+        const fiS = Math.min(r.fadeInMs  / 1000, durS);
+        const foS = Math.min(r.fadeOutMs / 1000, durS);
+        if (fiS > 0) {
+          rg.gain.setValueAtTime(0.0001, startS);
+          rg.gain.exponentialRampToValueAtTime(peak, startS + fiS);
+        } else {
+          rg.gain.setValueAtTime(peak, startS);
+        }
+        if (foS > 0) {
+          rg.gain.setValueAtTime(peak, endS - foS);
+          rg.gain.exponentialRampToValueAtTime(0.0001, endS);
+        }
+        src.connect(rg).connect(trackGain);
+        src.start(startS, r.trimStartMs / 1000, durS);
+      });
+    });
+
+    // Bake automation curves into offline AudioParams
+    liveTracks.forEach(t => {
+      const params = offlineParams.get(t.id);
+      if (!params) return;
+      for (const lane of t.automationLanes) {
+        if (lane.points.length === 0) continue;
+        const param = automationParamForLane(lane.param, params);
+        if (!param) continue;
+        const toAudio = lane.param === "volume" ? (v: number) => dbToLinear(v) : (v: number) => v;
+        const sorted = [...lane.points].sort((a, b) => a.timeMs - b.timeMs);
+        const initVal = sorted[0].value;
+        try { param.cancelScheduledValues(0); } catch {}
+        param.setValueAtTime(toAudio(initVal), 0);
+        for (const p of sorted) {
+          param.linearRampToValueAtTime(toAudio(p.value), p.timeMs / 1000);
+        }
+      }
+    });
+
+    const rendered = await offline.startRendering();
+    const wav = encodeWav(rendered);
+    const ether = (window as any).ether;
+    if (ether?.dialog?.saveFile && ether?.fs?.writeFile) {
+      try {
+        const res = await ether.dialog.saveFile({
+          defaultPath: `StudioPro_Mix_${Date.now()}.wav`,
+          filters: [{ name: "WAV", extensions: ["wav"] }],
+        });
+        const path = typeof res === "string" ? res : res?.filePath;
+        if (path) {
+          await ether.fs.writeFile(path, new Uint8Array(wav));
+          setStatus(`✓ Exported: ${path}`);
+          return;
+        }
+      } catch (e: any) {
+        setStatus(`✗ Save failed: ${e?.message || e}`);
+      }
+    }
+    const blob = new Blob([wav], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `StudioPro_Mix_${Date.now()}.wav`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setStatus("✓ Exported (downloaded)");
+  }, [tracks, anySolo, totalDurMs, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp]);
+
+  // ── Export stems: one WAV per track + the mix ────────────────
+
+  const exportStems = useCallback(async () => {
+    const stemTracks = tracks.filter(t => t.regions.some(r => r.buffer));
+    if (!stemTracks.length) { setStatus("Nothing to export."); return; }
+    const ether = (window as any).ether;
+    const dirRes = ether?.dialog?.saveFile && await ether.dialog.saveFile({
+      defaultPath: `StudioPro_Stems_${Date.now()}.wav`,
+      filters: [{ name: "WAV", extensions: ["wav"] }],
+    });
+    const basePath = typeof dirRes === "string" ? dirRes : dirRes?.filePath;
+    if (ether?.dialog?.saveFile && !basePath) { setStatus("Stem export cancelled."); return; }
+
+    const sr = 44100;
+    const totalSec = totalDurMs / 1000;
+    let exported = 0;
+
+    for (const t of stemTracks) {
+      setStatus(`Rendering stem ${exported + 1}/${stemTracks.length}: ${t.name}...`);
+      const offline = new OfflineAudioContext(2, Math.ceil(totalSec * sr), sr);
+      // Stems render through the track's own FX chain, no master EQ/comp/limiter
+      const trackGain = offline.createGain();
+      trackGain.gain.value = dbToLinear(t.gainDb);
+      const panNode = offline.createStereoPanner(); panNode.pan.value = clamp(t.pan, -1, 1);
+      let chainTail: AudioNode = trackGain;
+      trackGain.connect(panNode); chainTail = panNode;
+      EQ_FREQS.forEach((f, i) => {
+        const node = offline.createBiquadFilter();
+        node.type = i === 0 ? "lowshelf" : i === 6 ? "highshelf" : "peaking";
+        node.frequency.value = f;
+        if (node.type === "peaking") node.Q.value = 1;
+        node.gain.value = clamp(t.eq7[i] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+        chainTail.connect(node); chainTail = node;
+      });
+      if (t.saturation.on && t.saturation.drive > 0) {
+        const ws = offline.createWaveShaper();
+        ws.curve = makeSatCurve(t.saturation.drive);
+        ws.oversample = "2x";
+        chainTail.connect(ws); chainTail = ws;
+      }
+      if (t.compressor.on) {
+        const comp = offline.createDynamicsCompressor();
+        comp.threshold.value = t.compressor.threshold;
+        comp.ratio.value = t.compressor.ratio;
+        comp.attack.value = t.compressor.attack / 1000;
+        comp.release.value = t.compressor.release / 1000;
+        comp.knee.value = 6;
+        chainTail.connect(comp);
+        const mkup = offline.createGain();
+        mkup.gain.value = dbToLinear(t.compressor.makeup);
+        comp.connect(mkup);
+        chainTail = mkup;
+      }
+      chainTail.connect(offline.destination);
+      // Reverb in parallel
+      if (t.reverb.on && t.reverb.wet > 0) {
+        const wet = offline.createGain(); wet.gain.value = clamp(t.reverb.wet, 0, 1);
+        const conv = offline.createConvolver(); conv.buffer = makeReverbIR(offline, t.reverb.type, t.reverb.size);
+        chainTail.connect(wet).connect(conv).connect(offline.destination);
+      }
+
+      t.regions.forEach(r => {
+        if (!r.buffer) return;
+        const src = offline.createBufferSource(); src.buffer = r.buffer;
+        const rg = offline.createGain();
+        const peak = dbToLinear(r.clipGainDb || 0);
+        const startS = r.offsetMs / 1000;
+        const durS   = regionDurMs(r) / 1000;
+        const endS   = startS + durS;
+        const fiS = Math.min(r.fadeInMs  / 1000, durS);
+        const foS = Math.min(r.fadeOutMs / 1000, durS);
+        if (fiS > 0) { rg.gain.setValueAtTime(0.0001, startS); rg.gain.exponentialRampToValueAtTime(peak, startS + fiS); }
+        else { rg.gain.setValueAtTime(peak, startS); }
+        if (foS > 0) { rg.gain.setValueAtTime(peak, endS - foS); rg.gain.exponentialRampToValueAtTime(0.0001, endS); }
+        src.connect(rg).connect(trackGain);
+        src.start(startS, r.trimStartMs / 1000, durS);
+      });
+
+      const rendered = await offline.startRendering();
+      const wav = encodeWav(rendered);
+      const safeName = t.name.replace(/[^\w\s-]/g, "_").trim() || `Track${exported + 1}`;
+
+      if (basePath && ether?.fs?.writeFile) {
+        const stemPath = basePath.replace(/\.wav$/i, `_${safeName}.wav`);
+        await ether.fs.writeFile(stemPath, new Uint8Array(wav));
+      } else {
+        const blob = new Blob([wav], { type: "audio/wav" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `StudioPro_Stem_${safeName}.wav`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+      }
+      exported++;
+    }
+
+    setStatus(`✓ Exported ${exported} stem${exported === 1 ? "" : "s"}`);
+  }, [tracks, totalDurMs]);
+
+  // ── Save / Load session JSON ──────────────────────────────────
+
+  const saveSession = useCallback(async () => {
+    // Strip non-serializable fields. AudioBuffers can't be saved; we keep filePath
+    // so we can re-fetch on load. Recorded blob: URLs won't survive a reload —
+    // we drop those regions and warn.
+    let droppedBlobRegions = 0;
+    const tracksJson = tracks.map(t => ({
+      ...t,
+      regions: t.regions
+        .filter(r => {
+          const isBlob = r.filePath?.startsWith("blob:");
+          if (isBlob) droppedBlobRegions++;
+          return r.filePath && !isBlob;
+        })
+        .map(r => ({
+          id: r.id, filePath: r.filePath,
+          offsetMs: r.offsetMs, trimStartMs: r.trimStartMs, trimEndMs: r.trimEndMs,
+          fadeInMs: r.fadeInMs, fadeOutMs: r.fadeOutMs,
+        })),
+    }));
+    const session = {
+      version: 1,
+      tracks: tracksJson,
+      master: { masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp },
+      bpm, zoom,
+      loop: { range: loopRange, enabled: loopEnabled },
+      flags: { clickEnabled, gridEnabled },
+    };
+    const json = JSON.stringify(session, null, 2);
+    const ether = (window as any).ether;
+    if (ether?.dialog?.saveFile && ether?.fs?.writeFile) {
+      try {
+        const res = await ether.dialog.saveFile({
+          defaultPath: `StudioPro_Session_${Date.now()}.json`,
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        const path = typeof res === "string" ? res : res?.filePath;
+        if (path) {
+          await ether.fs.writeFile(path, json);
+          setStatus(`✓ Saved session${droppedBlobRegions ? ` (${droppedBlobRegions} recording(s) skipped — bounce them first)` : ""}`);
+          return;
+        }
+      } catch (e: any) {
+        setStatus(`✗ Save failed: ${e?.message || e}`);
+      }
+    }
+    // Fallback: download
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `StudioPro_Session_${Date.now()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setStatus("✓ Saved session (download)");
+  }, [tracks, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp, bpm, zoom, loopRange, loopEnabled, clickEnabled, gridEnabled]);
+
+  const loadSession = useCallback(async () => {
+    const ether = (window as any).ether;
+    let json: string | null = null;
+    if (ether?.dialog?.openFile && ether?.fs?.readFile) {
+      try {
+        const res = await ether.dialog.openFile({ filters: [{ name: "JSON", extensions: ["json"] }] });
+        const path = typeof res === "string" ? res : res?.filePath;
+        if (!path) return;
+        const buf = await ether.fs.readFile(path);
+        json = new TextDecoder().decode(buf instanceof Uint8Array ? buf : new Uint8Array(buf));
+      } catch (e: any) { setStatus(`✗ Open failed: ${e?.message || e}`); return; }
+    } else {
+      // Fallback: file picker
+      const input = document.createElement("input");
+      input.type = "file"; input.accept = ".json";
+      const file = await new Promise<File | null>(res => {
+        input.onchange = () => res(input.files?.[0] || null);
+        input.click();
+      });
+      if (!file) return;
+      json = await file.text();
+    }
+    if (!json) return;
+    let session: any;
+    try { session = JSON.parse(json); }
+    catch (e) { setStatus("✗ Invalid JSON"); return; }
+
+    setStatus("Loading session — re-fetching audio...");
+    const ctx = getCtx();
+    const restoredTracks: StudioTrack[] = [];
+    for (const tj of session.tracks || []) {
+      const restoredRegions: StudioRegion[] = [];
+      for (const rj of tj.regions || []) {
+        if (!rj.filePath) continue;
+        try {
+          const url = rj.filePath.startsWith("http") || rj.filePath.startsWith("blob:")
+            ? rj.filePath : convertFileSrc(rj.filePath);
+          const resp = await fetch(url);
+          const ab = await resp.arrayBuffer();
+          const buffer = await ctx.decodeAudioData(ab);
+          const peaks = extractPeaks(buffer);
+          restoredRegions.push({
+            ...newRegion({}), ...rj,
+            buffer, peaks,
+          });
+        } catch (e) {
+          // Skip missing files; keep going
+        }
+      }
+      restoredTracks.push({
+        ...newTrack(tj.name || "Track", tj.color || PALETTE[0]),
+        ...tj,
+        regions: restoredRegions,
+      });
+    }
+    dispatch({ type: "REPLACE", tracks: restoredTracks });
+    if (session.master) {
+      if (typeof session.master.masterGainDb === "number") setMasterGainDb(session.master.masterGainDb);
+      if (typeof session.master.limiterEnabled === "boolean") setLimiterEnabled(session.master.limiterEnabled);
+      if (typeof session.master.limiterThresh === "number") setLimiterThresh(session.master.limiterThresh);
+      if (Array.isArray(session.master.masterEq7)) setMasterEq7(session.master.masterEq7);
+      if (session.master.masterComp) setMasterComp(session.master.masterComp);
+    }
+    if (typeof session.bpm === "number") setBpm(session.bpm);
+    if (typeof session.zoom === "number") setZoom(session.zoom);
+    if (session.loop) {
+      if (session.loop.range) setLoopRange(session.loop.range);
+      if (typeof session.loop.enabled === "boolean") setLoopEnabled(session.loop.enabled);
+    }
+    if (session.flags) {
+      if (typeof session.flags.clickEnabled === "boolean") setClickEnabled(session.flags.clickEnabled);
+      if (typeof session.flags.gridEnabled === "boolean") setGridEnabled(session.flags.gridEnabled);
+    }
+    setStatus(`✓ Loaded session (${restoredTracks.length} tracks)`);
+  }, []);
+
+  const sendToDeck = useCallback(async (deck: "A" | "B" | "C") => {
+    const liveTracks = tracks.filter(t => t.regions.some(r => r.buffer) && !t.muted && (!anySolo || t.solo));
+    if (!liveTracks.length) { setStatus("Nothing to send."); return; }
+    const sr = 44100;
+    const offline = new OfflineAudioContext(2, Math.ceil(totalDurMs / 1000 * sr), sr);
+    liveTracks.forEach(t => {
+      const trackGain = offline.createGain();
+      trackGain.gain.value = dbToLinear(t.gainDb);
+      trackGain.connect(offline.destination);
+      t.regions.forEach(r => {
+        if (!r.buffer) return;
+        const src = offline.createBufferSource(); src.buffer = r.buffer;
+        src.connect(trackGain);
+        src.start(r.offsetMs / 1000, r.trimStartMs / 1000, regionDurMs(r) / 1000);
+      });
+    });
+    setStatus(`Rendering for Deck ${deck}...`);
+    const rendered = await offline.startRendering();
+    const wav = encodeWav(rendered);
+    const blob = new Blob([wav], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    window.dispatchEvent(new CustomEvent("ether:deck-load", { detail: { deck, filePath: url, title: `StudioPro Mix` } }));
+    setStatus(`✓ Sent to Deck ${deck}`);
+  }, [tracks, anySolo, totalDurMs]);
+
+  // ── Drag: region move / trim ──────────────────────────────────
+
+  const beginRegionDrag = useCallback((
+    e: React.MouseEvent, trackId: string, regionId: string, mode: "move" | "trim-l" | "trim-r",
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const t = stateRef.current.tracks.find(x => x.id === trackId);
+    const r0 = t?.regions.find(x => x.id === regionId);
+    if (!r0 || !r0.buffer) return;
+    const startX = e.clientX;
+    const orig = { offset: r0.offsetMs, ts: r0.trimStartMs, te: r0.trimEndMs };
+    const dragDurMs = regionDurMs(r0);
+    const playheadSnapshot = playheadMs;
+    const snapTargets: number[] = [0, playheadSnapshot];
+    for (const t of stateRef.current.tracks) {
+      for (const r of t.regions) {
+        if (r.id === regionId) continue;
+        snapTargets.push(r.offsetMs);
+        snapTargets.push(r.offsetMs + regionDurMs(r));
+      }
+    }
+    let currentTrackId = trackId;
+    const trackIdAtPoint = (x: number, y: number): string | null => {
+      const el = document.elementFromPoint(x, y);
+      if (!el) return null;
+      const lane = (el as Element).closest("[data-track-id]");
+      return lane ? (lane as HTMLElement).dataset.trackId || null : null;
+    };
+    const SNAP_PX = 8;
+    const beatMs = 60000 / bpm;
+    const useGridSnap = gridEnabled;
+    const computeSnap = (candidateOffset: number): { offset: number; snapAt: number | null } => {
+      const thresholdMs = xToMs(SNAP_PX);
+      const candStart = candidateOffset;
+      const candEnd   = candidateOffset + dragDurMs;
+      let bestDelta = Infinity;
+      let bestOffset = candidateOffset;
+      let bestTarget: number | null = null;
+      for (const target of snapTargets) {
+        const dStart = target - candStart;
+        const dEnd   = target - candEnd;
+        if (Math.abs(dStart) < thresholdMs && Math.abs(dStart) < Math.abs(bestDelta)) {
+          bestDelta = dStart; bestOffset = candidateOffset + dStart; bestTarget = target;
+        }
+        if (Math.abs(dEnd) < thresholdMs && Math.abs(dEnd) < Math.abs(bestDelta)) {
+          bestDelta = dEnd; bestOffset = candidateOffset + dEnd; bestTarget = target;
+        }
+      }
+      if (useGridSnap) {
+        const gridThresholdMs = xToMs(SNAP_PX * 1.5);
+        const beatNearStart = Math.round(candStart / beatMs) * beatMs;
+        const beatNearEnd   = Math.round(candEnd   / beatMs) * beatMs;
+        const dStart = beatNearStart - candStart;
+        const dEnd   = beatNearEnd   - candEnd;
+        if (Math.abs(dStart) < gridThresholdMs && Math.abs(dStart) < Math.abs(bestDelta)) {
+          bestDelta = dStart; bestOffset = candidateOffset + dStart; bestTarget = beatNearStart;
+        }
+        if (Math.abs(dEnd) < gridThresholdMs && Math.abs(dEnd) < Math.abs(bestDelta)) {
+          bestDelta = dEnd; bestOffset = candidateOffset + dEnd; bestTarget = beatNearEnd;
+        }
+      }
+      return { offset: bestOffset, snapAt: bestTarget };
+    };
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const dms = xToMs(dx);
+      if (mode === "move") {
+        const rawOffset = Math.max(0, orig.offset + dms);
+        const { offset: snappedOffset, snapAt } = computeSnap(rawOffset);
+        setSnapMs(snapAt);
+        const newOffset = Math.max(0, snappedOffset);
+        const targetTrackId = trackIdAtPoint(ev.clientX, ev.clientY);
+        if (targetTrackId && targetTrackId !== currentTrackId) {
+          dispatch({ type: "MOVE_REGION_TO_TRACK", srcTrackId: currentTrackId, destTrackId: targetTrackId, regionId, offsetMs: newOffset });
+          currentTrackId = targetTrackId;
+          setSelection({ trackId: targetTrackId, regionId });
+        } else {
+          dispatch({ type: "MOVE_REGION", trackId: currentTrackId, regionId, offsetMs: newOffset });
+        }
+      } else if (mode === "trim-l") {
+        dispatch({ type: "TRIM_REGION", trackId, regionId, trimStartMs: orig.ts + dms, offsetMs: orig.offset + dms });
+      } else {
+        dispatch({ type: "TRIM_REGION", trackId, regionId, trimEndMs: orig.te - dms });
+      }
+    };
+    const onUp = () => {
+      setSnapMs(null);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [xToMs, playheadMs, bpm, gridEnabled]);
+
+  const beginFadeDrag = useCallback((
+    e: React.MouseEvent, trackId: string, regionId: string, side: "in" | "out",
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const t = stateRef.current.tracks.find(x => x.id === trackId);
+    const r0 = t?.regions.find(x => x.id === regionId);
+    if (!r0 || !r0.buffer) return;
+    const startX = e.clientX;
+    const orig = side === "in" ? r0.fadeInMs : r0.fadeOutMs;
+    const maxMs = regionDurMs(r0) / 2;
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      const dms = xToMs(dx);
+      const next = Math.max(0, Math.min(maxMs, orig + (side === "in" ? dms : -dms)));
+      dispatch({
+        type: "UPDATE_REGION", trackId, regionId,
+        patch: side === "in" ? { fadeInMs: next } : { fadeOutMs: next },
+      });
+    };
+    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [xToMs]);
+
+  const onLaneDrop = useCallback((e: React.DragEvent, trackId: string) => {
+    e.preventDefault();
+    let dropMs = 0;
+    if (timelineRef.current) {
+      const rect = timelineRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+      dropMs = Math.max(0, xToMs(x));
+    }
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length > 1) {
+      // Bulk import: first file lands on this track at drop position;
+      // additional files create new tracks below.
+      const url0 = URL.createObjectURL(files[0]);
+      loadAudio(trackId, url0, { title: files[0].name, atMs: dropMs });
+      for (let i = 1; i < files.length; i++) {
+        const f = files[i];
+        // Add a track and load (the timeout ensures track exists in stateRef before load)
+        dispatch({ type: "ADD_TRACK", name: f.name });
+        const url = URL.createObjectURL(f);
+        const idxAtAdd = i;
+        setTimeout(() => {
+          const newest = (stateRef.current?.tracks || [])[stateRef.current.tracks.length - files.length + idxAtAdd];
+          if (newest) loadAudio(newest.id, url, { title: f.name, atMs: dropMs });
+        }, 30 * i);
+      }
+      setStatus(`Importing ${files.length} files...`);
+      return;
+    }
+    const file = files[0];
+    if (!file) {
+      const path = e.dataTransfer.getData("text/plain");
+      if (path) loadAudio(trackId, path, { atMs: dropMs });
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    loadAudio(trackId, url, { title: file.name, atMs: dropMs });
+  }, [loadAudio, xToMs]);
+
+  // ── Ctrl/Cmd + wheel = zoom around cursor ─────────────────────
+
+  useEffect(() => {
+    const el = timelineRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cursorViewportX = e.clientX - rect.left;
+      const cursorContentX  = cursorViewportX + el.scrollLeft;
+      const cursorMs = (cursorContentX / pps) * 1000;
+      const factor = e.deltaY > 0 ? 1 / 1.15 : 1.15;
+      setZoom(prev => {
+        const next = Math.max(0.25, Math.min(8, prev * factor));
+        requestAnimationFrame(() => {
+          if (!timelineRef.current) return;
+          const newPps = BASE_PPS * next;
+          const newCursorContentX = (cursorMs / 1000) * newPps;
+          timelineRef.current.scrollLeft = Math.max(0, newCursorContentX - cursorViewportX);
+        });
+        return next;
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [pps]);
+
+  const onRulerMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!timelineRef.current) return;
+    const rect = timelineRef.current.getBoundingClientRect();
+    const startX = e.clientX;
+    const startMs = Math.max(0, xToMs(startX - rect.left + timelineRef.current.scrollLeft));
+    let dragging = false;
+    let endMs = startMs;
+    const DRAG_THRESHOLD = 3;
+    const onMove = (ev: MouseEvent) => {
+      if (!timelineRef.current) return;
+      const dx = ev.clientX - startX;
+      if (!dragging && Math.abs(dx) >= DRAG_THRESHOLD) dragging = true;
+      if (!dragging) return;
+      endMs = Math.max(0, xToMs(ev.clientX - rect.left + timelineRef.current.scrollLeft));
+      const lo = Math.min(startMs, endMs);
+      const hi = Math.max(startMs, endMs);
+      if (hi - lo >= 50) setLoopRange({ startMs: lo, endMs: hi });
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      if (dragging) {
+        setLoopEnabled(true);
+        setStatus("Loop set · ↻ in toolbar to disable");
+      } else {
+        setPlayheadMs(startMs);
+      }
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [xToMs]);
+
+  // ── FX window helpers ─────────────────────────────────────────
+
+  const fxKey = (trackId: string, type: FxWindowType) => `${trackId}:${type}`;
+
+  const toggleFxWindow = useCallback((trackId: string, type: FxWindowType) => {
+    setOpenFxWindows(prev => {
+      const next = new Map(prev);
+      const k = `${trackId}:${type}`;
+      if (next.has(k)) {
+        next.delete(k);
+      } else {
+        // Stagger by track index so multiple tracks' windows don't perfectly overlap
+        const trackIdx = stateRef.current.tracks.findIndex(t => t.id === trackId);
+        const z = ++fxZRef.current;
+        next.set(k, {
+          trackId, type,
+          x: FX_WINDOW_DEFAULT_X[type] + (trackIdx >= 0 ? trackIdx * 24 : 0),
+          y: 120 + (trackIdx >= 0 ? trackIdx * 24 : 0),
+          z,
+        });
+      }
+      return next;
+    });
+  }, []);
+  const moveFxWindow = useCallback((key: string, x: number, y: number) => {
+    setOpenFxWindows(prev => {
+      const next = new Map(prev);
+      const w = next.get(key);
+      if (w) next.set(key, { ...w, x, y });
+      return next;
+    });
+  }, []);
+  const bringFxToFront = useCallback((key: string) => {
+    setOpenFxWindows(prev => {
+      const next = new Map(prev);
+      const w = next.get(key);
+      if (!w) return prev;
+      const z = ++fxZRef.current;
+      next.set(key, { ...w, z });
+      return next;
+    });
+  }, []);
+
+  // Close FX windows when the underlying track is removed
+  useEffect(() => {
+    setOpenFxWindows(prev => {
+      const next = new Map(prev);
+      let changed = false;
+      for (const [k, w] of Array.from(next.entries())) {
+        if (!tracks.find(t => t.id === w.trackId)) { next.delete(k); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [tracks]);
+
+  // ── Render mix to AudioBuffer (helper for normalize / cartwall / stream) ──
+
+  const renderMixOffline = useCallback(async (): Promise<AudioBuffer | null> => {
+    const liveTracks = tracks.filter(t => t.regions.some(r => r.buffer) && !t.muted && (!anySolo || t.solo));
+    if (!liveTracks.length) return null;
+    const sr = 44100;
+    const totalSec = totalDurMs / 1000;
+    const offline = new OfflineAudioContext(2, Math.ceil(totalSec * sr), sr);
+    // Use a simple direct mix (bypass master FX for normalize-target purity)
+    liveTracks.forEach(t => {
+      const trackGain = offline.createGain();
+      trackGain.gain.value = dbToLinear(t.gainDb);
+      trackGain.connect(offline.destination);
+      t.regions.forEach(r => {
+        if (!r.buffer) return;
+        const src = offline.createBufferSource(); src.buffer = r.buffer;
+        const peak = dbToLinear(r.clipGainDb || 0);
+        const rg = offline.createGain();
+        rg.gain.setValueAtTime(peak, r.offsetMs / 1000);
+        src.connect(rg).connect(trackGain);
+        src.start(r.offsetMs / 1000, r.trimStartMs / 1000, regionDurMs(r) / 1000);
+      });
+    });
+    return await offline.startRendering();
+  }, [tracks, anySolo, totalDurMs]);
+
+  // ── Auto-normalize: measure rendered LUFS, adjust master gain to target ──
+
+  const measureIntegratedLUFS = (rendered: AudioBuffer): number => {
+    // K-weighted approximation using RMS over the rendered buffer.
+    // Simplified: compute mean square of all samples (no real K-weighting filter
+    // since we'd need OfflineAudioContext with biquads — but the offset between
+    // RMS dBFS and LUFS is roughly -0.5 to -1 for typical content).
+    let sumSq = 0;
+    let n = 0;
+    for (let ch = 0; ch < rendered.numberOfChannels; ch++) {
+      const data = rendered.getChannelData(ch);
+      for (let i = 0; i < data.length; i++) { sumSq += data[i] * data[i]; n++; }
+    }
+    const ms = sumSq / Math.max(1, n);
+    return ms > 1e-10 ? -0.691 + 10 * Math.log10(ms) : -Infinity;
+  };
+
+  const autoNormalize = useCallback(async (target: number) => {
+    setStatus(`Measuring loudness...`);
+    const rendered = await renderMixOffline();
+    if (!rendered) { setStatus("Nothing to normalize."); return; }
+    const integrated = measureIntegratedLUFS(rendered);
+    if (!isFinite(integrated)) { setStatus("Mix is silent."); return; }
+    const delta = target - integrated;
+    setMasterGainDb(prev => clamp(prev + delta, -24, 12));
+    setStatus(`✓ Normalized: ${integrated.toFixed(1)} → ${target} LUFS (Δ ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} dB)`);
+  }, [renderMixOffline]);
+
+  // ── Send to cart wall + Stream this mix (CustomEvent dispatch) ──
+
+  const sendToCartwall = useCallback(async () => {
+    setStatus("Rendering for cart wall...");
+    const rendered = await renderMixOffline();
+    if (!rendered) return;
+    const wav = encodeWav(rendered);
+    const blob = new Blob([wav], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    window.dispatchEvent(new CustomEvent("ether:send-to-cartwall", {
+      detail: { filePath: url, title: "StudioPro Mix" },
+    }));
+    setStatus("✓ Sent to cart wall");
+  }, [renderMixOffline]);
+
+  const streamThisMix = useCallback(async () => {
+    setStatus("Rendering for stream...");
+    const rendered = await renderMixOffline();
+    if (!rendered) return;
+    const wav = encodeWav(rendered);
+    const blob = new Blob([wav], { type: "audio/wav" });
+    const url = URL.createObjectURL(blob);
+    window.dispatchEvent(new CustomEvent("ether:stream-mix", {
+      detail: { filePath: url, title: "StudioPro Mix" },
+    }));
+    setStatus("✓ Sent to stream engine");
+  }, [renderMixOffline]);
+
+  // ── Snapshots ─────────────────────────────────────────────────
+
+  const takeSnapshot = useCallback(() => {
+    const name = prompt("Snapshot name:", `Snapshot ${snapshots.length + 1}`);
+    if (!name) return;
+    const snap: MixerSnapshot = {
+      id: uuid(), name, takenAt: Date.now(),
+      tracksJson: stateRef.current.tracks.map(t => ({
+        id: t.id, name: t.name, color: t.color,
+        gainDb: t.gainDb, pan: t.pan, muted: t.muted, solo: t.solo, armed: t.armed,
+        eq7: [...t.eq7],
+        compressor: { ...t.compressor },
+        reverb: { ...t.reverb },
+        saturation: { ...t.saturation },
+        sidechainSourceId: t.sidechainSourceId,
+        sidechainAmountDb: t.sidechainAmountDb,
+      })),
+      master: {
+        masterGainDb, limiterEnabled, limiterThresh,
+        masterEq7: [...masterEq7], masterComp: { ...masterComp },
+      },
+    };
+    setSnapshots(prev => [...prev, snap]);
+    setStatus(`✓ Snapshot saved: ${name}`);
+  }, [snapshots, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp]);
+
+  const recallSnapshot = useCallback((snap: MixerSnapshot) => {
+    // Apply per-track patches (preserves regions/automation; only restores mixer state)
+    snap.tracksJson.forEach((tj: any) => {
+      dispatch({ type: "UPDATE_TRACK", id: tj.id, patch: {
+        name: tj.name, color: tj.color, gainDb: tj.gainDb, pan: tj.pan,
+        muted: tj.muted, solo: tj.solo, armed: tj.armed,
+        eq7: tj.eq7, compressor: tj.compressor, reverb: tj.reverb,
+        saturation: tj.saturation, sidechainSourceId: tj.sidechainSourceId,
+        sidechainAmountDb: tj.sidechainAmountDb,
+      }});
+    });
+    setMasterGainDb(snap.master.masterGainDb);
+    setLimiterEnabled(snap.master.limiterEnabled);
+    setLimiterThresh(snap.master.limiterThresh);
+    setMasterEq7([...snap.master.masterEq7]);
+    setMasterComp({ ...snap.master.masterComp });
+    setStatus(`✓ Recalled: ${snap.name}`);
+  }, []);
+
+  const deleteSnapshot = useCallback((id: string) => {
+    setSnapshots(prev => prev.filter(s => s.id !== id));
+  }, []);
+
+  // ── Track templates (preset + Add Track combos) ──────────────
+
+  const addTrackFromTemplate = useCallback((template: "vocal" | "music" | "drum" | "plain") => {
+    const idx = stateRef.current.tracks.length;
+    const color = nextColor(stateRef.current.tracks);
+    const name =
+      template === "vocal" ? `Vocal ${idx + 1}` :
+      template === "music" ? `Music ${idx + 1}` :
+      template === "drum"  ? `Drum ${idx + 1}`  :
+                             `Track ${idx + 1}`;
+    dispatch({ type: "ADD_TRACK", name });
+    // Apply preset settings on next tick
+    setTimeout(() => {
+      const newest = stateRef.current.tracks[stateRef.current.tracks.length - 1];
+      if (!newest) return;
+      let patch: TrackPatch = { color };
+      if (template === "vocal") {
+        patch = {
+          ...patch,
+          eq7: [-3, -2, 0, 1, 3, 4, 2],
+          compressor: { on: true, threshold: -18, ratio: 3, attack: 15, release: 200, makeup: 3 },
+          reverb: { on: true, type: "plate", wet: 0.18, size: 0.5 },
+        };
+      } else if (template === "music") {
+        patch = { ...patch, eq7: [2, 0, -1, 0, 1, 2, 3] };
+      } else if (template === "drum") {
+        patch = {
+          ...patch,
+          compressor: { on: true, threshold: -12, ratio: 6, attack: 2, release: 80, makeup: 4 },
+          saturation: { on: true, drive: 6 },
+        };
+      }
+      dispatch({ type: "UPDATE_TRACK", id: newest.id, patch });
+    }, 0);
+  }, []);
+
+  // ── Region context menu helper ────────────────────────────────
+
+  const openRegionContextMenu = useCallback((e: React.MouseEvent, trackId: string, regionId: string) => {
+    e.preventDefault(); e.stopPropagation();
+    setSelection({ trackId, regionId });
+    const items = [
+      { label: "Split here", onClick: () => {
+        // Use cursor X within the region to compute split point
+        const target = e.target as HTMLElement;
+        const lane = target.closest("[data-track-id]") as HTMLElement | null;
+        if (!lane) return;
+        const rect = lane.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const t = stateRef.current.tracks.find(x => x.id === trackId);
+        const r = t?.regions.find(x => x.id === regionId);
+        if (!r) return;
+        const ms = r.offsetMs + xToMs(x - (r.offsetMs / 1000) * pps);
+        splitRegion(trackId, regionId, ms);
+      } },
+      { label: "Duplicate (Ctrl+D)", onClick: () => {
+        const newId = uuid();
+        const t = stateRef.current.tracks.find(x => x.id === trackId);
+        const r = t?.regions.find(x => x.id === regionId);
+        if (r) dispatch({ type: "DUPLICATE_REGION", trackId, regionId, offsetMs: r.offsetMs + regionDurMs(r), newId });
+      } },
+      { label: "Copy (Ctrl+C)",  onClick: copySelectedRegion },
+      { label: "", onClick: () => {}, separator: true },
+      { label: "Delete region",  onClick: () => dispatch({ type: "DELETE_REGION", trackId, regionId }), danger: true },
+    ];
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+  }, [copySelectedRegion, splitRegion, xToMs, pps]);
+
+  const openTrackContextMenu = useCallback((e: React.MouseEvent, trackId: string) => {
+    e.preventDefault(); e.stopPropagation();
+    const t = stateRef.current.tracks.find(x => x.id === trackId);
+    if (!t) return;
+    const items = [
+      { label: "Open EQ window",     onClick: () => toggleFxWindow(trackId, "eq") },
+      { label: "Open Compressor",    onClick: () => toggleFxWindow(trackId, "comp") },
+      { label: "Open Reverb / FX",   onClick: () => toggleFxWindow(trackId, "reverb") },
+      { label: "", onClick: () => {}, separator: true },
+      { label: "Toggle mute (M)",    onClick: () => dispatch({ type: "UPDATE_TRACK", id: trackId, patch: { muted: !t.muted } }) },
+      { label: "Toggle solo",        onClick: () => dispatch({ type: "UPDATE_TRACK", id: trackId, patch: { solo: !t.solo } }) },
+      { label: "Toggle automation",  onClick: () => dispatch({ type: "UPDATE_TRACK", id: trackId, patch: { automationOpen: !t.automationOpen } }) },
+      { label: "Clear all regions",  onClick: () => dispatch({ type: "CLEAR_TRACK", id: trackId }) },
+      { label: "", onClick: () => {}, separator: true },
+      { label: "Delete track",       onClick: () => dispatch({ type: "DELETE_TRACK", id: trackId }), danger: true },
+    ];
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+  }, []);
+
+  // ── Render ────────────────────────────────────────────────────
+
+  return (
+    <div style={{
+      display: "flex", flexDirection: "column",
+      width: "100%", height: "100%",
+      background: "#0a0a0c", color: "#eee",
+      fontFamily: "Inter, system-ui, sans-serif",
+      position: "relative",
+    }}>
+      {/* TOP TOOLBAR */}
+      <div style={{
+        height: TOOLBAR_H, flex: `0 0 ${TOOLBAR_H}px`,
+        background: "#080808", borderBottom: "1px solid #1a1a1e",
+        display: "flex", alignItems: "center", padding: "0 12px", gap: 10,
+      }}>
+        <TBtn onClick={returnToStart} title="Return to start">⏮</TBtn>
+        <TBtn onClick={playing ? stop : play} title={playing ? "Stop" : "Play (Space)"} active={playing}>
+          {playing ? "⏸" : "▶"}
+        </TBtn>
+        <TBtn onClick={stop} title="Stop">⏹</TBtn>
+        <TBtn onClick={() => setRecordArmed(v => !v)} title="Record arm" danger={recordArmed}>⏺</TBtn>
+        <TBtn onClick={toggleRecord} title="Record" danger={recording}>
+          {recording ? "◼ Rec" : "Rec"}
+        </TBtn>
+        <div style={{ width: 1, height: 20, background: "#1a1a1e" }} />
+        <TBtn
+          onClick={() => {
+            if (!loopRange) { setStatus("Drag on the ruler to set a loop range"); return; }
+            setLoopEnabled(v => !v);
+          }}
+          title={loopRange
+            ? `Loop ${loopEnabled ? "ON" : "OFF"} · ${fmtDuration(loopRange.startMs)} → ${fmtDuration(loopRange.endMs)}`
+            : "Drag on the ruler to set a loop range"}
+          active={loopEnabled && !!loopRange}
+        >↻</TBtn>
+        <TBtn onClick={() => setClickEnabled(v => !v)} title="Click / metronome" active={clickEnabled}>♩</TBtn>
+        <TBtn onClick={() => setGridEnabled(v => !v)} title="Beat grid" active={gridEnabled}>▦</TBtn>
+
+        <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+          <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, color: "#fff", letterSpacing: 1 }}>
+            {fmtTimecode(playheadMs)}
+          </div>
+        </div>
+
+        <label style={lbl}>BPM</label>
+        <input type="number" min={40} max={240} value={bpm}
+          onChange={(e) => setBpm(Math.max(40, Math.min(240, +e.target.value || 120)))}
+          style={{ width: 50, background: "#111", color: "#eee", border: "1px solid #222", padding: "4px 6px", fontSize: 11, borderRadius: 0 }}
+        />
+        <TBtn onClick={() => setZoom(z => Math.max(0.25, z / 1.25))} title="Zoom out">−</TBtn>
+        <span style={{ fontSize: 11, color: "#888", minWidth: 34, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+        <TBtn onClick={() => setZoom(z => Math.min(8, z * 1.25))} title="Zoom in">+</TBtn>
+        <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>Master FX</TBtn>
+        <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
+        <NormalizeMenu onPick={(t) => autoNormalize(t)} />
+        <TBtn onClick={sendToCartwall} title="Render mix and send to cart wall">📤 Cart</TBtn>
+        <TBtn onClick={streamThisMix}  title="Render mix and send to stream engine">📡 Stream</TBtn>
+        <TBtn onClick={saveSession} title="Save session to disk">💾</TBtn>
+        <TBtn onClick={loadSession} title="Load session from disk">📂</TBtn>
+        <ExportMenu onExportMix={exportWav} onExportStems={() => exportStems()} />
+        <DeckMenu onPick={sendToDeck} />
+        <TBtn onClick={() => setVtOpen(v => !v)} title="Voice Tracker" active={vtOpen}>VT ▾</TBtn>
+      </div>
+
+      {/* EDIT TOOLS ROW */}
+      <div style={{
+        height: 36, flex: "0 0 36px",
+        background: "#0a0a0c", borderBottom: "1px solid #1a1a1e",
+        display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
+      }}>
+        {([
+          { id: "select", icon: <span style={{ fontSize: 13 }}>⬆</span>, label: "Select", key: "V" },
+          { id: "blade",  icon: <IBeamIcon />,                            label: "Blade",  key: "C" },
+          { id: "trim",   icon: <span style={{ fontSize: 13 }}>⊢⊣</span>, label: "Trim",   key: "T" },
+          { id: "fade",   icon: <span style={{ fontSize: 13 }}>⌒</span>,  label: "Fade",   key: "F" },
+        ] as const).map(t => {
+          const active = tool === t.id;
+          const accent = selectedTrack?.color || "#38bdf8";
+          return (
+            <button key={t.id} onClick={() => setTool(t.id as EditTool)} title={`${t.label} (${t.key})`}
+              style={{
+                height: 26, padding: "0 10px", borderRadius: 0,
+                background: active ? `${accent}22` : "transparent",
+                color: active ? accent : "#888",
+                border: `1px solid ${active ? accent : "#222"}`,
+                fontSize: 12, cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+                fontFamily: "ui-monospace, monospace",
+              }}
+            >
+              {t.icon}
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5 }}>{t.label}</span>
+              <span style={{ fontSize: 9, color: active ? accent : "#555", opacity: 0.7 }}>{t.key}</span>
+            </button>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 10, color: "#555" }}>
+          {tool === "select" && "Click to select · drag to move"}
+          {tool === "blade"  && "Click region to cut at cursor"}
+          {tool === "trim"   && "Drag region edges or body to trim"}
+          {tool === "fade"   && "Drag top-left for fade-in · top-right for fade-out"}
+        </span>
+      </div>
+
+      {status && (
+        <div style={{ height: 20, background: "#0c0c10", borderBottom: "1px solid #1a1a1e", fontSize: 11, color: "#888", padding: "2px 12px", display: "flex", alignItems: "center" }}>
+          {status}
+        </div>
+      )}
+
+      {/* MAIN AREA */}
+      <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
+        {/* TRACK HEADERS */}
+        <div style={{
+          width: HEADER_W, flex: `0 0 ${HEADER_W}px`,
+          background: "#0d0d0f", borderRight: "1px solid #1a1a1e",
+          display: "flex", flexDirection: "column",
+        }}>
+          <div style={{ height: RULER_H, borderBottom: "1px solid #1a1a1e" }} />
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {tracks.map((t, i) => (
+              <TrackHeaderRow
+                key={t.id}
+                track={t}
+                height={trackHeights[i]}
+                level={meterLevelsRef.current.perTrack.get(t.id) || 0}
+                selected={selection?.trackId === t.id && !selection?.regionId}
+                fxOpenSet={new Set(
+                  Array.from(openFxWindows.values()).filter(w => w.trackId === t.id).map(w => w.type)
+                )}
+                onSelect={() => setSelection({ trackId: t.id, regionId: null })}
+                onPatch={(patch) => dispatch({ type: "UPDATE_TRACK", id: t.id, patch })}
+                onDelete={() => dispatch({ type: "DELETE_TRACK", id: t.id })}
+                onColorPick={() => setPaletteForTrack(t.id)}
+                showPalette={paletteForTrack === t.id}
+                onChooseColor={(c) => { dispatch({ type: "UPDATE_TRACK", id: t.id, patch: { color: c } }); setPaletteForTrack(null); }}
+                onClosePalette={() => setPaletteForTrack(null)}
+                onToggleFx={(type) => toggleFxWindow(t.id, type)}
+                onToggleAutomation={() => dispatch({ type: "UPDATE_TRACK", id: t.id, patch: { automationOpen: !t.automationOpen } })}
+                onAddAutomationLane={() => dispatch({ type: "ADD_AUTOMATION_LANE", trackId: t.id, param: "volume" })}
+                onRemoveAutomationLane={(laneId) => dispatch({ type: "REMOVE_AUTOMATION_LANE", trackId: t.id, laneId })}
+                onSetAutomationParam={(laneId, param) => dispatch({ type: "SET_AUTOMATION_PARAM", trackId: t.id, laneId, param })}
+                onContext={(e) => openTrackContextMenu(e, t.id)}
+                reductionDb={compReductionRef.current.get(t.id) || 0}
+              />
+            ))}
+            <AddTrackMenu onAdd={addTrackFromTemplate} />
+          </div>
+        </div>
+
+        {/* TIMELINE */}
+        <div ref={timelineRef}
+          style={{ flex: 1, overflow: "auto", background: "#080808", position: "relative" }}
+          className="studiopro-scroll"
+        >
+          {/* Ruler */}
+          <div onMouseDown={onRulerMouseDown}
+            style={{
+              height: RULER_H, width: msToX(totalDurMs),
+              position: "sticky", top: 0, zIndex: 3,
+              background: "#0c0c10", borderBottom: "1px solid #1a1a1e",
+              cursor: "text",
+            }}
+          >
+            <Ruler totalMs={totalDurMs} pps={pps} bpm={bpm} showBeats={gridEnabled} />
+            {/* Markers */}
+            {state.markers.map(m => (
+              <div key={m.id}
+                onClick={(e) => { e.stopPropagation(); setPlayheadMs(m.timeMs); }}
+                onContextMenu={(e) => {
+                  e.preventDefault(); e.stopPropagation();
+                  setCtxMenu({
+                    x: e.clientX, y: e.clientY,
+                    items: [
+                      { label: "Rename...", onClick: () => {
+                        const v = prompt("Marker label:", m.label);
+                        if (v && v.trim()) dispatch({ type: "RENAME_MARKER", id: m.id, label: v.trim() });
+                      } },
+                      { label: "Jump here", onClick: () => setPlayheadMs(m.timeMs) },
+                      { label: "", onClick: () => {}, separator: true },
+                      { label: "Delete marker", onClick: () => dispatch({ type: "DELETE_MARKER", id: m.id }), danger: true },
+                    ],
+                  });
+                }}
+                title={`${m.label} · ${fmtTimecode(m.timeMs)}`}
+                style={{
+                  position: "absolute", top: 0, left: msToX(m.timeMs) - 6,
+                  width: 12, height: RULER_H,
+                  display: "flex", flexDirection: "column", alignItems: "center",
+                  cursor: "pointer", zIndex: 4,
+                }}
+              >
+                <div style={{
+                  width: 0, height: 0,
+                  borderLeft: "6px solid transparent", borderRight: "6px solid transparent",
+                  borderTop: `8px solid ${m.color}`,
+                  filter: `drop-shadow(0 0 3px ${m.color})`,
+                }} />
+                <div style={{
+                  fontSize: 8, color: m.color, marginTop: 1,
+                  whiteSpace: "nowrap" as const, fontFamily: "ui-monospace, monospace",
+                  background: "rgba(8,8,12,0.7)", padding: "0 2px",
+                }}>{m.label.slice(0, 10)}</div>
+              </div>
+            ))}
+            {loopRange && (
+              <div style={{
+                position: "absolute", top: 0,
+                left: msToX(loopRange.startMs),
+                width: Math.max(2, msToX(loopRange.endMs - loopRange.startMs)),
+                height: RULER_H,
+                background: loopEnabled ? "#fde04733" : "#fde04711",
+                borderLeft: `2px solid ${loopEnabled ? "#fde047" : "#fde04766"}`,
+                borderRight: `2px solid ${loopEnabled ? "#fde047" : "#fde04766"}`,
+                pointerEvents: "none",
+              }} />
+            )}
+          </div>
+
+          {/* Lanes */}
+          <div style={{ position: "relative", width: msToX(totalDurMs), height: totalLanesHeight }}>
+            {gridEnabled && (
+              <BeatGrid totalMs={totalDurMs} bpm={bpm} pps={pps} height={totalLanesHeight} />
+            )}
+
+            {tracks.map((t, i) => (
+              <div key={t.id} style={{
+                position: "absolute", top: trackTops[i],
+                left: 0, width: "100%", height: trackHeights[i],
+              }}>
+                <TrackLane
+                  track={t}
+                  pps={pps}
+                  tool={tool}
+                  selection={selection}
+                  bladeHover={bladeHover?.trackId === t.id ? bladeHover : null}
+                  liveRec={(() => {
+                    void liveRecTick;
+                    const lr = liveRecRef.current;
+                    return lr && lr.trackId === t.id ? {
+                      startMs: lr.startMs, peaks: lr.peaks, samplePeriodMs: lr.samplePeriodMs,
+                    } : null;
+                  })()}
+                  onSelectRegion={(regionId) => setSelection({ trackId: t.id, regionId })}
+                  onSelectTrack={() => setSelection({ trackId: t.id, regionId: null })}
+                  onDrop={(e) => onLaneDrop(e, t.id)}
+                  onRegionDrag={(e, regionId, mode) => beginRegionDrag(e, t.id, regionId, mode)}
+                  onBladeHover={(regionId, ms) => setBladeHover({ trackId: t.id, regionId, ms })}
+                  onBladeLeave={() => setBladeHover(null)}
+                  onBladeSplit={(regionId, ms) => splitRegion(t.id, regionId, ms)}
+                  onFadeDrag={(e, regionId, side) => beginFadeDrag(e, t.id, regionId, side)}
+                  onRegionContext={(e, regionId) => openRegionContextMenu(e, t.id, regionId)}
+                />
+
+                {t.automationOpen && (
+                  <div style={{
+                    position: "absolute", left: 0, top: TRACK_H,
+                    width: "100%", height: trackHeights[i] - TRACK_H,
+                    background: "#070708", borderTop: "1px solid #1a1a1e",
+                  }}>
+                    {/* per-lane stack */}
+                    {t.automationLanes.map((lane, li) => (
+                      <AutomationLaneView
+                        key={lane.id}
+                        track={t}
+                        lane={lane}
+                        pps={pps}
+                        totalDurMs={totalDurMs}
+                        topY={li * AUTOMATION_LANE_H}
+                        selectedPointId={selectedAutoPoint?.laneId === lane.id ? selectedAutoPoint.pointId : null}
+                        onSelectPoint={(pid) => setSelectedAutoPoint(pid ? { trackId: t.id, laneId: lane.id, pointId: pid } : null)}
+                        onAddPoint={(timeMs, value) => dispatch({ type: "ADD_AUTO_POINT", trackId: t.id, laneId: lane.id, point: { id: uuid(), timeMs, value } })}
+                        onMovePoint={(pointId, timeMs, value) => dispatch({ type: "MOVE_AUTO_POINT", trackId: t.id, laneId: lane.id, pointId, timeMs, value })}
+                        onDeletePoint={(pointId) => dispatch({ type: "DELETE_AUTO_POINT", trackId: t.id, laneId: lane.id, pointId })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Loop range overlay on lanes */}
+            {loopRange && tracks.length > 0 && (
+              <div style={{
+                position: "absolute", top: 0,
+                left: msToX(loopRange.startMs),
+                width: Math.max(2, msToX(loopRange.endMs - loopRange.startMs)),
+                height: totalLanesHeight,
+                background: loopEnabled ? "#fde04711" : "transparent",
+                borderLeft:  `1px dashed ${loopEnabled ? "#fde047aa" : "#fde04755"}`,
+                borderRight: `1px dashed ${loopEnabled ? "#fde047aa" : "#fde04755"}`,
+                pointerEvents: "none", zIndex: 3,
+              }} />
+            )}
+
+            {/* Marker lines on lanes */}
+            {state.markers.map(m => (
+              <div key={m.id} style={{
+                position: "absolute", top: 0,
+                left: msToX(m.timeMs),
+                width: 1, height: totalLanesHeight,
+                background: m.color, opacity: 0.25,
+                pointerEvents: "none", zIndex: 3,
+              }} />
+            ))}
+
+            {/* Snap indicator */}
+            {snapMs !== null && (
+              <div style={{
+                position: "absolute", left: msToX(snapMs), top: 0,
+                width: 2, height: totalLanesHeight,
+                background: "#fde047",
+                boxShadow: "0 0 8px #fde047, 0 0 2px #fde047",
+                pointerEvents: "none", zIndex: 4,
+              }} />
+            )}
+
+            {/* Playhead */}
+            <div style={{
+              position: "absolute", left: msToX(playheadMs), top: 0,
+              width: 1, height: totalLanesHeight,
+              background: "#ef4444",
+              boxShadow: "0 0 8px #ef4444, 0 0 2px #ef4444",
+              pointerEvents: "none", zIndex: 5,
+            }} />
+          </div>
+        </div>
+
+        {/* INSPECTOR (slimmed) */}
+        <div style={{
+          width: INSPECTOR_W, flex: `0 0 ${INSPECTOR_W}px`,
+          background: "#0a0a0c", borderLeft: "1px solid #1a1a1e",
+          padding: 12, overflowY: "auto",
+        }}>
+          <Inspector
+            track={selectedTrack}
+            region={selectedRegion}
+            masterGainDb={masterGainDb}
+            setMasterGainDb={setMasterGainDb}
+            limiterEnabled={limiterEnabled}
+            setLimiterEnabled={setLimiterEnabled}
+            limiterThresh={limiterThresh}
+            setLimiterThresh={setLimiterThresh}
+            masterLevel={meterLevelsRef.current.master}
+            masterAnalyser={masterAnalyserRef.current}
+            loopRange={loopRange}
+            onClearLoop={() => { setLoopRange(null); setLoopEnabled(false); }}
+            onPatchTrack={(patch) => selectedTrack && dispatch({ type: "UPDATE_TRACK", id: selectedTrack.id, patch })}
+            onPatchRegion={(patch) => selectedTrack && selectedRegion && dispatch({ type: "UPDATE_REGION", trackId: selectedTrack.id, regionId: selectedRegion.id, patch })}
+            onClear={() => selectedTrack && dispatch({ type: "CLEAR_TRACK", id: selectedTrack.id })}
+            onDeleteRegion={() => selectedTrack && selectedRegion && dispatch({
+              type: "DELETE_REGION", trackId: selectedTrack.id, regionId: selectedRegion.id,
+            })}
+            onOpenFx={() => selectedTrack && toggleFxWindow(selectedTrack.id, "eq")}
+          />
+        </div>
+      </div>
+
+      {/* MASTER FX WINDOW */}
+      {masterFxOpen && (
+        <MasterFxWindow
+          ctx={getCtx()}
+          position={masterFxPos}
+          masterGainDb={masterGainDb} setMasterGainDb={setMasterGainDb}
+          limiterEnabled={limiterEnabled} setLimiterEnabled={setLimiterEnabled}
+          limiterThresh={limiterThresh} setLimiterThresh={setLimiterThresh}
+          masterEq7={masterEq7} setMasterEq7={setMasterEq7}
+          masterComp={masterComp} setMasterComp={setMasterComp}
+          masterAnalyser={masterAnalyserRef.current}
+          masterLAnalyser={masterLAnalyserRef.current}
+          masterRAnalyser={masterRAnalyserRef.current}
+          masterLevel={meterLevelsRef.current.master}
+          lufsMomentary={lufsMomentaryRef.current}
+          correlation={correlationRef.current}
+          onClose={() => setMasterFxOpen(false)}
+          onMove={(x, y) => setMasterFxPos(p => ({ ...p, x, y }))}
+        />
+      )}
+
+      {/* FX WINDOWS — one per (track, type) */}
+      {Array.from(openFxWindows.entries()).map(([k, win]) => {
+        const t = tracks.find(x => x.id === win.trackId);
+        if (!t) return null;
+        return (
+          <FxWindow
+            key={k}
+            track={t}
+            allTracks={tracks}
+            type={win.type}
+            position={win}
+            ctx={getCtx()}
+            reductionDb={compReductionRef.current.get(win.trackId) || 0}
+            onClose={() => toggleFxWindow(win.trackId, win.type)}
+            onMove={(x, y) => moveFxWindow(k, x, y)}
+            onBringToFront={() => bringFxToFront(k)}
+            onPatch={(patch) => dispatch({ type: "UPDATE_TRACK", id: win.trackId, patch })}
+          />
+        );
+      })}
+
+      {/* VT DRAWER */}
+      <div style={{
+        height: vtOpen ? DRAWER_H : 0,
+        transition: "height 140ms ease",
+        borderTop: vtOpen ? "1px solid #1a1a1e" : "none",
+        background: "#0a0a0c", overflow: "hidden", flex: `0 0 auto`,
+      }}>
+        {vtOpen && (
+          <div style={{ height: "100%", overflow: "auto" }}>
+            <VoiceTracker />
+          </div>
+        )}
+      </div>
+
+      {/* Context menu */}
+      {ctxMenu && (
+        <ContextMenu
+          x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+
+      {/* Snapshots panel */}
+      {snapshotsOpen && (
+        <SnapshotsPanel
+          snapshots={snapshots}
+          onTake={takeSnapshot}
+          onRecall={recallSnapshot}
+          onDelete={deleteSnapshot}
+          onClose={() => setSnapshotsOpen(false)}
+        />
+      )}
+
+      {/* Keyboard help overlay */}
+      {helpOpen && <KeyboardHelpOverlay onClose={() => setHelpOpen(false)} />}
+
+      <style>{`
+        .studiopro-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+        .studiopro-scroll::-webkit-scrollbar-track { background: #1a1a1e; }
+        .studiopro-scroll::-webkit-scrollbar-thumb { background: #333340; }
+      `}</style>
+    </div>
+  );
+}
+
+// ── Subcomponents ───────────────────────────────────────────────
+
+function IBeamIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <line x1="12" y1="3" x2="12" y2="21" />
+      <line x1="9"  y1="3" x2="15" y2="3" />
+      <line x1="9"  y1="21" x2="15" y2="21" />
+    </svg>
+  );
+}
+
+function TBtn({ children, onClick, title, active, danger }: {
+  children: React.ReactNode; onClick: () => void; title?: string;
+  active?: boolean; danger?: boolean;
+}) {
+  return (
+    <button onClick={onClick} title={title}
+      style={{
+        height: 28, minWidth: 28, padding: "0 8px",
+        background: danger ? "#7f1d1d" : active ? "#1e293b" : "#111",
+        color: danger ? "#fff" : "#eee",
+        border: `1px solid ${danger ? "#ef4444" : active ? "#334155" : "#222"}`,
+        fontSize: 12, cursor: "pointer", borderRadius: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >{children}</button>
+  );
+}
+const lbl: React.CSSProperties = { fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 };
+
+function DeckMenu({ onPick }: { onPick: (d: "A" | "B" | "C") => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <TBtn onClick={() => setOpen(o => !o)} title="Send to deck">Send to Deck ▾</TBtn>
+      {open && (
+        <div onMouseLeave={() => setOpen(false)}
+          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#111", border: "1px solid #222", zIndex: 20, minWidth: 120 }}
+        >
+          {(["A", "B", "C"] as const).map(d => (
+            <button key={d} onClick={() => { setOpen(false); onPick(d); }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", background: "transparent", color: "#eee", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
+            >Deck {d}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SpectrumAnalyzer({ analyser, width, height }: { analyser: AnalyserNode | null; width: number; height: number }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.max(2, Math.floor(width * dpr));
+    cv.height = Math.max(2, Math.floor(height * dpr));
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    let raf = 0;
+    const N = analyser ? analyser.frequencyBinCount : 0;
+    const buf = new Uint8Array(N);
+    const draw = () => {
+      g.clearRect(0, 0, width, height);
+      if (analyser) {
+        analyser.getByteFrequencyData(buf);
+        const bars = 64;
+        for (let i = 0; i < bars; i++) {
+          const lo = Math.floor(Math.pow(i / bars, 2.2) * N);
+          const hi = Math.floor(Math.pow((i + 1) / bars, 2.2) * N);
+          let m = 0;
+          for (let k = lo; k < hi && k < N; k++) if (buf[k] > m) m = buf[k];
+          const v = m / 255;
+          const bw = width / bars;
+          const bh = v * (height - 2);
+          const hue = 200 - v * 200;
+          g.fillStyle = `hsl(${hue}, 90%, ${40 + v * 30}%)`;
+          g.fillRect(i * bw + 0.5, height - bh, bw - 1, bh);
+        }
+      } else {
+        g.fillStyle = "#222";
+        g.fillRect(0, 0, width, height);
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(raf);
+  }, [analyser, width, height]);
+  return <canvas ref={canvasRef} style={{ width, height, display: "block", marginTop: 4, background: "#050508" }} />;
+}
+
+function MeterBar({ level, color, height = 4, width = 120, vertical = false }: {
+  level: number; color: string; height?: number; width?: number; vertical?: boolean;
+}) {
+  const v = Math.min(1, Math.max(0, level));
+  const pct = v <= 0 ? 0 : Math.min(1, (linearToDb(v) + 60) / 60);
+  const overshoot = v >= 0.99 ? "#ef4444" : v >= 0.7 ? "#f59e0b" : color;
+  if (vertical) {
+    return (
+      <div style={{ width, height, background: "#1a1a1e", overflow: "hidden", position: "relative" }}>
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0,
+          height: pct * height, background: overshoot, transition: "height 50ms linear",
+        }} />
+      </div>
+    );
+  }
+  const w = pct * width;
+  return (
+    <div style={{ width, height, background: "#1a1a1e", overflow: "hidden", position: "relative" }}>
+      <div style={{ width: w, height: "100%", background: overshoot, transition: "width 50ms linear" }} />
+      {v >= 0.99 && (
+        <div style={{ position: "absolute", right: 0, top: 0, width: 2, height: "100%", background: "#ef4444", boxShadow: "0 0 4px #ef4444" }} />
+      )}
+    </div>
+  );
+}
+
+function TrackHeaderRow({
+  track, height, level, reductionDb, selected, fxOpenSet,
+  onSelect, onPatch, onDelete,
+  onColorPick, showPalette, onChooseColor, onClosePalette,
+  onToggleFx, onToggleAutomation,
+  onAddAutomationLane, onRemoveAutomationLane, onSetAutomationParam,
+  onContext,
+}: {
+  track: StudioTrack;
+  height: number;
+  level: number;
+  reductionDb: number;
+  selected: boolean;
+  fxOpenSet: Set<FxWindowType>;
+  onSelect: () => void;
+  onPatch: (p: TrackPatch) => void;
+  onDelete: () => void;
+  onColorPick: () => void;
+  showPalette: boolean;
+  onChooseColor: (c: string) => void;
+  onClosePalette: () => void;
+  onToggleFx: (type: FxWindowType) => void;
+  onToggleAutomation: () => void;
+  onAddAutomationLane: () => void;
+  onRemoveAutomationLane: (laneId: string) => void;
+  onSetAutomationParam: (laneId: string, param: AutomationParam) => void;
+  onContext: (e: React.MouseEvent) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(track.name);
+  useEffect(() => setName(track.name), [track.name]);
+  const [showFxMenu, setShowFxMenu] = useState(false);
+  const fxAnyOpen = fxOpenSet.size > 0;
+
+  return (
+    <div onClick={onSelect}
+      onContextMenu={onContext}
+      style={{
+        height,
+        borderBottom: "1px solid #1a1a1e",
+        background: selected ? "#141419" : "transparent",
+        cursor: "pointer", position: "relative",
+      }}
+    >
+      {/* Top row (matches TRACK_H) */}
+      <div style={{
+        height: TRACK_H, padding: "6px 8px",
+        display: "flex", flexDirection: "column", gap: 4,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div onClick={(e) => { e.stopPropagation(); onColorPick(); }}
+            style={{ width: 10, height: 10, background: track.color, cursor: "pointer" }} />
+          {editing ? (
+            <input autoFocus value={name}
+              onChange={(e) => setName(e.target.value)}
+              onBlur={() => { setEditing(false); onPatch({ name: name || "Track" }); }}
+              onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              style={{ flex: 1, background: "#111", color: "#fff", border: "1px solid #333", fontSize: 12, padding: "2px 4px", borderRadius: 0 }}
+            />
+          ) : (
+            <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
+              style={{ flex: 1, fontSize: 12, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >{track.name}</div>
+          )}
+          <button onClick={(e) => { e.stopPropagation(); onToggleAutomation(); }}
+            title={track.automationOpen ? "Hide automation" : "Show automation"}
+            style={{ background: "transparent", border: "none", color: track.automationOpen ? "#fde047" : "#555", fontSize: 12, cursor: "pointer", padding: "0 2px" }}
+          >▾</button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            title="Delete track"
+            style={{ background: "transparent", border: "none", color: "#555", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
+          >×</button>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <MiniBtn active={track.muted} activeColor="#ef4444"
+            onClick={(e) => { e.stopPropagation(); onPatch({ muted: !track.muted }); }}>M</MiniBtn>
+          <MiniBtn active={track.solo} activeColor="#f59e0b"
+            onClick={(e) => { e.stopPropagation(); onPatch({ solo: !track.solo }); }}>S</MiniBtn>
+          <MiniBtn active={track.armed} activeColor="#ef4444"
+            onClick={(e) => { e.stopPropagation(); onPatch({ armed: !track.armed }); }}>⏺</MiniBtn>
+          <MiniBtn active={fxAnyOpen} activeColor="#22c55e"
+            onClick={(e) => { e.stopPropagation(); setShowFxMenu(v => !v); }}>FX</MiniBtn>
+          <input type="range" min={-48} max={6} step={0.5} value={track.gainDb}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => onPatch({ gainDb: +e.target.value })}
+            style={{ flex: 1, minWidth: 40, accentColor: track.color }}
+          />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <MeterBar level={level} color={track.color} width={HEADER_W - 60} />
+          {/* Per-track gain-reduction meter (only visible when comp is on) */}
+          {track.compressor.on && (
+            <div title={`GR: ${reductionDb.toFixed(1)} dB`}
+              style={{ width: 30, height: 4, background: "#1a1a1e", overflow: "hidden", position: "relative" }}
+            >
+              <div style={{
+                position: "absolute", right: 0, top: 0, bottom: 0,
+                width: `${Math.min(100, Math.max(0, -reductionDb / 18 * 100))}%`,
+                background: "#22c55e",
+              }} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Automation header row (when open) */}
+      {track.automationOpen && (
+        <div style={{
+          height: AUTOMATION_BAR_H,
+          background: "#08080a",
+          borderTop: "1px solid #1a1a1e",
+          display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
+        }}>
+          <span style={{ fontSize: 9, color: "#888", letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
+            {track.automationLanes.length} lane{track.automationLanes.length === 1 ? "" : "s"}
+          </span>
+          <button
+            onClick={(e) => { e.stopPropagation(); onAddAutomationLane(); }}
+            title="Add automation lane"
+            style={{ background: "#111", border: "1px solid #222", color: "#888", fontSize: 10, cursor: "pointer", padding: "2px 6px", borderRadius: 0 }}
+          >+ Lane</button>
+        </div>
+      )}
+
+      {/* Per-lane control rows */}
+      {track.automationOpen && track.automationLanes.map(lane => (
+        <div key={lane.id} style={{
+          height: AUTOMATION_LANE_H,
+          background: "#08080a",
+          borderTop: "1px solid #14141a",
+          display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
+        }}>
+          <select value={lane.param}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => onSetAutomationParam(lane.id, e.target.value as AutomationParam)}
+            style={{ flex: 1, background: "#111", color: "#eee", border: "1px solid #222", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
+          >
+            {Object.entries(AUTOMATION_SPECS).map(([k, spec]) => (
+              <option key={k} value={k}>{spec.label}</option>
+            ))}
+          </select>
+          <button onClick={(e) => { e.stopPropagation(); onRemoveAutomationLane(lane.id); }}
+            title="Remove lane"
+            style={{ background: "transparent", border: "none", color: "#555", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
+          >×</button>
+        </div>
+      ))}
+
+      {showPalette && (
+        <div onClick={(e) => e.stopPropagation()} onMouseLeave={onClosePalette}
+          style={{
+            position: "absolute", top: 24, left: 8, zIndex: 30,
+            background: "#111", border: "1px solid #222", padding: 6,
+            display: "grid", gridTemplateColumns: "repeat(6, 16px)", gap: 4,
+          }}
+        >
+          {PALETTE.map(c => (
+            <div key={c} onClick={() => onChooseColor(c)}
+              style={{ width: 16, height: 16, background: c, cursor: "pointer" }} />
+          ))}
+        </div>
+      )}
+
+      {showFxMenu && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onMouseLeave={() => setShowFxMenu(false)}
+          style={{
+            position: "absolute", top: 50, left: 8, zIndex: 40,
+            background: "#111", border: "1px solid #2a2a32",
+            padding: 4, minWidth: 180,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+          }}
+        >
+          {(["eq", "comp", "reverb"] as const).map(type => {
+            const open = fxOpenSet.has(type);
+            return (
+              <button
+                key={type}
+                onClick={(e) => { e.stopPropagation(); onToggleFx(type); }}
+                style={{
+                  display: "flex", alignItems: "center",
+                  width: "100%", padding: "6px 8px",
+                  background: open ? `${track.color}22` : "transparent",
+                  color: open ? track.color : "#ccc",
+                  border: "none",
+                  fontSize: 11, fontWeight: 600, cursor: "pointer",
+                  textAlign: "left" as const,
+                  letterSpacing: 0.3,
+                }}
+              >
+                <span style={{ width: 14, color: track.color }}>
+                  {open ? "✓" : ""}
+                </span>
+                <span style={{ flex: 1 }}>{FX_WINDOW_LABELS[type]}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MiniBtn({ children, onClick, active, activeColor }: {
+  children: React.ReactNode; onClick: (e: React.MouseEvent) => void;
+  active?: boolean; activeColor?: string;
+}) {
+  return (
+    <button onClick={onClick}
+      style={{
+        width: 22, height: 16, fontSize: 9, fontWeight: 700,
+        background: active ? (activeColor || "#333") : "#151518",
+        color: active ? "#fff" : "#888",
+        border: `1px solid ${active ? (activeColor || "#333") : "#222"}`,
+        cursor: "pointer", borderRadius: 0, padding: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}
+    >{children}</button>
+  );
+}
+
+function Ruler({ totalMs, pps, bpm, showBeats }: { totalMs: number; pps: number; bpm: number; showBeats: boolean }) {
+  const totalSec = Math.ceil(totalMs / 1000);
+  const ticks: React.ReactNode[] = [];
+  for (let s = 0; s <= totalSec; s++) {
+    const x = s * pps;
+    const isMajor = s % 5 === 0;
+    ticks.push(<div key={`s${s}`} style={{
+      position: "absolute", left: x, top: 0,
+      height: isMajor ? RULER_H : RULER_H / 2,
+      width: 1, background: isMajor ? "#444" : "#262630",
+    }} />);
+    if (isMajor) {
+      ticks.push(<div key={`l${s}`} style={{
+        position: "absolute", left: x + 3, top: 2,
+        fontSize: 9, color: "#666",
+        fontFamily: "ui-monospace, monospace",
+      }}>{fmtDuration(s * 1000)}</div>);
+    }
+  }
+  if (showBeats) {
+    const beatMs = 60000 / bpm;
+    const totalBars = Math.ceil(totalMs / (beatMs * 4));
+    for (let bar = 0; bar <= totalBars; bar++) {
+      const x = (bar * beatMs * 4 / 1000) * pps;
+      ticks.push(<div key={`bar${bar}`} style={{
+        position: "absolute", left: x, top: 0,
+        fontSize: 8, color: "#fde04788",
+        fontFamily: "ui-monospace, monospace",
+        paddingLeft: 2,
+      }}>{bar + 1}</div>);
+    }
+  }
+  return <div style={{ position: "relative", height: RULER_H }}>{ticks}</div>;
+}
+
+function BeatGrid({ totalMs, bpm, pps, height }: { totalMs: number; bpm: number; pps: number; height: number }) {
+  const beatMs = 60000 / bpm;
+  const totalBeats = Math.ceil(totalMs / beatMs);
+  const lines: React.ReactNode[] = [];
+  for (let b = 0; b <= totalBeats; b++) {
+    const x = (b * beatMs / 1000) * pps;
+    const isBar = b % 4 === 0;
+    lines.push(<div key={b} style={{
+      position: "absolute", left: x, top: 0,
+      width: 1, height,
+      background: isBar ? "#fde04733" : "#fde04711",
+      pointerEvents: "none",
+    }} />);
+  }
+  return <>{lines}</>;
+}
+
+function TrackLane({
+  track, pps, tool, selection, bladeHover, liveRec,
+  onSelectRegion, onSelectTrack, onDrop,
+  onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag,
+  onRegionContext,
+}: {
+  track: StudioTrack;
+  pps: number;
+  tool: EditTool;
+  selection: { trackId: string; regionId: string | null } | null;
+  bladeHover: { trackId: string; regionId: string; ms: number } | null;
+  liveRec: { startMs: number; peaks: number[]; samplePeriodMs: number } | null;
+  onSelectRegion: (regionId: string) => void;
+  onSelectTrack: () => void;
+  onDrop: (e: React.DragEvent) => void;
+  onRegionDrag: (e: React.MouseEvent, regionId: string, mode: "move" | "trim-l" | "trim-r") => void;
+  onBladeHover: (regionId: string, ms: number) => void;
+  onBladeLeave: () => void;
+  onBladeSplit: (regionId: string, ms: number) => void;
+  onFadeDrag: (e: React.MouseEvent, regionId: string, side: "in" | "out") => void;
+  onRegionContext: (e: React.MouseEvent, regionId: string) => void;
+}) {
+  const laneBg = track.color + "0a";
+  const empty = track.regions.length === 0;
+  return (
+    <div data-track-id={track.id}
+      onClick={onSelectTrack}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      style={{
+        position: "relative", height: TRACK_H,
+        background: laneBg,
+        borderBottom: "1px solid #1a1a1e",
+        animation: track.armed ? "sp-arm-pulse 1.2s ease-in-out infinite" : undefined,
+      }}
+    >
+      {empty && (
+        <div style={{
+          position: "absolute", inset: 6,
+          border: `1px dashed ${track.color}55`,
+          color: track.color + "66", fontSize: 11,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          pointerEvents: "none",
+        }}>Drop audio here</div>
+      )}
+      {track.regions.map(r => (
+        <RegionBlock key={r.id}
+          track={track} region={r} pps={pps} tool={tool}
+          selected={selection?.trackId === track.id && selection?.regionId === r.id}
+          bladeHoverMs={bladeHover && bladeHover.regionId === r.id ? bladeHover.ms : null}
+          onSelect={() => onSelectRegion(r.id)}
+          onRegionDrag={(e, mode) => onRegionDrag(e, r.id, mode)}
+          onBladeHover={(ms) => onBladeHover(r.id, ms)}
+          onBladeLeave={onBladeLeave}
+          onBladeSplit={(ms) => onBladeSplit(r.id, ms)}
+          onFadeDrag={(e, side) => onFadeDrag(e, r.id, side)}
+          onContext={(e) => onRegionContext(e, r.id)}
+        />
+      ))}
+      {liveRec && (
+        <LiveRecordingOverlay color={track.color}
+          startMs={liveRec.startMs} peaks={liveRec.peaks}
+          samplePeriodMs={liveRec.samplePeriodMs} pps={pps} />
+      )}
+      <style>{`
+        @keyframes sp-arm-pulse {
+          0%,100% { box-shadow: inset 0 0 0 0 rgba(239,68,68,0); }
+          50%     { box-shadow: inset 0 0 0 2px rgba(239,68,68,0.5); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function RegionBlock({
+  track, region, pps, tool, selected, bladeHoverMs,
+  onSelect, onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onContext,
+}: {
+  track: StudioTrack; region: StudioRegion; pps: number; tool: EditTool;
+  selected: boolean; bladeHoverMs: number | null;
+  onSelect: () => void;
+  onRegionDrag: (e: React.MouseEvent, mode: "move" | "trim-l" | "trim-r") => void;
+  onBladeHover: (ms: number) => void;
+  onBladeLeave: () => void;
+  onBladeSplit: (ms: number) => void;
+  onFadeDrag: (e: React.MouseEvent, side: "in" | "out") => void;
+  onContext: (e: React.MouseEvent) => void;
+}) {
+  const durMs   = regionDurMs(region);
+  const regionX = (region.offsetMs / 1000) * pps;
+  const regionW = (durMs / 1000) * pps;
+  const fadeInX  = Math.min(regionW, (region.fadeInMs  / 1000) * pps);
+  const fadeOutX = Math.min(regionW, (region.fadeOutMs / 1000) * pps);
+  const regionMouseToMs = (ev: React.MouseEvent, el: HTMLElement): number => {
+    const rect = el.getBoundingClientRect();
+    const xWithinRegion = ev.clientX - rect.left;
+    return region.offsetMs + (xWithinRegion / pps) * 1000;
+  };
+  const onRegionMouseDown = (e: React.MouseEvent) => {
+    if (!region.buffer) return;
+    const el = e.currentTarget as HTMLElement;
+    onSelect();
+    if (tool === "blade") {
+      const ms = regionMouseToMs(e, el);
+      onBladeHover(ms); onBladeSplit(ms);
+      e.stopPropagation(); e.preventDefault();
+      return;
+    }
+    if (tool === "fade") {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      if (x <= FADE_ZONE) onFadeDrag(e, "in");
+      else if (x >= rect.width - FADE_ZONE) onFadeDrag(e, "out");
+      return;
+    }
+    if (tool === "trim") {
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      onRegionDrag(e, x < rect.width / 2 ? "trim-l" : "trim-r");
+      return;
+    }
+    onRegionDrag(e, "move");
+  };
+  const onRegionMouseMove = (e: React.MouseEvent) => {
+    if (tool !== "blade" || !region.buffer) return;
+    const el = e.currentTarget as HTMLElement;
+    onBladeHover(regionMouseToMs(e, el));
+  };
+  const regionCursor =
+    tool === "blade" ? "text" :
+    tool === "trim"  ? "ew-resize" :
+    tool === "fade"  ? "cell" :
+                       "grab";
+  if (!region.buffer) return null;
+  return (
+    <div
+      onMouseDown={onRegionMouseDown}
+      onMouseMove={onRegionMouseMove}
+      onMouseLeave={onBladeLeave}
+      onClick={(e) => e.stopPropagation()}
+      onContextMenu={onContext}
+      style={{
+        position: "absolute",
+        left: regionX, top: 4, width: regionW, height: TRACK_H - 8,
+        background: track.color + "1f",
+        border: `${selected ? 2 : 1}px solid ${selected ? "#fff" : track.color + "99"}`,
+        cursor: regionCursor, overflow: "hidden",
+      }}
+    >
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        <WaveformGL
+          peaks={region.peaks}
+          viewStart={region.buffer ? region.trimStartMs / (region.buffer.duration * 1000) : 0}
+          viewEnd={  region.buffer ? 1 - region.trimEndMs / (region.buffer.duration * 1000) : 1}
+          cueIn={0} cueOut={1} introEnd={0} outroStart={1}
+          playhead={-1} hoverPos={null} dragRegion={null}
+        />
+      </div>
+      {(fadeInX > 0 || fadeOutX > 0) && (
+        <svg width={regionW} height={TRACK_H - 8} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {fadeInX > 0 && (
+            <>
+              <polygon points={`0,${TRACK_H - 8} ${fadeInX},0 ${fadeInX},${TRACK_H - 8}`} fill={track.color} fillOpacity={0.18} />
+              <line x1={0} y1={TRACK_H - 8} x2={fadeInX} y2={0} stroke={track.color} strokeWidth={1.5} strokeOpacity={0.9} />
+            </>
+          )}
+          {fadeOutX > 0 && (
+            <>
+              <polygon points={`${regionW - fadeOutX},0 ${regionW},${TRACK_H - 8} ${regionW - fadeOutX},${TRACK_H - 8}`} fill={track.color} fillOpacity={0.18} />
+              <line x1={regionW - fadeOutX} y1={0} x2={regionW} y2={TRACK_H - 8} stroke={track.color} strokeWidth={1.5} strokeOpacity={0.9} />
+            </>
+          )}
+        </svg>
+      )}
+      {tool === "blade" && bladeHoverMs !== null && (() => {
+        const regionStartMs = region.offsetMs;
+        const regionEnd     = region.offsetMs + durMs;
+        if (bladeHoverMs <= regionStartMs || bladeHoverMs >= regionEnd) return null;
+        const bx = ((bladeHoverMs - regionStartMs) / 1000) * pps;
+        return (
+          <div style={{
+            position: "absolute", left: bx, top: 0,
+            width: 1, height: "100%",
+            background: track.color, boxShadow: `0 0 4px ${track.color}`,
+            pointerEvents: "none",
+          }} />
+        );
+      })()}
+      <div style={{
+        position: "absolute", left: 4, top: 2,
+        fontSize: 9, color: "#fff", opacity: 0.9,
+        textShadow: "0 0 3px rgba(0,0,0,0.8)", pointerEvents: "none",
+      }}>{track.name}</div>
+      <div style={{
+        position: "absolute", right: 4, bottom: 2,
+        fontSize: 9, color: "#fff", opacity: 0.7,
+        fontFamily: "ui-monospace, monospace",
+        textShadow: "0 0 3px rgba(0,0,0,0.8)", pointerEvents: "none",
+      }}>{fmtDuration(durMs)}</div>
+      {(tool === "select" || tool === "trim") && (
+        <>
+          <div onMouseDown={(e) => onRegionDrag(e, "trim-l")}
+            style={{ position: "absolute", left: 0, top: 0, width: HANDLE_W, height: "100%", cursor: "ew-resize", background: "transparent" }} />
+          <div onMouseDown={(e) => onRegionDrag(e, "trim-r")}
+            style={{ position: "absolute", right: 0, top: 0, width: HANDLE_W, height: "100%", cursor: "ew-resize", background: "transparent" }} />
+        </>
+      )}
+      {tool === "fade" && (
+        <>
+          <div onMouseDown={(e) => onFadeDrag(e, "in")} title="Drag right for fade-in"
+            style={{ position: "absolute", left: 0, top: 0, width: FADE_ZONE, height: "100%", cursor: "col-resize", background: "transparent" }} />
+          <div onMouseDown={(e) => onFadeDrag(e, "out")} title="Drag left for fade-out"
+            style={{ position: "absolute", right: 0, top: 0, width: FADE_ZONE, height: "100%", cursor: "col-resize", background: "transparent" }} />
+        </>
+      )}
+    </div>
+  );
+}
+
+function LiveRecordingOverlay({ color, startMs, peaks, samplePeriodMs, pps }: {
+  color: string; startMs: number; peaks: number[]; samplePeriodMs: number; pps: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const widthPerSample = (samplePeriodMs / 1000) * pps;
+  const w = Math.max(2, Math.ceil(peaks.length * widthPerSample));
+  const x = (startMs / 1000) * pps;
+  const h = TRACK_H - 8;
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.max(2, Math.floor(w * dpr));
+    cv.height = Math.max(2, Math.floor(h * dpr));
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = color; g.globalAlpha = 0.85;
+    const mid = h / 2;
+    for (let i = 0; i < peaks.length; i++) {
+      const px = i * widthPerSample;
+      const amp = Math.min(1, peaks[i]) * (h / 2 - 2);
+      g.fillRect(px, mid - amp, Math.max(1, widthPerSample - 0.5), amp * 2);
+    }
+  }, [peaks, peaks.length, w, h, color, widthPerSample]);
+  return (
+    <div style={{
+      position: "absolute", left: x, top: 4, width: w, height: h,
+      background: color + "1f", border: `1px solid ${color}`,
+      boxShadow: `0 0 12px ${color}88`,
+      pointerEvents: "none", overflow: "hidden",
+    }}>
+      <canvas ref={canvasRef} style={{ width: w, height: h, display: "block" }} />
+      <div style={{
+        position: "absolute", left: 4, top: 2,
+        fontSize: 9, color: "#fff", opacity: 0.95,
+        textShadow: "0 0 3px rgba(0,0,0,0.8)",
+        fontWeight: 700, letterSpacing: 0.5,
+      }}>● REC</div>
+    </div>
+  );
+}
+
+// ── Automation lane subcomponent ────────────────────────────────
+
+function AutomationLaneView({
+  track, lane, pps, totalDurMs, topY,
+  selectedPointId, onSelectPoint, onAddPoint, onMovePoint, onDeletePoint,
+}: {
+  track: StudioTrack;
+  lane: AutomationLane;
+  pps: number;
+  totalDurMs: number;
+  topY: number;
+  selectedPointId: string | null;
+  onSelectPoint: (pointId: string | null) => void;
+  onAddPoint: (timeMs: number, value: number) => void;
+  onMovePoint: (pointId: string, timeMs: number, value: number) => void;
+  onDeletePoint: (pointId: string) => void;
+}) {
+  const spec = AUTOMATION_SPECS[lane.param];
+  const w = (totalDurMs / 1000) * pps;
+  const h = AUTOMATION_LANE_H;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const yToValue = (y: number) => {
+    const pct = 1 - clamp(y / h, 0, 1);
+    return spec.min + pct * (spec.max - spec.min);
+  };
+  const valueToY = (v: number) => {
+    const pct = (v - spec.min) / (spec.max - spec.min);
+    return (1 - clamp(pct, 0, 1)) * h;
+  };
+  const xToTime = (x: number) => Math.max(0, (x / pps) * 1000);
+  const timeToX = (t: number) => (t / 1000) * pps;
+
+  const findPointAt = (x: number, y: number): AutomationPoint | null => {
+    const HIT = 7;
+    for (const p of lane.points) {
+      const px = timeToX(p.timeMs), py = valueToY(p.value);
+      if (Math.abs(px - x) < HIT && Math.abs(py - y) < HIT) return p;
+    }
+    return null;
+  };
+
+  // Redraw on any change
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.max(2, Math.floor(w * dpr));
+    cv.height = Math.max(2, Math.floor(h * dpr));
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    // background grid
+    g.strokeStyle = "#15151a";
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(0, h / 2); g.lineTo(w, h / 2);
+    g.stroke();
+    // automation curve
+    if (lane.points.length > 0) {
+      const sorted = [...lane.points].sort((a, b) => a.timeMs - b.timeMs);
+      g.strokeStyle = track.color;
+      g.lineWidth = 1.5;
+      g.beginPath();
+      const firstY = valueToY(sorted[0].value);
+      g.moveTo(0, firstY);
+      g.lineTo(timeToX(sorted[0].timeMs), firstY);
+      for (let i = 1; i < sorted.length; i++) {
+        g.lineTo(timeToX(sorted[i].timeMs), valueToY(sorted[i].value));
+      }
+      g.lineTo(w, valueToY(sorted[sorted.length - 1].value));
+      g.stroke();
+      // Fill area
+      g.fillStyle = track.color + "22";
+      g.lineTo(w, h); g.lineTo(0, h); g.closePath(); g.fill();
+      // Points
+      for (const p of sorted) {
+        const px = timeToX(p.timeMs), py = valueToY(p.value);
+        g.fillStyle = track.color;
+        g.beginPath(); g.arc(px, py, 3.5, 0, Math.PI * 2); g.fill();
+        if (p.id === selectedPointId) {
+          g.strokeStyle = "#fff"; g.lineWidth = 1.5;
+          g.beginPath(); g.arc(px, py, 5.5, 0, Math.PI * 2); g.stroke();
+        }
+      }
+    }
+  }, [lane.points, lane.param, w, h, track.color, selectedPointId, pps]);
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (e.button === 2) {
+      // Right-click: delete point if hit
+      const p = findPointAt(x, y);
+      if (p) onDeletePoint(p.id);
+      return;
+    }
+
+    const hit = findPointAt(x, y);
+    if (hit) {
+      onSelectPoint(hit.id);
+      // Begin drag
+      const startX = e.clientX, startY = e.clientY;
+      const orig = { time: hit.timeMs, value: hit.value };
+      const onMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - startX, dy = ev.clientY - startY;
+        const newTime = Math.max(0, orig.time + xToTime(dx));
+        const newVal  = clamp(orig.value - (dy / h) * (spec.max - spec.min), spec.min, spec.max);
+        onMovePoint(hit.id, newTime, newVal);
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      return;
+    }
+
+    // Click empty area = add point
+    onAddPoint(xToTime(x), yToValue(y));
+  };
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      onContextMenu={(e) => e.preventDefault()}
+      style={{
+        position: "absolute", top: topY,
+        left: 0, width: w, height: h,
+        background: "#070708",
+        borderTop: "1px solid #14141a",
+        cursor: "crosshair",
+      }}
+    >
+      <canvas ref={canvasRef} style={{ width: w, height: h, display: "block" }} />
+      <div style={{
+        position: "absolute", left: 4, top: 2,
+        fontSize: 9, color: "#666", letterSpacing: 0.5, textTransform: "uppercase",
+        pointerEvents: "none",
+      }}>{spec.label}</div>
+    </div>
+  );
+}
+
+// ── Inspector (slimmed) ─────────────────────────────────────────
+
+function Inspector({
+  track, region,
+  masterGainDb, setMasterGainDb,
+  limiterEnabled, setLimiterEnabled,
+  limiterThresh, setLimiterThresh,
+  masterLevel, masterAnalyser,
+  loopRange, onClearLoop,
+  onPatchTrack, onPatchRegion, onClear, onDeleteRegion, onOpenFx,
+}: {
+  track: StudioTrack | null;
+  region: StudioRegion | null;
+  masterGainDb: number; setMasterGainDb: (v: number) => void;
+  limiterEnabled: boolean; setLimiterEnabled: (v: boolean) => void;
+  limiterThresh: number; setLimiterThresh: (v: number) => void;
+  masterLevel: number; masterAnalyser: AnalyserNode | null;
+  loopRange: { startMs: number; endMs: number } | null;
+  onClearLoop: () => void;
+  onPatchTrack: (p: TrackPatch) => void;
+  onPatchRegion: (p: RegionPatch) => void;
+  onClear: () => void;
+  onDeleteRegion: () => void;
+  onOpenFx: () => void;
+}) {
+  const knob = (label: string, min: number, max: number, val: number, step: number,
+    onChange: (v: number) => void, unit = "", accent = "#38bdf8") => (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#888", marginBottom: 3 }}>
+        <span>{label}</span>
+        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>
+          {val.toFixed(step < 1 ? 2 : 1)}{unit}
+        </span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={val}
+        onChange={(e) => onChange(+e.target.value)}
+        style={{ width: "100%", accentColor: accent }}
+      />
+    </div>
+  );
+
+  const masterSection = (
+    <div style={{ padding: 8, marginBottom: 10, background: "#0c0c10", border: "1px solid #1a1a1e" }}>
+      <div style={{ fontSize: 10, color: "#888", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>Master</div>
+      <MeterBar level={masterLevel} color="#38bdf8" width={INSPECTOR_W - 32} height={6} />
+      <SpectrumAnalyzer analyser={masterAnalyser} width={INSPECTOR_W - 32} height={50} />
+      <div style={{ height: 6 }} />
+      {knob("Master gain", -24, 6, masterGainDb, 0.5, setMasterGainDb, " dB")}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+        <button onClick={() => setLimiterEnabled(!limiterEnabled)}
+          style={insBtn(limiterEnabled, "#22c55e")}
+        >Limiter {limiterEnabled ? "on" : "off"}</button>
+      </div>
+      {limiterEnabled && knob("Threshold", -24, 0, limiterThresh, 0.5, setLimiterThresh, " dB", "#22c55e")}
+      {loopRange && (
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #1a1a1e", fontSize: 10, color: "#888" }}>
+          Loop: {fmtDuration(loopRange.startMs)} → {fmtDuration(loopRange.endMs)}
+          <button onClick={onClearLoop}
+            style={{ marginLeft: 8, padding: "2px 6px", background: "#111", color: "#888", border: "1px solid #222", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+          >Clear</button>
+        </div>
+      )}
+    </div>
+  );
+
+  if (!track) {
+    return (
+      <div>
+        {masterSection}
+        <div style={{ color: "#555", fontSize: 12, textAlign: "center", marginTop: 20 }}>
+          Select a track
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ fontSize: 12 }}>
+      {masterSection}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+        <div style={{ width: 12, height: 12, background: track.color }} />
+        <input value={track.name}
+          onChange={(e) => onPatchTrack({ name: e.target.value })}
+          style={{ flex: 1, background: "#111", color: "#fff", border: "1px solid #222", padding: "4px 6px", fontSize: 12, borderRadius: 0 }}
+        />
+      </div>
+
+      <div style={{ fontSize: 10, color: "#666", marginBottom: 8 }}>
+        {track.regions.length} region{track.regions.length !== 1 ? "s" : ""}
+      </div>
+
+      <button onClick={onOpenFx}
+        style={{
+          width: "100%", marginBottom: 10, padding: "6px",
+          background: "#1e293b", color: "#38bdf8",
+          border: "1px solid #334155", fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0, letterSpacing: 0.5,
+        }}
+      >OPEN EQ (use FX menu in track header for Comp / Reverb)</button>
+
+      {knob("Gain", -18, 6, track.gainDb, 0.5, (v) => onPatchTrack({ gainDb: v }), " dB", track.color)}
+      {knob("Pan",  -1,  1, track.pan,    0.05, (v) => onPatchTrack({ pan: v }), "", track.color)}
+
+      <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
+        <button onClick={() => onPatchTrack({ muted: !track.muted })} style={insBtn(track.muted, "#ef4444")}>
+          M {track.muted ? "on" : ""}
+        </button>
+        <button onClick={() => onPatchTrack({ solo: !track.solo })} style={insBtn(track.solo, "#f59e0b")}>
+          S {track.solo ? "on" : ""}
+        </button>
+        <button onClick={() => onPatchTrack({ armed: !track.armed })} style={insBtn(track.armed, "#ef4444")}>
+          ⏺ {track.armed ? "on" : ""}
+        </button>
+      </div>
+
+      {region && (
+        <div style={{ marginTop: 14, padding: 8, background: "#0c0c10", border: "1px solid #1a1a1e" }}>
+          <div style={{ fontSize: 10, color: "#666", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>
+            Selected region
+          </div>
+          <div style={{ fontSize: 10, color: "#888", marginBottom: 3 }}>
+            Offset: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(region.offsetMs)}</span>
+          </div>
+          <div style={{ fontSize: 10, color: "#888", marginBottom: 3 }}>
+            Length: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(regionDurMs(region))}</span>
+          </div>
+          <div style={{ fontSize: 10, color: "#888", marginBottom: 3 }}>
+            Fade in: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{region.fadeInMs.toFixed(0)}ms</span>
+            {"  "}out: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{region.fadeOutMs.toFixed(0)}ms</span>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#888", marginBottom: 3 }}>
+              <span>Clip gain</span>
+              <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{(region.clipGainDb || 0).toFixed(1)} dB</span>
+            </div>
+            <input type="range" min={-24} max={12} step={0.5} value={region.clipGainDb || 0}
+              onChange={(e) => onPatchRegion({ clipGainDb: +e.target.value })}
+              style={{ width: "100%", accentColor: track.color }}
+            />
+          </div>
+          <div style={{ fontSize: 10, color: "#666", marginTop: 6, wordBreak: "break-all" }}>
+            {region.filePath || "(recorded)"}
+          </div>
+          <button onClick={onDeleteRegion}
+            style={{ width: "100%", marginTop: 8, padding: "4px", background: "#111", color: "#888", border: "1px solid #222", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+          >Delete region</button>
+        </div>
+      )}
+
+      <button onClick={onClear}
+        style={{ width: "100%", marginTop: 10, padding: "6px", background: "#111", color: "#888", border: "1px solid #222", fontSize: 11, cursor: "pointer", borderRadius: 0 }}
+      >Clear all regions</button>
+    </div>
+  );
+}
+
+function insBtn(active: boolean, color: string): React.CSSProperties {
+  return {
+    flex: 1, padding: "5px",
+    background: active ? color : "#111",
+    color: active ? "#fff" : "#888",
+    border: `1px solid ${active ? color : "#222"}`,
+    fontSize: 10, cursor: "pointer", borderRadius: 0,
+  };
+}
+
+// ── FX Window ───────────────────────────────────────────────────
+
+function FxWindow({
+  track, allTracks, type, position, ctx, reductionDb,
+  onClose, onMove, onBringToFront, onPatch,
+}: {
+  track: StudioTrack;
+  allTracks: StudioTrack[];
+  type: FxWindowType;
+  position: { x: number; y: number; z: number };
+  ctx: AudioContext;
+  reductionDb: number;
+  onClose: () => void;
+  onMove: (x: number, y: number) => void;
+  onBringToFront: () => void;
+  onPatch: (p: TrackPatch) => void;
+}) {
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    onBringToFront();
+    const startX = e.clientX, startY = e.clientY;
+    const startPos = { x: position.x, y: position.y };
+    const onMouseMove = (ev: MouseEvent) => {
+      onMove(startPos.x + (ev.clientX - startX), Math.max(0, startPos.y + (ev.clientY - startY)));
+    };
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  return (
+    <div onMouseDown={onBringToFront}
+      style={{
+        position: "absolute",
+        left: position.x, top: position.y, width: 320,
+        zIndex: 1000 + position.z,
+        background: "#0c0c10", border: "1px solid #2a2a2e",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+        fontFamily: "Inter, system-ui, sans-serif",
+      }}
+    >
+      <div onMouseDown={startDrag}
+        style={{
+          height: 28, background: "#15151a",
+          borderBottom: "1px solid #2a2a2e",
+          display: "flex", alignItems: "center", padding: "0 8px", gap: 8,
+          cursor: "grab", userSelect: "none",
+        }}
+      >
+        <div style={{ width: 8, height: 8, background: track.color }} />
+        <div style={{ flex: 1, fontSize: 11, color: "#ddd", fontWeight: 600 }}>
+          {track.name} — {FX_WINDOW_LABELS[type]}
+        </div>
+        <button onClick={onClose}
+          style={{ background: "transparent", border: "none", color: "#888", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+        >×</button>
+      </div>
+
+      <div style={{ padding: 10, maxHeight: "70vh", overflowY: "auto" }}>
+        {type === "eq"     && <FxEqSection     track={track} ctx={ctx} onPatch={onPatch} />}
+        {type === "comp"   && <FxCompSection   track={track} reductionDb={reductionDb} onPatch={onPatch} />}
+        {type === "reverb" && (
+          <>
+            <FxReverbSection    track={track} ctx={ctx} onPatch={onPatch} />
+            <FxSatSection       track={track} onPatch={onPatch} />
+            <FxSidechainSection track={track} allTracks={allTracks} onPatch={onPatch} />
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Export menu (Mix / Stems) ──────────────────────────────────
+
+function ExportMenu({ onExportMix, onExportStems }: { onExportMix: () => void; onExportStems: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <TBtn onClick={() => setOpen(o => !o)} title="Export options">Export ▾</TBtn>
+      {open && (
+        <div onMouseLeave={() => setOpen(false)}
+          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#111", border: "1px solid #222", zIndex: 30, minWidth: 160 }}
+        >
+          <button onClick={() => { setOpen(false); onExportMix(); }}
+            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "#eee", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
+          >Export Mix (one WAV)</button>
+          <button onClick={() => { setOpen(false); onExportStems(); }}
+            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "#eee", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
+          >Export Stems (one WAV per track)</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Per-FX presets (localStorage) ──────────────────────────────
+
+interface PresetStore<T> {
+  list: () => { name: string; value: T; builtin?: boolean }[];
+  save: (name: string, value: T) => void;
+  delete: (name: string) => void;
+}
+
+function usePresets<T>(key: string, builtins: { name: string; value: T }[]): PresetStore<T> {
+  const lsKey = `studiopro_presets_${key}`;
+  const [tick, setTick] = useState(0);
+  const list = () => {
+    let user: { name: string; value: T }[] = [];
+    try { user = JSON.parse(localStorage.getItem(lsKey) || "[]"); } catch {}
+    void tick;
+    return [
+      ...builtins.map(b => ({ ...b, builtin: true })),
+      ...user.map(u => ({ ...u, builtin: false })),
+    ];
+  };
+  const save = (name: string, value: T) => {
+    let user: { name: string; value: T }[] = [];
+    try { user = JSON.parse(localStorage.getItem(lsKey) || "[]"); } catch {}
+    const idx = user.findIndex(u => u.name === name);
+    if (idx >= 0) user[idx] = { name, value };
+    else user.push({ name, value });
+    localStorage.setItem(lsKey, JSON.stringify(user));
+    setTick(n => n + 1);
+  };
+  const del = (name: string) => {
+    let user: { name: string; value: T }[] = [];
+    try { user = JSON.parse(localStorage.getItem(lsKey) || "[]"); } catch {}
+    user = user.filter(u => u.name !== name);
+    localStorage.setItem(lsKey, JSON.stringify(user));
+    setTick(n => n + 1);
+  };
+  return { list, save, delete: del };
+}
+
+const EQ_PRESETS: { name: string; value: number[] }[] = [
+  { name: "Flat",            value: [0, 0, 0, 0, 0, 0, 0] },
+  { name: "Vocal — clarity", value: [-3, -2, 0, 1, 3, 4, 2] },
+  { name: "Vocal — warm",    value: [0, 2, 1, -1, 0, 1, -1] },
+  { name: "Music — radio",   value: [2, 0, -1, 0, 1, 2, 3] },
+  { name: "Loudness smile",  value: [4, 2, 0, -2, 0, 2, 4] },
+  { name: "Telephone",       value: [-12, -8, 2, 4, 2, -6, -12] },
+];
+
+const COMP_PRESETS: { name: string; value: TrackCompressor }[] = [
+  { name: "Off",            value: { on: false, threshold: -18, ratio: 3,   attack: 20, release: 200, makeup: 0 } },
+  { name: "Vocal — gentle", value: { on: true,  threshold: -18, ratio: 3,   attack: 15, release: 200, makeup: 3 } },
+  { name: "Vocal — assertive", value: { on: true, threshold: -16, ratio: 5,  attack: 5,  release: 150, makeup: 5 } },
+  { name: "Drums — punch",  value: { on: true,  threshold: -12, ratio: 6,   attack: 2,  release: 80,  makeup: 4 } },
+  { name: "Limiter-ish",    value: { on: true,  threshold: -6,  ratio: 12,  attack: 0.5, release: 100, makeup: 2 } },
+];
+
+const REVERB_PRESETS: { name: string; value: TrackReverb }[] = [
+  { name: "Off",          value: { on: false, type: "plate", wet: 0,    size: 0.5 } },
+  { name: "Vocal plate",  value: { on: true,  type: "plate", wet: 0.22, size: 0.55 } },
+  { name: "Small room",   value: { on: true,  type: "room",  wet: 0.18, size: 0.35 } },
+  { name: "Big hall",     value: { on: true,  type: "hall",  wet: 0.30, size: 0.85 } },
+  { name: "Surf spring",  value: { on: true,  type: "spring", wet: 0.4, size: 0.5 } },
+];
+
+function PresetMenu<T>({ store, current, onApply, label }: {
+  store: PresetStore<T>;
+  current: T;
+  onApply: (v: T) => void;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const items = store.list();
+  return (
+    <div style={{ position: "relative", marginBottom: 6 }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%", padding: "4px 8px", textAlign: "left" as const,
+          background: "#111", color: "#888", border: "1px solid #222",
+          fontSize: 10, cursor: "pointer", borderRadius: 0,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}
+      >
+        <span>{label || "Presets"}</span>
+        <span style={{ color: "#555" }}>▾</span>
+      </button>
+      {open && (
+        <div onMouseLeave={() => setOpen(false)}
+          style={{
+            position: "absolute", top: "100%", left: 0, right: 0,
+            background: "#0a0a0c", border: "1px solid #2a2a32",
+            zIndex: 50, maxHeight: 240, overflowY: "auto",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+          }}
+        >
+          {items.map(it => (
+            <div key={(it.builtin ? "b:" : "u:") + it.name}
+              style={{ display: "flex", alignItems: "center" }}
+            >
+              <button onClick={() => { setOpen(false); onApply(it.value); }}
+                style={{
+                  flex: 1, padding: "5px 8px", textAlign: "left" as const,
+                  background: "transparent", color: it.builtin ? "#bbb" : "#fde047",
+                  border: "none", fontSize: 11, cursor: "pointer",
+                }}
+              >{it.builtin ? it.name : "★ " + it.name}</button>
+              {!it.builtin && (
+                <button onClick={(e) => { e.stopPropagation(); store.delete(it.name); }}
+                  title="Delete preset"
+                  style={{ background: "transparent", border: "none", color: "#555", fontSize: 12, cursor: "pointer", padding: "0 6px" }}
+                >×</button>
+              )}
+            </div>
+          ))}
+          <div style={{ borderTop: "1px solid #1a1a1e", padding: 4 }}>
+            <button onClick={() => {
+              const name = prompt("Save current settings as preset:");
+              if (name && name.trim()) { store.save(name.trim(), current); setOpen(false); }
+            }}
+              style={{ width: "100%", padding: "4px", background: "#1e293b", color: "#38bdf8", border: "1px solid #334155", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+            >+ Save current as preset</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Master FX window ───────────────────────────────────────────
+
+function MasterFxWindow({
+  ctx, position,
+  masterGainDb, setMasterGainDb,
+  limiterEnabled, setLimiterEnabled,
+  limiterThresh, setLimiterThresh,
+  masterEq7, setMasterEq7,
+  masterComp, setMasterComp,
+  masterAnalyser, masterLAnalyser, masterRAnalyser,
+  masterLevel, lufsMomentary, correlation,
+  onClose, onMove,
+}: {
+  ctx: AudioContext;
+  position: { x: number; y: number };
+  masterGainDb: number; setMasterGainDb: (v: number) => void;
+  limiterEnabled: boolean; setLimiterEnabled: (v: boolean) => void;
+  limiterThresh: number; setLimiterThresh: (v: number) => void;
+  masterEq7: number[]; setMasterEq7: (v: number[]) => void;
+  masterComp: TrackCompressor; setMasterComp: (v: TrackCompressor) => void;
+  masterAnalyser: AnalyserNode | null;
+  masterLAnalyser: AnalyserNode | null;
+  masterRAnalyser: AnalyserNode | null;
+  masterLevel: number; lufsMomentary: number; correlation: number;
+  onClose: () => void;
+  onMove: (x: number, y: number) => void;
+}) {
+  const startDrag = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const startPos = { x: position.x, y: position.y };
+    const onMouseMove = (ev: MouseEvent) => onMove(startPos.x + (ev.clientX - startX), Math.max(0, startPos.y + (ev.clientY - startY)));
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  // Inline EQ canvas using getFrequencyResponse on temp BiquadFilters
+  const eqCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const W = 300, H = 90;
+  useEffect(() => {
+    const cv = eqCanvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.floor(W * dpr); cv.height = Math.floor(H * dpr);
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = "#050508"; g.fillRect(0, 0, W, H);
+    g.strokeStyle = "#1a1a22";
+    g.beginPath(); g.moveTo(0, H / 2); g.lineTo(W, H / 2); g.stroke();
+    const POINTS = 200;
+    const freqArr = new Float32Array(POINTS);
+    for (let i = 0; i < POINTS; i++) freqArr[i] = 20 * Math.pow(1000, i / (POINTS - 1));
+    const totalDb = new Float32Array(POINTS);
+    const mag = new Float32Array(POINTS);
+    const phase = new Float32Array(POINTS);
+    for (let b = 0; b < 7; b++) {
+      const f = ctx.createBiquadFilter();
+      f.type = b === 0 ? "lowshelf" : b === 6 ? "highshelf" : "peaking";
+      f.frequency.value = EQ_FREQS[b];
+      if (f.type === "peaking") f.Q.value = 1;
+      f.gain.value = clamp(masterEq7[b] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+      f.getFrequencyResponse(freqArr, mag, phase);
+      for (let i = 0; i < POINTS; i++) totalDb[i] += 20 * Math.log10(Math.max(1e-6, mag[i]));
+    }
+    g.strokeStyle = "#38bdf8"; g.lineWidth = 2;
+    g.beginPath();
+    for (let i = 0; i < POINTS; i++) {
+      const x = i / (POINTS - 1) * W;
+      const y = H / 2 - (totalDb[i] / EQ_DB_RANGE) * (H / 2 - 4);
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+    g.fillStyle = "#38bdf822";
+    g.lineTo(W, H / 2); g.lineTo(0, H / 2); g.closePath(); g.fill();
+  }, [masterEq7, ctx, W, H]);
+
+  const eqStore = usePresets<number[]>("master_eq", EQ_PRESETS);
+  const compStore = usePresets<TrackCompressor>("master_comp", COMP_PRESETS);
+
+  return (
+    <div style={{
+      position: "absolute",
+      left: position.x, top: position.y, width: 340,
+      zIndex: 1500,
+      background: "#0c0c10", border: "1px solid #2a2a2e",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      fontFamily: "Inter, system-ui, sans-serif",
+    }}>
+      <div onMouseDown={startDrag}
+        style={{
+          height: 28, background: "#15151a",
+          borderBottom: "1px solid #2a2a2e",
+          display: "flex", alignItems: "center", padding: "0 8px", gap: 8,
+          cursor: "grab", userSelect: "none",
+        }}
+      >
+        <div style={{ width: 8, height: 8, background: "#38bdf8" }} />
+        <div style={{ flex: 1, fontSize: 11, color: "#ddd", fontWeight: 600 }}>Master Bus FX</div>
+        <button onClick={onClose}
+          style={{ background: "transparent", border: "none", color: "#888", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+        >×</button>
+      </div>
+
+      <div style={{ padding: 10, maxHeight: "75vh", overflowY: "auto" }}>
+        {/* Master meter + spectrum + broadcast meters */}
+        <FxBlock title="Output">
+          <MeterBar level={masterLevel} color="#38bdf8" width={W} height={6} />
+          <SpectrumAnalyzer analyser={masterAnalyser} width={W} height={50} />
+          {compKnob("Master gain", -24, 6, masterGainDb, 0.5, setMasterGainDb, " dB")}
+        </FxBlock>
+        <FxBlock title="Broadcast Meters">
+          <LUFSMeter lufsMomentary={lufsMomentary} width={W} />
+          <div style={{ height: 8 }} />
+          <CorrelationMeter correlation={correlation} width={W} />
+          <div style={{ height: 8 }} />
+          <Goniometer lAnalyser={masterLAnalyser} rAnalyser={masterRAnalyser} size={Math.min(W, 200)} />
+        </FxBlock>
+
+        {/* Master EQ */}
+        <FxBlock title="Master 7-Band EQ">
+          <PresetMenu store={eqStore} current={masterEq7} onApply={setMasterEq7} label="EQ Presets" />
+          <canvas ref={eqCanvasRef} style={{ width: W, height: H, display: "block", marginBottom: 8 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+            {EQ_FREQS.map((_, i) => {
+              const v = masterEq7[i] || 0;
+              return (
+                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                  <input type="range" orient="vertical" min={-EQ_DB_RANGE} max={EQ_DB_RANGE} step={0.5} value={v}
+                    onChange={(e) => {
+                      const next = [...masterEq7];
+                      next[i] = +e.target.value;
+                      setMasterEq7(next);
+                    }}
+                    style={{
+                      // @ts-ignore
+                      WebkitAppearance: "slider-vertical", writingMode: "vertical-lr",
+                      width: 18, height: 80, accentColor: "#38bdf8",
+                    } as any}
+                  />
+                  <span style={{ fontSize: 8, color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
+                  <span style={{ fontSize: 8, color: "#666" }}>{EQ_LABELS[i]}</span>
+                </div>
+              );
+            })}
+          </div>
+        </FxBlock>
+
+        {/* Master compressor */}
+        <FxBlock title="Master Compressor" right={
+          <button onClick={() => setMasterComp({ ...masterComp, on: !masterComp.on })}
+            style={miniToggle(masterComp.on, "#22c55e")}>{masterComp.on ? "ON" : "OFF"}</button>
+        }>
+          <PresetMenu store={compStore} current={masterComp} onApply={setMasterComp} label="Comp Presets" />
+          <CompressorCurve
+            threshold={masterComp.threshold} ratio={masterComp.ratio}
+            makeup={masterComp.makeup} kneeDb={6} accent="#22c55e"
+            liveReductionDb={0}
+          />
+          {compKnob("Threshold", -60, 0,    masterComp.threshold, 0.5, (v) => setMasterComp({ ...masterComp, threshold: v }), " dB")}
+          {compKnob("Ratio",      1, 20,    masterComp.ratio,     0.1, (v) => setMasterComp({ ...masterComp, ratio: v }),     ":1")}
+          {compKnob("Attack",     0.1, 200, masterComp.attack,    0.5, (v) => setMasterComp({ ...masterComp, attack: v }),    " ms")}
+          {compKnob("Release",    10, 2000, masterComp.release,   5,   (v) => setMasterComp({ ...masterComp, release: v }),   " ms")}
+          {compKnob("Makeup",     0,  24,   masterComp.makeup,    0.5, (v) => setMasterComp({ ...masterComp, makeup: v }),    " dB")}
+        </FxBlock>
+
+        {/* Limiter */}
+        <FxBlock title="Master Limiter" right={
+          <button onClick={() => setLimiterEnabled(!limiterEnabled)}
+            style={miniToggle(limiterEnabled, "#ef4444")}>{limiterEnabled ? "ON" : "OFF"}</button>
+        }>
+          {compKnob("Threshold", -24, 0, limiterThresh, 0.5, setLimiterThresh, " dB")}
+          <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>
+            Brick-wall ceiling: ratio 20:1 · attack 3ms · release 250ms · knee 0
+          </div>
+        </FxBlock>
+      </div>
+    </div>
+  );
+}
+
+// EQ section with vertical band sliders + response curve
+function FxEqSection({ track, ctx, onPatch }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const w = 300, h = 100;
+
+  // Draw the EQ response curve using the actual biquad math
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    // bg
+    g.fillStyle = "#050508"; g.fillRect(0, 0, w, h);
+    g.strokeStyle = "#1a1a22";
+    g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+
+    // Compute response using temp BiquadFilters
+    const POINTS = 200;
+    const freqArr = new Float32Array(POINTS);
+    for (let i = 0; i < POINTS; i++) freqArr[i] = 20 * Math.pow(1000, i / (POINTS - 1));
+    const totalDb = new Float32Array(POINTS);
+    const mag = new Float32Array(POINTS);
+    const phase = new Float32Array(POINTS);
+    for (let b = 0; b < 7; b++) {
+      const f = ctx.createBiquadFilter();
+      f.type = b === 0 ? "lowshelf" : b === 6 ? "highshelf" : "peaking";
+      f.frequency.value = EQ_FREQS[b];
+      if (f.type === "peaking") f.Q.value = 1;
+      f.gain.value = clamp(track.eq7[b] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+      f.getFrequencyResponse(freqArr, mag, phase);
+      for (let i = 0; i < POINTS; i++) totalDb[i] += 20 * Math.log10(Math.max(1e-6, mag[i]));
+    }
+
+    // Curve
+    g.strokeStyle = track.color; g.lineWidth = 2;
+    g.beginPath();
+    for (let i = 0; i < POINTS; i++) {
+      const x = i / (POINTS - 1) * w;
+      const y = h / 2 - (totalDb[i] / EQ_DB_RANGE) * (h / 2 - 4);
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+    g.fillStyle = track.color + "22";
+    g.lineTo(w, h / 2); g.lineTo(0, h / 2); g.closePath(); g.fill();
+
+    // Band markers
+    for (let b = 0; b < 7; b++) {
+      const fx = (Math.log(EQ_FREQS[b] / 20) / Math.log(1000)) * w;
+      const fy = h / 2 - (track.eq7[b] / EQ_DB_RANGE) * (h / 2 - 4);
+      g.fillStyle = track.color;
+      g.beginPath(); g.arc(fx, fy, 2.5, 0, Math.PI * 2); g.fill();
+    }
+  }, [track.eq7, track.color, ctx, w, h]);
+
+  const eqStore = usePresets<number[]>("track_eq", EQ_PRESETS);
+  return (
+    <FxBlock title="7-Band EQ">
+      <PresetMenu store={eqStore} current={track.eq7} onApply={(v) => onPatch({ eq7: v })} label="EQ Presets" />
+      <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8 }} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+        {EQ_FREQS.map((_, i) => {
+          const v = track.eq7[i] || 0;
+          return (
+            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              <input
+                type="range" orient="vertical" min={-EQ_DB_RANGE} max={EQ_DB_RANGE} step={0.5}
+                value={v}
+                onChange={(e) => {
+                  const next = [...track.eq7];
+                  next[i] = +e.target.value;
+                  onPatch({ eq7: next });
+                }}
+                style={{
+                  // @ts-ignore
+                  WebkitAppearance: "slider-vertical", writingMode: "vertical-lr",
+                  width: 18, height: 80, accentColor: track.color,
+                } as any}
+              />
+              <span style={{ fontSize: 8, color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
+              <span style={{ fontSize: 8, color: "#666" }}>{EQ_LABELS[i]}</span>
+            </div>
+          );
+        })}
+      </div>
+    </FxBlock>
+  );
+}
+
+function FxCompSection({ track, reductionDb, onPatch }: { track: StudioTrack; reductionDb: number; onPatch: (p: TrackPatch) => void }) {
+  const c = track.compressor;
+  const reductionPct = Math.min(1, Math.max(0, -reductionDb / 18));
+  const compStore = usePresets<TrackCompressor>("track_comp", COMP_PRESETS);
+  return (
+    <FxBlock title="Compressor" right={
+      <button onClick={() => onPatch({ compressor: { ...c, on: !c.on } })}
+        style={miniToggle(c.on, "#22c55e")}>{c.on ? "ON" : "OFF"}</button>
+    }>
+      <PresetMenu store={compStore} current={c} onApply={(v) => onPatch({ compressor: v })} label="Comp Presets" />
+      <CompressorCurve
+        threshold={c.threshold}
+        ratio={c.ratio}
+        makeup={c.makeup}
+        kneeDb={6}
+        accent="#22c55e"
+        liveReductionDb={reductionDb}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0" }}>
+        <span style={{ fontSize: 9, color: "#666", letterSpacing: 0.5, textTransform: "uppercase" }}>GR</span>
+        <div style={{ flex: 1, height: 6, background: "#1a1a1e", position: "relative", overflow: "hidden" }}>
+          <div style={{
+            position: "absolute", right: 0, top: 0, bottom: 0,
+            width: `${reductionPct * 100}%`, background: "#22c55e",
+            transition: "width 50ms linear",
+          }} />
+        </div>
+        <span style={{ fontSize: 9, color: "#ccc", fontFamily: "ui-monospace, monospace", minWidth: 36, textAlign: "right" }}>
+          {reductionDb.toFixed(1)} dB
+        </span>
+      </div>
+      {compKnob("Threshold", -60, 0,    c.threshold, 0.5, (v) => onPatch({ compressor: { ...c, threshold: v } }), " dB")}
+      {compKnob("Ratio",      1,  20,    c.ratio,     0.1, (v) => onPatch({ compressor: { ...c, ratio: v } }),     ":1")}
+      {compKnob("Attack",     0.1, 200, c.attack,    0.5, (v) => onPatch({ compressor: { ...c, attack: v } }),    " ms")}
+      {compKnob("Release",    10, 2000, c.release,   5,   (v) => onPatch({ compressor: { ...c, release: v } }),   " ms")}
+      {compKnob("Makeup",     0,  24,    c.makeup,    0.5, (v) => onPatch({ compressor: { ...c, makeup: v } }),    " dB")}
+    </FxBlock>
+  );
+}
+
+function CompressorCurve({
+  threshold, ratio, makeup, kneeDb, accent, liveReductionDb,
+}: {
+  threshold: number;       // dB (≤ 0)
+  ratio: number;           // n:1
+  makeup: number;          // dB
+  kneeDb: number;          // dB
+  accent: string;
+  liveReductionDb: number; // ≤ 0, current GR
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const w = 300, h = 120;
+
+  // Standard soft-knee compression transfer function (input dB → output dB)
+  const transfer = (inputDb: number): number => {
+    const k = kneeDb;
+    let out: number;
+    if (inputDb <= threshold - k / 2) {
+      out = inputDb;
+    } else if (inputDb >= threshold + k / 2) {
+      out = threshold + (inputDb - threshold) / ratio;
+    } else {
+      // Quadratic knee: smooth blend between 1:1 and ratio slope
+      const x = inputDb - (threshold - k / 2);
+      const slopeAdjust = (1 / ratio - 1) * (x * x) / (2 * k);
+      out = inputDb + slopeAdjust;
+    }
+    return out + makeup;
+  };
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = "#050508"; g.fillRect(0, 0, w, h);
+
+    // Coordinate space: -60..+6 dB on both axes (input X, output Y, Y inverted)
+    const minDb = -60, maxDb = 6;
+    const span  = maxDb - minDb;
+    const xFor  = (db: number) => ((db - minDb) / span) * w;
+    const yFor  = (db: number) => h - ((db - minDb) / span) * h;
+
+    // Grid every 12 dB
+    g.strokeStyle = "#15151a"; g.lineWidth = 1;
+    for (let db = minDb; db <= maxDb; db += 12) {
+      const x = xFor(db), y = yFor(db);
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+    }
+    // 0 dB lines slightly brighter
+    g.strokeStyle = "#22222a";
+    g.beginPath(); g.moveTo(xFor(0), 0); g.lineTo(xFor(0), h); g.stroke();
+    g.beginPath(); g.moveTo(0, yFor(0)); g.lineTo(w, yFor(0)); g.stroke();
+
+    // 1:1 reference (dotted)
+    g.strokeStyle = "#33333a"; g.setLineDash([3, 3]);
+    g.beginPath(); g.moveTo(xFor(minDb), yFor(minDb)); g.lineTo(xFor(maxDb), yFor(maxDb)); g.stroke();
+    g.setLineDash([]);
+
+    // Threshold vertical
+    g.strokeStyle = accent + "55";
+    g.beginPath(); g.moveTo(xFor(threshold), 0); g.lineTo(xFor(threshold), h); g.stroke();
+
+    // Transfer curve
+    g.strokeStyle = accent; g.lineWidth = 2;
+    g.beginPath();
+    const POINTS = 200;
+    for (let i = 0; i < POINTS; i++) {
+      const inputDb = minDb + (i / (POINTS - 1)) * span;
+      const outDb = clamp(transfer(inputDb), minDb, maxDb);
+      const x = xFor(inputDb), y = yFor(outDb);
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+    // Soft fill under the curve
+    g.fillStyle = accent + "18";
+    g.lineTo(xFor(maxDb), h); g.lineTo(xFor(minDb), h); g.closePath(); g.fill();
+
+    // Live GR indicator: a horizontal arrow from the diagonal down to the curve at "0 dB input"
+    // (Approximation — shows current reduction visually as a vertical bar at right edge.)
+    if (liveReductionDb < -0.1) {
+      const inputProbe = 0;          // probe at 0 dB
+      const yDiag = yFor(inputProbe);
+      const yCurve = yFor(transfer(inputProbe));
+      g.strokeStyle = accent; g.lineWidth = 1.5;
+      const x = xFor(inputProbe);
+      g.beginPath(); g.moveTo(x - 6, yDiag); g.lineTo(x + 6, yDiag); g.stroke();
+      g.beginPath(); g.moveTo(x - 6, yCurve); g.lineTo(x + 6, yCurve); g.stroke();
+      g.strokeStyle = "#ef4444"; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(x, yDiag); g.lineTo(x, yCurve); g.stroke();
+    }
+
+    // Threshold label
+    g.fillStyle = accent;
+    g.font = "9px ui-monospace, monospace";
+    g.fillText(`thr ${threshold.toFixed(0)} dB`, xFor(threshold) + 3, 10);
+  }, [threshold, ratio, makeup, kneeDb, accent, liveReductionDb, w, h]);
+
+  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 6 }} />;
+}
+
+function FxReverbSection({ track, onPatch, ctx }: { track: StudioTrack; onPatch: (p: TrackPatch) => void; ctx: AudioContext }) {
+  const r = track.reverb;
+  const reverbStore = usePresets<TrackReverb>("track_reverb", REVERB_PRESETS);
+  return (
+    <FxBlock title="Reverb" right={
+      <button onClick={() => onPatch({ reverb: { ...r, on: !r.on } })}
+        style={miniToggle(r.on, "#8b5cf6")}>{r.on ? "ON" : "OFF"}</button>
+    }>
+      <PresetMenu store={reverbStore} current={r} onApply={(v) => onPatch({ reverb: v })} label="Reverb Presets" />
+      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+        {(["room", "hall", "plate", "spring"] as const).map(t => (
+          <button key={t} onClick={() => onPatch({ reverb: { ...r, type: t } })}
+            style={{
+              flex: 1, padding: "5px 0",
+              background: r.type === t ? "#8b5cf622" : "#111",
+              color:      r.type === t ? "#8b5cf6" : "#888",
+              border:     `1px solid ${r.type === t ? "#8b5cf6" : "#222"}`,
+              fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+              textTransform: "uppercase", letterSpacing: 0.5,
+            }}>{t}</button>
+        ))}
+      </div>
+      <ReverbIRDisplay ctx={ctx} type={r.type} size={r.size} wet={r.on ? r.wet : 0} accent="#8b5cf6" />
+      {compKnob("Wet/Dry", 0, 1, r.wet,  0.01, (v) => onPatch({ reverb: { ...r, wet: v } }))}
+      {compKnob("Size",    0, 1, r.size, 0.01, (v) => onPatch({ reverb: { ...r, size: v } }))}
+    </FxBlock>
+  );
+}
+
+function ReverbIRDisplay({ ctx, type, size, wet, accent }: {
+  ctx: AudioContext; type: ReverbType; size: number; wet: number; accent: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const w = 300, h = 80;
+
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = "#050508"; g.fillRect(0, 0, w, h);
+
+    // Generate the IR for the current settings (one channel is enough for display)
+    const ir = makeReverbIR(ctx, type, size);
+    const data = ir.getChannelData(0);
+    const len = data.length;
+    const sr = ir.sampleRate;
+    const seconds = len / sr;
+
+    // Time axis ticks every 0.5 sec
+    g.strokeStyle = "#15151a"; g.lineWidth = 1;
+    for (let s = 0.5; s < seconds; s += 0.5) {
+      const x = (s / seconds) * w;
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    }
+    // Mid axis
+    g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+
+    // Waveform: peak per pixel column (top + bottom mirror)
+    const samplesPerPx = Math.max(1, Math.floor(len / w));
+    g.fillStyle = accent;
+    g.globalAlpha = 0.9;
+    for (let x = 0; x < w; x++) {
+      let max = 0;
+      const start = x * samplesPerPx;
+      const end = Math.min(len, start + samplesPerPx);
+      for (let i = start; i < end; i++) {
+        const v = Math.abs(data[i]);
+        if (v > max) max = v;
+      }
+      // Boost very small tails so the visualization isn't entirely silent for small rooms
+      const amp = Math.min(1, max * 1.5) * (h / 2 - 2);
+      g.fillRect(x, h / 2 - amp, 1, amp * 2);
+    }
+    g.globalAlpha = 1;
+
+    // Decay envelope overlay (smoothed peak follower for a cleaner shape)
+    g.strokeStyle = accent; g.lineWidth = 1.2;
+    g.beginPath();
+    let env = 0;
+    for (let x = 0; x < w; x++) {
+      let max = 0;
+      const start = x * samplesPerPx;
+      const end = Math.min(len, start + samplesPerPx);
+      for (let i = start; i < end; i++) {
+        const v = Math.abs(data[i]);
+        if (v > max) max = v;
+      }
+      env = Math.max(max, env * 0.985);
+      const y = h / 2 - env * (h / 2 - 2);
+      if (x === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    }
+    g.stroke();
+
+    // Wet level shaded band on right edge, indicates send amount
+    if (wet > 0) {
+      g.fillStyle = accent;
+      g.globalAlpha = 0.18;
+      g.fillRect(w - 4, h - wet * h, 3, wet * h);
+      g.globalAlpha = 1;
+    }
+
+    // Labels
+    g.fillStyle = "#666";
+    g.font = "9px ui-monospace, monospace";
+    g.fillText(`${type.toUpperCase()} · ${seconds.toFixed(2)}s`, 4, 10);
+    g.fillText("0", 2, h - 2);
+    g.fillText(`${seconds.toFixed(1)}s`, w - 24, h - 2);
+  }, [ctx, type, size, wet, accent, w, h]);
+
+  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 6 }} />;
+}
+
+function FxSatSection({ track, onPatch }: { track: StudioTrack; onPatch: (p: TrackPatch) => void }) {
+  const s = track.saturation;
+  return (
+    <FxBlock title="Saturation" right={
+      <button onClick={() => onPatch({ saturation: { ...s, on: !s.on } })}
+        style={miniToggle(s.on, "#f97316")}>{s.on ? "ON" : "OFF"}</button>
+    }>
+      {compKnob("Drive", 0, 24, s.drive, 0.5, (v) => onPatch({ saturation: { ...s, drive: v } }), " dB")}
+    </FxBlock>
+  );
+}
+
+function FxSidechainSection({ track, allTracks, onPatch }: { track: StudioTrack; allTracks: StudioTrack[]; onPatch: (p: TrackPatch) => void }) {
+  return (
+    <FxBlock title="Sidechain (duck from)">
+      <select value={track.sidechainSourceId || ""}
+        onChange={(e) => onPatch({ sidechainSourceId: e.target.value || null })}
+        style={{
+          width: "100%", background: "#111", color: "#eee",
+          border: "1px solid #222", padding: "4px 6px",
+          fontSize: 11, borderRadius: 0, marginBottom: 6,
+        }}
+      >
+        <option value="">— off —</option>
+        {allTracks.filter(t => t.id !== track.id).map(t => (
+          <option key={t.id} value={t.id}>{t.name}</option>
+        ))}
+      </select>
+      {track.sidechainSourceId && compKnob("Reduction", 0, 30, track.sidechainAmountDb, 0.5,
+        (v) => onPatch({ sidechainAmountDb: v }), " dB")}
+    </FxBlock>
+  );
+}
+
+function FxBlock({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div style={{
+      marginBottom: 10, padding: 8,
+      background: "#08080a", border: "1px solid #1a1a1e",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+        <div style={{ flex: 1, fontSize: 9, color: "#888", letterSpacing: 0.5, textTransform: "uppercase", fontWeight: 700 }}>
+          {title}
+        </div>
+        {right}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function compKnob(label: string, min: number, max: number, val: number, step: number, onChange: (v: number) => void, unit = "") {
+  return (
+    <div style={{ marginBottom: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#888", marginBottom: 2 }}>
+        <span>{label}</span>
+        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>
+          {val.toFixed(step < 1 ? 2 : 1)}{unit}
+        </span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={val}
+        onChange={(e) => onChange(+e.target.value)}
+        style={{ width: "100%", accentColor: "#38bdf8" }}
+      />
+    </div>
+  );
+}
+
+function miniToggle(active: boolean, color: string): React.CSSProperties {
+  return {
+    padding: "3px 8px",
+    background: active ? color : "#111",
+    color: active ? "#fff" : "#888",
+    border: `1px solid ${active ? color : "#222"}`,
+    fontSize: 9, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+  };
+}
+
+// ── Context menu ────────────────────────────────────────────────
+
+function ContextMenu({ x, y, items, onClose }: {
+  x: number; y: number;
+  items: { label: string; onClick: () => void; danger?: boolean; separator?: boolean }[];
+  onClose: () => void;
+}) {
+  // Close on outside click
+  useEffect(() => {
+    const onDown = () => onClose();
+    setTimeout(() => window.addEventListener("mousedown", onDown), 0);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [onClose]);
+  // Reposition if would clip viewport
+  const adjX = Math.min(x, window.innerWidth - 220);
+  const adjY = Math.min(y, window.innerHeight - items.length * 28 - 8);
+  return (
+    <div onMouseDown={(e) => e.stopPropagation()}
+      style={{
+        position: "fixed", left: adjX, top: adjY, minWidth: 200,
+        background: "#0c0c10", border: "1px solid #2a2a32", padding: 4,
+        zIndex: 5000, fontFamily: "Inter, system-ui, sans-serif",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      }}
+    >
+      {items.map((it, i) => it.separator ? (
+        <div key={i} style={{ height: 1, background: "#1a1a1e", margin: "3px 4px" }} />
+      ) : (
+        <button key={i}
+          onClick={() => { it.onClick(); onClose(); }}
+          style={{
+            display: "block", width: "100%", textAlign: "left" as const,
+            padding: "5px 10px",
+            background: "transparent",
+            color: it.danger ? "#ef4444" : "#ddd",
+            border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#1a1a22"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >{it.label}</button>
+      ))}
+    </div>
+  );
+}
+
+// ── Snapshots panel (floating) ──────────────────────────────────
+
+function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
+  snapshots: MixerSnapshot[];
+  onTake: () => void;
+  onRecall: (s: MixerSnapshot) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div style={{
+      position: "fixed", right: 16, top: 110,
+      width: 280, maxHeight: "60vh",
+      background: "#0c0c10", border: "1px solid #2a2a32",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      zIndex: 1500, fontFamily: "Inter, system-ui, sans-serif",
+      display: "flex", flexDirection: "column",
+    }}>
+      <div style={{
+        height: 28, padding: "0 10px", background: "#15151a",
+        borderBottom: "1px solid #2a2a32",
+        display: "flex", alignItems: "center", gap: 8,
+      }}>
+        <div style={{ flex: 1, fontSize: 11, color: "#ddd", fontWeight: 600 }}>Snapshots</div>
+        <button onClick={onClose}
+          style={{ background: "transparent", border: "none", color: "#888", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+        >×</button>
+      </div>
+      <div style={{ padding: 8, overflowY: "auto", flex: 1 }}>
+        <button onClick={onTake}
+          style={{
+            width: "100%", padding: "6px",
+            background: "#1e293b", color: "#38bdf8",
+            border: "1px solid #334155",
+            fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+            marginBottom: 8, letterSpacing: 0.5,
+          }}
+        >+ TAKE SNAPSHOT</button>
+        {snapshots.length === 0 && (
+          <div style={{ fontSize: 10, color: "#555", textAlign: "center" as const, padding: "20px 8px" }}>
+            No snapshots yet. Capture the current mixer state to recall it later.
+          </div>
+        )}
+        {snapshots.map(s => (
+          <div key={s.id}
+            style={{
+              padding: 8, marginBottom: 6,
+              background: "#08080a", border: "1px solid #1a1a1e",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <div style={{ flex: 1, fontSize: 11, color: "#fff", fontWeight: 600 }}>{s.name}</div>
+              <button onClick={() => onDelete(s.id)}
+                title="Delete snapshot"
+                style={{ background: "transparent", border: "none", color: "#555", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+              >×</button>
+            </div>
+            <div style={{ fontSize: 9, color: "#666", marginBottom: 6, fontFamily: "ui-monospace, monospace" }}>
+              {new Date(s.takenAt).toLocaleTimeString()} · {s.tracksJson.length} tracks
+            </div>
+            <button onClick={() => onRecall(s)}
+              style={{
+                width: "100%", padding: "4px",
+                background: "#111", color: "#22c55e",
+                border: "1px solid #22c55e44",
+                fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+                letterSpacing: 0.5,
+              }}
+            >↺ RECALL</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Keyboard help overlay ───────────────────────────────────────
+
+function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
+  const groups: { name: string; rows: [string, string][] }[] = [
+    {
+      name: "Transport",
+      rows: [
+        ["Space",         "Play / Stop"],
+        ["M",             "Drop marker at playhead"],
+      ],
+    },
+    {
+      name: "Tools",
+      rows: [
+        ["V",             "Select tool"],
+        ["C",             "Blade tool — click region to cut, or press C while hovering"],
+        ["T",             "Trim tool — drag region edges or body half"],
+        ["F",             "Fade tool — drag corners for fade-in/out"],
+      ],
+    },
+    {
+      name: "Edit",
+      rows: [
+        ["Ctrl/Cmd + Z",  "Undo"],
+        ["Ctrl/Cmd + Shift + Z", "Redo"],
+        ["Ctrl/Cmd + C",  "Copy selected region"],
+        ["Ctrl/Cmd + V",  "Paste at playhead"],
+        ["Ctrl/Cmd + D",  "Duplicate region (placed after current)"],
+        ["Backspace / Delete", "Delete selected region or automation point"],
+      ],
+    },
+    {
+      name: "Timeline",
+      rows: [
+        ["Click ruler",   "Set playhead"],
+        ["Drag ruler",    "Define loop range (auto-enables loop)"],
+        ["Ctrl/Cmd + scroll on timeline", "Zoom around cursor"],
+      ],
+    },
+    {
+      name: "Other",
+      rows: [
+        ["?",             "Toggle this help overlay"],
+        ["Esc",           "Close overlays / context menus"],
+        ["Right-click region",  "Region context menu (split / duplicate / delete...)"],
+        ["Right-click track header", "Track context menu"],
+      ],
+    },
+  ];
+  return (
+    <div onMouseDown={onClose}
+      style={{
+        position: "fixed", inset: 0,
+        background: "rgba(8,8,12,0.85)",
+        zIndex: 9999, display: "flex",
+        alignItems: "center", justifyContent: "center",
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      <div onMouseDown={(e) => e.stopPropagation()}
+        style={{
+          width: 720, maxHeight: "80vh", overflowY: "auto",
+          background: "#0c0c10", border: "1px solid #2a2a32",
+          padding: 24, fontFamily: "Inter, system-ui, sans-serif",
+          boxShadow: "0 16px 64px rgba(0,0,0,0.6)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ flex: 1, fontSize: 16, color: "#fff", fontWeight: 700, letterSpacing: 0.5 }}>
+            Keyboard Shortcuts
+          </div>
+          <button onClick={onClose}
+            style={{ background: "transparent", border: "none", color: "#888", fontSize: 18, cursor: "pointer" }}
+          >×</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+          {groups.map(g => (
+            <div key={g.name}>
+              <div style={{ fontSize: 10, color: "#38bdf8", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
+                {g.name}
+              </div>
+              {g.rows.map(([k, d]) => (
+                <div key={k} style={{ display: "flex", marginBottom: 6, fontSize: 11 }}>
+                  <div style={{
+                    minWidth: 130, padding: "2px 6px",
+                    background: "#1a1a22", color: "#fde047",
+                    border: "1px solid #2a2a32",
+                    fontFamily: "ui-monospace, monospace",
+                    marginRight: 10,
+                  }}>{k}</div>
+                  <div style={{ flex: 1, color: "#bbb", paddingTop: 2 }}>{d}</div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 16, fontSize: 10, color: "#555", textAlign: "center" as const }}>
+          Press <span style={{ color: "#fde047" }}>?</span> or <span style={{ color: "#fde047" }}>Esc</span> to close
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Auto-normalize dropdown ─────────────────────────────────────
+
+function NormalizeMenu({ onPick }: { onPick: (target: number) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <TBtn onClick={() => setOpen(o => !o)} title="Auto-normalize mix to broadcast loudness">▮▮ Norm ▾</TBtn>
+      {open && (
+        <div onMouseLeave={() => setOpen(false)}
+          style={{
+            position: "absolute", top: "100%", right: 0, marginTop: 4,
+            background: "#111", border: "1px solid #222",
+            zIndex: 30, minWidth: 200,
+          }}
+        >
+          {[
+            { name: "Broadcast (-23 LUFS, EBU R128)",  v: -23 },
+            { name: "Streaming (-16 LUFS)",             v: -16 },
+            { name: "Spotify / Apple (-14 LUFS)",       v: -14 },
+            { name: "Loud (-9 LUFS)",                   v: -9  },
+          ].map(o => (
+            <button key={o.v}
+              onClick={() => { setOpen(false); onPick(o.v); }}
+              style={{
+                display: "block", width: "100%", textAlign: "left" as const,
+                padding: "6px 10px",
+                background: "transparent", color: "#eee",
+                border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
+              }}
+            >{o.name}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Add Track menu (with templates) ─────────────────────────────
+
+function AddTrackMenu({ onAdd }: { onAdd: (template: "vocal" | "music" | "drum" | "plain") => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{
+          width: "100%", height: 36, background: "transparent",
+          border: "1px dashed #2a2a2e", color: "#888",
+          fontSize: 11, cursor: "pointer", borderRadius: 0,
+        }}
+      >+ Add Track ▾</button>
+      {open && (
+        <div onMouseLeave={() => setOpen(false)}
+          style={{
+            position: "absolute", top: "100%", left: 0, right: 0,
+            background: "#0c0c10", border: "1px solid #2a2a32",
+            zIndex: 50, padding: 4,
+          }}
+        >
+          {([
+            { id: "plain", label: "Plain Track",     desc: "" },
+            { id: "vocal", label: "Vocal Track",     desc: "EQ + Comp + Plate reverb" },
+            { id: "music", label: "Music Bed",       desc: "EQ tilted for bed mix" },
+            { id: "drum",  label: "Drum Track",      desc: "Punchy comp + drive" },
+          ] as const).map(t => (
+            <button key={t.id} onClick={() => { setOpen(false); onAdd(t.id); }}
+              style={{
+                display: "block", width: "100%", textAlign: "left" as const,
+                padding: "6px 8px",
+                background: "transparent", color: "#eee",
+                border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#1a1a22"; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+            >
+              <div style={{ fontWeight: 600 }}>{t.label}</div>
+              {t.desc && <div style={{ fontSize: 9, color: "#666" }}>{t.desc}</div>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── LUFS meter ──────────────────────────────────────────────────
+
+function LUFSMeter({ lufsMomentary, width }: { lufsMomentary: number; width: number }) {
+  // Map -50..0 LUFS to bar width, with broadcast target zones marked.
+  const v = isFinite(lufsMomentary) ? lufsMomentary : -50;
+  const minDb = -50, maxDb = 0;
+  const pct = Math.min(1, Math.max(0, (v - minDb) / (maxDb - minDb)));
+  const targetMark = (db: number, color: string) => ({
+    left: `${((db - minDb) / (maxDb - minDb)) * 100}%`, color,
+  });
+  const broadcast = targetMark(-23, "#22c55e");
+  const streaming = targetMark(-16, "#fde047");
+  const loud      = targetMark(-9,  "#ef4444");
+  // Color depends on zone
+  const color = v <= -23 ? "#3b82f6" : v <= -16 ? "#22c55e" : v <= -9 ? "#fde047" : "#ef4444";
+  return (
+    <div style={{ width }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#888", marginBottom: 3 }}>
+        <span>LUFS (momentary, K-weighted)</span>
+        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>
+          {isFinite(v) ? v.toFixed(1) : "—"}
+        </span>
+      </div>
+      <div style={{ position: "relative", width: "100%", height: 10, background: "#1a1a1e", overflow: "hidden" }}>
+        <div style={{ width: `${pct * 100}%`, height: "100%", background: color, transition: "width 80ms linear" }} />
+        {/* Target markers */}
+        {[{ ...broadcast, lbl: "-23" }, { ...streaming, lbl: "-16" }, { ...loud, lbl: "-9" }].map((m, i) => (
+          <React.Fragment key={i}>
+            <div style={{ position: "absolute", top: 0, left: m.left, width: 1, height: "100%", background: m.color, opacity: 0.7 }} />
+          </React.Fragment>
+        ))}
+      </div>
+      <div style={{ display: "flex", fontSize: 8, color: "#555", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
+        <span style={{ flex: 1, textAlign: "left" }}>-50</span>
+        <span style={{ flex: 1, textAlign: "center", color: "#22c55e" }}>-23 broadcast</span>
+        <span style={{ flex: 1, textAlign: "center", color: "#fde047" }}>-16 stream</span>
+        <span style={{ flex: 1, textAlign: "right" }}>0</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Stereo correlation meter ────────────────────────────────────
+
+function CorrelationMeter({ correlation, width }: { correlation: number; width: number }) {
+  const v = Math.max(-1, Math.min(1, correlation));
+  const pctFromCenter = v * 0.5;   // -0.5..+0.5 range relative to center
+  // Color: green = mono-compatible, yellow = wide, red = phase-cancel
+  const color = v >= 0.5 ? "#3b82f6" : v >= 0 ? "#22c55e" : v >= -0.5 ? "#fde047" : "#ef4444";
+  return (
+    <div style={{ width }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#888", marginBottom: 3 }}>
+        <span>Stereo correlation</span>
+        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(2)}</span>
+      </div>
+      <div style={{ position: "relative", width: "100%", height: 10, background: "#1a1a1e", overflow: "hidden" }}>
+        <div style={{ position: "absolute", left: "50%", top: 0, width: 1, height: "100%", background: "#444" }} />
+        <div style={{
+          position: "absolute", top: 0, height: "100%",
+          left: v >= 0 ? "50%" : `${50 + pctFromCenter * 100}%`,
+          width: `${Math.abs(pctFromCenter) * 100}%`,
+          background: color, transition: "all 80ms linear",
+        }} />
+      </div>
+      <div style={{ display: "flex", fontSize: 8, color: "#555", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
+        <span style={{ flex: 1, textAlign: "left", color: "#ef4444" }}>-1 phase</span>
+        <span style={{ flex: 1, textAlign: "center" }}>0 wide</span>
+        <span style={{ flex: 1, textAlign: "right", color: "#3b82f6" }}>+1 mono</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Goniometer / vectorscope ────────────────────────────────────
+
+function Goniometer({ lAnalyser, rAnalyser, size }: {
+  lAnalyser: AnalyserNode | null; rAnalyser: AnalyserNode | null; size: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.floor(size * dpr);
+    cv.height = Math.floor(size * dpr);
+    const g = cv.getContext("2d");
+    if (!g) return;
+    g.scale(dpr, dpr);
+    let raf = 0;
+    const lBuf = lAnalyser ? new Float32Array(lAnalyser.fftSize) : null;
+    const rBuf = rAnalyser ? new Float32Array(rAnalyser.fftSize) : null;
+    const draw = () => {
+      // Persistence: fade the previous frame slightly instead of full clear
+      g.fillStyle = "rgba(5,5,8,0.18)";
+      g.fillRect(0, 0, size, size);
+      // Diamond outline + L/R axes
+      g.strokeStyle = "#1a1a22"; g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(size / 2, 0); g.lineTo(size, size / 2);
+      g.lineTo(size / 2, size); g.lineTo(0, size / 2); g.closePath();
+      g.stroke();
+      g.beginPath();
+      g.moveTo(0, size / 2); g.lineTo(size, size / 2);
+      g.moveTo(size / 2, 0); g.lineTo(size / 2, size);
+      g.stroke();
+      if (lAnalyser && rAnalyser && lBuf && rBuf) {
+        lAnalyser.getFloatTimeDomainData(lBuf);
+        rAnalyser.getFloatTimeDomainData(rBuf);
+        const cx = size / 2, cy = size / 2;
+        const scale = size * 0.45;
+        g.fillStyle = "#22c55e";
+        // Sub-sample for performance (every 4th sample)
+        for (let i = 0; i < lBuf.length; i += 4) {
+          // Rotate L/R by 45° to get classic vectorscope diamond
+          const L = lBuf[i], R = rBuf[i];
+          const x = cx + (L - R) * scale;
+          const y = cy - (L + R) * scale;
+          g.fillRect(x, y, 1, 1);
+        }
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    draw();
+    return () => cancelAnimationFrame(raf);
+  }, [lAnalyser, rAnalyser, size]);
+  return (
+    <div>
+      <div style={{ fontSize: 9, color: "#888", marginBottom: 3 }}>Goniometer</div>
+      <canvas ref={canvasRef}
+        style={{ width: size, height: size, display: "block", background: "#050508", margin: "0 auto" }}
+      />
+    </div>
+  );
+}

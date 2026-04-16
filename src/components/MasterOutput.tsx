@@ -392,7 +392,7 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 }
 
 // ── MasterOutput ─────────────────────────────────────────────
-export default function MasterOutput({ masterLevel, expanded }: { masterLevel: number; expanded?: boolean }) {
+export default function MasterOutput({ masterLevel, expanded, collapsed = false, onToggleCollapsed }: { masterLevel: number; expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const [masterVol,  setMasterVol]  = useState(1.0);
   const [monitorVol, setMonitorVol] = useState(0.8);
   const [nextBreak,  setNextBreak]  = useState("—");
@@ -522,6 +522,34 @@ export default function MasterOutput({ masterLevel, expanded }: { masterLevel: n
     return Math.max(0, Math.min(1, elapsed / total));
   })() : 0;
 
+  // ── Collapsed mode: thin 36px strip with VU + on-air dot + expand chevron ──
+  if (collapsed) {
+    return (
+      <div style={{
+        width: 36, flexShrink: 0, display: "flex", flexDirection: "column",
+        background: "var(--bg-secondary)", borderLeft: "1px solid var(--border-primary)",
+        color: "var(--text-primary)", overflow: "hidden", userSelect: "none",
+      }}>
+        <button
+          onClick={onToggleCollapsed}
+          title="Expand master output panel"
+          style={{ height: 28, background: "var(--bg-tertiary)", border: "none", borderBottom: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <div style={{ flex: 1, minHeight: 0, padding: "8px 6px", display: "flex" }}>
+          <MasterVU master={masterLevel * masterVol} />
+        </div>
+        <div style={{ padding: "6px 4px", borderTop: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+          <div title={onAir ? "ON AIR" : "STANDBY"} style={{ width: 8, height: 8, borderRadius: "50%", background: onAir ? "#22c55e" : "#3a3a4a", boxShadow: onAir ? "0 0 6px #22c55e" : "none" }} />
+          <div style={{ fontSize: 7, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", writingMode: "vertical-rl" as const, transform: "rotate(180deg)", letterSpacing: "0.08em" }}>{uptime}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       width: expanded ? undefined : 220,
@@ -532,22 +560,51 @@ export default function MasterOutput({ masterLevel, expanded }: { masterLevel: n
       fontSize: 11, color: "var(--text-primary)", overflow: "hidden",
       userSelect: "none",
     }}>
-      {/* Header */}
-      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Master out</span>
-        <button
-          title="Pop out to separate window"
-          onClick={() => (window as any).ether?.invoke("window:popout", "master")}
-          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "1px 2px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0 }}
-          onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
-          onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
-        >
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-            <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-          </svg>
-        </button>
+      {/* Header — full-width strip with a prominent collapse chevron on the left.
+          The chevron button is intentionally large (32×30) and contrast-bg so it is
+          obvious how to close the panel after expanding it. */}
+      <div style={{ display: "flex", alignItems: "stretch", flexShrink: 0, borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", height: 30 }}>
+        {onToggleCollapsed && (
+          <button
+            onClick={onToggleCollapsed}
+            title="Collapse master output panel"
+            style={{
+              width: 32, background: "transparent", border: "none",
+              borderRight: "1px solid var(--border-primary)",
+              color: "var(--text-secondary)", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              padding: 0, transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "rgba(96,128,192,0.15)"; el.style.color = "#88a8e0"; }}
+            onMouseLeave={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "transparent"; el.style.color = "var(--text-secondary)"; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        )}
+        <div style={{ flex: 1, padding: "0 12px", display: "flex", alignItems: "center", justifyContent: "space-between", minWidth: 0 }}>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>
+            Master Out
+          </span>
+          <button
+            title="Pop out to separate window"
+            onClick={() => (window as any).ether?.invoke("window:popout", "master")}
+            style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "1px 4px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0 }}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
+            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
+          </button>
+        </div>
       </div>
+
+      {/* Body — scrollable so all content (faders, EQ, status, expanded sections, console)
+          remains reachable on short screens. The header above stays pinned at the top. */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column" }}>
 
       {/* VU meters */}
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
@@ -687,6 +744,7 @@ export default function MasterOutput({ masterLevel, expanded }: { masterLevel: n
 
       {/* Live console — fills all remaining space */}
       <LiveConsole masterLevel={masterLevel} />
+      </div>{/* /scrollable body */}
     </div>
   );
 }

@@ -282,6 +282,28 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                   )}
                 </div>
 
+                {/* Chain type badge — click to cycle SEG/STOP */}
+                <button
+                  onMouseDown={e => e.stopPropagation()}
+                  onClick={e => {
+                    e.stopPropagation();
+                    const cur = (item as any).chainType || "segue";
+                    const next = cur === "segue" ? "stop" : "segue";
+                    engine.setQueueItemChainType(i, next);
+                    onQueueChange();
+                  }}
+                  title={((item as any).chainType || "segue") === "segue" ? "Segue — auto-advance to next. Click to change to Stop." : "Stop — wait for manual trigger. Click to change to Segue."}
+                  style={{
+                    fontSize: 7, fontWeight: 800, letterSpacing: "0.08em",
+                    padding: "2px 5px", borderRadius: 0, cursor: "pointer", flexShrink: 0,
+                    background: ((item as any).chainType || "segue") === "stop" ? "rgba(239,68,68,0.15)" : "rgba(52,211,153,0.10)",
+                    color: ((item as any).chainType || "segue") === "stop" ? "var(--accent-red)" : "var(--accent-green)",
+                    border: `1px solid ${((item as any).chainType || "segue") === "stop" ? "rgba(239,68,68,0.3)" : "rgba(52,211,153,0.2)"}`,
+                  }}
+                >
+                  {((item as any).chainType || "segue") === "stop" ? "STOP" : "SEG"}
+                </button>
+
                 {/* Remove */}
                 <button
                   onMouseDown={e => e.stopPropagation()}

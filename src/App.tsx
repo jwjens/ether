@@ -44,6 +44,9 @@ import Logs from "./components/Logs";
 import NowPlaying from "./components/NowPlaying";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
 import Spots from "./components/Spots";
+import MacrosPanel, { useMacroHotkeys, startMacroClockWatcher } from "./components/MacroEngine";
+import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
+import ConsoleStrip from "./components/ConsoleStrip";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
 import NowPlayingSettings from "./components/NowPlayingSettings";
@@ -76,10 +79,11 @@ import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPicker";
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
+import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -319,7 +323,45 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
   );
 }
 
+// ── Responsive viewport hook (header collapse + panel auto-collapse) ─────
+// Reports current window width and named breakpoints so consumers can
+// declaratively hide/collapse UI without each component owning its own
+// resize listener.
+function useViewport() {
+  const [w, setW] = useState(typeof window !== "undefined" ? window.innerWidth : 1920);
+  useEffect(() => {
+    const onResize = () => setW(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  // Search bar shrinks: 560 → 420 → 320 → 240 → icon-only
+  // Clock: 52pt → 40 → 32 → 28 → hidden
+  let searchW = 560;
+  if (w < 1200) searchW = 420;
+  if (w < 1100) searchW = 320;
+  if (w < 950)  searchW = 240;
+  if (w < 800)  searchW = 0; // icon-only mode
+  let clockSize: "full" | "lg" | "md" | "sm" | "hidden" = "full";
+  if (w < 1200) clockSize = "lg";
+  if (w < 1100) clockSize = "md";
+  if (w < 950)  clockSize = "sm";
+  if (w < 800)  clockSize = "hidden";
+  return {
+    width: w,
+    veryNarrow: w < 800,   // hide WARN text, Go Live → ▶ icon, search icon-only
+    narrow:     w < 950,   // collapse Admin to icon-only
+    medium:     w < 1100,  // collapse Pro to icon-only
+    panelTight: w < 1200,  // master panel auto-collapses
+    searchW,               // dynamic search bar width (0 = icon-only)
+    clockSize,             // "full" | "lg" | "md" | "sm" | "hidden"
+  };
+}
+
 export default function App() {
+  const viewport = useViewport();
+  // Macro automation: listen for hotkey-triggered macros + start clock watcher
+  useMacroHotkeys();
+  useEffect(() => { startMacroClockWatcher(); }, []);
   const [splashDone, setSplashDone] = useState(false);
   const [wizardDone, setWizardDone] = useState(false);
   const [firstRunChecked, setFirstRunChecked] = useState(false);
@@ -349,6 +391,34 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
   const [globalSearch, setGlobalSearch] = useState("");
+  const [autoXfade, setAutoXfade] = useState(true);
+  const [xfadeActive, setXfadeActive] = useState(false);
+  const handleXfade = () => {
+    const playingDeck = deckA?.status === "playing" ? "A" : deckB?.status === "playing" ? "B" : deckC?.status === "playing" ? "C" : null;
+    if (!playingDeck) return;
+    const order: Array<"A"|"B"|"C"> = ["A", "B", "C"];
+    const currentIdx = order.indexOf(playingDeck as "A"|"B"|"C");
+    let targetDeck: "A"|"B"|"C" | null = null;
+    for (let i = 1; i <= 2; i++) {
+      const candidate = order[(currentIdx + i) % 3];
+      const state = candidate === "A" ? deckA : candidate === "B" ? deckB : deckC;
+      if (state?.filePath) { targetDeck = candidate; break; }
+    }
+    if (!targetDeck) return;
+    engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
+    setTimeout(async () => {
+      engine.getDeck(playingDeck)?.stop();
+      const q = engine.getQueue();
+      if (q.length > 0) {
+        const next = q[0];
+        engine.clearQueue();
+        engine.addToQueue(q.slice(1));
+        await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist);
+      }
+    }, 2200);
+    setXfadeActive(true);
+    setTimeout(() => setXfadeActive(false), 2200);
+  };
   const [toolsCollapsed, setToolsCollapsed] = useState(() => localStorage.getItem("ether_tools_collapsed") === "1");
   const toggleToolsCollapsed = () => setToolsCollapsed(c => { const next = !c; localStorage.setItem("ether_tools_collapsed", next ? "1" : "0"); return next; });
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -882,6 +952,7 @@ export default function App() {
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
   return (
+    <MidiProvider>
     <EtherErrorBoundary>
     <div className={"h-screen flex flex-col " + (darkMode ? "dark-theme" : "")} onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
@@ -889,63 +960,46 @@ export default function App() {
       {/* ── Header ── */}
       <header style={{ height: 96, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
-        {/* LEFT: Chevron + Search */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, zIndex: 1 }}>
-          <button
-            onClick={toggleToolsCollapsed}
-            title={toolsCollapsed ? "Show tools" : "Hide tools"}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, flexShrink: 0, background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", transition: "color 0.15s" }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
-          >
-            {toolsCollapsed ? (
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3,2 7,5 3,8"/></svg>
-            ) : (
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="2,3 5,7 8,3"/></svg>
-            )}
-          </button>
-          <div style={{ position: "relative" as const, width: 260 }}>
-            <svg style={{ position: "absolute" as const, left: 8, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: "var(--text-tertiary)" }} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input
-              type="text"
-              placeholder="Search library..."
-              value={globalSearch}
-              onChange={e => setGlobalSearch(e.target.value)}
-              style={{ width: "100%", height: 30, paddingLeft: 28, paddingRight: globalSearch ? 28 : 8, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 0, color: "var(--text-primary)", fontSize: 12, outline: "none", fontFamily: "'Inter', sans-serif", boxSizing: "border-box" as const }}
-            />
-            {globalSearch && (
-              <button onClick={() => setGlobalSearch("")} style={{ position: "absolute" as const, right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: 0 }}>×</button>
-            )}
-          </div>
-        </div>
-
-        {/* CENTER: Go Live + Clock — absolutely centered */}
-        <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0, display: "flex", alignItems: "center", gap: 8 }}>
-          {panel !== "live" && (
+        {/* LEFT: Search — width shrinks with viewport, becomes icon-only at <800px */}
+        <div style={{ display: "flex", alignSelf: "stretch", flexShrink: 0, zIndex: 1 }}>
+          {viewport.searchW > 0 ? (
+            <div style={{ width: viewport.searchW, position: "relative" as const, display: "flex", flexDirection: "column" as const, transition: "width 0.18s ease" }}>
+              <JockStrip deckA={deckA} deckB={deckB} dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />
+            </div>
+          ) : (
             <button
-              onClick={() => setPanel("live")}
-              style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}
+              onClick={() => { setPanel("library"); }}
+              title="Search library"
+              style={{ width: 48, height: 44, alignSelf: "center", marginLeft: 4, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
             >
-              <svg width="7" height="9" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
-              Go Live
+              <svg width="18" height="18" viewBox="0 0 14 14" fill="none">
+                <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
             </button>
           )}
-          <ClockDisplay />
         </div>
+
+        {/* CENTER: Clock — absolutely centered, scales down or hides at narrow widths */}
+        {viewport.clockSize !== "hidden" && (
+          <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0, display: "flex", alignItems: "center", gap: 8, pointerEvents: "none" }}>
+            <ClockDisplay size={viewport.clockSize} />
+          </div>
+        )}
 
         {/* RIGHT: Status + Pro + Admin + ☰ menu + ON AIR */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1, marginLeft: "auto" }}>
-          <HealthStatusDot onClick={() => setPanel("health")} />
-          <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />
+          <HealthStatusDot onClick={() => setPanel("health")} compact={viewport.veryNarrow} />
+          {!viewport.veryNarrow && <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />}
           {currentPlan === "free" && (
-            <button onClick={() => setPanel("subscription")} style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 4 }}>
-              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              Pro
+            <button onClick={() => setPanel("subscription")} title="Upgrade to Pro" style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              {!viewport.medium && "Pro"}
             </button>
           )}
-          <button onClick={() => setCurrentUser(null)} style={{ height: 28, padding: "0 8px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, display: "flex", alignItems: "center", gap: 5 }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            {currentUser?.name}
+          <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ height: 44, padding: viewport.narrow ? "0 12px" : "0 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", gap: 7 }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            {!viewport.narrow && currentUser?.name}
           </button>
 
           {/* ☰ Menu button */}
@@ -953,7 +1007,7 @@ export default function App() {
             onClick={() => setDrawerOpen(d => !d)}
             title="Menu"
             style={{
-              width: 32, height: 32, borderRadius: 0, cursor: "pointer",
+              width: 48, height: 48, borderRadius: 0, cursor: "pointer",
               background: drawerOpen ? "var(--bg-tertiary)" : "transparent",
               border: `1px solid ${drawerOpen ? "var(--border-primary)" : "transparent"}`,
               color: drawerOpen ? "var(--text-primary)" : "var(--text-secondary)",
@@ -965,7 +1019,7 @@ export default function App() {
               if (!drawerOpen) { (e.currentTarget as HTMLElement).style.background = "transparent"; (e.currentTarget as HTMLElement).style.borderColor = "transparent"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }
             }}
           >
-            <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <svg width="20" height="16" viewBox="0 0 14 11" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <line x1="0" y1="1" x2="14" y2="1"/>
               <line x1="0" y1="5.5" x2="14" y2="5.5"/>
               <line x1="0" y1="10" x2="14" y2="10"/>
@@ -983,8 +1037,8 @@ export default function App() {
               }
             }}
             style={{
-              height: 32, padding: "0 16px", borderRadius: 0, border: "none", cursor: "pointer",
-              fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
+              height: 48, padding: "0 24px", borderRadius: 0, border: "none", cursor: "pointer",
+              fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
               background: onAir ? "#ef4444" : "var(--bg-tertiary)",
               color: onAir ? "#fff" : "var(--text-tertiary)",
               boxShadow: onAir ? "0 0 16px rgba(239,68,68,0.5)" : "none",
@@ -1026,9 +1080,11 @@ export default function App() {
                 {/* ── NAVIGATE ── */}
                 <div style={{ padding: "2px 16px 6px", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)" }}>NAVIGATE</div>
                 {([
+                  { key: "library",    emoji: "🎵", label: "Library",     action: () => setPanel("library"),     active: panel === "library"     },
                   { key: "schedule",   emoji: "📋", label: "Schedule",    action: () => setPanel("clocks"),      active: panel === "clocks"      },
                   { key: "calendar",   emoji: "📅", label: "Calendar",    action: () => setPanel("calendar"),    active: panel === "calendar"    },
                   { key: "programlog", emoji: "📜", label: "Program Log", action: () => setPanel("programlog"), active: panel === "programlog"  },
+                  { key: "cartwall",   emoji: "🎛️", label: "Carts",       action: () => setPanel("cartwall"),    active: panel === "cartwall"    },
                 ] as const).map(item => (
                   <button
                     key={item.key}
@@ -1144,6 +1200,11 @@ export default function App() {
                   nowPlaying={nowPlayingStr || undefined}
                   toolsCollapsed={toolsCollapsed}
                   toggleToolsCollapsed={toggleToolsCollapsed}
+                  autoXfade={autoXfade}
+                  setAutoXfade={(v) => { setAutoXfade(v); engine.outroCrossfade = v; }}
+                  xfadeActive={xfadeActive}
+                  handleXfade={handleXfade}
+                  onOpenCarts={() => setPanel("cartwall")}
                 />
               )}
             </div>
@@ -1155,7 +1216,7 @@ export default function App() {
               {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "studio" && (
                 <EtherErrorBoundary>
-                  <StudioEditor
+                  <StudioPro
                     deckAPath={null} deckATitle={undefined}
                     deckBPath={null} deckBTitle={undefined}
                   />
@@ -1216,6 +1277,8 @@ export default function App() {
                 </div>
               )}
               {panel === "videostudio" && <VideoStudio />}
+              {panel === "macros" && <MacrosPanel />}
+              {panel === "midi" && <MidiSettingsPanel />}
               {panel === "importlibrary" && (
                 <LibraryImport onClose={() => setPanel("live")} />
               )}
@@ -1316,9 +1379,26 @@ export default function App() {
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0, letterSpacing: "0.02em", fontFamily: "'DM Mono', monospace" }}>
-        <span style={{ color: onAir ? "var(--accent-green)" : "var(--text-tertiary)" }}>
-          {onAir ? "● On Air" : "○ Off Air"}
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ color: onAir ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+            {onAir ? "● On Air" : "○ Off Air"}
+          </span>
+          {panel !== "live" && (
+            <button
+              onClick={() => setPanel("live")}
+              title="Back to Live Dashboard"
+              style={{
+                padding: "2px 8px", borderRadius: 0,
+                background: "var(--accent-cyan)", border: "none",
+                color: "#000", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+              }}
+            >
+              <svg width="7" height="8" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
+              LIVE
+            </button>
+          )}
+        </div>
         <div style={{ display: "flex", gap: 16 }}>
           <HealthStatusDot onClick={() => setPanel("health")} />
           <span style={{ color: "var(--border-secondary)" }}>·</span>
@@ -1350,6 +1430,7 @@ export default function App() {
         />
       )}
     </EtherErrorBoundary>
+    </MidiProvider>
   );
 }
 
@@ -1469,7 +1550,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Import Music..." onClick={() => set("library")} />
         <Item label="Export Episode..." onClick={() => set("podcast")} />
         <Item separator />
-        <Item label="Preferences" onClick={() => set("settings")} />
+        {currentUser?.role === "admin" && <Item label="Preferences" onClick={() => set("settings")} />}
       </Menu>
     ),
     view: (
@@ -1526,13 +1607,15 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Announcements"        onClick={() => set("announce")} />
         <Item label="Show Prep"            onClick={() => set("showprep")} />
         <Item separator />
-        {/* Station */}
-        <Item label="Stream Manager"       onClick={() => set("streaming")} />
-        <Item label="Smart Scheduler"      onClick={() => set("smartschedule")} />
-        <Item label="Listener Analytics"   onClick={() => set("analytics")} />
-        <Item label="Cloud Log Backup"     onClick={() => set("cloudbackup")} />
-        <Item label="Audio Routing"        onClick={() => set("multioutput")} />
-        <Item label="Station Manager"      onClick={() => set("stationmanager")} />
+        {/* Station — admin/music_director features gated by role */}
+        {(currentUser?.role === "admin") && <Item label="Stream Manager"       onClick={() => set("streaming")} />}
+        {(currentUser?.role === "admin" || currentUser?.role === "music_director") && <Item label="Smart Scheduler"      onClick={() => set("smartschedule")} />}
+        {(currentUser?.role === "admin") && <Item label="Listener Analytics"   onClick={() => set("analytics")} />}
+        {(currentUser?.role === "admin") && <Item label="Cloud Log Backup"     onClick={() => set("cloudbackup")} />}
+        {(currentUser?.role === "admin") && <Item label="Audio Routing"        onClick={() => set("multioutput")} />}
+        {(currentUser?.role === "admin") && <Item label="Station Manager"      onClick={() => set("stationmanager")} />}
+        {(currentUser?.role === "admin") && <Item label="Macros"               onClick={() => set("macros")} />}
+        {(currentUser?.role === "admin") && <Item label="MIDI Controller"      onClick={() => set("midi")} />}
         <Item separator />
         <Item label="Remote Dashboard ↗"  onClick={async () => {
           try {
@@ -2328,7 +2411,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -2346,11 +2429,44 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   nowPlaying?: string;
   toolsCollapsed: boolean;
   toggleToolsCollapsed: () => void;
+  autoXfade: boolean;
+  setAutoXfade: (v: boolean) => void;
+  xfadeActive: boolean;
+  handleXfade: () => void;
+  onOpenCarts: () => void;
 }) {
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
-  const [autoXfade, setAutoXfade] = useState(true);
-  const [xfadeActive, setXfadeActive] = useState(false);
+  const lpViewport = useViewport();
   const [masterLevel, setMasterLevel] = useState(0);
+
+  // Master Output collapse state — persisted; auto-collapses below 1200px unless user opted in
+  const [masterUserExpanded, setMasterUserExpanded] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_master_user_expanded") === "1"; } catch { return false; }
+  });
+  const [masterUserCollapsed, setMasterUserCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_master_user_collapsed") === "1"; } catch { return false; }
+  });
+  // Effective collapsed:
+  //   - User toggle wins if set
+  //   - Else auto-collapse when window is < 1200
+  const masterCollapsed = masterUserCollapsed
+    ? true
+    : masterUserExpanded
+      ? false
+      : lpViewport.panelTight;
+  const toggleMasterCollapsed = useCallback(() => {
+    if (masterCollapsed) {
+      // Expanding — remember the user wants it open
+      setMasterUserExpanded(true);
+      setMasterUserCollapsed(false);
+      try { localStorage.setItem("ether_master_user_expanded", "1"); localStorage.removeItem("ether_master_user_collapsed"); } catch {}
+    } else {
+      // Collapsing — remember the user wants it closed
+      setMasterUserCollapsed(true);
+      setMasterUserExpanded(false);
+      try { localStorage.setItem("ether_master_user_collapsed", "1"); localStorage.removeItem("ether_master_user_expanded"); } catch {}
+    }
+  }, [masterCollapsed]);
 
   // Subscribe to master output level from push events
   useEffect(() => {
@@ -2361,6 +2477,13 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     });
     return () => ether.audio.offLevels(h);
   }, []);
+  // Console fader strip toggle
+  const [showConsole, setShowConsole] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_show_console") === "1"; } catch { return false; }
+  });
+  // Mic ON state for console fader mode (mirrors MicDeck's internal state)
+  const [consoleMicOn, setConsoleMicOn] = useState<Record<string, boolean>>({});
+
   // Panel widths — resizable via drag divider
   const [queueWidth, setQueueWidth] = useState(320);
   const resizingRef = useRef(false);
@@ -2426,9 +2549,16 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   type DeckSlot = "A" | "B" | "C" | "mic";
   // Always derive deck order directly from deckConfigs — no separate state needed
   const DEFAULT_DECK_ORDER: DeckSlot[] = ["A", "B", "C", "mic"];
-  const activeDeckOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0
+  const rawDeckOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0
     ? deckConfigs.filter(c => c.enabled).map(c => c.slot as DeckSlot)
     : DEFAULT_DECK_ORDER;
+  // Auto-hide the mic deck below 950px when no guest decks are configured.
+  // Guests in conversation always keep the mic visible, otherwise it drops out
+  // to give the music decks room to breathe on tablets/phones.
+  const hasGuestDeck = !!deckConfigs?.some(c => c.enabled && c.type === "guest");
+  const activeDeckOrder: DeckSlot[] = (lpViewport.narrow && !hasGuestDeck)
+    ? rawDeckOrder.filter(s => s !== "mic")
+    : rawDeckOrder;
   // Keep deckOrder in sync for drag-drop resize (still needed for deckWidths key)
   const [deckOrder, setDeckOrder] = useState<DeckSlot[]>(activeDeckOrder);
   useEffect(() => { setDeckOrder(activeDeckOrder); }, [JSON.stringify(activeDeckOrder)]);
@@ -2478,48 +2608,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     window.addEventListener("mouseup", onMouseUp);
   };
 
-  const handleXfade = () => {
-    // Determine which deck is currently playing
-    const playingDeck =
-      deckA?.status === "playing" ? "A" :
-      deckB?.status === "playing" ? "B" :
-      deckC?.status === "playing" ? "C" : null;
-
-    if (!playingDeck) return;
-
-    // Find the next loaded deck in cycle A→B→C→A
-    const order: Array<"A"|"B"|"C"> = ["A", "B", "C"];
-    const currentIdx = order.indexOf(playingDeck as "A"|"B"|"C");
-    
-    // Look for next deck that has a track loaded
-    let targetDeck: "A"|"B"|"C" | null = null;
-    for (let i = 1; i <= 2; i++) {
-      const candidate = order[(currentIdx + i) % 3];
-      const state = candidate === "A" ? deckA : candidate === "B" ? deckB : deckC;
-      if (state?.filePath) { targetDeck = candidate; break; }
-    }
-
-    if (!targetDeck) return;
-
-    // Fire the crossfade
-    engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
-
-    // After crossfade completes — stop source deck and load next from queue
-    setTimeout(async () => {
-      engine.getDeck(playingDeck)?.stop();
-      // If queue has more tracks, preload into the source deck
-      const q = engine.getQueue();
-      if (q.length > 0) {
-        const next = q[0];
-        engine.clearQueue();
-        engine.addToQueue(q.slice(1));
-        await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist);
-      }
-    }, 2200); // after fade completes
-
-    setXfadeActive(true);
-    setTimeout(() => setXfadeActive(false), 2200);
-  };
 
   const startDrag = (panel: "queue" | "decks") => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -2579,6 +2667,117 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         transition: "opacity 0.15s, outline 0.1s",
       }}
     >
+      {showConsole ? (
+        /* ── Console Fader Mode — replaces OnAirDeck with ConsoleStrip for music decks.
+           Non-music decks (mic, guest, cart, desk, video) render their normal components.
+           Uses the same activeDeckOrder from the deck configurator so all 6 slots work. ── */
+        <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0 }}>
+          {activeDeckOrder.map((slot) => {
+            const config = deckConfigs?.find(d => d.slot === slot);
+            const deckType = config?.type || (slot === "mic" ? "mic" : "music");
+            const deckMap: Record<string, any> = { A: deckA, B: deckB, C: deckC };
+            const deck = deckMap[slot as string];
+            const deckColors: Record<string, string> = { A: "#38bdf8", B: "#34d399", C: "#a78bfa", D: "#fb923c", E: "#e879f9", mic: "#ef4444" };
+            const deckColor = config?.color || deckColors[slot] || "#38bdf8";
+
+            // Music decks → ConsoleStrip (fader + VU)
+            if (deckType === "music") {
+              return (
+                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
+                  <ConsoleStrip
+                    label={config?.label || `DECK ${slot}`}
+                    color={deckColor}
+                    volume={deck?.volume ?? 1}
+                    level={masterLevel * (deck?.status === "playing" ? 1 : 0.05)}
+                    isPlaying={deck?.status === "playing"}
+                    isOn={true}
+                    onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
+                    onToggleOn={() => {
+                      if (deck?.status === "playing") engine.getDeck(slot)?.pause();
+                      else engine.getDeck(slot)?.play();
+                    }}
+                  />
+                </div>
+              );
+            }
+
+            // Mic decks → ConsoleStrip in fader mode (same design as music decks)
+            if (deckType === "mic" || slot === "mic") {
+              const micIsOn = consoleMicOn[slot] ?? false;
+              return (
+                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
+                  <ConsoleStrip
+                    label={config?.label || "MIC"}
+                    color="#ef4444"
+                    volume={1}
+                    level={micIsOn ? masterLevel * 0.6 : 0}
+                    isPlaying={micIsOn}
+                    isOn={micIsOn}
+                    onVolumeChange={() => {}}
+                    onToggleOn={() => {
+                      const next = !micIsOn;
+                      setConsoleMicOn(prev => ({ ...prev, [slot]: next }));
+                      // Broadcast mic state change to MicDeck components
+                      window.dispatchEvent(new CustomEvent("ether:mic-toggle", { detail: { slot, active: next } }));
+                    }}
+                  />
+                </div>
+              );
+            }
+            if (deckType === "video") {
+              return <div key={slot} style={{ flex: 2, minWidth: 280 }}><VideoStudio embedded /></div>;
+            }
+            if (deckType === "cart") {
+              return <div key={slot} style={{ flex: 1, minWidth: 120 }}><div style={{ height: "100%", background: "var(--bg-secondary)", overflow: "hidden" }}><BoutiqueCartWall deckSlot={slot} /></div></div>;
+            }
+            if (deckType === "desk") {
+              return <div key={slot} style={{ flex: 1, minWidth: 220 }}><InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} /></div>;
+            }
+            if (deckType === "guest") {
+              return (
+                <div key={slot} style={{ flex: 1, minWidth: 0 }}>
+                  <ConsoleStrip
+                    label={config?.label || `GUEST ${slot}`}
+                    color="#a78bfa"
+                    volume={1}
+                    level={0}
+                    isPlaying={false}
+                    isOn={true}
+                    onVolumeChange={() => {}}
+                    onToggleOn={() => {}}
+                  />
+                </div>
+              );
+            }
+
+            // Fallback: ConsoleStrip
+            return (
+              <div key={slot} style={{ flex: 1, minWidth: 0 }}>
+                <ConsoleStrip
+                  label={config?.label || slot}
+                  color={deckColor}
+                  volume={deck?.volume ?? 1}
+                  level={masterLevel * (deck?.status === "playing" ? 1 : 0.05)}
+                  isPlaying={deck?.status === "playing"}
+                  isOn={true}
+                  onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
+                  onToggleOn={() => {
+                    if (deck?.status === "playing") engine.getDeck(slot)?.pause();
+                    else engine.getDeck(slot)?.play();
+                  }}
+                />
+              </div>
+            );
+          })}
+          {/* Master Output — still present in fader mode */}
+          <MasterOutput
+            masterLevel={masterLevel}
+            expanded={!showCarts && !masterCollapsed}
+            collapsed={masterCollapsed}
+            onToggleCollapsed={toggleMasterCollapsed}
+          />
+        </div>
+      ) : (
       <div ref={deckRowRef} style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, cursor: draggingDeck ? "grabbing" : "auto" }}>
         {activeDeckOrder.map((slot, i) => {
           const isDragging = draggingDeck === slot;
@@ -2693,9 +2892,15 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             </React.Fragment>
           );
         })}
-        {/* Master Output — permanent right column, expands when cart wall is hidden */}
-        <MasterOutput masterLevel={masterLevel} expanded={!showCarts} />
+        {/* Master Output — permanent right column, expands when cart wall is hidden, collapsible at narrow widths */}
+        <MasterOutput
+          masterLevel={masterLevel}
+          expanded={!showCarts && !masterCollapsed}
+          collapsed={masterCollapsed}
+          onToggleCollapsed={toggleMasterCollapsed}
+        />
       </div>
+      )}
 
       {/* Cart wall — shown when CARTS active or when a deck is configured as cart */}
       {showCarts && !deckConfigs?.some(d => d.type === "cart" && d.enabled) && (
@@ -2711,103 +2916,29 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
 
-      {/* Toolbar */}
+      {/* Persistent top toolbar */}
       <div style={{
-        display: "flex", alignItems: "center", flexShrink: 0, gap: 4,
-        background: "transparent",
-        borderRadius: 0,
-        padding: "4px 8px",
-        marginBottom: 8,
+        display: "flex", alignItems: "center", gap: 6,
+        padding: "6px 10px", flexShrink: 0,
+        background: "var(--bg-secondary)",
+        borderBottom: "1px solid var(--border-primary)",
       }}>
-
-
-        {/* Collapsible tools group */}
-        {!toolsCollapsed && (
-          <>
-            <div style={{ display: "flex", gap: 2 }}>
-              <ToolbarBtn label="AUTO-X" active={autoXfade} onClick={() => { const n = !autoXfade; setAutoXfade(n); engine.outroCrossfade = n; }} color="#6040c0" />
-              <ToolbarBtn label="XFADE" active={xfadeActive} onClick={handleXfade} color="#a78bfa" />
-            </div>
-            <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
-          </>
-        )}
-
-        {/* JockStrip — always visible */}
-        <div style={{ flex: 1, minWidth: 0, maxWidth: 480, position: "relative" as const }}>
-          {!showCarts && <JockStrip deckA={deckA} deckB={deckB} dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />}
-        </div>
-
-        {/* Collapsible right tools: MONITORS + DECKS */}
-        {!toolsCollapsed && (
-          <>
-            <div style={{ width: 1, height: 16, background: "var(--border-primary)", margin: "0 4px" }} />
-            {/* Monitors pop-out */}
-            <button
-              title="Pop out all decks to a second monitor"
-              onClick={() => (window as any).ether?.invoke("window:popout", "decks")}
-              style={{
-                display: "flex", alignItems: "center", gap: 5,
-                padding: "5px 11px", borderRadius: 0,
-                background: "var(--bg-tertiary)",
-                border: "1px solid var(--border-primary)",
-                color: "var(--text-secondary)",
-                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
-                cursor: "pointer",
-                transition: "all 0.12s",
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(96,128,192,0.15)"; (e.currentTarget as HTMLElement).style.color = "#6080c0"; (e.currentTarget as HTMLElement).style.borderColor = "rgba(96,128,192,0.35)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-              </svg>
-              MONITORS
-            </button>
-
-            <ToolbarBtn label="CARTS" active={showCarts} onClick={toggleCarts} color="#f97316" />
-
-            <button
-              onClick={onConfigureDecks}
-              title="Configure deck layout"
-              style={{
-                display: "flex", alignItems: "center", gap: 5,
-                padding: "5px 11px", borderRadius: 0, border: "none",
-                background: "var(--bg-tertiary)", color: "var(--text-secondary)",
-                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
-                cursor: "pointer", fontFamily: "'Syne', sans-serif",
-                transition: "all 0.12s",
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; }}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
-                <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
-              </svg>
-              DECKS
-              {deckConfigs && deckConfigs.filter(c => {
-                const deck = engine.getDeck(c.slot);
-                const st = deck?.getState?.();
-                return st?.status === "playing" || st?.status === "paused" || c.purpose;
-              }).length > 0 && (
-                <span style={{
-                  minWidth: 14, height: 14, borderRadius: "50%",
-                  background: "#6040c0", color: "#fff",
-                  fontSize: 8, fontWeight: 800, lineHeight: "14px",
-                  textAlign: "center", padding: "0 3px", display: "inline-flex",
-                  alignItems: "center", justifyContent: "center",
-                }}>
-                  {deckConfigs.filter(c => {
-                    const deck = engine.getDeck(c.slot);
-                    const st = deck?.getState?.();
-                    return st?.status === "playing" || st?.status === "paused" || c.purpose;
-                  }).length}
-                </span>
-              )}
-            </button>
-          </>
-        )}
+        {[
+          { label: "AUTO-X", active: autoXfade,   onClick: () => setAutoXfade(!autoXfade), color: "#6040c0" },
+          { label: "XFADE",  active: xfadeActive, onClick: handleXfade,                    color: "#a78bfa" },
+          { label: "DECKS",  active: false,       onClick: () => onConfigureDecks?.(),     color: "#38bdf8" },
+          { label: "FADERS", active: showConsole,  onClick: () => { const v = !showConsole; setShowConsole(v); try { localStorage.setItem("ether_show_console", v ? "1" : "0"); } catch {} }, color: "#22d3ee" },
+          { label: "CARTS",  active: false,       onClick: onOpenCarts,                    color: "#f97316" },
+        ].map(({ label, active, onClick, color }) => (
+          <button key={label} onClick={onClick} style={{
+            padding: "6px 14px", borderRadius: 0,
+            border: `1px solid ${active ? color : "var(--border-primary)"}`,
+            background: active ? `${color}22` : "var(--bg-tertiary)",
+            color:      active ? color : "var(--text-secondary)",
+            fontSize: 10, fontWeight: 800, letterSpacing: "0.08em",
+            cursor: "pointer", transition: "all 0.15s",
+          }}>{label}</button>
+        ))}
       </div>
 
       {/* Main layout — drag-reorderable + resizable */}
@@ -3077,18 +3208,29 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   );
 }
 
-function ClockDisplay() {
+function ClockDisplay({ size = "full" }: { size?: "full" | "lg" | "md" | "sm" | "hidden" }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  const time = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  // At "sm", drop seconds and date to avoid clipping at narrow widths.
+  const showSeconds = size === "full" || size === "lg" || size === "md";
+  const showDate = size === "full" || size === "lg";
+  const time = now.toLocaleTimeString([], showSeconds
+    ? { hour: "2-digit", minute: "2-digit", second: "2-digit" }
+    : { hour: "2-digit", minute: "2-digit" });
   const day = now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  const fontSize =
+    size === "full" ? 52 :
+    size === "lg"   ? 40 :
+    size === "md"   ? 32 :
+                      24;
+  const dateSize = size === "full" ? 13 : 11;
   return (
     <div style={{ textAlign: "center", lineHeight: 1 }}>
-      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 52, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums" }}>{time}</div>
-      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, color: "var(--text-secondary)", marginTop: 5, letterSpacing: "0.02em" }}>{day}</div>
+      <div style={{ fontFamily: "'DM Mono', monospace", fontSize, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums" }}>{time}</div>
+      {showDate && <div style={{ fontFamily: "'Inter', sans-serif", fontSize: dateSize, color: "var(--text-secondary)", marginTop: 5, letterSpacing: "0.02em" }}>{day}</div>}
     </div>
   );
 }

@@ -72,6 +72,100 @@ export default function Spots() {
     } catch (e) { console.error(e); setImporting(false); }
   };
 
+  // ── Traffic CSV Import ──────────────────────────────────────
+  // Standard format: Cart/ISCI, Title, Advertiser, Agency, Length(sec), Start Date, End Date, Spot Type
+  // Auto-detects column positions by header. Supports WideOrbit, Marketron, Natural Log exports.
+  const handleTrafficImport = async () => {
+    try {
+      const files = await open({ multiple: false, title: "Select Traffic CSV/TSV", filters: [{ name: "Traffic File", extensions: ["csv", "tsv", "txt"] }] });
+      if (!files) return;
+      const filePath = Array.isArray(files) ? files[0] : files;
+      setImporting(true); setStatus("Reading traffic file...");
+
+      // Read file via IPC
+      let content = "";
+      try {
+        const bytes = await (window as any).ether.invoke("read_audio_file", { filePath });
+        content = new TextDecoder().decode(new Uint8Array(bytes));
+      } catch {
+        // Fallback: try fetch (for local file protocol)
+        const resp = await fetch("file://" + filePath);
+        content = await resp.text();
+      }
+
+      const lines = content.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) { setStatus("File is empty or has no data rows."); setImporting(false); return; }
+
+      // Auto-detect delimiter
+      const delim = lines[0].includes("\t") ? "\t" : ",";
+      const parseRow = (line: string) => {
+        if (delim === "\t") return line.split("\t").map(c => c.trim());
+        // CSV with possible quoted fields
+        const cols: string[] = [];
+        let cur = "", inQ = false;
+        for (const ch of line) {
+          if (ch === '"') { inQ = !inQ; continue; }
+          if (ch === "," && !inQ) { cols.push(cur.trim()); cur = ""; continue; }
+          cur += ch;
+        }
+        cols.push(cur.trim());
+        return cols;
+      };
+
+      // Parse header to find column indices
+      const header = parseRow(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ""));
+      const findCol = (...names: string[]) => header.findIndex(h => names.some(n => h.includes(n)));
+      const iTitle      = findCol("title", "name", "description", "spottitle", "cuttitle");
+      const iISCI       = findCol("isci", "cart", "cartnumber", "cartno", "cutid", "spotid");
+      const iAdvertiser = findCol("advertiser", "client", "sponsor", "agency", "account");
+      const iAgency     = findCol("agency", "agencyname");
+      const iLength     = findCol("length", "duration", "sec", "len");
+      const iStart      = findCol("start", "startdate", "airdate", "firstair");
+      const iEnd        = findCol("end", "enddate", "lastair", "killdate", "expire");
+      const iType       = findCol("type", "spottype", "class", "material");
+
+      if (iTitle < 0 && iISCI < 0) {
+        setStatus("Could not find Title or ISCI/Cart column in header. Check CSV format.");
+        setImporting(false); return;
+      }
+
+      let imported = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const cols = parseRow(lines[i]);
+        if (cols.length < 2) continue;
+        const title = cols[iTitle >= 0 ? iTitle : 0] || `Traffic Item ${i}`;
+        const isci = iISCI >= 0 ? cols[iISCI] || null : null;
+        const advertiser = iAdvertiser >= 0 ? cols[iAdvertiser] || null : null;
+        const agency = iAgency >= 0 ? cols[iAgency] || null : null;
+        const lengthSec = iLength >= 0 ? parseInt(cols[iLength]) || null : null;
+        const startDate = iStart >= 0 ? cols[iStart] || null : null;
+        const endDate = iEnd >= 0 ? cols[iEnd] || null : null;
+        const spotType = iType >= 0 ? (cols[iType] || "commercial").toLowerCase() : "commercial";
+
+        // Dedupe by ISCI or title
+        const ex = isci
+          ? await queryOne<{ id: number }>("SELECT id FROM spots WHERE isci_code = ?", [isci])
+          : await queryOne<{ id: number }>("SELECT id FROM spots WHERE title = ? AND advertiser = ?", [title, advertiser]);
+        if (ex) {
+          // Update dates/agency if changed
+          await execute("UPDATE spots SET start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date), agency=COALESCE(?,agency), is_active=1 WHERE id=?",
+            [startDate, endDate, agency, ex.id]);
+          continue;
+        }
+
+        await execute(
+          "INSERT INTO spots (title, spot_type, advertiser, agency, isci_code, cart_number, length_sec, start_date, end_date, is_active) VALUES (?,?,?,?,?,?,?,?,?,1)",
+          [title, SPOT_TYPES.includes(spotType) ? spotType : "commercial", advertiser, agency, isci, isci, lengthSec, startDate, endDate]
+        );
+        imported++;
+      }
+
+      setStatus(`Imported ${imported} spots from traffic file (${lines.length - 1} rows processed).`);
+      setTimeout(() => setStatus(""), 5000);
+      setImporting(false); load();
+    } catch (e) { console.error("Traffic import error:", e); setStatus("Import failed: " + String(e)); setImporting(false); }
+  };
+
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
@@ -112,6 +206,7 @@ export default function Spots() {
         <div style={{ display: "flex", gap: 8 }}>
           {iBtn("Import Folder", "var(--accent-blue)", handleImportFolder)}
           {iBtn("Import Files", "", handleImport, true)}
+          {iBtn("Import Traffic CSV", "var(--accent-amber)", handleTrafficImport)}
         </div>
       </div>
 

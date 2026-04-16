@@ -57,7 +57,78 @@ export default function Logs() {
 
   useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, [filter, dateFrom, dateTo]);
 
+  const [showReconcile, setShowReconcile] = useState(false);
+  const [reconcileData, setReconcileData] = useState<{ scheduled: any[]; actual: any[]; matched: any[] } | null>(null);
+
   const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await execute("DELETE FROM play_log"); load(); };
+
+  // As-Run reconciliation: compare scheduled_log vs play_log for the current filter period
+  const runReconcile = async () => {
+    let startEpoch = 0, endEpoch = Math.floor(Date.now() / 1000) + 86400;
+    if (filter === "today") startEpoch = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+    else if (filter === "week") startEpoch = Math.floor(Date.now() / 1000) - 7 * 86400;
+    else if (filter === "month") startEpoch = Math.floor(Date.now() / 1000) - 30 * 86400;
+    else if (dateFrom) startEpoch = Math.floor(new Date(dateFrom).getTime() / 1000);
+    if (dateTo) endEpoch = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
+
+    const scheduled = await query<any>(
+      "SELECT *, created_at as epoch FROM scheduled_log WHERE created_at >= ? AND created_at <= ? ORDER BY hour, position",
+      [startEpoch, endEpoch]
+    ) || [];
+    const actual = await query<any>(
+      "SELECT * FROM play_log WHERE played_at >= ? AND played_at <= ? ORDER BY played_at",
+      [startEpoch, endEpoch]
+    ) || [];
+
+    // Match: for each scheduled item, find the closest actual play by title (case-insensitive, within 10 min)
+    const usedActual = new Set<number>();
+    const matched = scheduled.map((s: any) => {
+      const sTitle = (s.title || "").toLowerCase();
+      let bestMatch: any = null;
+      let bestDist = Infinity;
+      for (const a of actual) {
+        if (usedActual.has(a.id)) continue;
+        if ((a.title || "").toLowerCase() === sTitle) {
+          const timeDist = Math.abs((a.played_at || 0) - (s.epoch || 0));
+          if (timeDist < bestDist && timeDist < 600) { bestMatch = a; bestDist = timeDist; }
+        }
+      }
+      if (bestMatch) usedActual.add(bestMatch.id);
+      const status = bestMatch ? "match" : "missed";
+      return { scheduled: s, actual: bestMatch, status };
+    });
+    // Unscheduled items (played but not in schedule)
+    const unscheduled = actual.filter((a: any) => !usedActual.has(a.id)).map((a: any) => ({
+      scheduled: null, actual: a, status: "unscheduled",
+    }));
+
+    setReconcileData({ scheduled, actual, matched: [...matched, ...unscheduled] });
+    setShowReconcile(true);
+  };
+
+  const exportAsRun = () => {
+    if (!reconcileData) return;
+    const header = "Time,Scheduled Title,Scheduled Artist,Actual Title,Actual Artist,Status,Duration";
+    const rows = reconcileData.matched.map((m: any) => {
+      const t = m.actual ? new Date((m.actual.played_at || 0) * 1000).toLocaleTimeString("en-US", { hour12: false })
+                        : (m.scheduled ? `${m.scheduled.hour || 0}:${String((m.scheduled.position || 0) * 3).padStart(2, "0")}:00` : "");
+      return [
+        t,
+        m.scheduled?.title || "",
+        m.scheduled?.artist || "",
+        m.actual?.title || "",
+        m.actual?.artist || "",
+        m.status === "match" ? "MATCH" : m.status === "missed" ? "MISSED" : "UNSCHED",
+        m.actual?.duration_ms ? (m.actual.duration_ms / 1000).toFixed(0) : "",
+      ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
+    });
+    const csv = header + "\n" + rows.join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "ether-asrun-" + new Date().toISOString().split("T")[0] + ".csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const exportCSV = (format: "standard" | "bmi" | "ascap" = "standard") => {
     let header = "";
@@ -151,6 +222,7 @@ export default function Logs() {
           <button onClick={() => exportCSV("bmi")} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>BMI</button>
           <button onClick={() => exportCSV("ascap")} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>ASCAP</button>
           <button onClick={exportPDF} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>PDF</button>
+          <button onClick={runReconcile} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: showReconcile ? "var(--accent-purple)" : "var(--bg-secondary)", border: showReconcile ? "none" : "1px solid var(--border-primary)", color: showReconcile ? "#fff" : "var(--accent-purple)", cursor: "pointer" }}>As-Run</button>
           <button onClick={clearLog} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--accent-red)", cursor: "pointer" }}>Clear</button>
         </div>
       </div>
@@ -211,6 +283,67 @@ export default function Logs() {
           </table>
         </div>
       )}
+      {/* As-Run Reconciliation */}
+      {showReconcile && reconcileData && (() => {
+        const matchCount = reconcileData.matched.filter((m: any) => m.status === "match").length;
+        const missedCount = reconcileData.matched.filter((m: any) => m.status === "missed").length;
+        const unschedCount = reconcileData.matched.filter((m: any) => m.status === "unscheduled").length;
+        const totalSched = reconcileData.scheduled.length;
+        const pct = totalSched > 0 ? Math.round((matchCount / totalSched) * 100) : 0;
+        const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }> = {
+          match: { bg: "rgba(52,211,153,0.12)", color: "var(--accent-green)", label: "✓ MATCH" },
+          missed: { bg: "rgba(248,113,113,0.12)", color: "var(--accent-red)", label: "✗ MISSED" },
+          unscheduled: { bg: "rgba(56,189,248,0.12)", color: "var(--accent-blue)", label: "+ UNSCHED" },
+        };
+        return (
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+            <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as any }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>As-Run Reconciliation</span>
+              <div style={{ display: "flex", gap: 10, fontSize: 11 }}>
+                <span style={{ color: "var(--accent-green)", fontWeight: 700 }}>{matchCount} matched</span>
+                <span style={{ color: "var(--accent-red)", fontWeight: 700 }}>{missedCount} missed</span>
+                <span style={{ color: "var(--accent-blue)", fontWeight: 700 }}>{unschedCount} unscheduled</span>
+              </div>
+              <div style={{ flex: 1 }} />
+              <div style={{ width: 100, height: 6, background: "var(--bg-tertiary)", overflow: "hidden" }}>
+                <div style={{ height: "100%", width: pct + "%", background: pct >= 90 ? "var(--accent-green)" : pct >= 70 ? "var(--accent-amber)" : "var(--accent-red)", transition: "width 0.3s" }} />
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: pct >= 90 ? "var(--accent-green)" : pct >= 70 ? "var(--accent-amber)" : "var(--accent-red)" }}>{pct}%</span>
+              <button onClick={exportAsRun} style={{ padding: "5px 12px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--accent-purple)", color: "#fff", border: "none", cursor: "pointer" }}>Export As-Run CSV</button>
+              <button onClick={() => setShowReconcile(false)} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Close</button>
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
+                  {["Time", "Scheduled", "Actual", "Status"].map(h => (
+                    <th key={h} style={{ padding: "8px 14px", textAlign: "left" as any, fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {reconcileData.matched.map((m: any, i: number) => {
+                  const st = STATUS_STYLE[m.status] || STATUS_STYLE.match;
+                  const time = m.actual ? fmtTimestamp(m.actual.played_at) : (m.scheduled ? `${m.scheduled.hour}:${String((m.scheduled.position || 0) * 3).padStart(2, "0")}` : "—");
+                  return (
+                    <tr key={i} style={{ borderBottom: "1px solid var(--border-primary)" }}>
+                      <td style={{ padding: "8px 14px", fontFamily: "'DM Mono', monospace", fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>{time}</td>
+                      <td style={{ padding: "8px 14px", color: m.scheduled ? "var(--text-primary)" : "var(--text-tertiary)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>
+                        {m.scheduled ? `${m.scheduled.title} — ${m.scheduled.artist || ""}` : "—"}
+                      </td>
+                      <td style={{ padding: "8px 14px", color: m.actual ? "var(--text-primary)" : "var(--text-tertiary)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>
+                        {m.actual ? `${m.actual.title} — ${m.actual.artist || ""}` : "—"}
+                      </td>
+                      <td style={{ padding: "8px 14px" }}>
+                        <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", background: st.bg, color: st.color }}>{st.label}</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
     </div>
   );
 }

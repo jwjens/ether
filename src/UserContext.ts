@@ -28,3 +28,26 @@ export function useCanManageSpots() {
   const role = useRole();
   return role === "admin" || role === "music_director";
 }
+
+// Granular permissions for role-based layout gating
+export function useCanAccessSettings() {
+  return useRole() === "admin";
+}
+export function useCanAccessScheduler() {
+  const role = useRole();
+  return role === "admin" || role === "music_director";
+}
+export function useCanAccessMacros() {
+  return useRole() === "admin";
+}
+export function useCanAccessStudio() {
+  const role = useRole();
+  return role === "admin" || role === "music_director";
+}
+export function useCanAccessStreaming() {
+  return useRole() === "admin";
+}
+export function useCanDeleteTracks() {
+  const role = useRole();
+  return role === "admin" || role === "music_director";
+}

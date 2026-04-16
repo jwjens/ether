@@ -381,6 +381,19 @@ function runMigrations() {
       color   TEXT NOT NULL DEFAULT '#34d399',
       enabled INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS macros (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      description TEXT,
+      trigger_type TEXT NOT NULL DEFAULT 'manual',
+      trigger_value TEXT,
+      actions     TEXT NOT NULL DEFAULT '[]',
+      hotkey      TEXT,
+      is_active   INTEGER DEFAULT 1,
+      color       TEXT DEFAULT '#38bdf8',
+      created_at  INTEGER DEFAULT (unixepoch())
+    );
   `);
 
   // Seed default separation rules if empty
@@ -409,6 +422,14 @@ function runMigrations() {
   alterSafe("ALTER TABLE songs ADD COLUMN intro_version_path TEXT");
   alterSafe("ALTER TABLE songs ADD COLUMN has_intro INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
+  alterSafe("ALTER TABLE spots ADD COLUMN isci_code TEXT");
+  alterSafe("ALTER TABLE spots ADD COLUMN cart_number TEXT");
+  alterSafe("ALTER TABLE spots ADD COLUMN agency TEXT");
+  alterSafe("ALTER TABLE spots ADD COLUMN length_sec INTEGER");
+  alterSafe("ALTER TABLE play_log ADD COLUMN scheduled_log_id INTEGER");
+  alterSafe("ALTER TABLE play_log ADD COLUMN show_name TEXT");
+  alterSafe("ALTER TABLE play_log ADD COLUMN category_code TEXT");
   alterSafe("ALTER TABLE clocks ADD COLUMN description TEXT");
   alterSafe("ALTER TABLE clocks ADD COLUMN color TEXT");
   alterSafe("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)");
@@ -963,6 +984,22 @@ ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
 ipcMain.handle("system:openSoundSettings", () => audio.openSoundSettings());
 ipcMain.handle("system:getAppDataDir", () => app.getPath("userData"));
 ipcMain.handle("system:getPlatform", () => process.platform);
+
+// ── User / PIN security ──────────────────────────────────────
+const crypto = require("crypto");
+ipcMain.handle("user:hash-pin", (_evt, pin) => {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.createHash("sha256").update(salt + pin).digest("hex");
+  return salt + ":" + hash;
+});
+ipcMain.handle("user:verify-pin", (_evt, pin, stored) => {
+  if (!stored) return false;
+  // Support both legacy plaintext PINs and new salt:hash format
+  if (!stored.includes(":")) return pin === stored;
+  const [salt, hash] = stored.split(":");
+  const attempt = crypto.createHash("sha256").update(salt + pin).digest("hex");
+  return attempt === hash;
+});
 
 // Backup
 ipcMain.handle("db:backup", () => {
@@ -1640,6 +1677,113 @@ try {
   console.warn("[FFMPEG] ffmpeg-static not available:", e.message);
 }
 
+// ── Video engine (renderer composites; we run ffmpeg for RTMP/MP4) ─────────
+try {
+  const { installVideoEngine } = require("./video-engine.js");
+  installVideoEngine(ipcMain, { ffmpegBin });
+} catch (e) {
+  console.warn("[video] installVideoEngine failed:", e.message);
+}
+
+// ── GPIO engine (broadcast hardware I/O) ────────────────────────────────
+try {
+  const { installGpioEngine } = require("./gpio-engine.js");
+  installGpioEngine(ipcMain, db, {
+    onGpiEvent: (actionType, actionValue, info) => {
+      console.log(`[GPIO] action: ${actionType} = ${actionValue}`, info);
+      // Forward GPI events to the renderer for macro/command dispatch
+      if (mainWindow) {
+        mainWindow.webContents.send("gpio:event", { actionType, actionValue, ...info });
+      }
+    },
+  });
+} catch (e) {
+  console.warn("[GPIO] installGpioEngine failed:", e.message);
+}
+
+// ── Site Replication (multi-station sync) ────────────────────────
+try {
+  const { installSiteReplication } = require("./site-replication.js");
+  installSiteReplication(ipcMain, db);
+} catch (e) {
+  console.warn("[REPL] installSiteReplication failed:", e.message);
+}
+
+// ── Cloud DR Backup ─────────────────────────────────────────────
+try {
+  const { installCloudBackup } = require("./cloud-backup.js");
+  installCloudBackup(ipcMain, db, { dbPath: getDbPath() });
+} catch (e) {
+  console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
+}
+
+// desktopCapturer source enumeration — needed by renderer to populate the
+// screen/window picker. (renderer can't import desktopCapturer directly in
+// modern Electron; it's main-only.)
+ipcMain.handle("video:list-sources", async (_, kinds = ["screen", "window"]) => {
+  try {
+    const { desktopCapturer } = require("electron");
+    const sources = await desktopCapturer.getSources({
+      types: kinds,
+      thumbnailSize: { width: 160, height: 90 },
+      fetchWindowIcons: false,
+    });
+    return sources.map(s => ({
+      id: s.id,                         // pass to setDesktopSource → handler picks this in callback
+      name: s.name,
+      kind: s.id.startsWith("screen:") ? "screen" : "window",
+      thumbnailDataUrl: s.thumbnail ? s.thumbnail.toDataURL() : "",
+    }));
+  } catch (e) {
+    console.error("[video] list-sources failed:", e);
+    return [];
+  }
+});
+
+// Modern Electron (>=22) replaces the legacy `chromeMediaSource: "desktop"`
+// constraint with `navigator.mediaDevices.getDisplayMedia()` plus a main-side
+// handler. The renderer pre-stores the picked source id below; the handler
+// reads it and returns that source to the requesting page.
+let pendingDesktopSourceId = null;
+ipcMain.handle("video:set-desktop-source", (_, sourceId) => {
+  pendingDesktopSourceId = sourceId || null;
+  return true;
+});
+
+app.whenReady().then(() => {
+  try {
+    const { session, desktopCapturer } = require("electron");
+    session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+      try {
+        const sources = await desktopCapturer.getSources({
+          types: ["screen", "window"],
+          thumbnailSize: { width: 0, height: 0 },
+        });
+        const picked = pendingDesktopSourceId
+          ? sources.find(s => s.id === pendingDesktopSourceId)
+          : sources[0];
+        pendingDesktopSourceId = null;
+        if (!picked) { callback({ video: null }); return; }
+        // Phase 4 audio: return system loopback when the renderer requested
+        // audio: true. Windows-only — on macOS/Linux we omit the audio key.
+        const wantsAudio = !!(request && request.audio);
+        const isWin = process.platform === "win32";
+        if (wantsAudio && isWin) {
+          callback({ video: picked, audio: "loopback" });
+        } else {
+          callback({ video: picked });
+        }
+      } catch (e) {
+        console.error("[video] display media handler error:", e);
+        callback({ video: null });
+      }
+    }, { useSystemPicker: false });
+    console.log("[video] setDisplayMediaRequestHandler installed");
+  } catch (e) {
+    console.warn("[video] failed to install display media handler:", e.message);
+  }
+});
+
 function runFFmpeg(args) {
   const { execFile } = require("child_process");
   return new Promise((resolve, reject) => {
@@ -1867,43 +2011,237 @@ function routeIrisCommand(cmd) {
 // IPC: Iris electron app (same machine, future use)
 ipcMain.handle('iris:command', (_, cmd) => routeIrisCommand(cmd));
 
-// HTTP: Iris can POST http://localhost:3400 without shared IPC
+// ── Browser Remote HTML (self-contained, no external deps) ──────
+const REMOTE_HTML = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ether Remote</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Inter,system-ui,sans-serif;background:#0d0d0f;color:#e8e8f0;min-height:100vh;display:flex;flex-direction:column}
+.header{padding:16px 20px;background:#111116;border-bottom:1px solid #1a1a22;display:flex;align-items:center;gap:12px}
+.header h1{font-size:18px;font-weight:800;letter-spacing:-.03em}
+.header .dot{width:8px;height:8px;border-radius:50%;background:#333}
+.header .dot.live{background:#22c55e;box-shadow:0 0 8px #22c55e}
+.np{padding:24px 20px;text-align:center;border-bottom:1px solid #1a1a22}
+.np .title{font-size:22px;font-weight:700;margin-bottom:4px}
+.np .artist{font-size:14px;color:#8878c0}
+.np .status{font-size:11px;color:#6060a0;margin-top:8px;text-transform:uppercase;letter-spacing:.1em}
+.controls{display:flex;justify-content:center;gap:12px;padding:24px 20px}
+.btn{width:64px;height:64px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;transition:all .15s}
+.btn.play{background:#22c55e;color:#000}.btn.play:active{background:#16a34a}
+.btn.stop{background:#ef4444;color:#fff}.btn.stop:active{background:#dc2626}
+.btn.skip{background:#141420;color:#8878c0;border:1px solid #1e1e2e}.btn.skip:active{background:#1e1e2e}
+.btn.pause{background:#fbbf24;color:#000}.btn.pause:active{background:#f59e0b}
+.decks{padding:16px 20px;display:flex;flex-direction:column;gap:8px}
+.deck{padding:12px 16px;background:#111116;border:1px solid #1a1a22;display:flex;align-items:center;gap:12px}
+.deck .id{width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:#000}
+.deck .info{flex:1;min-width:0}
+.deck .info .t{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.deck .info .a{font-size:11px;color:#6060a0}
+.deck .st{font-size:9px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px}
+.log{padding:16px 20px;flex:1;overflow-y:auto}
+.log h3{font-size:11px;font-weight:700;color:#6060a0;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}
+.log .entry{padding:6px 0;border-bottom:1px solid #111116;display:flex;gap:8px;font-size:12px}
+.log .entry .time{color:#6060a0;font-family:'DM Mono',monospace;font-size:10px;flex-shrink:0;width:60px}
+.refresh{text-align:center;padding:12px;font-size:10px;color:#6060a0}
+</style></head>
+<body>
+<div class="header">
+  <div class="dot" id="dot"></div>
+  <h1>Ether Remote</h1>
+  <span style="margin-left:auto;font-size:10px;color:#6060a0" id="conn">Connecting...</span>
+</div>
+<div class="np">
+  <div class="title" id="title">—</div>
+  <div class="artist" id="artist">Loading...</div>
+  <div class="status" id="npstatus">—</div>
+</div>
+<div class="controls">
+  <button class="btn play" onclick="api('transport/play')">&#9654;</button>
+  <button class="btn pause" onclick="api('transport/pause')">&#10074;&#10074;</button>
+  <button class="btn stop" onclick="api('transport/stop')">&#9632;</button>
+  <button class="btn skip" onclick="api('transport/skip')">&#9197;</button>
+</div>
+<div class="decks" id="decks"></div>
+<div class="log"><h3>Recent Plays</h3><div id="loglist"></div></div>
+<div class="refresh" id="refresh"></div>
+<script>
+const BASE=location.origin;
+async function api(path,method='POST'){try{const r=await fetch(BASE+'/api/'+path,{method});return await r.json()}catch{return{ok:false}}}
+async function poll(){
+  try{
+    const s=await(await fetch(BASE+'/api/status')).json();
+    const d=s.deckA||{};
+    document.getElementById('title').textContent=d.title||'No Track';
+    document.getElementById('artist').textContent=d.artist||'—';
+    document.getElementById('npstatus').textContent=d.status||'stopped';
+    document.getElementById('dot').className='dot'+(d.status==='playing'?' live':'');
+    document.getElementById('conn').textContent='Connected';
+    // Decks
+    let html='';
+    for(const[k,color] of [['deckA','#38bdf8'],['deckB','#34d399'],['deckC','#a78bfa']]){
+      const dk=s[k]||{};
+      const st=dk.status||'empty';
+      const stColor=st==='playing'?'#22c55e':st==='paused'?'#fbbf24':'#333';
+      html+='<div class="deck"><div class="id" style="background:'+color+'">'+k.slice(-1)+'</div><div class="info"><div class="t">'+(dk.title||'—')+'</div><div class="a">'+(dk.artist||'')+'</div></div><div class="st" style="color:'+stColor+'">'+st+'</div></div>';
+    }
+    document.getElementById('decks').innerHTML=html;
+    // Log
+    const log=await(await fetch(BASE+'/api/log')).json();
+    let lhtml='';
+    for(const e of (log.entries||[]).slice(0,15)){
+      const t=new Date(e.played_at*1000);
+      lhtml+='<div class="entry"><span class="time">'+t.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</span><span>'+e.title+'</span></div>';
+    }
+    document.getElementById('loglist').innerHTML=lhtml;
+    document.getElementById('refresh').textContent='Last updated: '+new Date().toLocaleTimeString();
+  }catch(e){document.getElementById('conn').textContent='Disconnected';document.getElementById('dot').className='dot'}
+}
+poll();setInterval(poll,2000);
+</script></body></html>`;
+
+// HTTP: REST API on port 3400 — serves Iris commands + public API
+// Accessible by external systems for automation, traffic integration, and monitoring.
 const irisHttpServer = require('http').createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Access-Control-Allow-Origin', '127.0.0.1');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'GET' && req.url === '/ping') {
-    irisConnected = true;
-    irisLastSeen  = Date.now();
-    sendToAllWindows('iris:connected', true);
-    res.end(JSON.stringify({ ok: true, pong: true }));
+  if (req.method === 'OPTIONS') { res.statusCode = 204; res.end(); return; }
+
+  const url = req.url?.split("?")[0] || "/";
+  const qs = Object.fromEntries(new URL("http://x" + (req.url || "/")).searchParams);
+
+  // ── Browser Remote Control (Zetta2GO equivalent) ──
+  if (req.method === 'GET' && (url === '/remote' || url === '/remote/')) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.end(REMOTE_HTML);
     return;
   }
 
-  if (req.method === 'POST' && req.url === '/') {
+  // ── Iris legacy ──
+  if (req.method === 'GET' && url === '/ping') {
+    irisConnected = true; irisLastSeen = Date.now();
+    sendToAllWindows('iris:connected', true);
+    res.end(JSON.stringify({ ok: true, pong: true })); return;
+  }
+  if (req.method === 'POST' && url === '/') {
     let body = '';
     req.on('data', d => { body += d; });
     req.on('end', () => {
-      try {
-        const cmd = JSON.parse(body);
-        irisConnected = true;
-        irisLastSeen  = Date.now();
-        const result = routeIrisCommand(cmd);
-        res.end(JSON.stringify(result));
-      } catch (e) {
-        res.statusCode = 400;
-        res.end(JSON.stringify({ ok: false, error: e.message }));
-      }
-    });
+      try { const cmd = JSON.parse(body); irisConnected = true; irisLastSeen = Date.now(); res.end(JSON.stringify(routeIrisCommand(cmd))); }
+      catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    }); return;
+  }
+
+  // ── REST API ──────────────────────────────────────────────────
+  // GET  /api/status          — full station status (decks, queue, on-air)
+  // GET  /api/now-playing     — current track metadata
+  // POST /api/transport/:action  — play/pause/stop/skip (deck=A default, ?deck=B)
+  // GET  /api/queue           — current queue
+  // GET  /api/log             — recent play log (last 50)
+  // POST /api/macro/:id/run   — execute a macro by id
+  // GET  /api/macros          — list all macros
+  // GET  /api/gpio/status     — GPIO connection status
+
+  if (req.method === 'GET' && url === '/api/status') {
+    let state = {};
+    try { state = JSON.parse(audio.audioGetState()); } catch {}
+    res.end(JSON.stringify({ ok: true, ...state, timestamp: Date.now() })); return;
+  }
+
+  if (req.method === 'GET' && url === '/api/now-playing') {
+    let state = {};
+    try { state = JSON.parse(audio.audioGetState()); } catch {}
+    const deck = state.deckA || {};
+    res.end(JSON.stringify({
+      ok: true, title: deck.title || null, artist: deck.artist || null,
+      status: deck.status || "stopped", positionSec: deck.positionSec || 0,
+      durationSec: deck.durationSec || 0,
+    })); return;
+  }
+
+  if (req.method === 'POST' && url.startsWith('/api/transport/')) {
+    const action = url.replace('/api/transport/', '');
+    const deck = qs.deck || 'A';
+    try {
+      if (action === 'play')  audio.audioPlay(deck);
+      else if (action === 'pause') audio.audioPause(deck);
+      else if (action === 'stop')  audio.audioStop(deck);
+      else if (action === 'skip')  { audio.audioPause('A'); sendToAllWindows('iris:next-track', {}); }
+      else { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: `Unknown action: ${action}` })); return; }
+      sendToAllWindows('iris:command-received', { action, label: `${action} deck ${deck}` });
+      res.end(JSON.stringify({ ok: true, action, deck }));
+    } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
+  if (req.method === 'GET' && url === '/api/log') {
+    try {
+      const rows = db.prepare("SELECT * FROM play_log ORDER BY played_at DESC LIMIT 50").all();
+      res.end(JSON.stringify({ ok: true, entries: rows }));
+    } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
+  if (req.method === 'GET' && url === '/api/macros') {
+    try {
+      const rows = db.prepare("SELECT id, name, description, trigger_type, hotkey, is_active FROM macros ORDER BY name").all();
+      res.end(JSON.stringify({ ok: true, macros: rows }));
+    } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
+  if (req.method === 'POST' && url.startsWith('/api/macro/') && url.endsWith('/run')) {
+    const macroId = parseInt(url.replace('/api/macro/', '').replace('/run', ''));
+    try {
+      const row = db.prepare("SELECT * FROM macros WHERE id = ?").get(macroId);
+      if (!row) { res.statusCode = 404; res.end(JSON.stringify({ ok: false, error: "Macro not found" })); return; }
+      // Send to renderer for execution (macros run in the renderer context)
+      sendToAllWindows('macro:execute', { id: macroId, name: row.name });
+      res.end(JSON.stringify({ ok: true, macro: row.name, status: "dispatched" }));
+    } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
+  if (req.method === 'GET' && url === '/api/gpio/status') {
+    try {
+      const devices = db.prepare("SELECT id, name, protocol, host, port, is_active FROM gpio_devices").all();
+      res.end(JSON.stringify({ ok: true, devices }));
+    } catch (e) { res.end(JSON.stringify({ ok: true, devices: [] })); }
+    return;
+  }
+
+  // Site replication — serve changes to peers
+  if (req.method === 'GET' && url === '/api/repl/changes') {
+    try {
+      const tableName = qs.table || "songs";
+      const since = parseInt(qs.since) || 0;
+      // Use the repl:get-changes IPC to get data
+      const siteIdRow = db.prepare("SELECT value FROM replication_config WHERE key = 'site_id'").get();
+      const SYNC_TABLES = ["songs","shows","clocks","spots","macros","categories","separation_rules","smart_schedule_rules"];
+      if (!SYNC_TABLES.includes(tableName)) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: "Unknown table" })); return; }
+      const rows = db.prepare(`SELECT * FROM ${tableName} LIMIT 500`).all();
+      res.end(JSON.stringify({ ok: true, siteId: siteIdRow?.value, table: tableName, rows, count: rows.length }));
+    } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    return;
+  }
+
+  if (req.method === 'GET' && url === '/api/repl/site-id') {
+    try {
+      const row = db.prepare("SELECT value FROM replication_config WHERE key = 'site_id'").get();
+      res.end(JSON.stringify({ ok: true, siteId: row?.value }));
+    } catch { res.end(JSON.stringify({ ok: true, siteId: null })); }
     return;
   }
 
   res.statusCode = 404;
-  res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id' }));
 });
 
-irisHttpServer.listen(3400, '127.0.0.1', () => {
-  console.log('[iris-bridge] HTTP server listening on http://127.0.0.1:3400');
+irisHttpServer.listen(3400, '0.0.0.0', () => {
+  console.log('[API] REST server listening on http://0.0.0.0:3400');
 });
 
 // Mark Iris disconnected if no ping for 30 seconds

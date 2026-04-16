@@ -64,8 +64,13 @@ export class AudioEngine {
   private pollTimer: any = null;
   private lastPollTime = Date.now();
 
-  private queue: { filePath: string; title: string; artist: string; gainDb?: number }[] = [];
+  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[] = [];
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
+  // Per-deck chain type: what happens when THIS deck finishes.
+  // Loaded from the queue item at deck-load time.
+  private deckChainType: Record<DeckId, "segue" | "stop"> = { A: "segue", B: "segue", C: "segue" };
+  // Callback fired when a "stop" chain type prevents auto-advance.
+  onChainStop: ((deckId: DeckId) => void) | null = null;
 
   private _autoAdvance = false;
   get autoAdvance() { return this._autoAdvance; }
@@ -136,6 +141,18 @@ export class AudioEngine {
     if (prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3 && !this.endTriggered.has(deckId)) {
       this.processingEnd = true;
       this.endTriggered.add(deckId);
+
+      // Chain type check — if the CURRENT deck is "stop", halt here.
+      // The DJ must manually trigger the next item.
+      if (this.deckChainType[deckId] === "stop") {
+        if (deckId === "A") this.stateA = { ...this.stateA, status: "ended" };
+        if (deckId === "B") this.stateB = { ...this.stateB, status: "ended" };
+        if (deckId === "C") this.stateC = { ...this.stateC, status: "ended" };
+        console.log(`[ENGINE] chain-stop on deck ${deckId} — waiting for manual trigger`);
+        this.onChainStop?.(deckId);
+        return;
+      }
+
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
         if (this.stateB.filePath) { this.handleRotate("A", "B"); }
@@ -197,6 +214,7 @@ export class AudioEngine {
         await this.refillIfNeeded();
         if (this.queue.length === 0) return;
         const next = this.dequeue();
+        this.deckChainType["A"] = next.chainType || "segue";
         await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
         await invoke("audio_play", { deck: "A" });
         this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
@@ -220,6 +238,7 @@ export class AudioEngine {
         await this.refillIfNeeded();
         if (this.queue.length === 0) return;
         const next = this.dequeue();
+        this.deckChainType[deckId] = next.chainType || "segue";
         await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
         await invoke("audio_play", { deck: deckId });
         if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
@@ -237,6 +256,7 @@ export class AudioEngine {
     if (deckState?.status === "playing" || deckState?.status === "paused") return;
     const next = this.queue[queueIndex];
     try {
+      this.deckChainType[deckId] = next.chainType || "segue";
       await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
       console.log(`[ENGINE] Preloaded ${deckId} (queue[${queueIndex}]):`, next.title);
     } catch (e) { console.error(`[ENGINE] Preload ${deckId} failed:`, e); }
@@ -315,11 +335,16 @@ export class AudioEngine {
     this.playStartCallbacks.forEach(fn => fn(deckId, title, artist, filePath));
   }
 
-  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number }[]) { this.queue.push(...songs); }
+  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[]) { this.queue.push(...songs); }
   clearQueue() { this.queue = []; }
   getQueue() { return [...this.queue]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
-  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number }[]) { this.queue = [...songs]; }
+  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[]) { this.queue = [...songs]; }
+
+  /** Toggle chain type for a queue item by index */
+  setQueueItemChainType(idx: number, chainType: "segue" | "stop") {
+    if (idx >= 0 && idx < this.queue.length) this.queue[idx].chainType = chainType;
+  }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
   async setOutputDevice(_id: string) {}
 

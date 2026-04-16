@@ -6,6 +6,9 @@ import React, {
   useState, useEffect, useRef, useCallback, useMemo,
 } from "react";
 import { query as dbQuery, execute as dbExec } from "../db/client";
+import { VideoEngineProvider } from "./VideoEngine/VideoEngineContext";
+import VideoEngineCanvas from "./VideoEngine/VideoEngineCanvas";
+import VideoEnginePanel  from "./VideoEngine/VideoEnginePanel";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -1308,7 +1311,7 @@ function EmbeddedStudio({
 // Studio — main export
 // ─────────────────────────────────────────────────────────────
 
-type RightTab = "guests" | "tele" | "lower" | "rtmp" | "quality";
+type RightTab = "guests" | "tele" | "lower" | "rtmp" | "quality" | "engine";
 
 export default function Studio({ embedded }: { embedded?: boolean } = {}) {
   const [hostStream, setHostStream]       = useState<MediaStream | null>(null);
@@ -1416,14 +1419,21 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
   }
 
   return (
+    <VideoEngineProvider>
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: BG1, overflow: "hidden" }}>
 
       {/* ── Body ── */}
       <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
 
-        {/* ── Left: camera + teleprompter sidebar ── */}
+        {/* ── Left: main area — webcam UI normally, engine canvas when Engine tab active ── */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
 
+          {rightTab === "engine" ? (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+              <VideoEngineCanvas />
+            </div>
+          ) : (
+          <>
           {/* Camera + sidebar teleprompter */}
           <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
             <HostCamera
@@ -1468,6 +1478,8 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
 
           {/* Level bar under camera */}
           <LevelBar level={hostLevel} height={5} />
+          </>
+          )}
         </div>
 
         {/* ── Right sidebar ── */}
@@ -1479,6 +1491,7 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
             {tab("lower",   "L3rds")}
             {tab("rtmp",    "RTMP")}
             {tab("quality", "Quality")}
+            {tab("engine",  "Engine")}
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
@@ -1520,6 +1533,7 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
                 stream={hostStream}
               />
             )}
+            {rightTab === "engine" && <VideoEnginePanel />}
           </div>
         </div>
       </div>
@@ -1537,5 +1551,6 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
         @keyframes rec-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }
       `}</style>
     </div>
+    </VideoEngineProvider>
   );
 }
