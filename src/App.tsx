@@ -1058,24 +1058,6 @@ export default function App() {
             {!viewport.narrow && currentUser?.name}
           </button>
 
-          {/* CC — Live Captions toggle */}
-          <button
-            onClick={captions.toggle}
-            title={captions.enabled ? "Stop live captions" : "Start live captions (Whisper)"}
-            style={{
-              height: 44, padding: "0 12px", borderRadius: 0, cursor: "pointer",
-              background:   captions.enabled ? "rgba(0,200,168,0.15)" : "transparent",
-              border:       `1px solid ${captions.enabled ? "rgba(0,200,168,0.5)" : "transparent"}`,
-              color:        captions.enabled ? "#00c8a8" : "var(--text-tertiary)",
-              fontSize:     11, fontWeight: 900, letterSpacing: "0.08em",
-              transition:   "all 0.15s",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = captions.enabled ? "rgba(0,200,168,0.2)" : "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.borderColor = captions.enabled ? "rgba(0,200,168,0.5)" : "var(--border-primary)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = captions.enabled ? "rgba(0,200,168,0.15)" : "transparent"; (e.currentTarget as HTMLElement).style.borderColor = captions.enabled ? "rgba(0,200,168,0.5)" : "transparent"; }}
-          >
-            CC
-          </button>
-
           {/* ☰ Menu button */}
           <button
             onClick={() => setDrawerOpen(d => !d)}
@@ -1437,7 +1419,7 @@ export default function App() {
       </div>
 
       {/* AppContextMenu removed — items moved to ≡ drawer */}
-      <CaptionsOverlay lines={captions.lines} enabled={captions.enabled} status={captions.status} />
+      {panel === "videostudio" && <CaptionsOverlay lines={captions.lines} enabled={captions.enabled} status={captions.status} />}
 
       {skinPickerPos && (
         <SkinPickerOverlay

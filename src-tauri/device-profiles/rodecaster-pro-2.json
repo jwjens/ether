@@ -1,0 +1,17 @@
+{
+  "id": "rodecaster-pro-2",
+  "name": "RØDECaster Pro II",
+  "manufacturer": "RØDE",
+  "midi_patterns": ["RODECaster", "RodeCaster", "RODE"],
+  "channels": 8,
+  "has_motorized_faders": true,
+  "has_jog_display": false,
+  "has_color_pads": true,
+  "notes": "Enable Advanced MIDI mode in RCP2 Settings → Advanced → MIDI. Faders send on channels 1–8. Smart Pads on channels 9–16.",
+  "controls": {
+    "channel_fader":  { "status": "0xB0-0xB7", "data1": "0x00" },
+    "mute":           { "status": "0x90-0x97", "data1": "0x00" },
+    "smart_pad":      { "status": "0x99-0x9F", "data1": "0x00-0x07" },
+    "main_fader":     { "status": "0xB8",       "data1": "0x00" }
+  }
+}

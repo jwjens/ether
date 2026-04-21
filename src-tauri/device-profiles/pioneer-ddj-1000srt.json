@@ -1,0 +1,26 @@
+{
+  "id": "pioneer-ddj-1000srt",
+  "name": "Pioneer DDJ-1000SRT",
+  "manufacturer": "Pioneer DJ",
+  "midi_patterns": ["DDJ-1000SRT", "DDJ-1000"],
+  "channels": 4,
+  "has_motorized_faders": false,
+  "has_jog_display": false,
+  "has_color_pads": true,
+  "notes": "Hold SHIFT + top-left DECK button while powering on to enter standard MIDI mode (exits Serato HID mode).",
+  "controls": {
+    "channel_fader":  { "status": "0xB0-0xB3", "data1": "0x13" },
+    "crossfader":     { "status": "0xB6",       "data1": "0x1F" },
+    "eq_high":        { "status": "0xB0-0xB3", "data1": "0x07" },
+    "eq_mid":         { "status": "0xB0-0xB3", "data1": "0x0B" },
+    "eq_low":         { "status": "0xB0-0xB3", "data1": "0x04" },
+    "trim":           { "status": "0xB0-0xB3", "data1": "0x16" },
+    "play":           { "status": "0x90-0x93", "data1": "0x0B" },
+    "cue":            { "status": "0x90-0x93", "data1": "0x0C" },
+    "sync":           { "status": "0x90-0x93", "data1": "0x16" },
+    "jog_pitch":      { "status": "0xB0",       "data1": "0x22-0x23", "relative": true },
+    "pitch_fader":    { "status": "0xB0-0xB1", "data1": "0x00" },
+    "browse_rotate":  { "status": "0xB6",       "data1": "0x20",       "relative": true },
+    "browse_load":    { "status": "0x90-0x91", "data1": "0x02" }
+  }
+}

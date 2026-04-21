@@ -417,6 +417,147 @@ function MusixmatchKeyForm() {
 
 // ── Discogs credential form ───────────────────────────────────
 
+// ── MIDI Controllers section ──────────────────────────────────
+
+function ControllersSection() {
+  const [devices,   setDevices]   = useState<string[]>([]);
+  const [status,    setStatus]    = useState<{ connected: boolean; deviceName: string }>({ connected: false, deviceName: "" });
+  const [scanning,  setScanning]  = useState(false);
+  const [connecting,setConnecting]= useState("");
+  const [testMsg,   setTestMsg]   = useState("");
+
+  const scan = async () => {
+    setScanning(true);
+    try {
+      const list = await invoke("controller_list_devices");
+      setDevices(list ?? []);
+      const st = await invoke("controller_get_status");
+      setStatus(st ?? { connected: false, deviceName: "" });
+    } finally {
+      setScanning(false);
+    }
+  };
+
+  useEffect(() => { scan(); }, []);
+
+  const connect = async (name: string) => {
+    setConnecting(name);
+    try {
+      await invoke("controller_connect", { deviceName: name });
+      const st = await invoke("controller_get_status");
+      setStatus(st ?? { connected: false, deviceName: "" });
+    } catch (e: any) {
+      setTestMsg("Connect failed: " + e.message);
+    } finally {
+      setConnecting("");
+    }
+  };
+
+  const disconnect = async () => {
+    await invoke("controller_disconnect");
+    const st = await invoke("controller_get_status");
+    setStatus(st ?? { connected: false, deviceName: "" });
+  };
+
+  const testLed = async () => {
+    for (let d = 1; d <= 2; d++) {
+      await invoke("controller_set_led", { deck: d, control: "play", on: true });
+      await invoke("controller_set_led", { deck: d, control: "cue",  on: true });
+      await invoke("controller_set_led", { deck: d, control: "sync", on: true });
+    }
+    setTestMsg("LEDs lit — check your controller");
+    setTimeout(async () => {
+      for (let d = 1; d <= 2; d++) {
+        await invoke("controller_set_led", { deck: d, control: "play", on: false });
+        await invoke("controller_set_led", { deck: d, control: "cue",  on: false });
+        await invoke("controller_set_led", { deck: d, control: "sync", on: false });
+      }
+      setTestMsg("");
+    }, 2000);
+  };
+
+  const DOT: React.CSSProperties = {
+    width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+    background: status.connected ? "#22c55e" : "var(--text-tertiary)",
+    boxShadow:  status.connected ? "0 0 6px #22c55e" : "none",
+  };
+
+  return (
+    <Section
+      category="audio"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="8" width="20" height="8" rx="2"/><line x1="6" y1="12" x2="6" y2="12"/><line x1="10" y1="12" x2="10" y2="12"/><line x1="14" y1="10" x2="14" y2="14"/><line x1="18" y1="10" x2="18" y2="14"/></svg>}
+      title="Controllers"
+      description="USB MIDI DJ controllers and mixers — Pioneer DDJ-1000SRT, Behringer X-TOUCH, RØDECaster Pro II"
+    >
+      {/* Connection status */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <div style={DOT} />
+        <span style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 600 }}>
+          {status.connected ? status.deviceName : "No controller connected"}
+        </span>
+        {status.connected && (
+          <button onClick={disconnect} style={{ marginLeft: "auto", padding: "4px 12px", fontSize: 11, fontWeight: 700, background: "rgba(239,68,68,0.1)", color: "#f87171", border: "1px solid rgba(239,68,68,0.25)", cursor: "pointer" }}>
+            Disconnect
+          </button>
+        )}
+      </div>
+
+      {/* Device list */}
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            MIDI Input Devices ({devices.length})
+          </span>
+          <button onClick={scan} disabled={scanning} style={{ padding: "3px 10px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+            {scanning ? "Scanning…" : "Refresh"}
+          </button>
+        </div>
+
+        {devices.length === 0 ? (
+          <div style={{ padding: "16px 0", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+            No MIDI devices found — connect a controller via USB and click Refresh
+          </div>
+        ) : (
+          devices.map(name => {
+            const isActive = status.connected && status.deviceName === name;
+            return (
+              <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 4, background: isActive ? "rgba(56,189,248,0.06)" : "var(--bg-secondary)", border: `1px solid ${isActive ? "rgba(56,189,248,0.25)" : "var(--border-primary)"}` }}>
+                <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)" }}>{name}</span>
+                {isActive ? (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-blue)", letterSpacing: "0.05em" }}>CONNECTED</span>
+                ) : (
+                  <button
+                    onClick={() => connect(name)}
+                    disabled={!!connecting}
+                    style={{ padding: "3px 12px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: connecting ? 0.5 : 1 }}
+                  >
+                    {connecting === name ? "Connecting…" : "Connect"}
+                  </button>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Test button */}
+      {status.connected && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={testLed} style={{ padding: "6px 16px", fontSize: 12, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+            Test LEDs
+          </button>
+          {testMsg && <span style={{ fontSize: 12, color: "var(--accent-blue)" }}>{testMsg}</span>}
+        </div>
+      )}
+
+      {/* Soft takeover note */}
+      <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+        Soft takeover active — physical faders only take control once they catch up to the software position (±2%).
+      </div>
+    </Section>
+  );
+}
+
 function DiscogsCredentialForm() {
   const [consumerKey, setConsumerKey]       = useState("");
   const [consumerSecret, setConsumerSecret] = useState("");
@@ -1121,6 +1262,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         </div>
         <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>Target is -14 LUFS — the broadcast standard used by most radio stations. This runs in the background and doesn't affect playback.</div>
       </Section>
+
+      {/* ── MIDI Controllers ── */}
+      <ControllersSection />
 
       {/* ── Clean Filenames ── */}
       <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>} title="Clean Filenames" description="Strip spotdown tags and timestamp prefixes from audio filenames — cleans up bulk-downloaded libraries">

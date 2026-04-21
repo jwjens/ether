@@ -21,45 +21,20 @@ export interface CaptionLine {
 // downsamples to 16 kHz mono Float32, and pumps chunks to the main
 // process where Whisper runs. Returns a stop function.
 
-async function startLoopbackTap(onChunk: (data: Float32Array) => void): Promise<() => void> {
-  const ether = (window as any).ether;
+async function startLoopbackTap(deviceId: string | undefined, onChunk: (data: Float32Array) => void): Promise<() => void> {
+  const audioConstraints: MediaTrackConstraints = {
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl:  false,
+  };
+  if (deviceId) (audioConstraints as any).deviceId = { exact: deviceId };
 
-  // Get a screen source ID from main so getUserMedia skips the OS picker
-  const sourceId = await ether.captions.getLoopbackSource();
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: audioConstraints,
+    video: false,
+  });
 
-  let stream: MediaStream;
-  try {
-    // Audio-only — works on most Electron builds
-    stream = await (navigator.mediaDevices as any).getUserMedia({
-      audio: {
-        mandatory: {
-          chromeMediaSource:   "desktop",
-          chromeMediaSourceId: sourceId,
-        },
-      },
-      video: false,
-    });
-  } catch {
-    // Fallback: request tiny video track, then immediately discard it
-    stream = await (navigator.mediaDevices as any).getUserMedia({
-      audio: {
-        mandatory: {
-          chromeMediaSource:   "desktop",
-          chromeMediaSourceId: sourceId,
-        },
-      },
-      video: {
-        mandatory: {
-          chromeMediaSource:   "desktop",
-          chromeMediaSourceId: sourceId,
-          maxWidth: 1, maxHeight: 1, maxFrameRate: 1,
-        },
-      },
-    });
-    stream.getVideoTracks().forEach(t => t.stop());
-  }
-
-  const INPUT_SR = 48_000;  // desktop capture is always 48 kHz on Windows
+  const INPUT_SR = 48_000;  // mic devices report 48 kHz on Windows
   const TARGET_SR = 16_000; // Whisper expects 16 kHz
   const RATIO = INPUT_SR / TARGET_SR; // 3:1 downsample
 
@@ -97,11 +72,22 @@ async function startLoopbackTap(onChunk: (data: Float32Array) => void): Promise<
 // Shared hook — call once at the App level, pass state down as props.
 
 export function useCaptions() {
-  const [enabled,   setEnabled]   = useState(false);
-  const [lines,     setLines]     = useState<CaptionLine[]>([]);
-  const [status,    setStatus]    = useState<{ state: string; message: string } | null>(null);
+  const [enabled,     setEnabled]     = useState(false);
+  const [lines,       setLines]       = useState<CaptionLine[]>([]);
+  const [status,      setStatus]      = useState<{ state: string; message: string } | null>(null);
+  const [micDevices,  setMicDevices]  = useState<MediaDeviceInfo[]>([]);
+  const [micDeviceId, setMicDeviceId] = useState<string>(
+    () => localStorage.getItem("captions_mic_device") || ""
+  );
   const stopTapRef = useRef<(() => void) | null>(null);
   const ether = (window as any).ether;
+
+  // Enumerate audio input devices once on mount
+  useEffect(() => {
+    navigator.mediaDevices.enumerateDevices().then(devices => {
+      setMicDevices(devices.filter(d => d.kind === "audioinput"));
+    }).catch(() => {});
+  }, []);
 
   // Subscribe to push events from main process
   useEffect(() => {
@@ -130,18 +116,23 @@ export function useCaptions() {
     }).catch(() => {});
   }, []);
 
+  const selectMic = useCallback((id: string) => {
+    setMicDeviceId(id);
+    localStorage.setItem("captions_mic_device", id);
+  }, []);
+
   const enable = useCallback(async () => {
     setEnabled(true);
     await ether.captions.start();
     try {
-      stopTapRef.current = await startLoopbackTap((chunk) => {
+      stopTapRef.current = await startLoopbackTap(micDeviceId || undefined, (chunk) => {
         ether.captions.sendAudioChunk(chunk);
       });
     } catch (e: any) {
       console.error("[captions] loopback tap failed:", e.message);
-      setStatus({ state: "error", message: "Loopback tap failed: " + e.message });
+      setStatus({ state: "error", message: "Audio capture unavailable: " + e.message });
     }
-  }, []);
+  }, [micDeviceId]);
 
   const disable = useCallback(async () => {
     setEnabled(false);
@@ -154,7 +145,7 @@ export function useCaptions() {
     enabled ? disable() : enable();
   }, [enabled, enable, disable]);
 
-  return { enabled, lines, status, toggle, enable, disable };
+  return { enabled, lines, status, toggle, enable, disable, micDevices, micDeviceId, selectMic };
 }
 
 // ── CaptionsOverlay ───────────────────────────────────────────

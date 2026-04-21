@@ -935,6 +935,10 @@ app.on("window-all-closed", () => {
   if (process.platform === "darwin") app.quit();
 });
 
+app.on("before-quit", () => {
+  if (levelPushId) { clearInterval(levelPushId); levelPushId = null; }
+});
+
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
   else mainWindow.show();
@@ -2213,7 +2217,13 @@ let irisLastSeen  = 0;
 
 function sendToAllWindows(channel, payload) {
   BrowserWindow.getAllWindows().forEach(w => {
-    if (!w.isDestroyed()) w.webContents.send(channel, payload);
+    try {
+      if (!w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
+        w.webContents.send(channel, payload);
+      }
+    } catch (e) {
+      // Window or render frame was disposed mid-send — skip silently
+    }
   });
 }
 

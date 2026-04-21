@@ -9,6 +9,7 @@ import { query as dbQuery, execute as dbExec } from "../db/client";
 import { VideoEngineProvider, useVideoEngine } from "./VideoEngine/VideoEngineContext";
 import VideoEngineCanvas from "./VideoEngine/VideoEngineCanvas";
 import VideoEnginePanel  from "./VideoEngine/VideoEnginePanel";
+import { useCaptions, CaptionsOverlay } from "./Captions";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -1374,11 +1375,13 @@ function QualityPanel({ resolution, setResolution, bitrate, setBitrate, stream }
 // StatusBar
 // ─────────────────────────────────────────────────────────────
 
-function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRecord, stream, onSaveClip, smartCutEnabled, onToggleSmartCut }: {
+function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRecord, stream, onSaveClip, smartCutEnabled, onToggleSmartCut, captionsEnabled, onToggleCaptions, micDevices, micDeviceId, onSelectMic }: {
   isRecording: boolean; isStreaming: boolean; guestCount: number; hostLevel: number;
   onToggleRecord: () => void; stream: MediaStream | null;
   onSaveClip: () => void;
   smartCutEnabled: boolean; onToggleSmartCut: () => void;
+  captionsEnabled: boolean; onToggleCaptions: () => void;
+  micDevices: MediaDeviceInfo[]; micDeviceId: string; onSelectMic: (id: string) => void;
 }) {
   const [secs, setSecs] = useState(0);
   const ref = useRef<any>(null);
@@ -1415,6 +1418,26 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
       <button onClick={onSaveClip} disabled={!stream} title="Save last 30 seconds as clip" style={{ padding: "3px 9px", border: `1px solid ${BOR}`, background: BG2, color: stream ? AMB : BOR, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", cursor: stream ? "pointer" : "not-allowed" }}>
         ⏮ CLIP
       </button>
+
+      {/* Live captions toggle + mic selector */}
+      <button onClick={onToggleCaptions} title="Live captions (Whisper)" style={{ padding: "3px 9px", border: `1px solid ${captionsEnabled ? "#00c8a8" : BOR}`, background: captionsEnabled ? "rgba(0,200,168,0.12)" : BG2, color: captionsEnabled ? "#00c8a8" : TXT2, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer" }}>
+        CC
+      </button>
+      {micDevices.length > 0 && (
+        <select
+          value={micDeviceId}
+          onChange={e => onSelectMic(e.target.value)}
+          title="Microphone for live captions"
+          style={{ fontSize: 11, background: BG2, color: TXT2, border: `1px solid ${BOR}`, padding: "2px 4px", maxWidth: 140, cursor: "pointer" }}
+        >
+          <option value="">Default mic</option>
+          {micDevices.map(d => (
+            <option key={d.deviceId} value={d.deviceId}>
+              {d.label || `Mic ${d.deviceId.slice(0, 6)}`}
+            </option>
+          ))}
+        </select>
+      )}
 
       <div style={{ flex: 1 }} />
 
@@ -1689,6 +1712,7 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
 
   const hostLevel = useLevelMeter(hostStream);
   const { guests, acceptGuest, denyGuest, removeGuest, toggleMute } = useWebRTCGuests(guestsEnabled);
+  const { enabled: captionsEnabled, lines: captionLines, status: captionsStatus, toggle: toggleCaptions, micDevices, micDeviceId, selectMic } = useCaptions();
 
   // Smart cut sources — host + accepted guests
   const smartCutSources = useMemo(() => [
@@ -1884,7 +1908,13 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
         onSaveClip={saveClip}
         smartCutEnabled={smartCutEnabled}
         onToggleSmartCut={() => setSmartCutEnabled(v => !v)}
+        captionsEnabled={captionsEnabled}
+        onToggleCaptions={toggleCaptions}
+        micDevices={micDevices}
+        micDeviceId={micDeviceId}
+        onSelectMic={selectMic}
       />
+      <CaptionsOverlay lines={captionLines} enabled={captionsEnabled} status={captionsStatus} />
 
       <style>{`
         @keyframes rec-pulse { 0%,100%{opacity:1;} 50%{opacity:0.3;} }

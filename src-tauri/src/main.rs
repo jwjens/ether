@@ -8,6 +8,7 @@ mod audio_routing;
 mod lufs;
 mod dashboard;
 mod clock;
+mod controller;
 
 use audio::{AudioState, SharedAudioState, start_audio_thread};
 use dashboard::{NowPlayingMeta, SharedNowPlaying};
@@ -33,10 +34,11 @@ fn main() {
         watchdog_triggered_count: 0,
     }));
 
-    let watchdog_state = audio_state.clone();
+    let watchdog_state    = audio_state.clone();
     let now_playing: SharedNowPlaying = Arc::new(Mutex::new(NowPlayingMeta::default()));
-    let heartbeat_log = commands::new_heartbeat_log();
-    let clock_state   = clock::new_clock_state();
+    let heartbeat_log     = commands::new_heartbeat_log();
+    let clock_state       = clock::new_clock_state();
+    let controller_state  = controller::new_controller_state();
 
     tauri::Builder::default()
         .manage(audio_state.clone())
@@ -45,6 +47,7 @@ fn main() {
         .manage(heartbeat_log.clone())
         .manage(clock_state.clone())
         .manage(Arc::new(Mutex::new(audio_routing::DeckRouting::default())))
+        .manage(controller_state.clone())
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -92,9 +95,27 @@ fn main() {
             audio_export::trim_silence_file,
             audio_export::export_episode,
             audio_export::verify_watermark,
+            controller::controller_list_devices,
+            controller::controller_connect,
+            controller::controller_disconnect,
+            controller::controller_get_status,
+            controller::controller_send_feedback,
+            controller::controller_set_led,
+            controller::controller_update_software_value,
         ])
         .setup(move |app| {
             dashboard::start_dashboard_server(audio_state.clone(), now_playing.clone(), 4242);
+
+            // Auto-detect and connect known MIDI controllers
+            {
+                let cs  = controller_state.clone();
+                let hdl = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Brief delay so the window is ready before controller events arrive
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    controller::auto_detect_and_connect(&cs, &hdl);
+                });
+            }
 
             // ── Broadcast Journal Emitter ─────────────────────────────────
             // Every event tells the story of the show.

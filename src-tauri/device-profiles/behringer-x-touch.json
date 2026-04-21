@@ -1,0 +1,23 @@
+{
+  "id": "behringer-x-touch",
+  "name": "Behringer X-TOUCH",
+  "manufacturer": "Behringer",
+  "midi_patterns": ["X-TOUCH", "X TOUCH", "XTOUCH"],
+  "channels": 8,
+  "has_motorized_faders": true,
+  "has_jog_display": false,
+  "has_color_pads": false,
+  "notes": "Set to MC (Mackie Control) mode or MIDI mode via the Mode button + encoder. In standard MIDI mode faders send Pitch Bend on channels 1–8.",
+  "controls": {
+    "channel_fader":  { "status": "0xE0-0xE7", "data1": "LSB", "data2": "MSB", "14bit": true },
+    "master_fader":   { "status": "0xE8",       "14bit": true },
+    "rec_arm":        { "status": "0x90", "data1": "0x00-0x07" },
+    "solo":           { "status": "0x90", "data1": "0x08-0x0F" },
+    "mute":           { "status": "0x90", "data1": "0x10-0x17" },
+    "select":         { "status": "0x90", "data1": "0x18-0x1F" },
+    "encoder":        { "status": "0xB0", "data1": "0x10-0x17", "relative": true },
+    "transport_play": { "status": "0x90", "data1": "0x5E" },
+    "transport_stop": { "status": "0x90", "data1": "0x5D" },
+    "transport_rec":  { "status": "0x90", "data1": "0x5F" }
+  }
+}
