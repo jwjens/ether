@@ -399,6 +399,19 @@ function runMigrations() {
       color       TEXT DEFAULT '#38bdf8',
       created_at  INTEGER DEFAULT (unixepoch())
     );
+
+    CREATE TABLE IF NOT EXISTS generated_schedule (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      scheduled_at INTEGER NOT NULL,
+      song_id      INTEGER REFERENCES songs(id),
+      title        TEXT NOT NULL,
+      artist       TEXT,
+      file_key     TEXT,
+      duration_s   INTEGER DEFAULT 0,
+      category_id  INTEGER,
+      clock_id     INTEGER,
+      generated_at INTEGER DEFAULT (unixepoch())
+    );
   `);
 
   // Seed default separation rules if empty
@@ -841,9 +854,41 @@ app.whenReady().then(() => {
 
   // Cloud backup must init AFTER initDb() so db is not undefined
   try {
-    const { installCloudBackup, triggerUpload } = require("./cloud-backup.js");
+    const { installCloudBackup, triggerUpload, getR2Config } = require("./cloud-backup.js");
     installCloudBackup(ipcMain, db, { dbPath: getDbPath() });
     cloudBackupTrigger = triggerUpload;
+    app._getR2Config = getR2Config;
+
+    // Auto-push R2 credentials to cloud playout server every startup.
+    // Runs after a short delay so it doesn't block the app launching.
+    setTimeout(async () => {
+      try {
+        const r2 = getR2Config();
+        if (!r2.accessKeyId || !r2.secretAccessKey) {
+          console.log('[PLAYOUT] Startup R2 push skipped — credentials not configured');
+          return;
+        }
+        const row = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
+        const server = row?.value?.trim() || '44.244.52.207';
+        const url = `http://${server}:3500/api/playout/r2config`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            accountId:       r2.accountId,
+            accessKeyId:     r2.accessKeyId,
+            secretAccessKey: r2.secretAccessKey,
+            bucket:          r2.bucket,
+            endpoint:        r2.endpoint,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (res.ok) console.log(`[PLAYOUT] R2 credentials auto-pushed to ${server} on startup`);
+        else        console.warn(`[PLAYOUT] Startup R2 push returned ${res.status} from ${server}`);
+      } catch (e) {
+        console.warn('[PLAYOUT] Startup R2 push failed (server may be offline):', e.message);
+      }
+    }, 6000);
   } catch (e) {
     console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
   }
@@ -2904,4 +2949,441 @@ ipcMain.handle('captions:get-loopback-source', async () => {
   const sources = await desktopCapturer.getSources({ types: ['screen'] });
   // Return the first screen source — its ID is used to route audio loopback
   return sources[0]?.id || null;
+});
+
+// ── R2 track cache — download a file from R2 to a local temp dir ─────────────
+// Used by the deck queue so local playback and cloud playback share the same
+// R2 source. Once cached the file is reused without re-downloading.
+
+const R2_CACHE_DIR = path.join(app.getPath('userData'), 'r2-cache');
+fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
+
+ipcMain.handle('r2:fetch-track', async (_, fileKey) => {
+  if (!fileKey) return { ok: false, error: 'No file_key' };
+
+  const getR2Config = app._getR2Config;
+  if (!getR2Config) return { ok: false, error: 'R2 module not loaded' };
+  const r2 = getR2Config();
+  if (!r2.accessKeyId || !r2.secretAccessKey) return { ok: false, error: 'R2 not configured' };
+
+  const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const cachePath = path.join(R2_CACHE_DIR, safeName);
+
+  if (fs.existsSync(cachePath)) return { ok: true, filePath: cachePath };
+
+  try {
+    const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+    const https = require('https');
+    const http  = require('http');
+
+    const s3  = new S3Client({
+      region: 'auto',
+      endpoint: r2.resolvedEndpoint || r2.endpoint || `https://${r2.accountId}.r2.cloudflarestorage.com`,
+      credentials: { accessKeyId: r2.accessKeyId, secretAccessKey: r2.secretAccessKey },
+    });
+    const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: r2.bucket || 'ether-audio', Key: fileKey }), { expiresIn: 300 });
+
+    await new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(cachePath);
+      const get  = url.startsWith('https') ? https : http;
+      get.get(url, res => {
+        res.pipe(file);
+        file.on('finish', () => { file.close(); resolve(); });
+      }).on('error', err => { fs.unlink(cachePath, () => {}); reject(err); });
+    });
+
+    console.log(`[r2:fetch-track] cached ${safeName} (${(fs.statSync(cachePath).size / 1e6).toFixed(1)} MB)`);
+    return { ok: true, filePath: cachePath };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// ── Playout server config ─────────────────────────────────────────────────────
+ipcMain.handle('playout:get-server', () => {
+  try {
+    const row = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
+    return row?.value?.trim() || '44.244.52.207';
+  } catch { return '44.244.52.207'; }
+});
+
+ipcMain.handle('playout:set-server', (_, ip) => {
+  try {
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('playout_server', ?)").run(String(ip).trim());
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Real-time cloud playout sync ──────────────────────────────────────────────
+// Fired by the renderer whenever a deck starts playing a new track.
+// POSTs to the cloud playout server so it mirrors the live deck in real time.
+
+let _playoutLastPing = 0;  // epoch ms of last successful play POST
+
+ipcMain.on('playout:track-started', (_, { filePath, file_key, title }) => {
+  const streamPath = filePath || '';
+  if (streamPath) {
+    _currentFilePath = streamPath;
+    _streamFile(streamPath);
+  } else if (file_key) {
+    const cachePath = require('path').join(app.getPath('userData'), 'r2-cache',
+      file_key.replace(/[^a-zA-Z0-9._-]/g, '_'));
+    if (require('fs').existsSync(cachePath)) {
+      _currentFilePath = cachePath;
+      _streamFile(cachePath);
+    }
+  }
+  console.log(`[stream] track-started: ${title}`);
+});
+
+// ── Schedule Generator ────────────────────────────────────────────────────────
+// Reads shows → clocks → clock_slots, picks songs per rotation rules, and
+// writes a full week of timestamped entries to generated_schedule.
+ipcMain.handle('schedule:generate', (_, days = 7) => {
+  try {
+    // Load separation rules (fall back to safe defaults)
+    let artistSepMin = 60;
+    let songRepeatMin = 180;
+    try {
+      const ar = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get();
+      if (ar) artistSepMin = ar.value;
+      const sr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='song_separation_min' AND is_active=1 LIMIT 1").get();
+      if (sr) songRepeatMin = sr.value;
+    } catch {}
+
+    // Wipe previous run
+    db.prepare("DELETE FROM generated_schedule").run();
+
+    // Prepared statements (compiled once, reused in the loop)
+    const stmtShows = db.prepare(
+      `SELECT id, start_hour, end_hour, clock_id
+       FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 ORDER BY start_hour`
+    );
+    const stmtSlots = db.prepare(
+      `SELECT cs.position, cs.slot_type, cs.category_id, cs.duration_min
+       FROM clock_slots cs
+       WHERE cs.clock_id = ? ORDER BY cs.position`
+    );
+    const stmtCandidates = db.prepare(
+      `SELECT s.id, s.title, a.name AS artist_name, s.artist_id,
+              s.duration_ms, s.last_played_at, s.file_path
+       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+       WHERE s.category_id = ?
+         AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+         AND ((s.daypart_mask >> ?) & 1) = 1
+       ORDER BY COALESCE(s.last_played_at, 0) ASC`
+    );
+    const stmtInsert = db.prepare(
+      `INSERT INTO generated_schedule
+         (scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+
+    // Per-generation tracking maps (survive across hours/days)
+    const songLastTs   = new Map(); // songId   → unix ts last queued this run
+    const artistLastTs = new Map(); // artistId → unix ts last queued this run
+
+    const now = new Date();
+    now.setMinutes(0, 0, 0);
+    let totalInserted = 0;
+
+    for (let d = 0; d < days; d++) {
+      for (let h = 0; h < 24; h++) {
+        const slotDate = new Date(now.getTime() + d * 86_400_000);
+        slotDate.setHours(h, 0, 0, 0);
+        const jsDay      = slotDate.getDay(); // 0=Sun
+        const hourStartTs = Math.floor(slotDate.getTime() / 1000);
+
+        // Find the show active at this hour on this weekday
+        const shows = stmtShows.all(String(jsDay));
+        const show  = shows.find(s => {
+          if (s.end_hour === 0 || s.end_hour === s.start_hour) return h >= s.start_hour;
+          if (s.end_hour > s.start_hour) return h >= s.start_hour && h < s.end_hour;
+          return h >= s.start_hour || h < s.end_hour; // overnight
+        });
+        if (!show || !show.clock_id) continue;
+
+        const slots = stmtSlots.all(show.clock_id);
+        if (!slots.length) continue;
+
+        // Per-hour sets to avoid same song or artist within a single hour
+        const usedSongIds   = new Set();
+        const usedArtistIds = new Set();
+
+        let currentTs = hourStartTs;
+
+        for (const slot of slots) {
+          const slotDurationS = (slot.duration_min || 4) * 60;
+
+          if (slot.slot_type !== 'music' || !slot.category_id) {
+            currentTs += slotDurationS;
+            continue;
+          }
+
+          const candidates = stmtCandidates.all(slot.category_id, h);
+
+          let picked = null;
+          let softFallback = null;
+
+          for (const song of candidates) {
+            if (usedSongIds.has(song.id)) continue;
+
+            // Song repeat check — use generation-run timestamp if available, else DB value
+            const lastSongTs  = songLastTs.get(song.id) ?? (song.last_played_at || 0);
+            const songAgeSec  = currentTs - lastSongTs;
+            if (songAgeSec < songRepeatMin * 60) continue;
+
+            // Artist separation — strict within the hour, soft across hours
+            const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
+            const artistAgeSec = currentTs - lastArtistTs;
+            const artistBlocked = usedArtistIds.has(song.artist_id)
+              || (song.artist_id && artistAgeSec < artistSepMin * 60);
+
+            if (!artistBlocked) { picked = song; break; }
+            if (!softFallback)    softFallback = song; // same artist, but song repeat ok
+          }
+
+          // Soft fallback: violates artist sep but passes song repeat
+          if (!picked) picked = softFallback;
+          // Last resort: any unused song
+          if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
+
+          if (picked) {
+            usedSongIds.add(picked.id);
+            if (picked.artist_id) usedArtistIds.add(picked.artist_id);
+            songLastTs.set(picked.id, currentTs);
+            if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
+
+            const durationS = picked.duration_ms
+              ? Math.round(picked.duration_ms / 1000)
+              : slotDurationS;
+
+            stmtInsert.run(
+              currentTs, picked.id, picked.title, picked.artist_name || '',
+              picked.file_path ? path.basename(picked.file_path) : '', durationS, slot.category_id, show.clock_id
+            );
+            currentTs += durationS;
+            totalInserted++;
+          } else {
+            currentTs += slotDurationS;
+          }
+        }
+      }
+    }
+
+    console.log(`[schedule:generate] Generated ${totalInserted} tracks over ${days} days`);
+    return { ok: true, count: totalInserted };
+  } catch (e) {
+    console.error('[schedule:generate]', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
+  try {
+    const rows = db.prepare(
+      `SELECT id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id
+       FROM generated_schedule
+       WHERE scheduled_at >= ? AND scheduled_at < ?
+       ORDER BY scheduled_at`
+    ).all(fromTs ?? 0, toTs ?? 9999999999);
+    return { data: rows, error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+});
+
+// ── Library → R2 sync ─────────────────────────────────────────────────────────
+// Uploads every local song file to R2. Runs async; progress sent via IPC push.
+// Cancel by calling library:sync-r2:cancel before the job finishes.
+
+// ── Live stream to Icecast ────────────────────────────────────────────────────
+// ffmpeg reads audio files DIRECTLY (same files the decks play) and pushes to
+// Icecast at full volume — completely independent of local speaker volume.
+// Monitor fader → audioSetVolume on decks → controls speakers only, never the stream.
+
+let _liveStreamArmed = false;   // true = Go Live was clicked, stream next track
+let _liveStreamProc  = null;    // current ffmpeg process
+let _liveIcecastUrl  = '';
+let _currentFilePath = '';      // last file loaded on any deck — used to stream immediately on Go Live
+
+function _streamKillCurrent() {
+  if (_liveStreamProc) {
+    try { _liveStreamProc.kill('SIGTERM'); } catch {}
+    _liveStreamProc = null;
+  }
+}
+
+function _spawnStream(args, label) {
+  _streamKillCurrent();
+  const { spawn } = require('child_process');
+  const bin = ffmpegBin || 'ffmpeg';
+  console.log(`[stream] spawning ffmpeg: ${bin}`);
+  console.log(`[stream] args: ${args.join(' ')}`);
+  _liveStreamProc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  _liveStreamProc.stderr.on('data', d => {
+    console.log(`[stream/ffmpeg] ${d.toString().trim()}`);
+  });
+  _liveStreamProc.on('error', e => {
+    console.error(`[stream] spawn error: ${e.message}`);
+    _liveStreamProc = null;
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send('stream:status', { live: false, error: e.message });
+  });
+  _liveStreamProc.on('close', code => {
+    console.log(`[stream] ffmpeg closed (code ${code}) — ${label}`);
+    _liveStreamProc = null;
+  });
+  console.log(`[stream] → ${label}`);
+}
+
+function _streamSilence() {
+  if (!_liveStreamArmed) return;
+  _spawnStream([
+    '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+    '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3',
+    '-content_type', 'audio/mpeg',
+    _liveIcecastUrl,
+  ], 'silence/hold');
+}
+
+function _streamFile(filePath) {
+  if (!_liveStreamArmed || !filePath) return;
+  _spawnStream([
+    '-re', '-i', filePath, '-vn',
+    '-c:a', 'libmp3lame', '-b:a', '128k',
+    '-ar', '44100', '-ac', '2', '-f', 'mp3',
+    '-content_type', 'audio/mpeg',
+    _liveIcecastUrl,
+  ], require('path').basename(filePath));
+}
+
+ipcMain.handle('stream:go-live', async () => {
+  try {
+    const row   = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
+    const server = row?.value?.trim() || '44.244.52.207';
+    const pwRow  = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
+    const pw     = pwRow?.value?.trim() || 'hackme';
+    _liveIcecastUrl  = `icecast://source:${pw}@${server}:8000/live`;
+    _liveStreamArmed = true;
+    console.log(`[stream] Armed → ${_liveIcecastUrl}`);
+    // If a track is already playing, start streaming it immediately
+    if (_currentFilePath && require('fs').existsSync(_currentFilePath)) {
+      console.log(`[stream] Resuming current track → ${require('path').basename(_currentFilePath)}`);
+      _streamFile(_currentFilePath);
+    } else {
+      // Nothing playing — spawn a silent test tone so Icecast mount is live
+      _streamSilence();
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('stream:status', { live: true, server });
+    }
+    return { ok: true, server };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle('stream:stop-live', () => {
+  _liveStreamArmed = false;
+  _streamKillCurrent();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stream:status', { live: false });
+  }
+  return { ok: true };
+});
+
+ipcMain.handle('stream:get-status', () => ({ live: _liveStreamArmed }));
+
+let _libSyncAbort = false;
+
+ipcMain.handle('library:sync-r2:start', async () => {
+  const getR2Config = app._getR2Config;
+  if (!getR2Config) return { ok: false, error: 'Cloud Backup module not loaded' };
+
+  const r2 = getR2Config();
+  if (!r2.resolvedEndpoint || !r2.accessKeyId || !r2.secretAccessKey) {
+    return { ok: false, error: 'R2 not configured — set up Cloud Backup credentials first' };
+  }
+
+  const songs = db.prepare(
+    `SELECT id, file_path FROM songs
+     WHERE file_path IS NOT NULL AND file_path != ''`
+  ).all();
+
+  if (!songs.length) return { ok: false, error: 'No local song files found in the library' };
+
+  _libSyncAbort = false;
+
+  // Fire-and-forget — returns immediately so the renderer isn't blocked
+  (async () => {
+    const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
+    const s3 = new S3Client({
+      region: 'auto',
+      endpoint: r2.resolvedEndpoint,
+      credentials: { accessKeyId: r2.accessKeyId, secretAccessKey: r2.secretAccessKey },
+    });
+
+    const CONCURRENCY = 3;
+    let done = 0;
+    let errors = 0;
+
+    function contentType(fp) {
+      const ext = path.extname(fp).toLowerCase();
+      return ({ '.mp3': 'audio/mpeg', '.flac': 'audio/flac', '.wav': 'audio/wav',
+                '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg' })[ext]
+        || 'application/octet-stream';
+    }
+
+    async function uploadOne(song) {
+      if (_libSyncAbort) return;
+      const key = path.basename(song.file_path);
+      try {
+        const data = require('fs').readFileSync(song.file_path);
+        await s3.send(new PutObjectCommand({
+          Bucket: r2.bucket,
+          Key:    key,
+          Body:   data,
+          ContentType: contentType(song.file_path),
+        }));
+      } catch (e) {
+        errors++;
+        console.warn(`[library:sync-r2] SKIP ${key}: ${e.message}`);
+      }
+      done++;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('library:sync-r2:progress', {
+          done, total: songs.length, errors, current: key,
+        });
+      }
+    }
+
+    // Upload in batches of CONCURRENCY
+    for (let i = 0; i < songs.length; i += CONCURRENCY) {
+      if (_libSyncAbort) break;
+      await Promise.all(songs.slice(i, i + CONCURRENCY).map(uploadOne));
+    }
+
+    const aborted = _libSyncAbort;
+    _libSyncAbort = false;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('library:sync-r2:done', {
+        done, total: songs.length, errors, aborted,
+      });
+    }
+    console.log(`[library:sync-r2] ${aborted ? 'Cancelled' : 'Done'} — ${done}/${songs.length} uploaded, ${errors} errors`);
+  })().catch(e => {
+    console.error('[library:sync-r2] fatal:', e.message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('library:sync-r2:done', { done: 0, total: songs.length, errors: 1, aborted: false });
+    }
+  });
+
+  return { ok: true, total: songs.length };
+});
+
+ipcMain.handle('library:sync-r2:cancel', () => {
+  _libSyncAbort = true;
+  return { ok: true };
 });

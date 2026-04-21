@@ -20,7 +20,7 @@ const readDir = (path: string) =>
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
 import { engine, DeckState } from "./audio/engine-rodio";
-import { fillQueueFromSchedule, refillFromSchedule } from "./audio/loggen";
+import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
@@ -616,14 +616,24 @@ export default function App() {
 
   useEffect(() => {
     (globalThis as any).__etherEngine = engine;
+    (globalThis as any).__resetScheduleCursor = resetScheduleCursor;
     // Column additions now handled by db/client.ts migration system
-    return engine.onPlayStart(async (deckId, title, artist, _filePath) => {
+    return engine.onPlayStart(async (deckId, title, artist, filePath) => {
       try { await logPlay(title, artist, deckId); }
       catch (e) { console.error('Log write error:', e); }
       consoleLog("audio", `[DECK ${deckId}] Playing: ${title}${artist ? ` — ${artist}` : ""}`);
       // Keep Iris informed about what's on air
       try { (window as any).ether.emit("iris:nowplaying", { title, artist }); }
       catch {}
+      // Notify main process a new track started — used for live streaming
+      try {
+        const file_key = filePath ? filePath.replace(/\\/g, '/').split('/').pop() : '';
+        if (file_key) {
+          (window as any).ether.emit("playout:track-started", {
+            file_key, filePath: filePath || '', title, artist: artist || '', start_at: Date.now(),
+          });
+        }
+      } catch {}
     });
   }, []);
 
@@ -843,6 +853,7 @@ export default function App() {
     try { localStorage.setItem("ether_autoAdv", n ? "1" : "0"); } catch {}
     if (n) {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
+      resetScheduleCursor();
       if (engine.getQueue().length === 0) {
         const count = await fillQueueFromSchedule();
         if (count === 0) {
@@ -2111,7 +2122,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
         {/* Fader */}
         <div style={{ padding: '1px 6px 3px', flexShrink: 0 }}>
           <input type="range" min={0} max={100} value={fader}
-            onChange={e => { const v = Number(e.target.value); setFader(v); deckSlot && engine.getDeck(deckSlot)?.setVolume(v/100); }}
+            onChange={e => { const v = Number(e.target.value); setFader(v); const master = (window as any).__etherMasterVol ?? 1; deckSlot && engine.getDeck(deckSlot)?.setVolume((v/100) * master); }}
             style={{ width: '100%', accentColor: color, cursor: 'pointer', height: 10 }}
           />
         </div>
@@ -2242,7 +2253,8 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
         onChange={e => {
           const v = Number(e.target.value);
           setFader(v);
-          deckSlot && engine.getDeck(deckSlot)?.setVolume(v / 100);
+          const master = (window as any).__etherMasterVol ?? 1;
+          deckSlot && engine.getDeck(deckSlot)?.setVolume((v / 100) * master);
         }}
         style={{ width: "100%", accentColor: color, cursor: "pointer", height: 3, display: "block" }}
       />

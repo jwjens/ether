@@ -18,6 +18,9 @@ interface Show {
   clock_name: string | null;
 }
 
+// unix_day (Math.floor(scheduled_at / 86400)) → hour → track count
+type TrackCounts = Map<number, Map<number, number>>;
+
 // ── Constants ─────────────────────────────────────────────────────────
 
 const ROW_H = 48;         // px per hour row
@@ -67,10 +70,12 @@ interface BroadcastCalendarProps {
 }
 
 export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProps) {
-  const [shows, setShows]         = useState<Show[]>([]);
+  const [shows, setShows]           = useState<Show[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
-  const [fullDay, setFullDay]     = useState(false);
-  const [now, setNow]             = useState(new Date());
+  const [fullDay, setFullDay]       = useState(false);
+  const [now, setNow]               = useState(new Date());
+  const [trackCounts, setTrackCounts] = useState<TrackCounts>(new Map());
+  const [showTracks, setShowTracks] = useState(false);
 
   const MIN_HOUR    = fullDay ? 0 : 5;
   const MAX_HOUR    = 24;
@@ -96,9 +101,27 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     } catch { /* ignore — DB may not be ready yet on first render */ }
   };
 
+  const loadTrackCounts = async () => {
+    try {
+      const nowTs = Math.floor(Date.now() / 1000);
+      const result = await (window as any).ether.invoke("schedule:get", nowTs - 86_400, nowTs + 14 * 86_400);
+      if (!result?.data) return;
+      const counts: TrackCounts = new Map();
+      for (const row of result.data as { scheduled_at: number }[]) {
+        const dayKey  = Math.floor(row.scheduled_at / 86_400);
+        const hourKey = Math.floor((row.scheduled_at % 86_400) / 3_600);
+        if (!counts.has(dayKey)) counts.set(dayKey, new Map());
+        const h = counts.get(dayKey)!;
+        h.set(hourKey, (h.get(hourKey) || 0) + 1);
+      }
+      setTrackCounts(counts);
+    } catch {}
+  };
+
   useEffect(() => {
     load();
-    const refresh = setInterval(load, 60_000);
+    loadTrackCounts();
+    const refresh = setInterval(() => { load(); loadTrackCounts(); }, 60_000);
     const tick    = setInterval(() => setNow(new Date()), 30_000);
     return () => { clearInterval(refresh); clearInterval(tick); };
   }, []);
@@ -141,6 +164,15 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{shows.length} show{shows.length !== 1 ? "s" : ""}</span>
         <button
+          onClick={() => setShowTracks(t => !t)}
+          style={{
+            ...navBtn,
+            color: showTracks ? "var(--accent-cyan)" : "var(--text-secondary)",
+            borderColor: showTracks ? "var(--accent-cyan)" : "var(--border-primary)",
+          }}
+          title="Show generated schedule track counts per hour"
+        >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
+        <button
           onClick={() => setFullDay(f => !f)}
           style={{
             ...navBtn,
@@ -148,7 +180,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             borderColor: fullDay ? "var(--accent-cyan)" : "var(--border-primary)",
           }}
         >{fullDay ? "Daytime (5 AM–Midnight)" : "Full 24h"}</button>
-        <button onClick={load} style={navBtn} title="Refresh">↻</button>
+        <button onClick={() => { load(); loadTrackCounts(); }} style={navBtn} title="Refresh">↻</button>
       </div>
 
       {/* ── Calendar grid ── */}
@@ -201,15 +233,28 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
                 {/* Hour-row backgrounds */}
                 <div style={{ position: "relative", height: totalPx }}>
-                  {HOURS.map(h => (
+                  {HOURS.map(h => {
+                    const dayKey    = Math.floor(colDate.getTime() / 86_400_000);
+                    const count     = showTracks ? (trackCounts.get(dayKey)?.get(h) ?? 0) : 0;
+                    return (
                     <div key={h} style={{
                       height: ROW_H, borderBottom: "1px solid var(--border-secondary)",
-                      boxSizing: "border-box",
+                      boxSizing: "border-box", position: "relative",
                       background: isToday
                         ? (h % 2 === 0 ? "rgba(34,211,238,0.02)" : "rgba(34,211,238,0.01)")
                         : (h % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)"),
-                    }} />
-                  ))}
+                    }}>
+                      {count > 0 && (
+                        <span style={{
+                          position: "absolute", bottom: 2, right: 3,
+                          fontSize: 8, fontWeight: 700, lineHeight: 1,
+                          color: "rgba(139,92,246,0.8)",
+                          pointerEvents: "none",
+                        }}>{count}</span>
+                      )}
+                    </div>
+                    );
+                  })}
 
                   {/* Show blocks */}
                   {colShows.map(show => {

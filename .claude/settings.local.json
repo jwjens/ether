@@ -9,7 +9,8 @@
       "Bash(findstr MasterOutput)",
       "Bash(cargo check *)",
       "Bash(xargs grep *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }

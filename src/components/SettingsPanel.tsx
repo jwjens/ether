@@ -417,6 +417,153 @@ function MusixmatchKeyForm() {
 
 // ── Discogs credential form ───────────────────────────────────
 
+// ── Icecast / Broadcast section ───────────────────────────────
+
+const DEFAULT_PLAYOUT_SERVER = '44.244.52.207';
+
+function CloudPlayoutSection() {
+  const [icecastUp,     setIcecastUp]     = useState<boolean | null>(null);
+  const [checking,      setChecking]      = useState(false);
+  const [syncMsg,       setSyncMsg]       = useState<string>("");
+  const [playoutServer, setPlayoutServer] = useState(DEFAULT_PLAYOUT_SERVER);
+  const [editingServer, setEditingServer] = useState(false);
+  const [serverDraft,   setServerDraft]   = useState('');
+  const [live,          setLive]          = useState(false);
+
+  const streamUrl = `http://${playoutServer}:8000/live`;
+
+  useEffect(() => {
+    const ether = (window as any).ether;
+    ether.invoke('playout:get-server').then((ip: string) => {
+      if (ip) setPlayoutServer(ip);
+    }).catch(() => {});
+    ether.invoke('stream:get-status').then((s: any) => {
+      if (s?.live) setLive(true);
+    }).catch(() => {});
+    const h = ether.on('stream:status', (s: any) => setLive(!!s?.live));
+    return () => ether.off('stream:status', h);
+  }, []);
+
+  const checkStatus = async () => {
+    setChecking(true);
+    try {
+      const res = await fetch(`http://${playoutServer}:8000/`, { signal: AbortSignal.timeout(4000) });
+      setIcecastUp(res.ok || res.status === 200 || res.status === 403);
+    } catch {
+      setIcecastUp(false);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  useEffect(() => { checkStatus(); }, [playoutServer]);
+
+  const goLive = async () => {
+    setSyncMsg('');
+    const res = await (window as any).ether.invoke('stream:go-live');
+    if (res?.ok) { setLive(true); setSyncMsg(`✓ Streaming → ${res.server}:8000/live`); }
+    else setSyncMsg('✗ ' + (res?.error || 'Failed to start stream'));
+  };
+
+  const stopLive = async () => {
+    await (window as any).ether.invoke('stream:stop-live');
+    setLive(false);
+    setSyncMsg('');
+  };
+
+  const saveServer = async () => {
+    const ip = serverDraft.trim();
+    if (!ip) return;
+    await (window as any).ether.invoke('playout:set-server', ip);
+    setPlayoutServer(ip);
+    setEditingServer(false);
+  };
+
+  const statusColor = icecastUp === null ? "var(--text-tertiary)" : icecastUp ? "#22c55e" : "#ef4444";
+  const statusLabel = icecastUp === null ? "CHECKING" : icecastUp ? "ONLINE" : "OFFLINE";
+
+  return (
+    <Section
+      category="broadcast"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12a5 5 0 0 0 5 5 8 8 0 0 1 5 2 8 8 0 0 1 5-2 5 5 0 0 0 5-5V7H2z"/><path d="M6 11V7"/><path d="M10 11V5"/><path d="M14 11V3"/><path d="M18 11V7"/></svg>}
+      title="Broadcast"
+      description="Stream Ether's output to Icecast so listeners can tune in"
+    >
+      {/* Server row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, padding: "8px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: icecastUp ? `0 0 7px ${statusColor}` : "none", flexShrink: 0 }} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
+          {editingServer ? (
+            <>
+              <input
+                value={serverDraft}
+                onChange={e => setServerDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveServer(); if (e.key === 'Escape') setEditingServer(false); }}
+                autoFocus
+                style={{ fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", padding: "2px 6px", width: 160 }}
+                placeholder="IP address"
+              />
+              <button onClick={saveServer} style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+              <button onClick={() => setEditingServer(false)} style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", background: "none", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>✕</button>
+            </>
+          ) : (
+            <>
+              <span>{playoutServer}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: statusColor, letterSpacing: "0.08em" }}>{statusLabel}</span>
+              <button onClick={() => { setServerDraft(playoutServer); setEditingServer(true); }} style={{ fontSize: 9, fontWeight: 700, padding: "1px 6px", background: "none", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
+            </>
+          )}
+        </div>
+        <button onClick={checkStatus} disabled={checking} style={{ padding: "3px 10px", fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>
+          {checking ? "…" : "Refresh"}
+        </button>
+      </div>
+
+      {/* Stream URL */}
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Listener URL</div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <code style={{ flex: 1, fontSize: 12, padding: "6px 10px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", userSelect: "all" }}>
+            {streamUrl}
+          </code>
+          <button onClick={() => navigator.clipboard.writeText(streamUrl)} style={{ padding: "5px 10px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>
+            Copy
+          </button>
+        </div>
+      </div>
+
+      {/* Go Live */}
+      <button
+        onClick={live ? stopLive : goLive}
+        style={{
+          width: "100%", padding: "10px 0", fontSize: 13, fontWeight: 800,
+          letterSpacing: "0.06em", cursor: "pointer", border: "none",
+          background: live ? "rgba(239,68,68,0.15)" : "rgba(34,197,94,0.15)",
+          color: live ? "#f87171" : "#4ade80",
+          outline: live ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(34,197,94,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          marginBottom: 8,
+        }}
+      >
+        {live && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171", display: "inline-block", boxShadow: "0 0 6px #f87171", animation: "pulse 1.2s infinite" }} />}
+        {live ? "■  STOP STREAM" : "▶  GO LIVE — Stream to Icecast"}
+      </button>
+
+      {syncMsg && (
+        <div style={{
+          fontSize: 12, fontWeight: 600,
+          color: syncMsg.startsWith("✓") ? "#4ade80" : "#f87171",
+          padding: "5px 10px",
+          background: syncMsg.startsWith("✓") ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+          border: `1px solid ${syncMsg.startsWith("✓") ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)"}`,
+        }}>
+          {syncMsg}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ── MIDI Controllers section ──────────────────────────────────
 
 function ControllersSection() {
@@ -1169,6 +1316,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           </div>
         </div>
       </Section>
+
+      {/* ── Cloud Playout ── */}
+      <CloudPlayoutSection />
 
       {/* ── Stream Metadata Outputs (PAD/RDS) ── */}
       <Section

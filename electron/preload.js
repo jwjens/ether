@@ -63,6 +63,10 @@ contextBridge.exposeInMainWorld("ether", {
     listBackups: () => ipcRenderer.invoke("db:listBackups"),
     restore: (n) => ipcRenderer.invoke("db:restore", n),
   },
+  schedule: {
+    generate: (days) => ipcRenderer.invoke("schedule:generate", days ?? 7),
+    get:      (fromTs, toTs) => ipcRenderer.invoke("schedule:get", fromTs, toTs),
+  },
   fs: {
     readFile: (fp) => ipcRenderer.invoke("fs:readFile", fp),
     exists: (fp) => ipcRenderer.invoke("fs:exists", fp),

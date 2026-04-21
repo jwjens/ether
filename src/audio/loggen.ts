@@ -51,6 +51,13 @@ interface SepRules {
   song_sep_sec: number;
 }
 
+// ── Cursor into generated_schedule — advances as tracks are queued ──
+// Tracks the last row id already loaded into the queue so refills
+// continue forward rather than re-queuing played songs.
+let _schedCursor = 0;  // 0 = start from beginning
+
+export function resetScheduleCursor() { _schedCursor = 0; }
+
 // ── Hourly daypart log — fires once per clock-hour ────────────
 let _lastLoggedHour = -1;
 function maybeDaypartLog(hour: number) {
@@ -351,26 +358,101 @@ async function pickSongsFromClock(
   return songs;
 }
 
+// ── Read upcoming tracks from generated_schedule ──────────────
+//
+// Reads the next `count` tracks from the pre-generated schedule,
+// starting from now (with a 5-minute back-window so we don't miss
+// the current slot if we're slightly late).  Joins songs to get
+// the local file_path — entries with no matching local file are skipped.
+
+interface ScheduledTrack {
+  title: string;
+  artist: string;
+  file_path: string | null;
+  file_key: string;
+  intro_end: number | null;
+  outro_start: number | null;
+  scheduled_at: number;
+}
+
+interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
+
+async function readGeneratedSchedule(count: number): Promise<ScheduledTrack[]> {
+  const rows = await query<ScheduledTrackRow>(
+    `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
+            s.file_path, s.intro_end, s.outro_start
+     FROM generated_schedule gs
+     LEFT JOIN songs s ON s.id = gs.song_id
+     WHERE gs.id > ?
+     ORDER BY gs.scheduled_at
+     LIMIT ?`,
+    [_schedCursor, count]
+  );
+  if (rows.length > 0) {
+    _schedCursor = rows[rows.length - 1].row_id;
+  }
+  return rows;
+}
+
 // ── Main export: fill the queue ────────────────────────────────
+//
+// Priority 1: generated_schedule — plays the pre-planned log in order.
+// Priority 2: active show clock  — live clock-based picking.
+// Priority 3: SmartRules         — localStorage rules.
+// Priority 4: filtered random    — last resort.
 
 export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
   try {
-    const sep  = await getSepRules();
-    const { blockExplicit } = getContentFilter();
     const hour = new Date().getHours();
     maybeDaypartLog(hour);
 
+    // ── Priority 1: generated schedule ───────────────────────
+    let scheduled = await readGeneratedSchedule(targetCount);
+    if (scheduled.length === 0 && _schedCursor > 0) {
+      _schedCursor = 0;
+      scheduled = await readGeneratedSchedule(targetCount);
+    }
+    if (scheduled.length > 0) {
+      // Resolve each track: prefer local file_path, fall back to R2 cache download
+      const resolved = await Promise.all(scheduled.map(async s => {
+        let filePath = s.file_path || '';
+        if (!filePath && s.file_key) {
+          try {
+            const res = await (window as any).ether.invoke('r2:fetch-track', s.file_key);
+            if (res?.ok) filePath = res.filePath;
+          } catch {}
+        }
+        return filePath ? {
+          filePath,
+          title:      s.title,
+          artist:     s.artist || '',
+          introEnd:   s.intro_end ?? undefined,
+          outroStart: s.outro_start ?? undefined,
+        } : null;
+      }));
+      const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string }[];
+      if (items.length > 0) {
+        engine.addToQueue(items);
+        console.log(`[loggen] fillQueue: source=generated_schedule | ${items.length} tracks`);
+        return items.length;
+      }
+    }
+
+    console.log("[loggen] generated_schedule empty — falling back to live picking");
+
+    const sep  = await getSepRules();
+    const { blockExplicit } = getContentFilter();
     let songs: Song[] = [];
     let source = "random";
 
-    // ── Priority 1: active show's format clock ────────────────
+    // ── Priority 2: active show's format clock ────────────────
     const showClock = await getActiveShowClock();
     if (showClock) {
       songs = await pickSongsFromClock(showClock.clockId, targetCount, sep, blockExplicit);
       source = `clock "${showClock.showName}"`;
     }
 
-    // ── Priority 2: localStorage SmartRules ───────────────────
+    // ── Priority 3: localStorage SmartRules ───────────────────
     if (songs.length < targetCount / 2) {
       const rule = getActiveRule();
       if (rule) {
@@ -380,35 +462,23 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
       }
     }
 
-    // ── Priority 3: filtered random ───────────────────────────
+    // ── Priority 4: filtered random ───────────────────────────
     if (songs.length < targetCount / 2) {
       const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit);
       songs = [...songs, ...extra];
       if (songs.length > 0 && source === "random") source = "random (no show/rules matched)";
     }
 
-    console.log(
-      `[loggen] fillQueue: source=${source} | ` +
-      `hour=${hour} | blockExplicit=${blockExplicit} | ` +
-      `artistSep=${sep.artist_sep_sec / 60}min`
-    );
+    console.log(`[loggen] fillQueue: source=${source} | hour=${hour} | artistSep=${sep.artist_sep_sec / 60}min`);
 
     if (songs.length === 0) {
       console.warn(
-        "[loggen] WARNING: No eligible songs found after applying all rotation rules. " +
-        "Check that songs are not all marked inactive, that daypart masks allow the " +
-        "current hour, and that separation rules are not too strict."
+        "[loggen] WARNING: No eligible songs found. Check rotation_status, daypart_mask, and separation rules."
       );
       return 0;
     }
 
-    // ── BPM/energy flow ordering (GSelector-style) ─────────────
-    // Reorder the selected songs so adjacent tracks transition smoothly.
-    // Each next song should be within ±15 BPM of the previous one when possible.
-    // Songs without BPM data are placed anywhere (no penalty).
     songs = orderByBpmFlow(songs);
-
-    console.log(`[loggen] Queuing ${songs.length} songs: ${songs.map(s => `"${s.title}" (${s.bpm ? Math.round(s.bpm) + 'bpm' : '?'})`).join(", ")}`);
 
     const items = songs.map(s => ({
       filePath:    s.file_path,

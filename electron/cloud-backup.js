@@ -380,4 +380,15 @@ async function triggerUpload() {
 
 let _dbPath = "";
 
-module.exports = { installCloudBackup, triggerUpload };
+function getR2Config() {
+  return {
+    accountId:       r2Config.accountId,
+    endpoint:        r2Config.endpoint,
+    bucket:          r2Config.bucket,
+    accessKeyId:     r2Config.accessKeyId,
+    secretAccessKey: r2Config.secretAccessKey,
+    resolvedEndpoint: r2Endpoint(),
+  };
+}
+
+module.exports = { installCloudBackup, triggerUpload, getR2Config };

@@ -394,7 +394,9 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 // ── MasterOutput ─────────────────────────────────────────────
 export default function MasterOutput({ masterLevel, expanded, collapsed = false, onToggleCollapsed }: { masterLevel: number; expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const [masterVol,  setMasterVol]  = useState(1.0);
-  const [monitorVol, setMonitorVol] = useState(0.8);
+  const [monitorVol, setMonitorVol] = useState(() => {
+    try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
+  });
   const [nextBreak,  setNextBreak]  = useState("—");
   const [onAir,      setOnAir]      = useState(false);
   const [uptime,     setUptime]     = useState("0:00");
@@ -480,6 +482,22 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
   useEffect(() => {
     setOnAir(masterLevel > 0.03);
   }, [masterLevel]);
+
+  // Master fader — controls overall output gain across all decks
+  useEffect(() => {
+    try {
+      const ether = (window as any).ether;
+      ether.audio.setVolume('A', masterVol);
+      ether.audio.setVolume('B', masterVol);
+      ether.audio.setVolume('C', masterVol);
+      // Expose globally so deck faders can scale against it
+      (window as any).__etherMasterVol = masterVol;
+    } catch {}
+  }, [masterVol]);
+
+  useEffect(() => {
+    try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
+  }, [monitorVol]);
 
   // Query next show boundary
   useEffect(() => {

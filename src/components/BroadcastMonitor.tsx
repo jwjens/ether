@@ -379,7 +379,9 @@ function NextUpList({ items }: { items: { title: string; artist: string }[] }) {
 export default function BroadcastMonitor() {
   const [masterLevel, setMasterLevel] = useState(0);
   const [masterVol,   setMasterVol]   = useState(1.0);
-  const [monitorVol,  setMonitorVol]  = useState(0.8);
+  const [monitorVol,  setMonitorVol]  = useState(() => {
+    try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
+  });
   const [onAir,       setOnAir]       = useState(false);
 
   const [title,       setTitle]       = useState("");
@@ -409,6 +411,10 @@ export default function BroadcastMonitor() {
     });
     return () => ether.audio.offLevels(h);
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
+  }, [monitorVol]);
 
   // ── Now-playing updates from main window ──────────────────────
   useEffect(() => {

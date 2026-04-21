@@ -1,0 +1,22 @@
+[Unit]
+Description=Ether Cloud Playout Engine
+After=network.target icecast2.service
+Wants=icecast2.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/ether-playout
+ExecStart=/usr/bin/node /opt/ether-playout/playout.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ether-playout
+Environment=PORT=3500
+Environment=ICECAST_URL=icecast://source:hackme@localhost:8000/live
+Environment=CACHE_DIR=/tmp/ether-playout-cache
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

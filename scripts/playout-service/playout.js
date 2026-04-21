@@ -40,6 +40,10 @@ let currentTrack = null;
 let status     = 'idle';   // idle | playing | downloading | error
 let startedAt  = null;
 let playLog    = [];
+let _retryTimer    = null;
+let _liveMode      = false;   // true = Ether is connected and sending real-time play commands
+let _fallbackTimer = null;    // set when we're waiting for the next live command
+const LIVE_TIMEOUT_MS = 30_000;  // fall back to schedule after 30s with no live command
 
 // ── Logging ───────────────────────────────────────────────────
 
@@ -140,7 +144,7 @@ async function playNext() {
   } catch (e) {
     log(`Download failed for ${track.file_key}: ${e.message} — skipping`);
     status = 'error';
-    setTimeout(playNext, 2_000);
+    _retryTimer = setTimeout(playNext, 2_000);
     return;
   }
 
@@ -179,6 +183,7 @@ async function playNext() {
 
 function startPlayout() {
   if (status === 'playing' || status === 'downloading') return;
+  if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
   playIndex = 0;
   playNext();
 }
@@ -206,6 +211,7 @@ app.use((req, res, next) => {
 app.get('/api/playout/status', (req, res) => {
   res.json({
     status,
+    liveMode: _liveMode,
     currentTrack,
     scheduleLength: schedule.length,
     playIndex: playIndex % Math.max(schedule.length, 1),
@@ -236,6 +242,11 @@ app.post('/api/playout/r2config', (req, res) => {
   if (endpoint)       r2Config.endpoint        = endpoint;
   saveConfig('r2', r2Config);
   log('R2 config updated');
+  // If playout stalled due to missing R2 creds, restart immediately
+  if ((status === 'error' || status === 'idle') && schedule.length > 0) {
+    log('R2 config received — restarting playout');
+    startPlayout();
+  }
   res.json({ ok: true });
 });
 
@@ -245,6 +256,84 @@ app.post('/api/playout/control', (req, res) => {
   else if (action === 'skip')  { skipTrack();  res.json({ ok: true }); }
   else if (action === 'stop')  { killFfmpeg(); status = 'idle'; res.json({ ok: true }); }
   else res.status(400).json({ error: 'unknown action' });
+});
+
+// ── Live play command from Ether ──────────────────────────────
+// Ether sends this every time a deck starts a new track.
+// We kill the current ffmpeg, download the new file, and start immediately.
+// If no command arrives within LIVE_TIMEOUT_MS, we fall back to the schedule.
+
+function armFallbackTimer() {
+  if (_fallbackTimer) clearTimeout(_fallbackTimer);
+  _fallbackTimer = setTimeout(() => {
+    log(`No live command for ${LIVE_TIMEOUT_MS / 1000}s — falling back to schedule`);
+    _liveMode = false;
+    _fallbackTimer = null;
+    if (schedule.length > 0) startPlayout();
+  }, LIVE_TIMEOUT_MS);
+}
+
+app.post('/api/playout/play', async (req, res) => {
+  const { file_key, title, artist, start_at } = req.body;
+  if (!file_key) return res.status(400).json({ error: 'file_key required' });
+
+  // Acknowledge immediately — download + play happens async
+  res.json({ ok: true });
+
+  _liveMode = true;
+  armFallbackTimer();
+
+  // Kill whatever is playing now
+  killFfmpeg();
+  if (_retryTimer) { clearTimeout(_retryTimer); _retryTimer = null; }
+
+  log(`▶ LIVE ${title || file_key} — ${artist || ''}`);
+  status = 'downloading';
+  currentTrack = { file_key, title: title || file_key, artist: artist || '', startedAt: new Date().toISOString() };
+  startedAt = Date.now();
+
+  let localPath;
+  try {
+    localPath = await downloadTrack(file_key);
+  } catch (e) {
+    log(`Live download failed for ${file_key}: ${e.message}`);
+    status = 'error';
+    // Don't retry — wait for the next live command (or fallback timer)
+    return;
+  }
+
+  status = 'playing';
+
+  ffmpegProc = spawn('ffmpeg', [
+    '-re',
+    '-i', localPath,
+    '-vn',
+    '-af', 'loudnorm=I=-16:LRA=7:TP=-1.5',
+    '-c:a', 'libmp3lame',
+    '-b:a', '128k',
+    '-ar', '44100',
+    '-ac', '2',
+    '-f', 'mp3',
+    '-content_type', 'audio/mpeg',
+    ICECAST_URL,
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  ffmpegProc.stderr.on('data', d => {
+    const line = d.toString();
+    if (/error|failed|invalid/i.test(line)) log('[ffmpeg-live] ' + line.trim());
+  });
+
+  ffmpegProc.on('close', code => {
+    ffmpegProc = null;
+    if (code !== 0 && code !== null) log(`ffmpeg-live exited with code ${code}`);
+    // In live mode, don't auto-advance — wait for Ether's next play command.
+    // The fallback timer will kick in if Ether goes silent.
+    if (!_liveMode) {
+      setTimeout(playNext, 500);
+    } else {
+      status = 'idle';
+    }
+  });
 });
 
 app.get('/api/playout/log', (req, res) => {
