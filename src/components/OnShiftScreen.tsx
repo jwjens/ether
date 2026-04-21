@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { query, queryOne, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import { engine } from "../audio/engine-rodio";
 import { getNextTransition } from "../audio/showClock";
 
@@ -44,6 +46,7 @@ function fmtSecs(s: number): string {
 // ── Component ─────────────────────────────────────────────────
 
 export default function OnShiftScreen({ onStart }: Props) {
+  const { stationId, isReady } = useActiveStation();
   const [operators, setOperators]       = useState<Operator[]>([]);
   const [operator, setOperator]         = useState<Operator | null>(null);
   const [note, setNote]                 = useState("");
@@ -70,10 +73,11 @@ export default function OnShiftScreen({ onStart }: Props) {
   // ── Load all data ─────────────────────────────────────────────
 
   useEffect(() => {
+    if (!isReady) return;
     (async () => {
       try {
         // Operators
-        const ops = await query<Operator>("SELECT id, name, initials FROM operators ORDER BY id");
+        const ops = await queryScoped<Operator>("SELECT id, name, initials FROM operators ORDER BY id", [], stationId);
         setOperators(ops);
 
         // Last selected operator
@@ -95,7 +99,7 @@ export default function OnShiftScreen({ onStart }: Props) {
         setSongCount(sc?.n ?? 0);
 
         // Rotation rules
-        const rr = await queryOne<{ n: number }>("SELECT COUNT(*) as n FROM separation_rules WHERE is_active = 1");
+        const rr = await (queryScoped<{ n: number }>("SELECT COUNT(*) as n FROM separation_rules WHERE is_active = 1", [], stationId).then(r => r[0] ?? null));
         setRulesOk((rr?.n ?? 0) > 0);
 
         // Last backup
@@ -120,7 +124,7 @@ export default function OnShiftScreen({ onStart }: Props) {
         const now = new Date();
         const hour = now.getHours();
         const day = String(now.getDay());
-        const shows = await query<ShowInfo>("SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour");
+        const shows = await queryScoped<ShowInfo>("SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour", [], stationId);
         const curr = shows.find(s => {
           if (!s.name) return false;
           const dayOk = true; // simplified — all shows checked
@@ -145,7 +149,7 @@ export default function OnShiftScreen({ onStart }: Props) {
 
       } catch (e) { console.error("[OnShift] Load error:", e); }
     })();
-  }, []);
+  }, [isReady]);
 
   // ── Load operator note when operator changes ──────────────────
 
@@ -153,10 +157,10 @@ export default function OnShiftScreen({ onStart }: Props) {
     if (!operator) return;
     (async () => {
       try {
-        const n = await queryOne<{ note: string }>(
+        const n = await (queryScoped<{ note: string }>(
           "SELECT note FROM operator_notes WHERE operator_id = ? ORDER BY updated_at DESC LIMIT 1",
-          [operator.id]
-        );
+          [operator.id], stationId
+        ).then(r => r[0] ?? null));
         setNote(n?.note ?? "");
       } catch { setNote(""); }
     })();
@@ -195,9 +199,9 @@ export default function OnShiftScreen({ onStart }: Props) {
   const saveNote = async () => {
     if (!operator) return;
     try {
-      await execute(
+      await executeScopedInsert(
         "INSERT INTO operator_notes (operator_id, note, updated_at) VALUES (?, ?, unixepoch())",
-        [operator.id, note]
+        [operator.id, note], stationId
       );
       setNoteSaved(true);
       setTimeout(() => setNoteSaved(false), 1500);
@@ -209,8 +213,8 @@ export default function OnShiftScreen({ onStart }: Props) {
   const addOperator = async () => {
     if (!newName.trim()) return;
     try {
-      await execute("INSERT INTO operators (name, initials) VALUES (?, ?)", [newName.trim(), newInitials.trim() || newName.trim().charAt(0)]);
-      const ops = await query<Operator>("SELECT id, name, initials FROM operators ORDER BY id");
+      await executeScopedInsert("INSERT INTO operators (name, initials) VALUES (?, ?)", [newName.trim(), newInitials.trim() || newName.trim().charAt(0)], stationId);
+      const ops = await queryScoped<Operator>("SELECT id, name, initials FROM operators ORDER BY id", [], stationId);
       setOperators(ops);
       const newest = ops[ops.length - 1];
       setOperator(newest);

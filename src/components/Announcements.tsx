@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { engine } from "../audio/engine-rodio";
@@ -29,7 +31,7 @@ async function checkAnnouncements() {
   const currentDay = String(now.getDay());
   if (currentTime === lastFiredMinute) return;
   try {
-    const announcements = await query<Announcement>("SELECT * FROM announcements WHERE is_active = 1 AND trigger_time = ?", [currentTime]);
+    const announcements = await queryScoped<Announcement>("SELECT * FROM announcements WHERE is_active = 1 AND trigger_time = ?", [currentTime], getActiveStationIdSync());
     for (const ann of announcements) {
       if (!ann.days.includes(currentDay)) continue;
       const nowEpoch = Math.floor(Date.now() / 1000);
@@ -48,7 +50,7 @@ async function checkAnnouncements() {
           if (ann.duck_music && ann.resume_music) { deckA?.setVolume(1); deckB?.setVolume(1); }
         };
         audio.play();
-        await execute("UPDATE announcements SET last_played_at = unixepoch() WHERE id = ?", [ann.id]);
+        await queryScoped("UPDATE announcements SET last_played_at = unixepoch() WHERE id = ?", [ann.id], getActiveStationIdSync());
       } catch (e) {
         if (ann.duck_music) { deckA?.setVolume(1); deckB?.setVolume(1); }
       }
@@ -77,13 +79,15 @@ function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: bool
 }
 
 export default function Announcements() {
+  const { stationId, isReady } = useActiveStation();
   const [list, setList] = useState<Announcement[]>([]);
   const [editing, setEditing] = useState<Partial<Announcement> | null>(null);
 
   const load = async () => {
-    setList(await query<Announcement>("SELECT * FROM announcements ORDER BY trigger_time"));
+    if (!isReady) return;
+    setList(await queryScoped<Announcement>("SELECT * FROM announcements ORDER BY trigger_time", [], stationId));
   };
-  useEffect(() => { load(); startAnnouncementEngine(); }, []);
+  useEffect(() => { load(); startAnnouncementEngine(); }, [isReady]);
 
   const addNew = async () => {
     const files = await open({ multiple: false, title: "Select announcement audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
@@ -96,18 +100,18 @@ export default function Announcements() {
   const save = async () => {
     if (!editing) return;
     if (editing.id) {
-      await execute("UPDATE announcements SET title=?, trigger_time=?, days=?, duck_music=?, resume_music=?, duck_level=?, is_active=? WHERE id=?",
-        [editing.title, editing.trigger_time, editing.days, editing.duck_music ? 1 : 0, editing.resume_music ? 1 : 0, editing.duck_level, editing.is_active ? 1 : 0, editing.id]);
+      await queryScoped("UPDATE announcements SET title=?, trigger_time=?, days=?, duck_music=?, resume_music=?, duck_level=?, is_active=? WHERE id=?",
+        [editing.title, editing.trigger_time, editing.days, editing.duck_music ? 1 : 0, editing.resume_music ? 1 : 0, editing.duck_level, editing.is_active ? 1 : 0, editing.id], stationId);
     } else {
-      await execute("INSERT INTO announcements (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active) VALUES (?,?,?,?,?,?,?,?)",
-        [editing.title, editing.file_path, editing.trigger_time, editing.days, editing.duck_music ? 1 : 0, editing.resume_music ? 1 : 0, editing.duck_level, editing.is_active ? 1 : 0]);
+      await executeScopedInsert("INSERT INTO announcements (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active) VALUES (?,?,?,?,?,?,?,?)",
+        [editing.title, editing.file_path, editing.trigger_time, editing.days, editing.duck_music ? 1 : 0, editing.resume_music ? 1 : 0, editing.duck_level, editing.is_active ? 1 : 0], stationId);
     }
     setEditing(null); load();
   };
 
   const remove = async (id: number) => {
     if (!confirm("Delete this announcement?")) return;
-    await execute("DELETE FROM announcements WHERE id=?", [id]); load();
+    await queryScoped("DELETE FROM announcements WHERE id=?", [id], stationId); load();
   };
 
   const toggleDay = (day: string) => {
@@ -256,7 +260,7 @@ export default function Announcements() {
                     {a.duck_music ? `↓ ${Math.round(a.duck_level * 100)}%` : "—"}
                   </td>
                   <td style={{ padding: "12px 14px" }}>
-                    <button onClick={async () => { await execute("UPDATE announcements SET is_active=? WHERE id=?", [a.is_active ? 0 : 1, a.id]); load(); }} style={{
+                    <button onClick={async () => { await queryScoped("UPDATE announcements SET is_active=? WHERE id=?", [a.is_active ? 0 : 1, a.id], stationId); load(); }} style={{
                       padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
                       background: a.is_active ? "rgba(52,211,153,0.15)" : "var(--bg-tertiary)",
                       color: a.is_active ? "var(--accent-green)" : "var(--text-tertiary)",

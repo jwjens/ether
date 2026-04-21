@@ -4,6 +4,8 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
 import { engine } from "../audio/engine-rodio";
 
@@ -393,6 +395,7 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 
 // ── MasterOutput ─────────────────────────────────────────────
 export default function MasterOutput({ masterLevel, expanded, collapsed = false, onToggleCollapsed }: { masterLevel: number; expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
+  const { stationId, isReady } = useActiveStation();
   const [masterVol,  setMasterVol]  = useState(1.0);
   const [monitorVol, setMonitorVol] = useState(() => {
     try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
@@ -427,8 +430,8 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
     const load = async () => {
       try {
         const h = new Date().getHours();
-        const rows = await query<{ name: string; start_hour: number; end_hour: number }>(
-          "SELECT name, start_hour, end_hour FROM shows WHERE is_active=1 AND start_hour <= ? ORDER BY start_hour DESC LIMIT 1", [h]
+        const rows = await queryScoped<{ name: string; start_hour: number; end_hour: number }>(
+          "SELECT name, start_hour, end_hour FROM shows WHERE is_active=1 AND start_hour <= ? ORDER BY start_hour DESC LIMIT 1", [h], stationId
         );
         if (rows.length > 0) setCurrentShow({ name: rows[0].name, startH: rows[0].start_hour, endH: rows[0].end_hour });
         else setCurrentShow(null);
@@ -504,9 +507,9 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
     const load = async () => {
       try {
         const hour = new Date().getHours();
-        const shows = await query<{ name: string; start_hour: number }>(
+        const shows = await queryScoped<{ name: string; start_hour: number }>(
           "SELECT name, start_hour FROM shows WHERE is_active=1 AND start_hour > ? ORDER BY start_hour LIMIT 1",
-          [hour]
+          [hour], stationId
         );
         if (shows.length > 0) {
           const h = shows[0].start_hour;

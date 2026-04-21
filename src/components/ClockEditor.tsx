@@ -13,6 +13,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -100,6 +102,7 @@ interface Props {
 }
 
 export default function ClockEditor({ clockId, onSave, onClose }: Props) {
+  const { stationId, isReady } = useActiveStation();
   const [clock, setClock] = useState<Clock>({
     id: null,
     name: "New Clock",
@@ -122,9 +125,11 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
 
   useEffect(() => {
     const load = async () => {
+      if (!isReady) return;
       try {
-        const rows = await query<{ id: number; name: string; daypart: string; slots_json: string }>(
-          "SELECT id, name, daypart, slots_json FROM format_clocks ORDER BY daypart, name"
+        const rows = await queryScoped<{ id: number; name: string; daypart: string; slots_json: string }>(
+          "SELECT id, name, daypart, slots_json FROM format_clocks ORDER BY daypart, name",
+          [], stationId
         );
         setClocks(rows.map(r => ({ id: r.id, name: r.name, daypart: r.daypart })));
         if (clockId) {
@@ -150,7 +155,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
       }
     };
     load();
-  }, [clockId]);
+  }, [clockId, isReady]);
 
   // ── Save clock ────────────────────────────────────────────────
 
@@ -159,14 +164,14 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
     try {
       const json = JSON.stringify(clock.slots);
       if (clock.id) {
-        await execute(
+        await queryScoped(
           "UPDATE format_clocks SET name=?, daypart=?, slots_json=? WHERE id=?",
-          [clock.name, clock.daypart, json, clock.id]
+          [clock.name, clock.daypart, json, clock.id], stationId
         );
       } else {
-        const result = await execute(
+        const result = await executeScopedInsert(
           "INSERT INTO format_clocks (name, daypart, slots_json) VALUES (?,?,?)",
-          [clock.name, clock.daypart, json]
+          [clock.name, clock.daypart, json], stationId
         );
         const newId = result?.lastInsertRowid != null ? Number(result.lastInsertRowid) : null;
         if (newId) setClock(prev => ({ ...prev, id: newId }));

@@ -3,6 +3,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -88,6 +90,7 @@ interface Props {
 }
 
 export default function CreateShowWizard({ onClose, onDone }: Props) {
+  const { stationId, isReady } = useActiveStation();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -116,18 +119,20 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
   const [catCreated, setCatCreated]   = useState(false);
 
   const loadClocks = useCallback(async () => {
+    if (!isReady) return;
     try {
-      const rows = await query<Clock>("SELECT id, name FROM clocks ORDER BY name");
+      const rows = await queryScoped<Clock>("SELECT id, name FROM clocks ORDER BY name", [], stationId);
       setClocks(rows);
     } catch {}
-  }, []);
+  }, [isReady, stationId]);
 
   const loadCategories = useCallback(async () => {
+    if (!isReady) return;
     try {
-      const rows = await query<Category>("SELECT id, code, name, color FROM categories ORDER BY code");
+      const rows = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
       setCategories(rows);
     } catch {}
-  }, []);
+  }, [isReady, stationId]);
 
   useEffect(() => { loadClocks(); loadCategories(); }, [loadClocks, loadCategories]);
 
@@ -142,12 +147,12 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     if (!newClockName.trim()) return;
     setCreatingClock(true);
     try {
-      await execute(
+      await executeScopedInsert(
         "INSERT INTO clocks (name) VALUES (?)",
-        [newClockName.trim()]
+        [newClockName.trim()], stationId
       );
       await loadClocks();
-      const updated = await query<Clock>("SELECT id, name FROM clocks ORDER BY id DESC LIMIT 1");
+      const updated = await queryScoped<Clock>("SELECT id, name FROM clocks ORDER BY id DESC LIMIT 1", [], stationId);
       if (updated.length) setSelectedClockId(updated[0].id);
       setNewClockName("");
       setClockCreated(true);
@@ -160,12 +165,12 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     setCreatingCat(true);
     try {
-      await execute(
+      await executeScopedInsert(
         "INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
-        [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor, 0, 0]
+        [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor, 0, 0], stationId
       );
       await loadCategories();
-      const updated = await query<Category>("SELECT id, code, name, color FROM categories ORDER BY id DESC LIMIT 1");
+      const updated = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY id DESC LIMIT 1", [], stationId);
       if (updated.length) setSelectedCatId(updated[0].id);
       setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
       setCatCreated(true);
@@ -178,9 +183,9 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     setSaving(true);
     setSaveError("");
     try {
-      await execute(
+      await executeScopedInsert(
         "INSERT INTO shows (name, start_hour, end_hour, color, days, is_active, clock_id) VALUES (?,?,?,?,?,?,?)",
-        [showName.trim(), startHour, endHour, showColor, activeDays || "0123456", 1, selectedClockId]
+        [showName.trim(), startHour, endHour, showColor, activeDays || "0123456", 1, selectedClockId], stationId
       );
       onDone();
     } catch (e: any) {

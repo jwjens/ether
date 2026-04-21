@@ -23,6 +23,8 @@
 //   • Export MP3 (requires: npm install lamejs)
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
 const openDialog = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
@@ -277,6 +279,7 @@ export default function BroadcastEditor({
   initialAPath, initialATitle, initialBPath, initialBTitle,
   sourceSongId, onBouncePlace, onOpenCueEditor,
 }: Props) {
+  const { stationId } = useActiveStation();
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playStartRef = useRef<{ ctxTime: number; originMs: number } | null>(null);
@@ -1248,10 +1251,9 @@ export default function BroadcastEditor({
 
       // Update DB — flag the original song as having an intro version
       if (sourceSongId) {
-        const { execute } = await import("../db/client");
-        await execute(
+        await queryScoped(
           "UPDATE songs SET intro_version_path = ?, has_intro = 1 WHERE id = ?",
-          [outPath, sourceSongId]
+          [outPath, sourceSongId], stationId
         );
       }
 
@@ -1299,11 +1301,10 @@ export default function BroadcastEditor({
       await writeFile(outPath, wavBytes);
 
       // Insert into voice_tracks table so Voice Tracker picks it up immediately
-      const { execute: dbExec } = await import("../db/client");
-      await dbExec(
+      await executeScopedInsert(
         `INSERT INTO voice_tracks (title, file_path, duration_ms, recorded_by, recorded_at)
          VALUES (?, ?, ?, ?, strftime('%s','now'))`,
-        [clipName.replace(".wav", ""), outPath, clip.sourceDurationMs, "Production Editor"]
+        [clipName.replace(".wav", ""), outPath, clip.sourceDurationMs, "Production Editor"], stationId
       );
 
       setStatus(`✓ Sent to Voice Tracker — "${clipName.replace(".wav","")}" ready to assign`);

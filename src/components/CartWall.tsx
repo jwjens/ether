@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 
@@ -15,6 +17,7 @@ function titleFromFile(p: string) {
 }
 
 export default function CartWall() {
+  const { stationId, isReady } = useActiveStation();
   const [slots, setSlots] = useState<(CartSlot | null)[]>([]);
   const [playing, setPlaying] = useState<number | null>(null);
   const [flashing, setFlashing] = useState<number | null>(null);
@@ -26,12 +29,13 @@ export default function CartWall() {
   const TOTAL = 18;
 
   const load = async () => {
-    const rows = await query<CartSlot>("SELECT * FROM cart_slots ORDER BY slot_number");
+    if (!isReady) return;
+    const rows = await queryScoped<CartSlot>("SELECT * FROM cart_slots ORDER BY slot_number", [], stationId);
     const g: (CartSlot | null)[] = [];
     for (let i = 0; i < TOTAL; i++) g.push(rows.find(r => r.slot_number === i) || null);
     setSlots(g);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [isReady]);
 
   const fireCart = useCallback(async (n: number) => {
     const slot = slots[n];
@@ -64,14 +68,14 @@ export default function CartWall() {
     if (!f) return;
     const fp = Array.isArray(f) ? f[0] : f;
     const title = titleFromFile(fp); const color = COLORS[n % COLORS.length]; const hk = n < 12 ? "F" + (n + 1) : "";
-    const ex = await queryOne<{ id: number }>("SELECT id FROM cart_slots WHERE slot_number = ?", [n]);
-    if (ex) await execute("UPDATE cart_slots SET title=?, file_path=?, color=?, hotkey=? WHERE slot_number=?", [title, fp, color, hk, n]);
-    else await execute("INSERT INTO cart_slots (slot_number, title, file_path, color, hotkey) VALUES (?,?,?,?,?)", [n, title, fp, color, hk]);
+    const ex = await (queryScoped<{ id: number }>("SELECT id FROM cart_slots WHERE slot_number = ?", [n], stationId).then(r => r[0] ?? null));
+    if (ex) await queryScoped("UPDATE cart_slots SET title=?, file_path=?, color=?, hotkey=? WHERE slot_number=?", [title, fp, color, hk, n], stationId);
+    else await executeScopedInsert("INSERT INTO cart_slots (slot_number, title, file_path, color, hotkey) VALUES (?,?,?,?,?)", [n, title, fp, color, hk], stationId);
     load();
   };
 
-  const clearSlot = async (n: number) => { await execute("DELETE FROM cart_slots WHERE slot_number = ?", [n]); load(); };
-  const saveEdit = async () => { if (editing === null) return; await execute("UPDATE cart_slots SET title=?, color=?, hotkey=? WHERE slot_number=?", [editTitle, editColor, editHotkey, editing]); setEditing(null); load(); };
+  const clearSlot = async (n: number) => { await queryScoped("DELETE FROM cart_slots WHERE slot_number = ?", [n], stationId); load(); };
+  const saveEdit = async () => { if (editing === null) return; await queryScoped("UPDATE cart_slots SET title=?, color=?, hotkey=? WHERE slot_number=?", [editTitle, editColor, editHotkey, editing], stationId); setEditing(null); load(); };
 
   return (
     <div>

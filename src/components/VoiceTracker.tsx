@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import { engine } from "../audio/engine-rodio";
 
 // ─── Types ────────────────────────────────────────────────────
@@ -316,6 +318,7 @@ function TrackCard({
 // ─── Main Component ────────────────────────────────────────────
 
 export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string }) {
+  const { stationId, isReady } = useActiveStation();
 
   // Data
   const [tracks, setTracks]     = useState<VoiceTrack[]>([]);
@@ -367,13 +370,14 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   // ── Load data ──
   const load = useCallback(async () => {
+    if (!isReady) return;
     const [tr, sh, cl] = await Promise.all([
-      query<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 100"),
-      query<Show>("SELECT * FROM shows ORDER BY start_hour"),
-      query<Clock>("SELECT * FROM clocks ORDER BY name"),
+      queryScoped<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 100", [], stationId),
+      queryScoped<Show>("SELECT * FROM shows ORDER BY start_hour", [], stationId),
+      queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId),
     ]);
     setTracks(tr || []); setShows(sh || []); setClocks(cl || []);
-  }, []);
+  }, [isReady, stationId]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => { wavePointsRef.current = []; }, []);
@@ -390,6 +394,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   useEffect(() => {
     if (!selectedClock) { setClockSlots([]); return; }
+    // TODO 3b-ii: JOIN query — convert when JOIN scoping is supported
     query<ClockSlot>(
       `SELECT cs.*, c.code as category_code FROM clock_slots cs LEFT JOIN categories c ON c.id = cs.category_id WHERE cs.clock_id = ? ORDER BY cs.position`,
       [selectedClock]
@@ -405,11 +410,12 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   // ── Load scheduled songs for prev/next song context ──
   useEffect(() => {
-    query<ScheduledSong>(
+    if (!isReady) return;
+    queryScoped<ScheduledSong>(
       "SELECT position, title, artist, duration_ms FROM scheduled_log WHERE hour = ? ORDER BY position",
-      [selectedHour]
+      [selectedHour], stationId
     ).then(r => setScheduledSongs(Array.isArray(r) ? r : [])).catch(() => setScheduledSongs([]));
-  }, [selectedHour]);
+  }, [selectedHour, isReady]);
 
   // Derive prev/next songs for the selected slot
   const songs = scheduledSongs || [];
@@ -555,15 +561,15 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
           reader.onerror = () => reject(reader.error);
           reader.onload = async () => {
             try {
-              try { await execute("INSERT INTO voice_tracks (title, file_path, show_id, duration_ms, recorded_by, clock_slot_id) VALUES (?,?,?,?,?,?)", [title, reader.result as string, matchingShow?.id ?? null, durMs, djName, null]); }
-              catch { await execute("INSERT INTO voice_tracks (title, file_path, show_id, duration_ms, recorded_by) VALUES (?,?,?,?,?)", [title, reader.result as string, matchingShow?.id ?? null, durMs, djName]); }
+              try { await executeScopedInsert("INSERT INTO voice_tracks (title, file_path, show_id, duration_ms, recorded_by, clock_slot_id) VALUES (?,?,?,?,?,?)", [title, reader.result as string, matchingShow?.id ?? null, durMs, djName, null], stationId); }
+              catch { await executeScopedInsert("INSERT INTO voice_tracks (title, file_path, show_id, duration_ms, recorded_by) VALUES (?,?,?,?,?)", [title, reader.result as string, matchingShow?.id ?? null, durMs, djName], stationId); }
               setTrackTitle("");
               load().then(async () => {
                 if (recordingForSlot) {
-                  const latest = await query<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 1");
+                  const latest = await queryScoped<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 1", [], stationId);
                   if (latest.length > 0) {
-                    await execute("UPDATE voice_tracks SET clock_slot_id = NULL WHERE clock_slot_id = ?", [recordingForSlot.id]);
-                    await execute("UPDATE voice_tracks SET clock_slot_id = ? WHERE id = ?", [recordingForSlot.id, latest[0].id]);
+                    await queryScoped("UPDATE voice_tracks SET clock_slot_id = NULL WHERE clock_slot_id = ?", [recordingForSlot.id], stationId);
+                    await queryScoped("UPDATE voice_tracks SET clock_slot_id = ? WHERE id = ?", [recordingForSlot.id, latest[0].id], stationId);
                     load();
                   }
                   setRecordingForSlot(null);
@@ -596,17 +602,17 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   const deleteTrack = async (id: number) => {
     if (!confirm("Delete this voice track?")) return;
     if (playingId === id) { audioRef.current?.pause(); setPlayingId(null); }
-    await execute("DELETE FROM voice_tracks WHERE id = ?", [id]); load();
+    await queryScoped("DELETE FROM voice_tracks WHERE id = ?", [id], stationId); load();
   };
 
   // ── Slot assignment ──
   const assignToSlot = async (slotId: number, trackId: number) => {
-    await execute("UPDATE voice_tracks SET clock_slot_id = NULL WHERE clock_slot_id = ?", [slotId]);
-    await execute("UPDATE voice_tracks SET clock_slot_id = ? WHERE id = ?", [slotId, trackId]);
+    await queryScoped("UPDATE voice_tracks SET clock_slot_id = NULL WHERE clock_slot_id = ?", [slotId], stationId);
+    await queryScoped("UPDATE voice_tracks SET clock_slot_id = ? WHERE id = ?", [slotId, trackId], stationId);
     load();
   };
   const unassignFromSlot = async (slotId: number) => {
-    await execute("UPDATE voice_tracks SET clock_slot_id = NULL WHERE clock_slot_id = ?", [slotId]); load();
+    await queryScoped("UPDATE voice_tracks SET clock_slot_id = NULL WHERE clock_slot_id = ?", [slotId], stationId); load();
   };
 
   // ── SPACE keyboard shortcut ──

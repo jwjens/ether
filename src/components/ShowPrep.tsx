@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { engine, DeckState } from "../audio/engine-rodio";
 import { query, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
 // ── Types ────────────────────────────────────────────────────
@@ -249,30 +251,32 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
 // ── Liner Cards ──────────────────────────────────────────────
 
 function LinerCards() {
+  const { stationId, isReady } = useActiveStation();
   const [cards, setCards] = useState<LinerCard[]>([]);
   const [editing, setEditing] = useState<Partial<LinerCard> | null>(null);
   const [activeCard, setActiveCard] = useState<number | null>(null);
   const [filterCat, setFilterCat] = useState("all");
 
   const load = async () => {
+    if (!isReady) return;
     try {
-      setCards(await query<LinerCard>("SELECT * FROM liner_cards ORDER BY pinned DESC, created_at DESC"));
+      setCards(await queryScoped<LinerCard>("SELECT * FROM liner_cards ORDER BY pinned DESC, created_at DESC", [], stationId));
     } catch {
       // Table might not exist yet
       await execute("CREATE TABLE IF NOT EXISTS liner_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL, category TEXT DEFAULT 'Custom', color TEXT DEFAULT '#94a3b8', pinned INTEGER DEFAULT 0, created_at INTEGER DEFAULT (unixepoch()))");
       setCards([]);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [isReady]);
 
   const save = async () => {
     if (!editing?.title || !editing?.body) return;
     if (editing.id) {
-      await execute("UPDATE liner_cards SET title=?, body=?, category=?, color=?, pinned=? WHERE id=?",
-        [editing.title, editing.body, editing.category || "Custom", editing.color || "#94a3b8", editing.pinned || 0, editing.id]);
+      await queryScoped("UPDATE liner_cards SET title=?, body=?, category=?, color=?, pinned=? WHERE id=?",
+        [editing.title, editing.body, editing.category || "Custom", editing.color || "#94a3b8", editing.pinned || 0, editing.id], stationId);
     } else {
-      await execute("INSERT INTO liner_cards (title, body, category, color, pinned) VALUES (?,?,?,?,?)",
-        [editing.title, editing.body, editing.category || "Custom", LINER_COLORS[editing.category || "Custom"] || "#94a3b8", 0]);
+      await executeScopedInsert("INSERT INTO liner_cards (title, body, category, color, pinned) VALUES (?,?,?,?,?)",
+        [editing.title, editing.body, editing.category || "Custom", LINER_COLORS[editing.category || "Custom"] || "#94a3b8", 0], stationId);
     }
     setEditing(null); load();
   };
@@ -340,7 +344,7 @@ function LinerCards() {
                 </div>
                 <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
                   <button onClick={() => setEditing(card)} style={{ padding: "2px 7px", borderRadius: 0, fontSize: 9, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
-                  <button onClick={async () => { await execute("DELETE FROM liner_cards WHERE id=?", [card.id]); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={async () => { await queryScoped("DELETE FROM liner_cards WHERE id=?", [card.id], stationId); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {isActive && (
@@ -364,19 +368,21 @@ function LinerCards() {
 // ── Script Writer ────────────────────────────────────────────
 
 function ScriptWriter() {
+  const { stationId, isReady } = useActiveStation();
   const [notes, setNotes] = useState<PrepNote[]>([]);
   const [activeNote, setActiveNote] = useState<Partial<PrepNote> | null>(null);
   const [template, setTemplate] = useState("");
 
   const load = async () => {
+    if (!isReady) return;
     try {
-      setNotes(await query<PrepNote>("SELECT * FROM prep_notes ORDER BY created_at DESC LIMIT 50"));
+      setNotes(await queryScoped<PrepNote>("SELECT * FROM prep_notes ORDER BY created_at DESC LIMIT 50", [], stationId));
     } catch {
       await execute("CREATE TABLE IF NOT EXISTS prep_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT DEFAULT '', show_date TEXT DEFAULT '', category TEXT DEFAULT 'Script', created_at INTEGER DEFAULT (unixepoch()))");
       setNotes([]);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [isReady]);
 
   const newNote = (cat = "Script") => {
     setActiveNote({ title: "", body: "", category: cat, show_date: new Date().toISOString().split("T")[0] });
@@ -385,11 +391,11 @@ function ScriptWriter() {
   const save = async () => {
     if (!activeNote?.title) return;
     if (activeNote.id) {
-      await execute("UPDATE prep_notes SET title=?, body=?, category=?, show_date=? WHERE id=?",
-        [activeNote.title, activeNote.body, activeNote.category, activeNote.show_date, activeNote.id]);
+      await queryScoped("UPDATE prep_notes SET title=?, body=?, category=?, show_date=? WHERE id=?",
+        [activeNote.title, activeNote.body, activeNote.category, activeNote.show_date, activeNote.id], stationId);
     } else {
-      await execute("INSERT INTO prep_notes (title, body, category, show_date) VALUES (?,?,?,?)",
-        [activeNote.title, activeNote.body || "", activeNote.category || "Script", activeNote.show_date || ""]);
+      await executeScopedInsert("INSERT INTO prep_notes (title, body, category, show_date) VALUES (?,?,?,?)",
+        [activeNote.title, activeNote.body || "", activeNote.category || "Script", activeNote.show_date || ""], stationId);
     }
     setActiveNote(null); load();
   };
@@ -480,7 +486,7 @@ function ScriptWriter() {
                 </div>
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                   {note.show_date && <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{note.show_date}</span>}
-                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await execute("DELETE FROM prep_notes WHERE id=?", [note.id]); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await queryScoped("DELETE FROM prep_notes WHERE id=?", [note.id], stationId); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {note.body && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{note.body.substring(0, 100)}{note.body.length > 100 ? "…" : ""}</div>}

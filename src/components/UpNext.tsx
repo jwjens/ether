@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { engine } from "../audio/engine-rodio";
 import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -38,6 +40,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function UpNext({ queueLen, onQueueChange }: Props) {
+  const { stationId, isReady } = useActiveStation();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories]   = useState<CategoryInfo[]>([]);
   const [artUrls, setArtUrls]         = useState<Record<string, string>>({});
@@ -73,10 +76,11 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   }, [queueLen]);
 
   useEffect(() => {
+    if (!isReady) return;
     (async () => {
-      try { setCategories(await query<CategoryInfo>("SELECT id, code, name, color FROM categories")); } catch {}
+      try { setCategories(await queryScoped<CategoryInfo>("SELECT id, code, name, color FROM categories", [], stationId)); } catch {}
     })();
-  }, []);
+  }, [isReady]);
 
   const getItemColor = (item: any): string => {
     if (item.itemType) return CATEGORY_COLORS[item.itemType] || "#4a4a6a";

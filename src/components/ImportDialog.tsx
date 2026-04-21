@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: { directory?: boolean; title?: string }) =>
   opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (path: string) => (window as any).ether.fs.readDir(path);
@@ -18,6 +20,7 @@ interface Props {
 }
 
 export default function ImportDialog({ onDone }: Props) {
+  const { stationId, isReady } = useActiveStation();
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCat, setSelectedCat] = useState<number | null>(null);
   const [newCatName, setNewCatName] = useState("");
@@ -27,18 +30,19 @@ export default function ImportDialog({ onDone }: Props) {
   const [imported, setImported] = useState(0);
 
   useEffect(() => {
+    if (!isReady) return;
     (async () => {
-      const cats = await query<Category>("SELECT id, code, name, color FROM categories ORDER BY code");
+      const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
       setCategories(cats);
     })();
-  }, []);
+  }, [isReady]);
 
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     const colors = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6", "#6366f1"];
     const color = colors[categories.length % colors.length];
-    await execute("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), color]);
-    const cats = await query<Category>("SELECT id, code, name, color FROM categories ORDER BY code");
+    await executeScopedInsert("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), color], stationId);
+    const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
     setCategories(cats);
     const newCat = cats.find(c => c.code === newCatCode.trim().toUpperCase());
     if (newCat) setSelectedCat(newCat.id);
@@ -88,11 +92,11 @@ export default function ImportDialog({ onDone }: Props) {
     for (const filePath of files) {
       try {
         // Check if already imported
-        const existing = await queryOne<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]);
+        const existing = await (queryScoped<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath], stationId).then(r => r[0] ?? null));
         if (existing) {
           // Update category if one was selected
           if (selectedCat) {
-            await execute("UPDATE songs SET category_id = ? WHERE id = ?", [selectedCat, existing.id]);
+            await queryScoped("UPDATE songs SET category_id = ? WHERE id = ?", [selectedCat, existing.id], stationId);
           }
           count++;
           setProgress({ done: count, total: files.length, current: filePath.split("/").pop() || "" });
@@ -105,21 +109,21 @@ export default function ImportDialog({ onDone }: Props) {
         const artistName = tags.artist || "Unknown";
 
         // Get or create artist
-        let artist = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
+        let artist = await (queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId).then(r => r[0] ?? null));
         if (!artist) {
-          await execute("INSERT INTO artists (name) VALUES (?)", [artistName]);
-          artist = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
+          await executeScopedInsert("INSERT INTO artists (name) VALUES (?)", [artistName], stationId);
+          artist = await (queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId).then(r => r[0] ?? null));
         }
 
         // Insert song (skip album lookup for reliability)
-        await execute(
+        await executeScopedInsert(
           "INSERT INTO songs (title, file_path, artist_id, category_id, genre, created_at, updated_at) VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())",
-          [title, filePath, artist?.id || null, selectedCat, tags.genre || null]
+          [title, filePath, artist?.id || null, selectedCat, tags.genre || null], stationId
         );
 
         // Auto-analyze: BPM, LUFS, energy, cue points — runs in Rust background thread.
         // Non-blocking: we don't await so import stays fast; analysis happens in parallel.
-        const inserted = await queryOne<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]);
+        const inserted = await (queryScoped<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath], stationId).then(r => r[0] ?? null));
         if (inserted) {
           analyzeAndSave(inserted.id, filePath).catch(e => console.warn("[Import] analysis skipped:", title, e));
         }

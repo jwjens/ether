@@ -64,6 +64,15 @@ async function loadActiveStation(): Promise<void> {
   }
 }
 
+/**
+ * Synchronous cache read — safe for timers/module-level functions that can't
+ * call hooks. Returns 1 until the async load resolves (which happens on first
+ * component mount, well before any 10-second timer fires).
+ */
+export function getActiveStationIdSync(): number {
+  return _cached?.id ?? 1;
+}
+
 // ─── Hook ─────────────────────────────────────────────────────
 
 export function useActiveStation(): UseActiveStationResult {

@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface Rule {
   id: number; rule_type: string; scope: string;
@@ -30,14 +32,18 @@ function writeContentFilter(val: { blockExplicit: boolean }) {
 }
 
 export default function RulesEditor() {
+  const { stationId, isReady } = useActiveStation();
   const [rules, setRules] = useState<Rule[]>([]);
   const [blockExplicit, setBlockExplicit] = useState(() => readContentFilter().blockExplicit);
 
-  const load = async () => { setRules(await query<Rule>("SELECT * FROM separation_rules ORDER BY id")); };
-  useEffect(() => { load(); }, []);
+  const load = async () => {
+    if (!isReady) return;
+    setRules(await queryScoped<Rule>("SELECT * FROM separation_rules ORDER BY id", [], stationId));
+  };
+  useEffect(() => { load(); }, [isReady]);
 
   const update = async (id: number, field: string, val: number) => {
-    await execute("UPDATE separation_rules SET " + field + " = ? WHERE id = ?", [val, id]);
+    await queryScoped("UPDATE separation_rules SET " + field + " = ? WHERE id = ?", [val, id], stationId);
     load();
   };
 

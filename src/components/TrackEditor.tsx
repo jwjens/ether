@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { execute, query, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import WaveformGL from "./WaveformGL";
 
@@ -48,6 +50,7 @@ interface ImportPanelProps {
 const SUPPORTED = [".mp3", ".flac", ".wav", ".aac", ".m4a", ".ogg", ".opus", ".aiff"];
 
 function ImportPanel({ onImported }: ImportPanelProps) {
+  const { stationId } = useActiveStation();
   const [dragOver, setDragOver] = useState(false);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState<{ file: string; done: number; total: number } | null>(null);
@@ -78,15 +81,16 @@ function ImportPanel({ onImported }: ImportPanelProps) {
       } catch {}
 
       // Upsert artist
-      await execute("INSERT OR IGNORE INTO artists (name) VALUES (?)", [artistName]);
-      const artistRow = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName]);
+      await executeScopedInsert("INSERT OR IGNORE INTO artists (name) VALUES (?)", [artistName], stationId);
+      const artistRow = (await queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId))[0] ?? null;
       const artistId = artistRow?.id ?? 1;
 
       // Upsert song
-      await execute(
+      await executeScopedInsert(
         "INSERT OR IGNORE INTO songs (title, artist_id, file_path, duration_ms) VALUES (?, ?, ?, ?)",
-        [title, artistId, filePath, durationMs]
+        [title, artistId, filePath, durationMs], stationId
       );
+      // TODO 3b-ii: JOIN query — convert when JOIN scoping is supported
       const songRow = await queryOne<Song>(
         "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ?",
         [filePath]
@@ -302,6 +306,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
 }
 
 export default function TrackEditor({ song: songProp, filePath: filePathProp, onClose, onSaved }: Props) {
+  const { stationId } = useActiveStation();
   const [song, setSong] = useState<Song | null | undefined>(songProp);
 
   // If opened by filePath, look up the song from DB with timeout fallback
@@ -749,9 +754,9 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
   const save = async () => {
     if (!song) return;
     try {
-      await execute(
+      await queryScoped(
         "UPDATE songs SET cue_in=?, cue_out=?, intro_end=?, outro_start=?, is_explicit=? WHERE id=?",
-        [cueIn, cueOut, introEnd, outroStart, isExplicit, song.id]
+        [cueIn, cueOut, introEnd, outroStart, isExplicit, song.id], stationId
       );
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
@@ -782,7 +787,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
       const tags: string[] = (rec.tags || []).map((t: any) => (t.name || "").toLowerCase());
       const explicit = tags.some(t => t === "explicit" || t === "explicit content" || t === "parental advisory") ? 1 : 0;
       setIsExplicit(explicit);
-      await execute("UPDATE songs SET is_explicit=? WHERE id=?", [explicit, song.id]);
+      await queryScoped("UPDATE songs SET is_explicit=? WHERE id=?", [explicit, song.id], stationId);
       const label = explicit ? "Marked EXPLICIT" : "Marked clean";
       setMbStatus(`${label} (score: ${rec.score}, tags: ${tags.length ? tags.join(", ") : "none"})`);
       console.log(`[mb] "${song.title}": ${label} — tags: [${tags.join(", ")}]`);

@@ -11,6 +11,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 import { engine } from "../audio/engine-rodio";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -134,7 +136,7 @@ export function startMacroClockWatcher(dispatch?: (cmd: string) => void) {
     const currentMinute = now.getHours() * 60 + now.getMinutes();
     if (currentMinute === lastFiredMinute) return; // already fired this minute
 
-    const macros = await query<any>("SELECT * FROM macros WHERE trigger_type = 'clock' AND is_active = 1");
+    const macros = await queryScoped<any>("SELECT * FROM macros WHERE trigger_type = 'clock' AND is_active = 1", [], getActiveStationIdSync());
     for (const row of (macros || [])) {
       const m: Macro = { ...row, actions: JSON.parse(row.actions || "[]") };
       if (!m.trigger_value) continue;
@@ -156,7 +158,7 @@ export function useMacroHotkeys(dispatch?: (cmd: string) => void) {
 
   useEffect(() => {
     const loadMacros = async () => {
-      const rows = await query<any>("SELECT * FROM macros WHERE hotkey IS NOT NULL AND is_active = 1");
+      const rows = await queryScoped<any>("SELECT * FROM macros WHERE hotkey IS NOT NULL AND is_active = 1", [], getActiveStationIdSync());
       macrosRef.current = (rows || []).map((r: any) => ({ ...r, actions: JSON.parse(r.actions || "[]") }));
     };
     loadMacros();
@@ -182,14 +184,16 @@ export function useMacroHotkeys(dispatch?: (cmd: string) => void) {
 // ── Macros Panel UI ───────────────────────────────────────────
 
 export default function MacrosPanel() {
+  const { stationId, isReady } = useActiveStation();
   const [macros, setMacros] = useState<Macro[]>([]);
   const [editing, setEditing] = useState<Macro | null>(null);
   const [running, setRunning] = useState<number | null>(null);
 
   const load = useCallback(async () => {
-    const rows = await query<any>("SELECT * FROM macros ORDER BY name");
+    if (!isReady) return;
+    const rows = await queryScoped<any>("SELECT * FROM macros ORDER BY name", [], stationId);
     setMacros((rows || []).map((r: any) => ({ ...r, actions: JSON.parse(r.actions || "[]") })));
-  }, []);
+  }, [isReady, stationId]);
   useEffect(() => { load(); }, [load]);
 
   const run = async (m: Macro) => {
@@ -201,18 +205,18 @@ export default function MacrosPanel() {
   const save = async (m: Macro) => {
     const actionsJson = JSON.stringify(m.actions);
     if (m.id) {
-      await execute("UPDATE macros SET name=?, description=?, trigger_type=?, trigger_value=?, actions=?, hotkey=?, is_active=?, color=? WHERE id=?",
-        [m.name, m.description, m.trigger_type, m.trigger_value, actionsJson, m.hotkey, m.is_active, m.color, m.id]);
+      await queryScoped("UPDATE macros SET name=?, description=?, trigger_type=?, trigger_value=?, actions=?, hotkey=?, is_active=?, color=? WHERE id=?",
+        [m.name, m.description, m.trigger_type, m.trigger_value, actionsJson, m.hotkey, m.is_active, m.color, m.id], stationId);
     } else {
-      await execute("INSERT INTO macros (name, description, trigger_type, trigger_value, actions, hotkey, is_active, color) VALUES (?,?,?,?,?,?,?,?)",
-        [m.name, m.description || null, m.trigger_type, m.trigger_value || null, actionsJson, m.hotkey || null, 1, m.color]);
+      await executeScopedInsert("INSERT INTO macros (name, description, trigger_type, trigger_value, actions, hotkey, is_active, color) VALUES (?,?,?,?,?,?,?,?)",
+        [m.name, m.description || null, m.trigger_type, m.trigger_value || null, actionsJson, m.hotkey || null, 1, m.color], stationId);
     }
     setEditing(null); load();
   };
 
   const deleteMacro = async (id: number) => {
     if (!confirm("Delete this macro?")) return;
-    await execute("DELETE FROM macros WHERE id=?", [id]);
+    await queryScoped("DELETE FROM macros WHERE id=?", [id], stationId);
     load();
   };
 

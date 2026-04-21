@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { engine } from "../audio/engine-rodio";
 import { query, execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -43,24 +45,27 @@ const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; 
 // in electron/main.js before the window loads — they can never
 // disappear regardless of what UI code does.
 export function useDeckConfig() {
+  const { stationId, isReady } = useActiveStation();
   const [configs, setConfigs] = useState<DeckConfig[]>([]);
 
   useEffect(() => {
-    query<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string }>(
-      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose FROM deck_configs ORDER BY slot"
+    if (!isReady) return;
+    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string }>(
+      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose FROM deck_configs ORDER BY slot",
+      [], stationId
     ).then(rows => {
       const sorted = [...rows].sort(
         (a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)
       );
       setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1 })));
     }).catch(e => console.error("[DeckConfig] Failed to load from DB:", e));
-  }, []);
+  }, [isReady]);
 
   const save = async (next: DeckConfig[]) => {
     await Promise.all(next.map(c =>
-      execute(
+      queryScoped(
         "UPDATE deck_configs SET type=?, label=?, color=?, enabled=?, purpose=? WHERE slot=?",
-        [c.type, c.label, c.color, c.enabled ? 1 : 0, c.purpose || "", c.slot]
+        [c.type, c.label, c.color, c.enabled ? 1 : 0, c.purpose || "", c.slot], stationId
       )
     ));
     setConfigs([...next].sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)));
@@ -302,6 +307,7 @@ interface PlaylistProps {
 }
 
 export function PlaylistPlayer({ deckSlot, color }: PlaylistProps) {
+  const { stationId, isReady } = useActiveStation();
   const [tracks, setTracks] = useState<PlaylistTrack[]>([]);
   const [currentIdx, setCurrentIdx] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -310,10 +316,11 @@ export function PlaylistPlayer({ deckSlot, color }: PlaylistProps) {
   const [showLibrary, setShowLibrary] = useState(false);
 
   useEffect(() => {
-    query<PlaylistTrack>("SELECT id, title, artist, file_path as filePath, duration_ms as durationMs FROM songs ORDER BY artist, title LIMIT 200")
+    if (!isReady) return;
+    queryScoped<PlaylistTrack>("SELECT id, title, artist, file_path as filePath, duration_ms as durationMs FROM songs ORDER BY artist, title LIMIT 200", [], stationId)
       .then(rows => setLibrary(rows))
       .catch(() => {});
-  }, []);
+  }, [isReady]);
 
   const filtered = search
     ? library.filter(s => `${s.title} ${s.artist}`.toLowerCase().includes(search.toLowerCase()))

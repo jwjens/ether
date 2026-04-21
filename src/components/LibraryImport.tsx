@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -266,6 +268,7 @@ const BTN_PRIMARY: React.CSSProperties = {
 type ImportStep = "pick" | "preview" | "importing" | "done";
 
 export default function LibraryImport({ onClose }: Props) {
+  const { stationId } = useActiveStation();
   const [step, setStep]           = useState<ImportStep>("pick");
   const [hint, setHint]           = useState<System>(null);
   const [dragging, setDragging]   = useState(false);
@@ -341,7 +344,7 @@ export default function LibraryImport({ onClose }: Props) {
     try { await execute("ALTER TABLE songs ADD COLUMN raw_metadata TEXT"); } catch {}
 
     // Pre-load category map
-    const cats = await query<{ id: number; code: string }>("SELECT id, code FROM categories");
+    const cats = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories", [], stationId);
     const catMap: Record<string, number> = {};
     cats.forEach(c => { catMap[c.code] = c.id; });
 
@@ -366,11 +369,11 @@ export default function LibraryImport({ onClose }: Props) {
       // Resolve or create artist
       let artistId: number | null = null;
       if (mapped.artist) {
-        const a = await queryOne<{ id: number }>("SELECT id FROM artists WHERE name = ?", [mapped.artist]);
+        const a = await (queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [mapped.artist], stationId).then(r => r[0] ?? null));
         if (a) {
           artistId = a.id;
         } else {
-          const r = await execute("INSERT INTO artists (name) VALUES (?)", [mapped.artist]);
+          const r = await executeScopedInsert("INSERT INTO artists (name) VALUES (?)", [mapped.artist], stationId);
           artistId = r?.lastInsertRowid ?? null;
         }
       }
@@ -383,16 +386,16 @@ export default function LibraryImport({ onClose }: Props) {
         } else {
           const colors = ["#3b82f6","#22c55e","#f59e0b","#ef4444","#8b5cf6","#14b8a6"];
           const color = colors[Object.keys(catMap).length % colors.length];
-          const r = await execute(
+          const r = await executeScopedInsert(
             "INSERT INTO categories (code, name, color) VALUES (?,?,?)",
-            [mapped.category_code, mapped.category_code, color]
+            [mapped.category_code, mapped.category_code, color], stationId
           );
           const newId = r?.lastInsertRowid;
           if (newId) { catMap[mapped.category_code] = newId; categoryId = newId; }
         }
       }
 
-      await execute(
+      await executeScopedInsert(
         `INSERT INTO songs
           (title, artist_id, album, duration_ms, category_id, rotation_status,
            daypart_mask, is_explicit, energy, bpm, raw_metadata, created_at, updated_at)
@@ -402,7 +405,7 @@ export default function LibraryImport({ onClose }: Props) {
           categoryId, mapped.rotation_status,
           mapped.daypart_mask, mapped.is_explicit, mapped.energy, mapped.bpm,
           mapped.raw_metadata,
-        ]
+        ], stationId
       );
       imported++;
       setProgress({ done: i + 1, total: parseResult.rows.length });

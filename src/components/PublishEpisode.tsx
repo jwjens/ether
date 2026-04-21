@@ -32,6 +32,8 @@ const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, ar
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -203,6 +205,7 @@ function Field({
 // ─── Main component ───────────────────────────────────────────────────────
 
 export default function PublishEpisode({ onClose, episodeTitle = "", episodeArtist = "" }: Props) {
+  const { stationId, isReady } = useActiveStation();
   const [step, setStep] = useState(0);
   const [meta, setMeta] = useState<EpisodeMeta>({
     title: episodeTitle || "",
@@ -266,13 +269,14 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
              duration_sec REAL DEFAULT 0
            )`, []
         );
-        const eps = await query<PublishedEpisode>(
-          "SELECT * FROM published_episodes ORDER BY id DESC LIMIT 20"
+        const eps = await queryScoped<PublishedEpisode>(
+          "SELECT * FROM published_episodes ORDER BY id DESC LIMIT 20",
+          [], stationId
         );
         setHistory(eps);
       } catch { /* first run */ }
     })();
-  }, []);
+  }, [isReady]);
 
   const set = (k: keyof EpisodeMeta, v: string | boolean) =>
     setMeta(prev => ({ ...prev, [k]: v }));
@@ -424,16 +428,16 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
       }
 
       // 7. Log to DB
-      await execute(
+      await executeScopedInsert(
         "INSERT INTO published_episodes (title, published_at, audio_path, feed_path, duration_sec) VALUES (?, ?, ?, ?, ?)",
-        [meta.title, new Date().toISOString(), meta.audioPath, meta.feedPath, audioDuration || 0]
+        [meta.title, new Date().toISOString(), meta.audioPath, meta.feedPath, audioDuration || 0], stationId
       );
 
       log("🎉 Episode published successfully!");
       setPublishedPath(meta.feedPath);
 
       // Refresh history
-      const eps = await query<PublishedEpisode>("SELECT * FROM published_episodes ORDER BY id DESC LIMIT 20");
+      const eps = await queryScoped<PublishedEpisode>("SELECT * FROM published_episodes ORDER BY id DESC LIMIT 20", [], stationId);
       setHistory(eps);
 
       setStep(3);

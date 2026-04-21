@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 import { engine } from "../audio/engine-rodio";
@@ -24,6 +26,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function Spots() {
+  const { stationId, isReady } = useActiveStation();
   const [spots, setSpots] = useState<Spot[]>([]);
   const [filter, setFilter] = useState<string>("all");
   const [editing, setEditing] = useState<Partial<Spot> | null>(null);
@@ -31,10 +34,12 @@ export default function Spots() {
   const [status, setStatus] = useState("");
 
   const load = async () => {
+    if (!isReady) return;
+    // TODO 3b-ii: dynamic WHERE clause — convert when complex filter injection is supported
     const where = filter === "all" ? "" : " WHERE spot_type = '" + filter + "'";
-    setSpots(await query<Spot>("SELECT * FROM spots" + where + " ORDER BY title"));
+    setSpots(await queryScoped<Spot>("SELECT * FROM spots" + where + " ORDER BY title", [], stationId));
   };
-  useEffect(() => { load(); }, [filter]);
+  useEffect(() => { load(); }, [filter, isReady]);
 
   const handleImport = async () => {
     try {
@@ -44,8 +49,8 @@ export default function Spots() {
       const fileList = Array.isArray(files) ? files : [files];
       let n = 0;
       for (const fp of fileList) {
-        const ex = await queryOne<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp]);
-        if (!ex) { await execute("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"]); n++; }
+        const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp], stationId))[0] ?? null;
+        if (!ex) { await executeScopedInsert("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"], stationId); n++; }
       }
       setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
       setImporting(false); load();
@@ -63,8 +68,8 @@ export default function Spots() {
         if (e.name && isAudio(e.name)) {
           const sep = (folder as string).includes("/") ? "/" : "\\";
           const fp = (folder as string) + sep + e.name;
-          const ex = await queryOne<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp]);
-          if (!ex) { await execute("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"]); n++; }
+          const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp], stationId))[0] ?? null;
+          if (!ex) { await executeScopedInsert("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"], stationId); n++; }
         }
       }
       setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
@@ -144,18 +149,18 @@ export default function Spots() {
 
         // Dedupe by ISCI or title
         const ex = isci
-          ? await queryOne<{ id: number }>("SELECT id FROM spots WHERE isci_code = ?", [isci])
-          : await queryOne<{ id: number }>("SELECT id FROM spots WHERE title = ? AND advertiser = ?", [title, advertiser]);
+          ? (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE isci_code = ?", [isci], stationId))[0] ?? null
+          : (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE title = ? AND advertiser = ?", [title, advertiser], stationId))[0] ?? null;
         if (ex) {
           // Update dates/agency if changed
-          await execute("UPDATE spots SET start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date), agency=COALESCE(?,agency), is_active=1 WHERE id=?",
-            [startDate, endDate, agency, ex.id]);
+          await queryScoped("UPDATE spots SET start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date), agency=COALESCE(?,agency), is_active=1 WHERE id=?",
+            [startDate, endDate, agency, ex.id], stationId);
           continue;
         }
 
-        await execute(
+        await executeScopedInsert(
           "INSERT INTO spots (title, spot_type, advertiser, agency, isci_code, cart_number, length_sec, start_date, end_date, is_active) VALUES (?,?,?,?,?,?,?,?,?,1)",
-          [title, SPOT_TYPES.includes(spotType) ? spotType : "commercial", advertiser, agency, isci, isci, lengthSec, startDate, endDate]
+          [title, SPOT_TYPES.includes(spotType) ? spotType : "commercial", advertiser, agency, isci, isci, lengthSec, startDate, endDate], stationId
         );
         imported++;
       }
@@ -169,13 +174,13 @@ export default function Spots() {
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
-      await execute("UPDATE spots SET title=?, spot_type=?, advertiser=?, start_date=?, end_date=?, max_plays_day=?, is_active=?, notes=? WHERE id=?",
-        [editing.title, editing.spot_type || "promo", editing.advertiser || null, editing.start_date || null, editing.end_date || null, editing.max_plays_day || 999, editing.is_active ?? 1, editing.notes || null, editing.id]);
+      await queryScoped("UPDATE spots SET title=?, spot_type=?, advertiser=?, start_date=?, end_date=?, max_plays_day=?, is_active=?, notes=? WHERE id=?",
+        [editing.title, editing.spot_type || "promo", editing.advertiser || null, editing.start_date || null, editing.end_date || null, editing.max_plays_day || 999, editing.is_active ?? 1, editing.notes || null, editing.id], stationId);
     }
     setEditing(null); load();
   };
 
-  const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await execute("DELETE FROM spots WHERE id=?", [id]); load(); };
+  const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await queryScoped("DELETE FROM spots WHERE id=?", [id], stationId); load(); };
 
   const playSpot = (spot: Spot) => {
     if (spot.file_path) { engine.init(); engine.loadToDeck("B", spot.file_path, spot.title, spot.spot_type); setTimeout(() => engine.getDeck("B")?.play(), 500); }

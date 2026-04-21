@@ -19,6 +19,8 @@
 
 import { useState } from "react";
 import { execute, query } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface ParsedSong {
   title: string;
@@ -128,6 +130,7 @@ function parseGSelectorXML(xmlText: string): ParseResult {
 const DEFAULT_COLORS = ["#3b82f6","#22c55e","#f59e0b","#ef4444","#a855f7","#ec4899","#14b8a6","#6366f1"];
 
 export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
+  const { stationId } = useActiveStation();
   const [parsed, setParsed]     = useState<ParseResult | null>(null);
   const [filename, setFilename] = useState("");
   const [importing, setImporting] = useState(false);
@@ -168,9 +171,9 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
           const c = parsed.categories[i];
           try {
             const color = c.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
-            await execute(
+            await executeScopedInsert(
               "INSERT OR IGNORE INTO categories (code, name, color) VALUES (?, ?, ?)",
-              [c.code.toUpperCase(), c.name, color]
+              [c.code.toUpperCase(), c.name, color], stationId
             );
             importedCats++;
           } catch {}
@@ -179,7 +182,7 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
       // Build a {code → id} map so songs can get their category_id
       const catMap: Record<string, number> = {};
-      const catRows = await query<{ id: number; code: string }>("SELECT id, code FROM categories");
+      const catRows = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories", [], stationId);
       catRows.forEach(r => { catMap[r.code.toUpperCase()] = r.id; });
 
       // ── Songs ──
@@ -191,8 +194,8 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
           // Insert artist first (if new)
           let artistId: number | null = null;
           if (s.artist) {
-            await execute("INSERT OR IGNORE INTO artists (name) VALUES (?)", [s.artist]);
-            const ar = await query<{ id: number }>("SELECT id FROM artists WHERE name = ?", [s.artist]);
+            await executeScopedInsert("INSERT OR IGNORE INTO artists (name) VALUES (?)", [s.artist], stationId);
+            const ar = await queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [s.artist], stationId);
             artistId = ar[0]?.id || null;
           }
 
@@ -201,10 +204,10 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
           // Insert song — use INSERT OR IGNORE on title+artist to avoid dupes
           try {
-            await execute(
+            await executeScopedInsert(
               `INSERT OR IGNORE INTO songs (title, artist_id, category_id, file_path, duration_ms, intro_end, outro_start, bpm, energy, year)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [s.title, artistId, catId, s.filepath || null, s.duration_ms || 0, s.intro_ms || null, s.outro_ms || null, s.bpm || null, s.energy || null, s.year || null]
+              [s.title, artistId, catId, s.filepath || null, s.duration_ms || 0, s.intro_ms || null, s.outro_ms || null, s.bpm || null, s.energy || null, s.year || null], stationId
             );
             importedSongs++;
             if (s.filepath && !(await checkFileExists(s.filepath))) missingFiles++;
@@ -217,22 +220,22 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
         for (const c of parsed.clocks) {
           setProgress(`Importing clocks… ${c.name}`);
           try {
-            await execute(
+            await executeScopedInsert(
               "INSERT OR IGNORE INTO format_clocks (name) VALUES (?)",
-              [c.name]
+              [c.name], stationId
             );
-            const cr = await query<{ id: number }>("SELECT id FROM format_clocks WHERE name = ?", [c.name]);
+            const cr = await queryScoped<{ id: number }>("SELECT id FROM format_clocks WHERE name = ?", [c.name], stationId);
             const clockId = cr[0]?.id;
             if (!clockId) continue;
 
             // Clear existing slots for this clock (re-import replaces)
-            await execute("DELETE FROM clock_slots WHERE clock_id = ?", [clockId]);
+            await queryScoped("DELETE FROM clock_slots WHERE clock_id = ?", [clockId], stationId);
 
             for (const slot of c.slots) {
               const catId = slot.category ? (catMap[slot.category.toUpperCase()] || null) : null;
-              await execute(
+              await executeScopedInsert(
                 "INSERT INTO clock_slots (clock_id, position, slot_type, category_id) VALUES (?, ?, ?, ?)",
-                [clockId, slot.position, slot.type, catId]
+                [clockId, slot.position, slot.type, catId], stationId
               );
             }
             importedClocks++;

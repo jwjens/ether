@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -82,6 +84,7 @@ interface Props {
 }
 
 export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPlayingTrack }: Props) {
+  const { stationId, isReady } = useActiveStation();
   // Window position/size
   const [minimized, setMinimized] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -271,15 +274,15 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
 
   const pushToCart = async (text: string) => {
     try {
-      const rows = await query<{ slot_number: number }>("SELECT slot_number FROM cart_slots ORDER BY slot_number");
+      const rows = await queryScoped<{ slot_number: number }>("SELECT slot_number FROM cart_slots ORDER BY slot_number", [], stationId);
       const used = new Set(rows.map(r => r.slot_number));
       let slot = -1;
       for (let i = 0; i < 18; i++) { if (!used.has(i)) { slot = i; break; } }
       if (slot === -1) { alert("All 18 cart slots are full."); return; }
       const label = text.slice(0, 40).replace(/\n/g, " ").trim();
-      await execute(
+      await executeScopedInsert(
         "INSERT OR REPLACE INTO cart_slots (slot_number, title, file_path, color, hotkey) VALUES (?,?,NULL,?,?)",
-        [slot, label, "#f59e0b", ""]
+        [slot, label, "#f59e0b", ""], stationId
       );
     } catch (e) { console.error("Cart push failed", e); }
   };
@@ -350,8 +353,9 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
     const load = async () => {
       try {
         const hour = new Date().getHours();
-        const shows = await query<{ name: string; start_hour: number; end_hour: number }>(
-          "SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour"
+        const shows = await queryScoped<{ name: string; start_hour: number; end_hour: number }>(
+          "SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour",
+          [], stationId
         );
         const curr = shows.find(s => {
           if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;

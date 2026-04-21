@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { execute, query, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface ImportResult {
   imported: number;
@@ -67,6 +69,7 @@ function mapToEther(row: any, format: string) {
 }
 
 export default function NexGenImport({ onDone }: { onDone: () => void }) {
+  const { stationId } = useActiveStation();
   const [format, setFormat] = useState<'nexgen' | 'enco' | 'csv'>('nexgen');
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -107,21 +110,21 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
         // Get or create artist
         let artistId: number | null = null;
         if (song.artist) {
-          let artist = await queryOne<{id:number}>("SELECT id FROM artists WHERE name=?", [song.artist]);
+          let artist = await (queryScoped<{id:number}>("SELECT id FROM artists WHERE name=?", [song.artist], stationId).then(r => r[0] ?? null));
           if (!artist) {
-            const r = await execute("INSERT INTO artists (name, sort_name) VALUES (?,?)", [song.artist, song.artist]);
+            const r = await executeScopedInsert("INSERT INTO artists (name, sort_name) VALUES (?,?)", [song.artist, song.artist], stationId);
             artistId = r.lastInsertId;
           } else { artistId = artist.id; }
         }
 
         // Check duplicate by title+artist
-        const existing = await queryOne<{id:number}>("SELECT id FROM songs WHERE title=? AND artist_id IS ?", [song.title, artistId]);
+        const existing = await (queryScoped<{id:number}>("SELECT id FROM songs WHERE title=? AND artist_id IS ?", [song.title, artistId], stationId).then(r => r[0] ?? null));
         if (existing) { skipped++; continue; }
 
         // Insert song (no file_path - they'll need to relocate library)
-        await execute(
+        await executeScopedInsert(
           "INSERT INTO songs (title, artist_id, genre, rotation_status, gender, created_at, updated_at) VALUES (?,?,?,'active','unknown',unixepoch(),unixepoch())",
-          [song.title, artistId, song.genre || null]
+          [song.title, artistId, song.genre || null], stationId
         );
         imported++;
       } catch (e) {

@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { query, execute, queryOne } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import CreateShowWizard from "./CreateShowWizard";
 
 interface Show {
@@ -88,6 +90,7 @@ export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
 // ============================================================
 
 function ShowsTab() {
+  const { stationId, isReady } = useActiveStation();
   const [shows, setShows] = useState<Show[]>([]);
   const [clocks, setClocks] = useState<Clock[]>([]);
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
@@ -95,10 +98,12 @@ function ShowsTab() {
   const [saveError, setSaveError] = useState("");
 
   const load = async () => {
+    if (!isReady) return;
+    // JOIN query — left for 3b-ii; clocks is simple
     setShows(await query<Show>("SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour"));
-    setClocks(await query<Clock>("SELECT * FROM clocks ORDER BY name"));
+    setClocks(await queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId));
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [isReady]);
 
   const save = async () => {
     if (!editing || !editing.name) return;
@@ -107,14 +112,14 @@ function ShowsTab() {
     const isActive = editing.is_active ?? 1;
     try {
       if (editing.id) {
-        await execute(
+        await queryScoped(
           "UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=?, days=?, is_active=? WHERE id=?",
-          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive, editing.id]
+          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive, editing.id], stationId
         );
       } else {
-        await execute(
+        await executeScopedInsert(
           "INSERT INTO shows (name, start_hour, end_hour, color, description, days, is_active) VALUES (?,?,?,?,?,?,?)",
-          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive]
+          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive], stationId
         );
       }
       setSaved(true);
@@ -126,11 +131,11 @@ function ShowsTab() {
   };
 
   const assignClock = async (showId: number, clockId: number | null) => {
-    await execute("UPDATE shows SET clock_id = ? WHERE id = ?", [clockId, showId]);
+    await queryScoped("UPDATE shows SET clock_id = ? WHERE id = ?", [clockId, showId], stationId);
     load();
   };
 
-  const remove = async (id: number) => { await execute("DELETE FROM shows WHERE id=?", [id]); load(); };
+  const remove = async (id: number) => { await queryScoped("DELETE FROM shows WHERE id=?", [id], stationId); load(); };
 
   return (
     <div className="space-y-3">
@@ -240,6 +245,7 @@ function ShowsTab() {
 // ============================================================
 
 function CategoriesTab() {
+  const { stationId, isReady } = useActiveStation();
   const [cats, setCats] = useState<Category[]>([]);
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -248,18 +254,21 @@ function CategoriesTab() {
   const [catSaved, setCatSaved] = useState(false);
 
   const load = async () => {
+    if (!isReady) return;
+    // Subquery SELECT — left for 3b-ii
     const rows = await query<Category & { song_count: number }>("SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c ORDER BY c.code");
     setCats(rows);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [isReady]);
 
   const scanDurations = async () => {
     setScanning(true);
     setScanStatus("Finding songs...");
     try {
       const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
-      const songs = await query<{ id: number; file_path: string; title: string }>(
-        "SELECT id, file_path, title FROM songs WHERE duration_ms IS NULL OR duration_ms < 1000"
+      const songs = await queryScoped<{ id: number; file_path: string; title: string }>(
+        "SELECT id, file_path, title FROM songs WHERE duration_ms IS NULL OR duration_ms < 1000",
+        [], stationId
       );
       if (songs.length === 0) { setScanStatus("✓ All songs have duration data"); setScanning(false); return; }
       setScanStatus(`Scanning ${songs.length} songs...`);
@@ -271,7 +280,7 @@ function CategoriesTab() {
           const durSec = await invoke<number>("get_file_duration", { filePath: song.file_path });
           const durMs = Math.round(durSec * 1000);
           if (durMs > 1000) {
-            await execute("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, song.id]);
+            await queryScoped("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, song.id], stationId);
             fixed++;
           } else { failed++; }
         } catch { failed++; }
@@ -289,11 +298,11 @@ function CategoriesTab() {
     setSaveError("");
     try {
       if (editing.id) {
-        await execute("UPDATE categories SET code=?, name=?, color=?, spins_per_hour=?, priority=? WHERE id=?",
-          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0, editing.id]);
+        await queryScoped("UPDATE categories SET code=?, name=?, color=?, spins_per_hour=?, priority=? WHERE id=?",
+          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0, editing.id], stationId);
       } else {
-        await execute("INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
-          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0]);
+        await executeScopedInsert("INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
+          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0], stationId);
       }
       setCatSaved(true);
       load();
@@ -675,6 +684,7 @@ function fmtClockPos(totalMin: number): string {
 
 // ── ClocksTab — professional spreadsheet with clock positions ─
 function ClocksTab() {
+  const { stationId, isReady } = useActiveStation();
   const [clocks, setClocks]       = useState<Clock[]>([]);
   const [selected, setSelected]   = useState<number | null>(null);
   const [slots, setSlots]         = useState<ClockSlot[]>([]);
@@ -689,8 +699,9 @@ function ClocksTab() {
 
   // ── Fix: reload cats every time the tab is active ────────────
   const loadAll = async () => {
-    setClocks(await query<Clock>("SELECT * FROM clocks ORDER BY name"));
-    setCats(await query<Category>("SELECT * FROM categories ORDER BY priority, code"));
+    if (!isReady) return;
+    setClocks(await queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId));
+    setCats(await queryScoped<Category>("SELECT * FROM categories ORDER BY priority, code", [], stationId));
   };
 
   const loadSlots = async (clockId: number) => {
@@ -718,7 +729,7 @@ function ClocksTab() {
                 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
                 const durSec = await invoke<number>("get_file_duration", { filePath: songs[0].file_path });
                 durMs = Math.round(durSec * 1000);
-                if (durMs > 0) await execute("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, songs[0].id]);
+                if (durMs > 0) await queryScoped("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, songs[0].id], stationId);
               } catch {}
             }
             const durMin = durMs > 0
@@ -738,7 +749,7 @@ function ClocksTab() {
 
   const createClock = async () => {
     if (!newName.trim()) return;
-    const r = await execute("INSERT INTO clocks (name) VALUES (?)", [newName.trim()]);
+    const r = await executeScopedInsert("INSERT INTO clocks (name) VALUES (?)", [newName.trim()], stationId);
     setNewName(""); loadAll(); setSelected(r.lastInsertRowid as number);
   };
 
@@ -746,9 +757,9 @@ function ClocksTab() {
 
   const deleteClock = async (id: number) => {
     try {
-      await execute("UPDATE shows SET clock_id = NULL WHERE clock_id = ?", [id]);
-      await execute("DELETE FROM clock_slots WHERE clock_id=?", [id]);
-      await execute("DELETE FROM clocks WHERE id=?", [id]);
+      await queryScoped("UPDATE shows SET clock_id = NULL WHERE clock_id = ?", [id], stationId);
+      await queryScoped("DELETE FROM clock_slots WHERE clock_id=?", [id], stationId);
+      await queryScoped("DELETE FROM clocks WHERE id=?", [id], stationId);
       if (selected === id) { setSelected(null); setSlots([]); }
       setConfirmDelete(null);
       loadAll();
@@ -762,31 +773,31 @@ function ClocksTab() {
     let dur = durationMin;
     if (type === "music" && catId) {
       try {
-        const avg = await query<{ d: number }>(
+        const avg = await queryScoped<{ d: number }>(
           "SELECT AVG(duration_ms)/60000.0 as d FROM songs WHERE category_id=? AND duration_ms > 0",
-          [catId]
+          [catId], stationId
         );
         if (avg[0]?.d && avg[0].d > 0) dur = Math.round(avg[0].d * 100) / 100;
       } catch {}
     }
-    await execute(
+    await executeScopedInsert(
       "INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min, label) VALUES (?,?,?,?,?,?)",
-      [selected, slots.length, type, catId, dur, label]
+      [selected, slots.length, type, catId, dur, label], stationId
     );
     setShowPicker(false);
     loadSlots(selected);
   };
 
   const removeSlot = async (id: number) => {
-    await execute("DELETE FROM clock_slots WHERE id=?", [id]);
+    await queryScoped("DELETE FROM clock_slots WHERE id=?", [id], stationId);
     if (selected) loadSlots(selected);
   };
 
   const duplicateSlot = async (s: ClockSlot) => {
     if (!selected) return;
-    await execute(
+    await executeScopedInsert(
       "INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min, label) VALUES (?,?,?,?,?,?)",
-      [selected, slots.length, s.slot_type, s.category_id, s.duration_min, s.label]
+      [selected, slots.length, s.slot_type, s.category_id, s.duration_min, s.label], stationId
     );
     loadSlots(selected);
   };
@@ -801,9 +812,9 @@ function ClocksTab() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "v") {
         if (copiedSlot && selected) {
-          execute(
+          executeScopedInsert(
             "INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min, label) VALUES (?,?,?,?,?,?)",
-            [selected, slots.length, copiedSlot.slot_type, copiedSlot.category_id, copiedSlot.duration_min, copiedSlot.label]
+            [selected, slots.length, copiedSlot.slot_type, copiedSlot.category_id, copiedSlot.duration_min, copiedSlot.label], stationId
           ).then(() => loadSlots(selected));
         }
       }

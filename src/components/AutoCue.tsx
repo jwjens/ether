@@ -5,6 +5,8 @@
 
 import { useState, useEffect } from "react";
 import { execute, query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface SongCue {
   id: number;
@@ -216,6 +218,7 @@ async function analyzeAudioCues(filePath: string, durationMs: number): Promise<{
 // ── Main AutoCue component ────────────────────────────────────
 
 export default function AutoCue({ onClose }: { onClose: () => void }) {
+  const { stationId, isReady } = useActiveStation();
   const [songs, setSongs] = useState<SongCue[]>([]);
   const [status, setStatus] = useState<"idle" | "running" | "done">("idle");
   const [results, setResults] = useState<CueResult[]>([]);
@@ -224,10 +227,12 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
   const [mode, setMode] = useState<"id3-only" | "analyze-all" | "missing-only">("missing-only");
 
   useEffect(() => {
-    query<SongCue>(
-      "SELECT id, title, artist_name, file_path, duration_ms, intro_end, outro_start, cue_in, bpm FROM songs WHERE file_path IS NOT NULL ORDER BY title"
+    if (!isReady) return;
+    queryScoped<SongCue>(
+      "SELECT id, title, artist_name, file_path, duration_ms, intro_end, outro_start, cue_in, bpm FROM songs WHERE file_path IS NOT NULL ORDER BY title",
+      [], stationId
     ).then(setSongs).catch(() => {});
-  }, []);
+  }, [isReady]);
 
   const uncued = songs.filter(s => !s.intro_end && !s.outro_start).length;
   const cued = songs.filter(s => s.intro_end || s.outro_start).length;
@@ -273,9 +278,9 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
         }
 
         if (introEnd || outroStart) {
-          await execute(
+          await queryScoped(
             "UPDATE songs SET intro_end=?, outro_start=?, bpm=COALESCE(?, bpm) WHERE id=?",
-            [introEnd ?? null, outroStart ?? null, bpm ?? null, song.id]
+            [introEnd ?? null, outroStart ?? null, bpm ?? null, song.id], stationId
           );
         }
       } catch {
