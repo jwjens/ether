@@ -100,21 +100,21 @@ jobs:
 
       - name: Build and publish (Windows)
         if: matrix.platform == 'win'
-        run: npm run electron:build:win
+        run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_DRAFT: true
 
       - name: Build and publish (Mac)
         if: matrix.platform == 'mac'
-        run: npm run electron:build:mac
+        run: npx electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_DRAFT: true
 
       - name: Build and publish (Linux)
         if: matrix.platform == 'linux'
-        run: npm run electron:build:linux
+        run: npx electron-builder --linux --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EP_DRAFT: true
