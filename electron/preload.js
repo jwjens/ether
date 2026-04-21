@@ -39,6 +39,20 @@ contextBridge.exposeInMainWorld("ether", {
     search:              (title, artist)               => ipcRenderer.invoke("discogs:search", { title, artist }),
     updateTrack:         (fields)                      => ipcRenderer.invoke("discogs:updateTrack", fields),
   },
+  captions: {
+    start:             ()        => ipcRenderer.invoke("captions:start"),
+    stop:              ()        => ipcRenderer.invoke("captions:stop"),
+    irisLine:          (text)    => ipcRenderer.invoke("captions:iris-line", text),
+    getTranscript:     ()        => ipcRenderer.invoke("captions:get-transcript"),
+    getLoopbackSource: ()        => ipcRenderer.invoke("captions:get-loopback-source"),
+    // Push events from main → renderer
+    onLine:    (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("captions:line", h);   return h; },
+    offLine:   (h)  => ipcRenderer.removeListener("captions:line", h),
+    onStatus:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("captions:status", h); return h; },
+    offStatus: (h)  => ipcRenderer.removeListener("captions:status", h),
+    // Raw PCM chunks from renderer → main (fire-and-forget, use 'send' not 'invoke')
+    sendAudioChunk: (float32Array) => ipcRenderer.send("captions:audio-chunk", float32Array),
+  },
   library: {
     writeTrack: (track) => ipcRenderer.invoke("library:writeTrack", track),
   },

@@ -27,6 +27,7 @@ import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
 import CartWall from "./components/CartWall";
 import ClipEditor from "./components/ClipEditor";
+import { useCaptions, CaptionsOverlay, CaptionsLogPanel } from "./components/Captions";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
@@ -94,7 +95,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -521,7 +522,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
@@ -902,6 +903,7 @@ export default function App() {
   });
   const toggleVisible = (key: string) => setVisiblePanels((p: Record<string, boolean>) => ({ ...p, [key]: !p[key] }));
   const { skinId, setSkin } = useSkin();
+  const captions = useCaptions();
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   const [skinPickerPos, setSkinPickerPos] = useState<{ x: number; y: number } | null>(null);
@@ -1054,6 +1056,24 @@ export default function App() {
           <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ height: 44, padding: viewport.narrow ? "0 12px" : "0 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", gap: 7 }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             {!viewport.narrow && currentUser?.name}
+          </button>
+
+          {/* CC — Live Captions toggle */}
+          <button
+            onClick={captions.toggle}
+            title={captions.enabled ? "Stop live captions" : "Start live captions (Whisper)"}
+            style={{
+              height: 44, padding: "0 12px", borderRadius: 0, cursor: "pointer",
+              background:   captions.enabled ? "rgba(0,200,168,0.15)" : "transparent",
+              border:       `1px solid ${captions.enabled ? "rgba(0,200,168,0.5)" : "transparent"}`,
+              color:        captions.enabled ? "#00c8a8" : "var(--text-tertiary)",
+              fontSize:     11, fontWeight: 900, letterSpacing: "0.08em",
+              transition:   "all 0.15s",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = captions.enabled ? "rgba(0,200,168,0.2)" : "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.borderColor = captions.enabled ? "rgba(0,200,168,0.5)" : "var(--border-primary)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = captions.enabled ? "rgba(0,200,168,0.15)" : "transparent"; (e.currentTarget as HTMLElement).style.borderColor = captions.enabled ? "rgba(0,200,168,0.5)" : "transparent"; }}
+          >
+            CC
           </button>
 
           {/* ☰ Menu button */}
@@ -1216,6 +1236,17 @@ export default function App() {
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.35 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.34 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
                   <span style={{ flex: 1 }}>Phone</span>
                   {(drawerUsage["phone"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
+
+                <button
+                  onClick={() => { drawerClick("captions", () => setPanel("captions")); }}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: panel === "captions" ? "rgba(0,200,168,0.08)" : "transparent", border: "none", borderLeft: `3px solid ${panel === "captions" ? "#00c8a8" : "transparent"}`, color: panel === "captions" ? "#00c8a8" : "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = panel === "captions" ? "rgba(0,200,168,0.08)" : "transparent"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M7 11h2m2 0h2m2 0h2"/></svg>
+                  <span style={{ flex: 1 }}>Live Captions</span>
+                  {captions.enabled && <span style={{ fontSize: 9, fontWeight: 900, color: "#00c8a8", letterSpacing: "0.08em" }}>●</span>}
                 </button>
 
                 {/* ── Divider ── */}
@@ -1391,11 +1422,23 @@ export default function App() {
               <ClipEditor />
             </div>
           )}
+          {panel === "captions" && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", padding: 16 }}>
+              <CaptionsLogPanel
+                lines={captions.lines}
+                enabled={captions.enabled}
+                status={captions.status}
+                toggle={captions.toggle}
+              />
+            </div>
+          )}
           <DMCANotice />
         </main>
       </div>
 
       {/* AppContextMenu removed — items moved to ≡ drawer */}
+      <CaptionsOverlay lines={captions.lines} enabled={captions.enabled} status={captions.status} />
+
       {skinPickerPos && (
         <SkinPickerOverlay
           currentSkin={skinId} x={skinPickerPos.x} y={skinPickerPos.y}

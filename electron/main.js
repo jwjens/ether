@@ -2836,3 +2836,62 @@ ipcMain.handle("station:uploadLogo", async () => {
     return { ok: true, dataUrl: b64 };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+
+// ── Captions / Live Transcription (Whisper) ───────────────────
+//
+// Architecture:
+//   1. Renderer opens a WASAPI loopback tap via getUserMedia with
+//      chromeMediaSource:'desktop' and a ScriptProcessorNode.
+//   2. Float32 16 kHz mono PCM chunks arrive via captions:audio-chunk IPC.
+//   3. whisper-engine.js accumulates 5-second windows and runs inference.
+//   4. Each result is emitted back to the renderer as captions:line.
+//   5. Iris spoken text is injected directly via addIrisLine() so it
+//      appears instantly without waiting for Whisper to hear it.
+
+const whisperEngine = require('./whisper-engine');
+
+// Relay transcription lines to all renderer windows
+whisperEngine.on('line', (line) => {
+  sendToAllWindows('captions:line', line);
+});
+
+whisperEngine.on('status', (status) => {
+  sendToAllWindows('captions:status', status);
+});
+
+// Start / stop loopback capture
+ipcMain.handle('captions:start', async () => {
+  whisperEngine.start();
+  return { ok: true };
+});
+
+ipcMain.handle('captions:stop', async () => {
+  whisperEngine.stop();
+  return { ok: true };
+});
+
+// PCM Float32 chunks from renderer ScriptProcessorNode (16 kHz mono)
+ipcMain.on('captions:audio-chunk', (_evt, float32Array) => {
+  whisperEngine.feedSamples(float32Array);
+});
+
+// Direct Iris injection — also callable from renderer (e.g. if Iris speaks
+// via the local TTS fallback path)
+ipcMain.handle('captions:iris-line', (_evt, text) => {
+  whisperEngine.addIrisLine(text);
+  return { ok: true };
+});
+
+// Return the full rolling 60-second transcript on demand
+ipcMain.handle('captions:get-transcript', () => {
+  return whisperEngine.getTranscript();
+});
+
+// Provide a desktopCapturer source ID to the renderer so getUserMedia
+// can open WASAPI loopback without showing the OS picker dialog.
+ipcMain.handle('captions:get-loopback-source', async () => {
+  const { desktopCapturer } = require('electron');
+  const sources = await desktopCapturer.getSources({ types: ['screen'] });
+  // Return the first screen source — its ID is used to route audio loopback
+  return sources[0]?.id || null;
+});
