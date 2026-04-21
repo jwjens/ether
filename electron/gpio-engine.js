@@ -138,10 +138,13 @@ function installGpioEngine(ipcMain, database, opts = {}) {
 
   // Auto-connect devices on startup
   setTimeout(() => {
-    const autoDevices = db.prepare("SELECT * FROM gpio_devices WHERE auto_connect = 1 AND is_active = 1").all();
-    for (const d of autoDevices) {
-      connect(d.id).catch(e => console.warn(`[GPIO] auto-connect ${d.name} failed:`, e));
-    }
+    if (!db) return;
+    try {
+      const autoDevices = db.prepare("SELECT * FROM gpio_devices WHERE auto_connect = 1 AND is_active = 1").all();
+      for (const d of autoDevices) {
+        connect(d.id).catch(e => console.warn(`[GPIO] auto-connect ${d.name} failed:`, e));
+      }
+    } catch (e) { console.warn("[GPIO] auto-connect scan failed:", e.message); }
   }, 3000);
 
   console.log("[GPIO] engine installed");

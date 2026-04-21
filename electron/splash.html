@@ -1,42 +1,239 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8" />
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 340px; height: 340px;
-      background: #0e0e14;
-      display: flex; align-items: center; justify-content: center;
-      overflow: hidden;
-    }
-    .logo {
-      width: 180px; height: 180px;
-      opacity: 0;
-      animation: fadeIn 0.5s ease 0.1s forwards;
-    }
-    @keyframes fadeIn { to { opacity: 1; } }
-  </style>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 820px;
+    height: 480px;
+    background: transparent;
+    overflow: hidden;
+    font-family: monospace;
+  }
+
+  .card {
+    width: 820px;
+    height: 480px;
+    border-radius: 14px;
+    overflow: hidden;
+    display: flex;
+    border: 1px solid rgba(0, 255, 65, 0.25);
+    box-shadow: 0 0 60px rgba(0,0,0,0.9), 0 0 30px rgba(0,255,65,0.1);
+    position: relative;
+  }
+
+  .left {
+    width: 45%;
+    height: 100%;
+    background: #08080f;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    padding: 32px 28px;
+    overflow: hidden;
+    z-index: 2;
+  }
+
+  /* Scrolling code background texture */
+  .code-scroll {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    z-index: 0;
+  }
+
+  .code-scroll-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    animation: scrollUp 20s linear infinite;
+  }
+
+  .code-scroll-line {
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 9px;
+    color: rgba(139,92,246,0.12);
+    line-height: 1.7;
+    white-space: nowrap;
+    padding: 0 12px;
+  }
+
+  @keyframes scrollUp {
+    from { transform: translateY(0); }
+    to   { transform: translateY(-50%); }
+  }
+
+  .left-content {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
+  .wordmark {
+    font-family: sans-serif;
+    font-size: 36px;
+    font-weight: 900;
+    color: #ffffff;
+    letter-spacing: 0.12em;
+    text-shadow: 0 0 20px rgba(0,255,65,0.5);
+  }
+
+  .tagline {
+    font-size: 11px;
+    color: #a78bfa;
+    letter-spacing: 0.25em;
+    margin-top: 6px;
+    text-transform: uppercase;
+  }
+
+  .log {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 20px;
+  }
+
+  .log-line {
+    font-size: 10px;
+    color: #c084fc;
+    opacity: 0;
+    transition: opacity 0.4s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .log-line.visible { opacity: 1; }
+  .log-line.ready { color: #ffffff; }
+
+  .copyright {
+    font-size: 9px;
+    color: #374151;
+    margin-top: 12px;
+  }
+
+  .right {
+    width: 55%;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+    margin-left: -2px;
+  }
+
+  .right img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: perspective(700px) rotateY(-15deg) scale(1.2);
+    transform-origin: right center;
+    filter: saturate(1.6) contrast(1.2) brightness(0.8);
+  }
+
+  .right-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to right, #08080f 0%, rgba(8,8,15,0.8) 20%, transparent 55%);
+    z-index: 2;
+  }
+
+  .scanlines {
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,0.1) 0px, rgba(0,0,0,0.1) 1px, transparent 1px, transparent 3px);
+    z-index: 3;
+  }
+</style>
 </head>
 <body>
-  <svg class="logo" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
-    <rect fill="#0e0e14" width="256" height="256" rx="48"/>
-    <g transform="translate(128,128) rotate(-7)">
-      <ellipse fill="none" stroke="#9070d0" stroke-width="5" rx="88" ry="33"/>
-      <ellipse fill="none" stroke="#9070d0" stroke-width="5" rx="88" ry="33" transform="rotate(60)"/>
-      <ellipse fill="none" stroke="#9070d0" stroke-width="5" rx="88" ry="33" transform="rotate(-60)"/>
-      <circle fill="#c8a8f0" cx="0" cy="-88" r="8"/>
-      <circle fill="#c8a8f0" cx="76.2" cy="44" r="8"/>
-      <circle fill="#5030a0" cx="0" cy="88" r="6"/>
-      <circle fill="#5030a0" cx="-76.2" cy="-44" r="6"/>
-      <polygon fill="#c8b8e8" opacity="0.2" points="0,-38 30,5 0,18 -30,5"/>
-      <polygon fill="none" stroke="#e0d0f8" stroke-width="3.5" stroke-linejoin="round" points="0,-38 30,5 0,18 -30,5"/>
-      <polygon fill="none" stroke="#7858b8" stroke-width="2.5" stroke-linejoin="round" points="0,38 30,5 0,18 -30,5"/>
-      <line stroke="#a888d8" stroke-width="2" opacity="0.8" x1="0" y1="-38" x2="0" y2="18"/>
-      <line stroke="#a888d8" stroke-width="2" opacity="0.8" x1="-30" y1="5" x2="30" y2="5"/>
-      <line stroke="#a888d8" stroke-width="2" opacity="0.8" x1="-30" y1="5" x2="0" y2="38"/>
-      <line stroke="#a888d8" stroke-width="2" opacity="0.8" x1="30" y1="5" x2="0" y2="38"/>
-    </g>
-  </svg>
+<div class="card">
+  <div class="left">
+    <div class="code-scroll">
+      <div class="code-scroll-inner" id="code-scroll-inner"></div>
+    </div>
+    <div class="left-content">
+      <img src="./assets/ether-logo.svg" width="72" height="72" style="margin-bottom: 14px; display: block;" alt="" />
+      <div class="wordmark">ETHER</div>
+      <div class="tagline">Streaming Automation.</div>
+      <div class="log" id="log"></div>
+      <div class="copyright">© 2026 Ether Technologies</div>
+    </div>
+  </div>
+  <div class="right">
+    <img src="./assets/splash-artwork.png" alt="" />
+    <div class="right-overlay"></div>
+    <div class="scanlines"></div>
+  </div>
+</div>
+
+<script>
+// Scrolling code background — populate and duplicate for seamless loop
+(function () {
+  const CODE_LINES = [
+    "const AudioEngine = require('./engine/rodio');",
+    'AudioEngine.initialize({ sampleRate: 48000 });',
+    "StreamManager.connect('rtmp://live.ether.fm');",
+    "RotationEngine.loadRules({ daypart: 'morning' });",
+    'DatabaseSync.verify() → schema v5 OK',
+    'BroadcastClock.start() → next_break: 10:00 AM',
+    'LibraryIndex.scan() → 4891 tracks loaded',
+    'IrisAI.wake() → voice model: Lila ready',
+    'WatermarkEngine.init() → LSB active',
+    'DeadAirProtection.arm() → threshold: 3s',
+    'StreamHealth.monitor() → latency: 12ms',
+    'AutoXfade.calibrate() → 2.4s equal-power',
+    'SignalChain.build() → EQ → Compressor → Limiter',
+    'CartWall.restore() → 48 carts loaded',
+    'CloudBackup.schedule() → next sync: 06:00',
+  ];
+
+  const inner = document.getElementById('code-scroll-inner');
+  // Double the lines so the CSS loop is seamless (scrolls -50% = exactly one set)
+  const doubled = [...CODE_LINES, ...CODE_LINES];
+  doubled.forEach(text => {
+    const div = document.createElement('div');
+    div.className = 'code-scroll-line';
+    div.textContent = text;
+    inner.appendChild(div);
+  });
+})();
+
+// Scrolling log
+const lines = [
+  'AudioEngine.initialize({ sampleRate: 48000, channels: 2 })',
+  "StreamManager.connect('rtmp://live.ether.fm/broadcast')",
+  "RotationEngine.loadRules({ daypart: 'morning' })",
+  'DatabaseSync.verify() → schema v5 OK',
+  'BroadcastClock.start() → next_break: 10:00 AM',
+  'LibraryIndex.scan() → 4891 tracks loaded',
+  'IrisAI.wake() → voice model: Lila ready',
+  'WatermarkEngine.init() → LSB steganography active',
+  'DeadAirProtection.arm() → threshold: 3s',
+  'StreamHealth.monitor() → latency: 12ms nominal',
+  'AutoXfade.calibrate() → crossfade: 2.4s equal-power',
+  'Ready.',
+];
+const logEl = document.getElementById('log');
+let i = 0;
+function addLine() {
+  if (i >= lines.length) return;
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.textContent = lines[i++];
+  logEl.appendChild(div);
+  setTimeout(() => div.classList.add('visible'), 50);
+  if (logEl.children.length > 8) logEl.removeChild(logEl.children[0]);
+  if (i < lines.length) setTimeout(addLine, 700);
+}
+setTimeout(addLine, 500);
+
+// Close after 10 seconds
+setTimeout(() => window.close(), 10000);
+</script>
 </body>
 </html>

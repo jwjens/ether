@@ -60,8 +60,9 @@ import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPicker";
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
+import ClipEditor from "./components/ClipEditor";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "clipeditor";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -876,7 +877,7 @@ export default function App() {
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast") ? 0 : 16, display: "flex", flexDirection: "column" }}>
+        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "clipeditor") ? 0 : 16, display: "flex", flexDirection: "column" }}>
           {(panel === "live" || panel === "podcast") && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
               {panel === "podcast" ? (
@@ -907,7 +908,12 @@ export default function App() {
               )}
             </div>
           )}
-          {panel !== "live" && panel !== "podcast" && (
+          {panel === "clipeditor" && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+              <ClipEditor />
+            </div>
+          )}
+          {panel !== "live" && panel !== "podcast" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
               {panel === "clocks" && <Scheduler />}
@@ -1201,6 +1207,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="AI Show Notes"     onClick={() => { set("live"); togglePanel("shownotes"); }} />
         <Item label="Export Episode"    onClick={() => set("podcast")} />
         <Item separator />
+        <Item label="Clip Editor"        onClick={() => set("clipeditor")} />
         <Item label="Podcast Studio"    onClick={() => set("podcast")} />
         <Item label="Cart Wall"         onClick={() => set("cartwall")} />
         <Item label="Playlist Player"   onClick={() => set("playlist")} />

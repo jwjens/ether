@@ -1,6 +1,6 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
-import etherMarkSvg from "./assets/ether-logo-mark-only.svg";
+import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/Studio";
 import { UserContext, AppUser, useRole } from "./UserContext";
 // Electron IPC bridge (replaces @tauri-apps imports)
@@ -26,6 +26,7 @@ import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
 import CartWall from "./components/CartWall";
+import ClipEditor from "./components/ClipEditor";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
@@ -41,6 +42,16 @@ import Scheduler from "./components/Scheduler";
 import ProgramLog from "./components/ProgramLog";
 import PlayLog from "./components/PlayLog";
 import Logs from "./components/Logs";
+import EASLogbook from "./components/EASLogbook";
+import PDPicks from "./components/PDPicks";
+import SchedulePreview from "./components/SchedulePreview";
+import SchedulerReasons from "./components/SchedulerReasons";
+import VoiceTrackInbox from "./components/VoiceTrackInbox";
+import AIVoiceStudio from "./components/AIVoiceStudio";
+import StationsManager from "./components/StationsManager";
+import ActiveStationBadge from "./components/ActiveStationBadge";
+import GSelectorImport from "./components/GSelectorImport";
+import HelpPanel from "./components/HelpPanel";
 import NowPlaying from "./components/NowPlaying";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
 import Spots from "./components/Spots";
@@ -76,22 +87,22 @@ import StationManager from "./components/StationManager";
 import { usePlan, setPlanGlobally, PlanGate } from "./hooks/usePlan";
 import PhoneDesk from "./components/PhoneDesk";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
-import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPicker";
+import { useSkin, SkinPickerOverlay } from "./components/SkinPicker";
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
 import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
-  artist_name: string | null; album_title: string | null;
+  artist_name: string | null; album_title: string | null; album_year?: number | null;
   genre: string | null; duration_ms: number;
   category_code: string | null; category_color: string | null;
   intro_end?: number | null; outro_start?: number | null; bpm?: number | null;
-  gain_db?: number | null;
+  gain_db?: number | null; play_count?: number | null;
 }
 
 const EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
@@ -106,7 +117,7 @@ function ToolbarBtn({ label, active, onClick, color }: { label: string; active: 
       onClick={onClick}
       style={{
         height: 32, padding: "0 14px", borderRadius: 0,
-        fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
+        fontSize: 12, fontWeight: 700, letterSpacing: "0.08em",
         cursor: "pointer", fontFamily: "'Inter', sans-serif",
         transition: "all 0.15s ease",
         background: active ? `${color}18` : "transparent",
@@ -220,7 +231,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
         <button
           onClick={handleSave}
           style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: "0.08em",
+            fontSize: 13, fontWeight: 700, letterSpacing: "0.08em",
             padding: "3px 8px", borderRadius: 0,
             background: saved ? "var(--accent-green)" : "var(--bg-tertiary)",
             border: `1px solid ${saved ? "var(--accent-green)" : "var(--border-primary)"}`,
@@ -235,7 +246,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
       {layouts.length > 0 && !editing && (
         <button
           onClick={() => setShowList(p => !p)}
-          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12, padding: "2px 4px", borderRadius: 0 }}
           title="Switch layout"
         >▾</button>
       )}
@@ -250,7 +261,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
             boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
             fontFamily: "'Inter', sans-serif",
           }}>
-            <div style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-tertiary)", padding: "2px 8px 8px", textTransform: "uppercase" as const }}>Saved Layouts</div>
+            <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.14em", color: "var(--text-tertiary)", padding: "2px 8px 8px", textTransform: "uppercase" as const }}>Saved Layouts</div>
             {layouts.map((l: any) => (
               <div key={l.id}>
                 {renamingId === l.id ? (
@@ -283,13 +294,13 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                       }}
                     >
                       {l.name}
-                      {l.name === name && <span style={{ fontSize: 9, opacity: 0.5, marginLeft: 6 }}>active</span>}
+                      {l.name === name && <span style={{ fontSize: 13, opacity: 0.5, marginLeft: 6 }}>active</span>}
                     </button>
                     {/* Rename */}
                     <button
                       title="Rename"
                       onClick={e => { e.stopPropagation(); setRenamingId(l.id); setRenameDraft(l.name); }}
-                      style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "4px 6px", borderRadius: 0, fontSize: 11, opacity: 0.6 }}
+                      style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "4px 6px", borderRadius: 0, fontSize: 13, opacity: 0.6 }}
                       onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
                       onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.6"}
                     >
@@ -305,7 +316,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                             onDeleteLayout(l.id);
                           }
                         }}
-                        style={{ background: "none", border: "none", color: "var(--accent-red)", cursor: "pointer", padding: "4px 6px", borderRadius: 0, fontSize: 11, opacity: 0.5, marginRight: 2 }}
+                        style={{ background: "none", border: "none", color: "var(--accent-red)", cursor: "pointer", padding: "4px 6px", borderRadius: 0, fontSize: 13, opacity: 0.5, marginRight: 2 }}
                         onMouseEnter={e => (e.currentTarget as HTMLElement).style.opacity = "1"}
                         onMouseLeave={e => (e.currentTarget as HTMLElement).style.opacity = "0.5"}
                       >
@@ -334,24 +345,29 @@ function useViewport() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
-  // Search bar shrinks: 560 → 420 → 320 → 240 → icon-only
-  // Clock: 52pt → 40 → 32 → 28 → hidden
-  let searchW = 560;
-  if (w < 1200) searchW = 420;
-  if (w < 1100) searchW = 320;
-  if (w < 950)  searchW = 240;
-  if (w < 800)  searchW = 0; // icon-only mode
-  let clockSize: "full" | "lg" | "md" | "sm" | "hidden" = "full";
-  if (w < 1200) clockSize = "lg";
-  if (w < 1100) clockSize = "md";
-  if (w < 950)  clockSize = "sm";
-  if (w < 800)  clockSize = "hidden";
+  // Search bar shrinks: 520 → 420 → 320 → 220 → 140 → icon-only
+  // Clock: 52pt → 40 → 32 → 24 → 18 (never hidden — always visible)
+  // Breakpoints triggered earlier so the absolute-centered clock never
+  // overlaps the search bar or right-side buttons at narrower window widths.
+  let searchW = 520;
+  if (w < 1500) searchW = 440;
+  if (w < 1350) searchW = 340;
+  if (w < 1200) searchW = 260;
+  if (w < 1050) searchW = 180;
+  if (w < 900)  searchW = 0; // icon-only mode
+  let clockSize: "full" | "lg" | "md" | "sm" | "xs" | "hidden" = "full";
+  if (w < 1500) clockSize = "lg";
+  if (w < 1350) clockSize = "md";
+  if (w < 1200) clockSize = "sm";
+  if (w < 1000) clockSize = "xs";
+  // never "hidden" — always show at least a tiny clock so the header
+  // doesn't look empty/unfinished at the narrowest window sizes.
   return {
     width: w,
-    veryNarrow: w < 800,   // hide WARN text, Go Live → ▶ icon, search icon-only
-    narrow:     w < 950,   // collapse Admin to icon-only
-    medium:     w < 1100,  // collapse Pro to icon-only
-    panelTight: w < 1200,  // master panel auto-collapses
+    veryNarrow: w < 900,   // hide WARN text, Go Live → ▶ icon, search icon-only
+    narrow:     w < 1050,  // collapse Admin to icon-only
+    medium:     w < 1200,  // collapse Pro to icon-only
+    panelTight: w < 1350,  // master panel auto-collapses
     searchW,               // dynamic search bar width (0 = icon-only)
     clockSize,             // "full" | "lg" | "md" | "sm" | "hidden"
   };
@@ -366,6 +382,16 @@ export default function App() {
   const [wizardDone, setWizardDone] = useState(false);
   const [firstRunChecked, setFirstRunChecked] = useState(false);
   const [stationName, setStationName] = useState("Ether");
+  // Video live indicator — updated via custom event from VideoEngineContext
+  const [videoLive, setVideoLive] = useState(false);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const d = (e as CustomEvent).detail as { streaming: boolean; recording: boolean };
+      setVideoLive(d.streaming || d.recording);
+    };
+    window.addEventListener("ether:video-status", handler);
+    return () => window.removeEventListener("ether:video-status", handler);
+  }, []);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [currentPlan, setCurrentPlan] = useState<PlanTier>("free");
   const [panel, setPanel] = useState<Panel>("live");
@@ -384,7 +410,12 @@ export default function App() {
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
   const [deckC, setDeckC] = useState<DeckState | null>(null);
-  const [autoAdv, setAutoAdv] = useState(false);
+  // AUTO state persists across restarts — broadcasters expect their automation
+  // to remain in whatever state they left it in, especially after a power cycle
+  // or app restart. Default false on first install.
+  const [autoAdv, setAutoAdv] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_autoAdv") === "1"; } catch { return false; }
+  });
   const [shuffle, setShuffle] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
@@ -426,6 +457,11 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("ether_drawer_usage") || "{}"); } catch { return {}; }
   });
   const [showDeckConfig, setShowDeckConfig] = useState(false);
+  const [deckConfigClosing, setDeckConfigClosing] = useState(false);
+  const closeDeckConfig = useCallback(() => {
+    setDeckConfigClosing(true);
+    setTimeout(() => { setShowDeckConfig(false); setDeckConfigClosing(false); }, 200);
+  }, []);
   const [showProducerDesk, setShowProducerDesk] = useState(false);
 
   const openDeskWindow = async () => {
@@ -449,19 +485,12 @@ export default function App() {
   const { configs: deckConfigs, save: saveDeckConfigs, enabled: enabledDecks } = useDeckConfig();
 
   // Experience mode — controls deck visibility
-  type ExperienceMode = "solo" | "standard" | "live_radio";
-  const [experienceMode, setExperienceMode] = useState<ExperienceMode>("live_radio");
   const [shiftStarted, setShiftStarted] = useState(false);
-  const [hiddenDeckAudio, setHiddenDeckAudio] = useState<string | null>(null); // amber warning
 
-  // Compute which decks are visible given the current mode + per-deck purpose
-  const visibleEnabledDecks = React.useMemo(() => {
-    if (experienceMode === "live_radio") return enabledDecks;
-    const purposedSlots = new Set(deckConfigs.filter(c => c.purpose && c.purpose !== "").map(c => c.slot));
-    if (experienceMode === "solo")     return enabledDecks.filter(c => c.slot === "A" || purposedSlots.has(c.slot));
-    if (experienceMode === "standard") return enabledDecks.filter(c => c.slot === "A" || c.slot === "B" || purposedSlots.has(c.slot));
-    return enabledDecks;
-  }, [enabledDecks, deckConfigs, experienceMode]);
+  // Visible decks = whatever the user enabled in Configure Decks. No
+  // separate "Experience Mode" — the deck configuration IS the mode.
+  // 1 music deck enabled → solo. 2 → standard. 3 → full radio. Etc.
+  const visibleEnabledDecks = enabledDecks;
 
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
@@ -481,8 +510,8 @@ export default function App() {
           setCurrentPlan(p);
           setPlanGlobally(p);
         }
-        const modeRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'");
-        if (modeRows.length > 0) setExperienceMode(modeRows[0].value as ExperienceMode);
+        // experience_mode key in DB is now ignored — deck visibility is
+        // driven entirely by Configure Decks. Old key left in DB for now.
       } catch {}
       setFirstRunChecked(true);
       consoleLog("system", "ether started — engine ready");
@@ -492,7 +521,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
@@ -545,10 +574,12 @@ export default function App() {
           case "automation_on":
             setAutoAdv(true);
             engine.autoAdvance = true;
+            try { localStorage.setItem("ether_autoAdv", "1"); } catch {}
             break;
           case "automation_off":
             setAutoAdv(false);
             engine.autoAdvance = false;
+            try { localStorage.setItem("ether_autoAdv", "0"); } catch {}
             break;
           case "play_emergency_cart":
             (engine as any).playEmergencyCart?.();
@@ -680,6 +711,11 @@ export default function App() {
     engine.init();
     engine.outroCrossfade = true;
     engine.crossfadeDuration = xfadeDuration;
+    // Restore persisted AUTO state on boot — autoAdv was hydrated from
+    // localStorage in useState init, but engine is a singleton that doesn't
+    // know about it until we sync here.
+    engine.autoAdvance = autoAdv;
+    if (autoAdv) engine.continuous = true;
     return engine.on((id, st) => {
       if (id === "A") setDeckA({...st});
       else if (id === "B") setDeckB({...st});
@@ -704,8 +740,14 @@ export default function App() {
         prevQueueLen.current = newQLen;
       }
       setQueueLen(newQLen);
-      // Broadcast queue length to any pop-out windows (e.g. StandaloneUpNext)
-      (window as any).ether?.emit("ether:broadcast", { channel: "queue:sync", data: newQLen });
+      // Broadcast the full queue (not just length) to pop-out windows so
+      // their local engine instances can mirror it. Pop-outs are separate
+      // BrowserWindows with their own JS context, so they have empty engine
+      // singletons until we explicitly sync.
+      (window as any).ether?.emit("ether:broadcast", {
+        channel: "queue:sync",
+        data: { len: newQLen, items: engine.getQueue() },
+      });
 
       // Fire tour events
       if (id === "A" && st.filePath) window.dispatchEvent(new Event("ether:tour-deck-loaded"));
@@ -797,6 +839,7 @@ export default function App() {
     const n = !autoAdv;
     setAutoAdv(n);
     engine.autoAdvance = n;
+    try { localStorage.setItem("ether_autoAdv", n ? "1" : "0"); } catch {}
     if (n) {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
       if (engine.getQueue().length === 0) {
@@ -861,14 +904,10 @@ export default function App() {
   const { skinId, setSkin } = useSkin();
   const [showShortcuts, setShowShortcuts] = useState(false);
 
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [skinPickerPos, setSkinPickerPos] = useState<{ x: number; y: number } | null>(null);
 
-  const handleContextMenu = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.closest("button, input, select, a, [data-deck-slot]")) return;
-    e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
+  const handleContextMenu = (_e: React.MouseEvent) => {
+    // Global right-click context menu removed — Theme Studio and Reset Layout moved to ≡ menu
   };
 
   const resetLayout = () => { window.location.reload(); };
@@ -927,23 +966,28 @@ export default function App() {
     }
   }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName]);
 
-  // Detect audio on hidden decks and show amber banner
-  // Must be before any early returns to comply with React rules of hooks
+  // Tell the engine which music decks are enabled, so auto-advance only
+  // rotates through them. If a deck the user disabled is currently playing
+  // (e.g. they just turned it off in Configure Decks), pause it.
   useEffect(() => {
-    if (experienceMode === "live_radio") { setHiddenDeckAudio(null); return; }
-    const visibleSlots = new Set(visibleEnabledDecks.map(c => c.slot));
-    const checkHidden = () => {
-      const hiddenPlaying = deckConfigs.filter(c => {
-        if (visibleSlots.has(c.slot)) return false;
-        const deck = engine.getDeck(c.slot);
-        const st = deck?.getState?.();
-        return st?.status === "playing";
-      });
-      setHiddenDeckAudio(hiddenPlaying.length > 0 ? hiddenPlaying[0].slot : null);
-    };
-    const id = setInterval(checkHidden, 500);
-    return () => clearInterval(id);
-  }, [experienceMode, visibleEnabledDecks, deckConfigs]);
+    const activeMusicSlots: ("A" | "B" | "C")[] = enabledDecks
+      .filter(c => c.type === "music" && (c.slot === "A" || c.slot === "B" || c.slot === "C"))
+      .map(c => c.slot as "A" | "B" | "C");
+
+    if (typeof (engine as any).setActiveDecks === "function") {
+      (engine as any).setActiveDecks(activeMusicSlots);
+    }
+
+    // Pause any music deck not in the active set
+    (["A", "B", "C"] as const).forEach(slot => {
+      if (activeMusicSlots.includes(slot)) return;
+      const d = engine.getDeck(slot);
+      const st = d?.getState?.();
+      if (st?.status === "playing") {
+        try { d?.pause(); } catch {}
+      }
+    });
+  }, [enabledDecks]);
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
@@ -980,8 +1024,8 @@ export default function App() {
           )}
         </div>
 
-        {/* CENTER: Clock — absolutely centered, scales down or hides at narrow widths */}
-        {viewport.clockSize !== "hidden" && (
+        {/* CENTER: Clock — absolutely centered, scales down to xs at narrow widths (never fully hidden) */}
+        {(viewport.clockSize as string) !== "hidden" && (
           <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0, display: "flex", alignItems: "center", gap: 8, pointerEvents: "none" }}>
             <ClockDisplay size={viewport.clockSize} />
           </div>
@@ -989,6 +1033,16 @@ export default function App() {
 
         {/* RIGHT: Status + Pro + Admin + ☰ menu + ON AIR */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1, marginLeft: "auto" }}>
+          {videoLive && panel !== "videostudio" && (
+            <button
+              onClick={() => setPanel("videostudio")}
+              title="Video engine is live — click to return to Video Studio"
+              style={{ height: 28, padding: "0 10px", borderRadius: 0, background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.4)", color: "#22c55e", fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, animation: "rec-pulse 2s ease-in-out infinite" }}
+            >
+              <svg width="8" height="8" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="#22c55e"/></svg>
+              VIDEO LIVE
+            </button>
+          )}
           <HealthStatusDot onClick={() => setPanel("health")} compact={viewport.veryNarrow} />
           {!viewport.veryNarrow && <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />}
           {currentPlan === "free" && (
@@ -1069,16 +1123,38 @@ export default function App() {
               fontFamily: "var(--font-ui, 'Inter', sans-serif)",
             }}>
               {/* Drawer header */}
-              <div style={{ height: 48, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-                <img src={etherMarkSvg} height={22} alt="ether" style={{ opacity: 0.7 }} />
-                <button onClick={() => setDrawerOpen(false)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 20, lineHeight: 1, padding: "2px 4px", display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
+              <div style={{ height: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, background: "var(--bg-tertiary)" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Menu</div>
+                <button
+                  onClick={() => setDrawerOpen(false)}
+                  title="Close (Esc)"
+                  aria-label="Close menu"
+                  style={{
+                    width: 36, height: 36,
+                    background: "var(--bg-primary)",
+                    border: "1px solid var(--border-secondary)",
+                    color: "#ffffff",
+                    cursor: "pointer",
+                    borderRadius: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "all 0.12s ease",
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "#ef4444"; (e.currentTarget as HTMLElement).style.borderColor = "#ef4444"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-primary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-secondary)"; }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <line x1="5" y1="5" x2="19" y2="19"/>
+                    <line x1="19" y1="5" x2="5" y2="19"/>
+                  </svg>
+                </button>
               </div>
 
               {/* Drawer body */}
               <div style={{ flex: 1, overflowY: "auto", padding: "10px 0 16px" }}>
 
                 {/* ── NAVIGATE ── */}
-                <div style={{ padding: "2px 16px 6px", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)" }}>NAVIGATE</div>
+                <div style={{ padding: "6px 16px 8px", fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)" }}>NAVIGATE</div>
                 {([
                   { key: "library",    emoji: "🎵", label: "Library",     action: () => setPanel("library"),     active: panel === "library"     },
                   { key: "schedule",   emoji: "📋", label: "Schedule",    action: () => setPanel("clocks"),      active: panel === "clocks"      },
@@ -1095,7 +1171,7 @@ export default function App() {
                       border: "none",
                       borderLeft: `3px solid ${item.active ? "var(--accent-cyan)" : "transparent"}`,
                       color: item.active ? "var(--accent-cyan)" : "var(--text-secondary)",
-                      fontSize: 12, fontWeight: (drawerUsage[item.key] || 0) >= 3 ? 700 : 500,
+                      fontSize: 13, fontWeight: (drawerUsage[item.key] || 0) >= 3 ? 700 : 500,
                       cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s",
                     }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
@@ -1103,43 +1179,66 @@ export default function App() {
                   >
                     <span style={{ fontSize: 15, lineHeight: 1 }}>{item.emoji}</span>
                     <span style={{ flex: 1 }}>{item.label}</span>
-                    {(drawerUsage[item.key] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                    {(drawerUsage[item.key] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                   </button>
                 ))}
 
                 <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 16px" }} />
 
                 {/* ── WINDOWS ── */}
-                <div style={{ padding: "2px 16px 6px", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)" }}>WINDOWS</div>
+                <div style={{ padding: "12px 16px 8px", fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)" }}>WINDOWS</div>
                 <button
                   onClick={() => drawerClick("desk", openDeskWindow)}
-                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 12, fontWeight: (drawerUsage["desk"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["desk"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                   <span style={{ flex: 1 }}>Desk</span>
-                  {(drawerUsage["desk"] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                  {(drawerUsage["desk"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                 </button>
                 <button
                   onClick={() => drawerClick("nowplaying", () => openNowPlayingWindow())}
-                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 12, fontWeight: (drawerUsage["nowplaying"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["nowplaying"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
                   <span style={{ flex: 1 }}>Now Playing</span>
-                  {(drawerUsage["nowplaying"] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                  {(drawerUsage["nowplaying"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                 </button>
                 <button
                   onClick={() => drawerClick("phone", () => setPanel("phonedesk"))}
-                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent", border: "none", borderLeft: `3px solid ${panel === "phonedesk" ? "#00c8a8" : "transparent"}`, color: panel === "phonedesk" ? "#00c8a8" : "var(--text-secondary)", fontSize: 12, fontWeight: (drawerUsage["phone"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent", border: "none", borderLeft: `3px solid ${panel === "phonedesk" ? "#00c8a8" : "transparent"}`, color: panel === "phonedesk" ? "#00c8a8" : "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["phone"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent"; }}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.35 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.34 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
                   <span style={{ flex: 1 }}>Phone</span>
-                  {(drawerUsage["phone"] || 0) >= 3 && <span style={{ fontSize: 8, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                  {(drawerUsage["phone"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
+
+                {/* ── Divider ── */}
+                <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 16px" }} />
+
+                {/* ── APPEARANCE ── */}
+                <button
+                  onClick={() => { setSkinPickerPos({ x: 0, y: 0 }); setDrawerOpen(false); }}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+                  <span style={{ flex: 1 }}>Theme Studio</span>
+                </button>
+                <button
+                  onClick={() => { resetLayout(); setDrawerOpen(false); }}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
+                  <span style={{ flex: 1 }}>Reset Layout</span>
                 </button>
 
               </div>
@@ -1148,25 +1247,11 @@ export default function App() {
         )}
 </header>
 
-      {/* Hidden-deck audio warning */}
-      {hiddenDeckAudio && (
-        <div style={{
-          padding: "6px 16px", background: "#8a5a10", borderBottom: "1px solid #b87020",
-          display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
-        }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: "#fff", letterSpacing: "0.02em" }}>
-            Audio is playing on a hidden deck (Deck {hiddenDeckAudio}) — tap to show it
-          </span>
-          <button
-            onClick={() => setShowDeckConfig(true)}
-            style={{ padding: "3px 12px", background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0, letterSpacing: "0.06em" }}
-          >SHOW DECK</button>
-        </div>
-      )}
+      {/* Hidden-deck warning removed — disabled decks now auto-pause */}
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "videostudio") ? 0 : 16, display: "flex", flexDirection: "column" }}>
+        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "videostudio" || panel === "clipeditor") ? 0 : 16, display: "flex", flexDirection: "column" }}>
           {(panel === "live" || panel === "podcast") && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
               {panel === "podcast" ? (
@@ -1209,9 +1294,9 @@ export default function App() {
               )}
             </div>
           )}
-          {panel !== "live" && panel !== "podcast" && (
+          {panel !== "live" && panel !== "podcast" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
+              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "studio" && (
@@ -1229,6 +1314,15 @@ export default function App() {
                 />
               )}
               {panel === "logs" && <Logs />}
+              {panel === "eas" && <EASLogbook onClose={() => setPanel("live")} />}
+              {panel === "pdpicks" && <PDPicks onClose={() => setPanel("live")} />}
+              {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}
+              {panel === "reasons" && <SchedulerReasons onClose={() => setPanel("live")} />}
+              {panel === "vtinbox" && <VoiceTrackInbox onClose={() => setPanel("live")} />}
+              {panel === "aivoice" && <AIVoiceStudio onClose={() => setPanel("live")} />}
+              {panel === "stations" && <StationsManager onClose={() => setPanel("live")} />}
+              {panel === "gselector" && <GSelectorImport onClose={() => setPanel("live")} />}
+              {panel === "help" && <HelpPanel onClose={() => setPanel("live")} />}
               {panel === "spots" && <Spots />}
               {panel === "streaming" && <StreamManager />}
               {panel === "announce" && <Announcements />}
@@ -1276,7 +1370,6 @@ export default function App() {
                   <PlaylistPanel onClose={() => setPanel("live")} />
                 </div>
               )}
-              {panel === "videostudio" && <VideoStudio />}
               {panel === "macros" && <MacrosPanel />}
               {panel === "midi" && <MidiSettingsPanel />}
               {panel === "importlibrary" && (
@@ -1287,18 +1380,22 @@ export default function App() {
               )}
             </div>
           )}
+          {/* VideoStudio is always mounted so camera streams and the WebRTC
+              compositor stay alive when the user navigates to another panel.
+              Hidden via display:none rather than unmounted. */}
+          <div style={{ display: panel === "videostudio" ? "flex" : "none", flex: 1, minHeight: 0 }}>
+            <VideoStudio />
+          </div>
+          {panel === "clipeditor" && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+              <ClipEditor />
+            </div>
+          )}
           <DMCANotice />
         </main>
       </div>
 
-      {contextMenu && (
-        <AppContextMenu
-          x={contextMenu.x} y={contextMenu.y}
-          onClose={() => setContextMenu(null)}
-          onChangeSkin={() => { setSkinPickerPos(contextMenu); setContextMenu(null); }}
-          onResetLayout={resetLayout}
-        />
-      )}
+      {/* AppContextMenu removed — items moved to ≡ drawer */}
       {skinPickerPos && (
         <SkinPickerOverlay
           currentSkin={skinId} x={skinPickerPos.x} y={skinPickerPos.y}
@@ -1321,7 +1418,7 @@ export default function App() {
             boxShadow: "0 32px 80px rgba(0,0,0,0.6)",
           }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>Keyboard Shortcuts</div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 18, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em" }}>Keyboard Shortcuts</div>
               <button onClick={() => setShowShortcuts(false)} style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>✕</button>
             </div>
             {[
@@ -1340,16 +1437,16 @@ export default function App() {
               ]},
               { group: "Interface", items: [
                 { key: "Shift + ?", desc: "Toggle this shortcut overlay" },
-                { key: "Right-click", desc: "Theme Studio & Reset Layout" },
+                { key: "≡ Menu", desc: "Theme Studio & Reset Layout" },
               ]},
             ].map(({ group, items }) => (
               <div key={group} style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 10 }}>{group}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 10 }}>{group}</div>
                 <div style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
                   {items.map(({ key, desc }) => (
                     <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, padding: "7px 10px", borderRadius: 0, background: "var(--bg-tertiary)" }}>
                       <kbd style={{
-                        fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700,
+                        fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 13, fontWeight: 700,
                         background: "var(--bg-primary)", color: "var(--accent-cyan)",
                         border: "1px solid var(--border-secondary)", borderRadius: 0,
                         padding: "3px 8px", whiteSpace: "nowrap" as const, flexShrink: 0,
@@ -1362,8 +1459,8 @@ export default function App() {
                 </div>
               </div>
             ))}
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const }}>
-              Press <kbd style={{ fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0, border: "1px solid var(--border-primary)" }}>Esc</kbd> or click outside to close
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-primary)", fontSize: 12, color: "var(--text-tertiary)", textAlign: "center" as const }}>
+              Press <kbd style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0, border: "1px solid var(--border-primary)" }}>Esc</kbd> or click outside to close
             </div>
           </div>
         </div>
@@ -1378,7 +1475,7 @@ export default function App() {
       {restoreInfo && <SessionRestoreToast info={restoreInfo} onDismiss={() => setRestoreInfo(null)} />}
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
-      <footer style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0, letterSpacing: "0.02em", fontFamily: "'DM Mono', monospace" }}>
+      <footer style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0, letterSpacing: "0.02em", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ color: onAir ? "var(--accent-green)" : "var(--text-tertiary)" }}>
             {onAir ? "● On Air" : "○ Off Air"}
@@ -1390,7 +1487,7 @@ export default function App() {
               style={{
                 padding: "2px 8px", borderRadius: 0,
                 background: "var(--accent-cyan)", border: "none",
-                color: "#000", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+                color: "#000", fontSize: 13, fontWeight: 700, letterSpacing: "0.06em",
                 cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
               }}
             >
@@ -1404,7 +1501,7 @@ export default function App() {
           <span style={{ color: "var(--border-secondary)" }}>·</span>
           {autoAdv && (
             <button onClick={() => toggleAuto()} title="Auto-advance is ON — click to turn off"
-              style={{ background: "none", border: "none", color: "var(--accent-cyan)", cursor: "pointer", fontSize: 10, fontFamily: "'DM Mono', monospace", letterSpacing: "0.06em", padding: 0 }}>
+              style={{ background: "none", border: "none", color: "var(--accent-cyan)", cursor: "pointer", fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.06em", padding: 0 }}>
               AUTO
             </button>
           )}
@@ -1424,10 +1521,42 @@ export default function App() {
         />
       )}
       {showDeckConfig && (
-        <DeckConfigurator
-          onClose={() => setShowDeckConfig(false)}
-          onApply={(configs: DeckConfig[]) => saveDeckConfigs(configs)}
-        />
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={closeDeckConfig}
+            style={{
+              position: "fixed", inset: 0, zIndex: 800,
+              background: "rgba(0,0,0,0.4)",
+              opacity: deckConfigClosing ? 0 : 1,
+              transition: "opacity 200ms ease-out",
+            }}
+          />
+          <style>{`@keyframes ether-deck-drawer-in { from { transform: translateX(-100%); } to { transform: translateX(0); } }`}</style>
+          {/* Sliding drawer from left */}
+          <div
+            style={{
+              position: "fixed", top: 0, left: 0, bottom: 0,
+              width: 640, zIndex: 810,
+              background: "var(--bg-primary)",
+              borderRight: "1px solid var(--border-primary)",
+              boxShadow: "4px 0 24px rgba(0,0,0,0.5)",
+              transform: deckConfigClosing ? "translateX(-100%)" : "translateX(0)",
+              animation: deckConfigClosing ? "none" : "ether-deck-drawer-in 200ms ease-out",
+              transition: "transform 200ms ease-out",
+              overflowY: "auto",
+              display: "flex", flexDirection: "column",
+            }}
+            onKeyDown={e => { if (e.key === "Escape") closeDeckConfig(); }}
+            tabIndex={-1}
+            ref={el => el?.focus()}
+          >
+            <DeckConfigurator
+              onClose={closeDeckConfig}
+              onApply={async (configs: DeckConfig[]) => { await saveDeckConfigs(configs); }}
+            />
+          </div>
+        </>
       )}
     </EtherErrorBoundary>
     </MidiProvider>
@@ -1520,11 +1649,11 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
           transition: "background 0.1s",
         }}
       >
-        <span style={{ width: 14, fontSize: 10, color: "var(--accent-cyan)", flexShrink: 0 }}>
+        <span style={{ width: 14, fontSize: 12, color: "var(--accent-cyan)", flexShrink: 0 }}>
           {checked === true ? "✓" : ""}
         </span>
         <span style={{ flex: 1 }}>{label}</span>
-        {shortcut && <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", marginLeft: 12 }}>{shortcut}</span>}
+        {shortcut && <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", marginLeft: 12 }}>{shortcut}</span>}
       </button>
     );
   };
@@ -1601,6 +1730,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Auto-Cue Library"     onClick={() => set("autocue")} />
         <Item separator />
         {/* Live tools */}
+        <Item label="Clip Editor"          onClick={() => set("clipeditor")} />
         <Item label="Cart Wall"            onClick={() => set("cartwall")} />
         <Item label="Playlist Player"      onClick={() => set("playlist")} />
         <Item label="Phone Desk"           onClick={() => set("phonedesk")} />
@@ -1730,7 +1860,7 @@ function PodcastLayout({ deckA, deckB, deckC, inputDevice }: {
       }}>
         {/* Mixer header */}
         <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Mixer</div>
+          <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Mixer</div>
         </div>
         {/* Channel strips — stacked */}
         <div style={{ flex: 1, overflowY: "auto" as const }}>
@@ -1912,14 +2042,14 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
 
         {/* Label + ON AIR badge */}
         <div style={{ padding: '4px 6px 3px', flexShrink: 0, borderBottom: '1px solid var(--border-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: '0.1em', color: isActive ? color : 'var(--text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: isActive ? color : 'var(--text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
           {isActive && <div style={{ fontSize: 7, fontWeight: 800, color: '#fff', background: color, padding: '1px 5px', borderRadius: 0, flexShrink: 0, animation: 'mic-blink 2s ease-in-out infinite', letterSpacing: '0.05em' }}>ON AIR</div>}
         </div>
 
         {/* Music: track + artist + time. Mic: no info needed */}
         {!isMic && (
           <div style={{ padding: '3px 6px', flexShrink: 0 }}>
-            <div style={{ fontSize: 8, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
             {deck?.artist && <div style={{ fontSize: 7, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deck.artist}</div>}
           </div>
         )}
@@ -1936,7 +2066,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
 
         {/* Time remaining for music */}
         {!isMic && deck && (
-          <div style={{ textAlign: 'center', fontSize: 9, fontFamily: "'DM Mono',monospace", fontWeight: 700, color: remaining < 10 && remaining > 0 ? '#ef4444' : 'var(--text-tertiary)', flexShrink: 0, padding: '1px 0' }}>
+          <div style={{ textAlign: 'center', fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontWeight: 700, color: remaining < 10 && remaining > 0 ? '#ef4444' : 'var(--text-tertiary)', flexShrink: 0, padding: '1px 0' }}>
             {isActive ? timeStr : '—'}
           </div>
         )}
@@ -1949,7 +2079,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
         )}
 
         {/* dB */}
-        <div style={{ textAlign: 'center', fontSize: 8, fontFamily: "'DM Mono',monospace", color: dbVal !== null && dbVal > -3 ? '#ef4444' : 'var(--text-tertiary)', flexShrink: 0, padding: '1px 0' }}>
+        <div style={{ textAlign: 'center', fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: dbVal !== null && dbVal > -3 ? '#ef4444' : 'var(--text-tertiary)', flexShrink: 0, padding: '1px 0' }}>
           {dbVal !== null ? `${dbVal}dB` : '—'}
         </div>
 
@@ -1967,11 +2097,11 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
             <div style={{ display: 'flex', gap: 3 }}>
               <button
                 onClick={() => deck?.status === 'playing' ? engine.getDeck(deckSlot!)?.pause() : engine.getDeck(deckSlot!)?.play()}
-                style={{ flex: 1, padding: '5px 0', borderRadius: 0, border: 'none', background: deck?.status === 'playing' ? color : 'var(--bg-tertiary)', color: deck?.status === 'playing' ? '#000' : 'var(--text-secondary)', fontSize: 9, fontWeight: 800, cursor: 'pointer', transition: 'all 0.15s' }}>
+                style={{ flex: 1, padding: '5px 0', borderRadius: 0, border: 'none', background: deck?.status === 'playing' ? color : 'var(--bg-tertiary)', color: deck?.status === 'playing' ? '#000' : 'var(--text-secondary)', fontSize: 13, fontWeight: 800, cursor: 'pointer', transition: 'all 0.15s' }}>
                 {deck?.status === 'playing' ? '❚❚' : '▶'}
               </button>
               <button onClick={() => engine.getDeck(deckSlot!)?.stop()}
-                style={{ width: 24, padding: '5px 0', borderRadius: 0, border: 'none', background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)', fontSize: 9, cursor: 'pointer' }}>■</button>
+                style={{ width: 24, padding: '5px 0', borderRadius: 0, border: 'none', background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)', fontSize: 13, cursor: 'pointer' }}>■</button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 3 }}>
@@ -1979,7 +2109,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
                 flex: 1, padding: '5px 0', borderRadius: 0, border: 'none',
                 background: muted ? '#ef444430' : 'var(--bg-tertiary)',
                 color: muted ? '#ef4444' : 'var(--text-tertiary)',
-                fontSize: 8, fontWeight: 800, letterSpacing: '0.05em', cursor: 'pointer',
+                fontSize: 12, fontWeight: 800, letterSpacing: '0.05em', cursor: 'pointer',
                 outline: muted ? '1px solid #ef444450' : 'none',
               }}>
                 {muted ? 'MUTED' : 'MUTE'}
@@ -2021,7 +2151,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
       {/* Header row: label + status + dB */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, fontWeight: 800, color: isActive ? color : "var(--text-secondary)", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{label}</span>
+          <span style={{ fontSize: 13, fontWeight: 800, color: isActive ? color : "var(--text-secondary)", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{label}</span>
           {/* Guest status dot */}
           {guestStatus && (
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, boxShadow: guestStatus === "connected" ? `0 0 5px ${statusColor}` : "none", animation: guestStatus === "connecting" ? "mic-blink 0.8s ease-in-out infinite" : "none" }} />
@@ -2029,15 +2159,15 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
           {isActive && !guestStatus && (
             <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 0, background: `${color}15`, border: `1px solid ${color}25` }}>
               <div style={{ width: 5, height: 5, borderRadius: "50%", background: color, animation: "mic-blink 1.5s ease-in-out infinite" }} />
-              <span style={{ fontSize: 8, fontWeight: 800, color, letterSpacing: "0.08em" }}>LIVE</span>
+              <span style={{ fontSize: 12, fontWeight: 800, color, letterSpacing: "0.08em" }}>LIVE</span>
             </div>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", fontWeight: 500, color: dbVal !== null && dbVal > -3 ? "#ef4444" : "var(--text-tertiary)", minWidth: 36, textAlign: "right" as const }}>
+          <span style={{ fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontWeight: 500, color: dbVal !== null && dbVal > -3 ? "#ef4444" : "var(--text-tertiary)", minWidth: 36, textAlign: "right" as const }}>
             {dbVal !== null ? `${dbVal}dB` : "—"}
           </span>
-          <button onClick={() => setMuted(m => !m)} style={{ padding: "2px 8px", borderRadius: 0, background: muted ? `${color}20` : "var(--bg-tertiary)", border: `1px solid ${muted ? color + "40" : "var(--border-primary)"}`, color: muted ? color : "var(--text-tertiary)", fontSize: 9, fontWeight: 800, cursor: "pointer", letterSpacing: "0.06em" }}>
+          <button onClick={() => setMuted(m => !m)} style={{ padding: "2px 8px", borderRadius: 0, background: muted ? `${color}20` : "var(--bg-tertiary)", border: `1px solid ${muted ? color + "40" : "var(--border-primary)"}`, color: muted ? color : "var(--text-tertiary)", fontSize: 13, fontWeight: 800, cursor: "pointer", letterSpacing: "0.06em" }}>
             {muted ? "MUTED" : "MUTE"}
           </button>
         </div>
@@ -2051,7 +2181,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
             <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
             <path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/>
           </svg>
-          <span style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, textAlign: "left" as const }}>{displaySub}</span>
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, textAlign: "left" as const }}>{displaySub}</span>
           {(isMic || audioDevices.length > 0) && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>}
         </button>
       </div>
@@ -2107,7 +2237,7 @@ function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDevice
             boxShadow: "0 -4px 32px rgba(0,0,0,0.4)",
             minWidth: 260, maxWidth: 340,
           }}>
-            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, padding: "2px 10px 8px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, padding: "2px 10px 8px" }}>
               Audio Input — {label}
             </div>
             {audioDevices.map((dev, i) => {
@@ -2189,9 +2319,9 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
       {/* Header */}
       <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#fbbf24", textTransform: "uppercase" as const, marginBottom: 3 }}>Cart Wall</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Sound Effects & Stingers</div>
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{loaded}/{carts.length} slots loaded · Press key or click to fire · Drop audio to assign · Double-click to rename</div>
+          <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.16em", color: "#fbbf24", textTransform: "uppercase" as const, marginBottom: 3 }}>Cart Wall</div>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Inter', sans-serif" }}>Sound Effects & Stingers</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{loaded}/{carts.length} slots loaded · Press key or click to fire · Drop audio to assign · Double-click to rename</div>
         </div>
         <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
       </div>
@@ -2228,7 +2358,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
             {/* Hotkey */}
             <div style={{
               position: "absolute" as const, top: 8, right: 9,
-              fontSize: 10, fontWeight: 900, fontFamily: "'DM Mono', monospace",
+              fontSize: 12, fontWeight: 900, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
               color: cart.playing ? "rgba(0,0,0,0.6)" : cart.filePath ? cart.color : "var(--text-tertiary)",
               letterSpacing: "0.04em",
             }}>{cart.key}</div>
@@ -2259,7 +2389,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
             )}
 
             {!cart.filePath && !cart.playing && (
-              <div style={{ marginTop: 6, fontSize: 9, color: "var(--text-tertiary)" }}>Drop audio here</div>
+              <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-tertiary)" }}>Drop audio here</div>
             )}
 
             {/* Clear button */}
@@ -2322,8 +2452,8 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
       <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#34d399", textTransform: "uppercase" as const, marginBottom: 3 }}>Playlist Player</div>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.16em", color: "#34d399", textTransform: "uppercase" as const, marginBottom: 3 }}>Playlist Player</div>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Inter', sans-serif" }}>
               {tracks.length > 0 ? `${tracks.length} tracks · ${total} min` : "Build your playlist"}
             </div>
           </div>
@@ -2331,7 +2461,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
             {/* Deck selector */}
             <div style={{ display: "flex", gap: 3 }}>
               {["A","B","C"].map(s => (
-                <button key={s} onClick={() => setDeckSlot(s)} style={{ width: 28, height: 28, borderRadius: 0, border: "none", background: deckSlot === s ? "var(--accent-green)" : "var(--bg-tertiary)", color: deckSlot === s ? "#000" : "var(--text-secondary)", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{s}</button>
+                <button key={s} onClick={() => setDeckSlot(s)} style={{ width: 28, height: 28, borderRadius: 0, border: "none", background: deckSlot === s ? "var(--accent-green)" : "var(--bg-tertiary)", color: deckSlot === s ? "#000" : "var(--text-secondary)", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{s}</button>
               ))}
             </div>
             <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
@@ -2346,10 +2476,10 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
             style={{ width: 44, height: 32, borderRadius: 0, background: "#34d399", border: "none", color: "#000", cursor: "pointer", fontSize: 16, fontWeight: 700 }}
           >{playing ? "⏸" : "▶"}</button>
           <button onClick={next} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 14 }}>⏭</button>
-          <button onClick={() => setShuffle(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: shuffle ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${shuffle ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: shuffle ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>SHUFFLE</button>
-          <button onClick={() => setRepeat(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: repeat ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${repeat ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: repeat ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>REPEAT</button>
-          <button onClick={() => setTracks([])} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, marginLeft: "auto" }}>Clear All</button>
-          <button onClick={() => setShowLib(p => !p)} style={{ height: 32, padding: "0 14px", borderRadius: 0, background: showLib ? "var(--accent-cyan)" : "var(--bg-tertiary)", border: "none", color: showLib ? "#000" : "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>
+          <button onClick={() => setShuffle(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: shuffle ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${shuffle ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: shuffle ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>SHUFFLE</button>
+          <button onClick={() => setRepeat(p => !p)} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: repeat ? "rgba(52,211,153,0.1)" : "var(--bg-tertiary)", border: `1px solid ${repeat ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`, color: repeat ? "#34d399" : "var(--text-tertiary)", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>REPEAT</button>
+          <button onClick={() => setTracks([])} style={{ height: 32, padding: "0 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 13, marginLeft: "auto" }}>Clear All</button>
+          <button onClick={() => setShowLib(p => !p)} style={{ height: 32, padding: "0 14px", borderRadius: 0, background: showLib ? "var(--accent-cyan)" : "var(--bg-tertiary)", border: "none", color: showLib ? "#000" : "var(--text-secondary)", cursor: "pointer", fontSize: 13, fontWeight: 700 }}>
             {showLib ? "Hide Library" : "Browse Library"}
           </button>
         </div>
@@ -2372,14 +2502,14 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
               borderLeft: `2px solid ${i === currentIdx ? "#34d399" : "transparent"}`,
               cursor: "default", transition: "all 0.1s",
             }}>
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", width: 22, textAlign: "right" as const, flexShrink: 0 }}>
+              <span style={{ fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", width: 22, textAlign: "right" as const, flexShrink: 0 }}>
                 {i === currentIdx && playing ? "▶" : i + 1}
               </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: i === currentIdx ? 700 : 500, color: i === currentIdx ? "#34d399" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{t.title}</div>
-                <div style={{ fontSize: 11, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{t.artist}</div>
+                <div style={{ fontSize: 13, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{t.artist}</div>
               </div>
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{fmtDur(t.durationMs || 0)}</span>
+              <span style={{ fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", flexShrink: 0 }}>{fmtDur(t.durationMs || 0)}</span>
               <button onClick={() => removeTrack(t.pid)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, opacity: 0.4, padding: "0 2px", flexShrink: 0, lineHeight: 1 }}>×</button>
             </div>
           ))}
@@ -2398,8 +2528,8 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
                   onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{t.title}</div>
                   <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
-                    <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 }}>{t.artist}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0, marginLeft: 8 }}>{fmtDur(t.durationMs || 0)}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 }}>{t.artist}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", flexShrink: 0, marginLeft: 8 }}>{fmtDur(t.durationMs || 0)}</div>
                   </div>
                 </div>
               ))}
@@ -2477,16 +2607,38 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     });
     return () => ether.audio.offLevels(h);
   }, []);
-  // Console fader strip toggle
-  const [showConsole, setShowConsole] = useState<boolean>(() => {
-    try { return localStorage.getItem("ether_show_console") === "1"; } catch { return false; }
-  });
-  // Mic ON state for console fader mode (mirrors MicDeck's internal state)
+  // Mic ON state for console fader view
   const [consoleMicOn, setConsoleMicOn] = useState<Record<string, boolean>>({});
+  // Guest mic on/off state — keyed by slot ("E", "F", etc.). Mirrors mic state pattern.
+  const [consoleGuestOn, setConsoleGuestOn] = useState<Record<string, boolean>>({});
+  const [consoleGuestLevel, setConsoleGuestLevel] = useState<Record<string, number>>({});
+
+  // Listen for guest level updates pushed from the WebRTC layer (Studio.tsx)
+  useEffect(() => {
+    const onLevel = (e: Event) => {
+      const d = (e as CustomEvent).detail as { slot: string; level: number };
+      if (!d?.slot) return;
+      setConsoleGuestLevel(prev => ({ ...prev, [d.slot]: d.level }));
+    };
+    window.addEventListener("ether:guest-level", onLevel as EventListener);
+    return () => window.removeEventListener("ether:guest-level", onLevel as EventListener);
+  }, []);
 
   // Panel widths — resizable via drag divider
   const [queueWidth, setQueueWidth] = useState(320);
   const resizingRef = useRef(false);
+
+  // Queue slide-in/out collapse state — persisted so it stays how the user
+  // left it across launches. When collapsed, the queue shrinks to a thin
+  // 26px tab strip with a chevron handle to pop it back open. Same UX as
+  // the Studio Editor inspector panel.
+  const [queueCollapsed, setQueueCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_queue_collapsed") === "1"; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem("ether_queue_collapsed", queueCollapsed ? "1" : "0"); } catch {}
+  }, [queueCollapsed]);
+  const COLLAPSED_W = 26;
 
   const startResizeQueue = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -2640,19 +2792,79 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   };
 
   const showQueue = vp.queue !== false;
+  // Chevron points TOWARD where the queue would expand to. If queue is on
+  // the LEFT of decks, collapsed chevron points right (will expand right);
+  // if on the RIGHT, points left.
+  const queueOnLeft = panelOrder[0] === "queue";
+  const expandChevron = queueOnLeft ? "▶" : "◀";
+  const collapseChevron = queueOnLeft ? "◀" : "▶";
+
   const queuePanel = (
     <div
       key="queue"
       data-tour="queue"
       style={{
-        width: queueWidth, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+        width: queueCollapsed ? COLLAPSED_W : queueWidth,
+        flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
+        position: "relative",
         opacity: dragging === "queue" ? 0.55 : 1,
         outline: dropTarget === "queue" ? "2px solid #38bdf8" : "none",
         outlineOffset: 2, borderRadius: 0,
-        transition: "opacity 0.15s, outline 0.1s",
+        // Width transition animates the slide; opacity/outline already had transitions.
+        transition: "width 0.22s cubic-bezier(.2,.7,.2,1), opacity 0.15s, outline 0.1s",
+        background: queueCollapsed ? "var(--bg-secondary)" : undefined,
+        borderRight:  queueCollapsed && queueOnLeft  ? "1px solid var(--border-primary)" : undefined,
+        borderLeft:   queueCollapsed && !queueOnLeft ? "1px solid var(--border-primary)" : undefined,
       }}
     >
-      <UpNext queueLen={queueLen} onQueueChange={() => {}} />
+      {queueCollapsed ? (
+        // Collapsed — thin tab strip with chevron + vertical "QUEUE" label.
+        // Whole strip is clickable to expand.
+        <button
+          onClick={() => setQueueCollapsed(false)}
+          title="Expand queue"
+          style={{
+            width: "100%", height: "100%", display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 14,
+            background: "transparent", border: "none", color: "var(--text-secondary)",
+            cursor: "pointer", padding: 0, borderRadius: 0,
+            transition: "color 0.15s, background 0.15s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = "var(--accent-blue)"; e.currentTarget.style.background = "var(--bg-tertiary)"; }}
+          onMouseLeave={e => { e.currentTarget.style.color = "var(--text-secondary)"; e.currentTarget.style.background = "transparent"; }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 700 }}>{expandChevron}</span>
+          <span style={{
+            fontSize: 10, fontWeight: 800, letterSpacing: "0.18em",
+            writingMode: "vertical-rl", transform: "rotate(180deg)",
+          }}>
+            QUEUE · {queueLen}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700 }}>{expandChevron}</span>
+        </button>
+      ) : (
+        <>
+          {/* Collapse chevron — small, tucked at the inner edge so it doesn't
+              steal queue real estate. Hover-only to stay subtle. */}
+          <button
+            onClick={() => setQueueCollapsed(true)}
+            title="Collapse queue"
+            style={{
+              position: "absolute", top: 4, zIndex: 5,
+              [queueOnLeft ? "right" : "left"]: 4,
+              width: 18, height: 18, padding: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+              border: "1px solid var(--border-primary)", borderRadius: 0,
+              fontSize: 10, fontWeight: 700, cursor: "pointer",
+              opacity: 0.55, transition: "opacity 0.15s, color 0.15s",
+            } as React.CSSProperties}
+            onMouseEnter={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "var(--accent-blue)"; }}
+            onMouseLeave={e => { e.currentTarget.style.opacity = "0.55"; e.currentTarget.style.color = "var(--text-secondary)"; }}
+          >{collapseChevron}</button>
+          <UpNext queueLen={queueLen} onQueueChange={() => {}} />
+        </>
+      )}
     </div>
   );
 
@@ -2667,10 +2879,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         transition: "opacity 0.15s, outline 0.1s",
       }}
     >
-      {showConsole ? (
-        /* ── Console Fader Mode — replaces OnAirDeck with ConsoleStrip for music decks.
-           Non-music decks (mic, guest, cart, desk, video) render their normal components.
-           Uses the same activeDeckOrder from the deck configurator so all 6 slots work. ── */
+      {(
+        /* ── Console channel strips — the default deck view.
+           Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */
         <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0 }}>
           {activeDeckOrder.map((slot) => {
             const config = deckConfigs?.find(d => d.slot === slot);
@@ -2734,17 +2945,28 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               return <div key={slot} style={{ flex: 1, minWidth: 220 }}><InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} /></div>;
             }
             if (deckType === "guest") {
+              const guestIsOn  = consoleGuestOn[slot] ?? false;
+              const guestLevel = consoleGuestLevel[slot] ?? 0;
+              const guestVol   = consoleGuestLevel[`${slot}_vol`] ?? 1;
               return (
                 <div key={slot} style={{ flex: 1, minWidth: 0 }}>
                   <ConsoleStrip
                     label={config?.label || `GUEST ${slot}`}
                     color="#a78bfa"
-                    volume={1}
-                    level={0}
-                    isPlaying={false}
-                    isOn={true}
-                    onVolumeChange={() => {}}
-                    onToggleOn={() => {}}
+                    volume={guestVol}
+                    level={guestIsOn ? guestLevel : 0}
+                    isPlaying={guestIsOn && guestLevel > 0.02}
+                    isOn={guestIsOn}
+                    onVolumeChange={v => {
+                      setConsoleGuestLevel(prev => ({ ...prev, [`${slot}_vol`]: v }));
+                      window.dispatchEvent(new CustomEvent("ether:guest-volume", { detail: { slot, volume: v } }));
+                    }}
+                    onToggleOn={() => {
+                      const next = !guestIsOn;
+                      setConsoleGuestOn(prev => ({ ...prev, [slot]: next }));
+                      // Broadcast guest on/off — VideoStudio/Guest WebRTC layer can mute/unmute
+                      window.dispatchEvent(new CustomEvent("ether:guest-toggle", { detail: { slot, active: next } }));
+                    }}
                   />
                 </div>
               );
@@ -2777,129 +2999,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             onToggleCollapsed={toggleMasterCollapsed}
           />
         </div>
-      ) : (
-      <div ref={deckRowRef} style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, cursor: draggingDeck ? "grabbing" : "auto" }}>
-        {activeDeckOrder.map((slot, i) => {
-          const isDragging = draggingDeck === slot;
-          const isDropTarget = dropDeck === slot;
-          const hasRight = i < deckOrder.length - 1;
-          const fixedW = deckWidths[slot] ?? null;
-
-          // Get this slot's type early so we can decide layout
-          const slotConfig = deckConfigs?.find(d => d.slot === slot);
-          const slotType = slotConfig?.type || (slot === "mic" ? "mic" : "music");
-
-          // Video deck: spans 3× width of a standard deck
-          const isVideoDeck = slotType === "video";
-
-          // Compact strip when 4+ decks total — all slots get channel strip view
-          const compact = activeDeckOrder.length >= 5;
-
-          const divider = hasRight ? (
-            compact ? (
-              // Compact mode — thin visual gap only, no resize
-              <div style={{ width: 4, flexShrink: 0 }} />
-            ) : (
-              <div
-                onMouseDown={startResizeDeck(slot)}
-                style={{
-                  width: 8, flexShrink: 0, cursor: "col-resize",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}
-              >
-                <div style={{
-                  width: 3, height: 32, borderRadius: 0,
-                  background: "var(--border-secondary)",
-                  pointerEvents: "none",
-                  transition: "background 0.15s, height 0.15s",
-                }}
-                  onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = "var(--accent-blue)"; el.style.height = "50px"; }}
-                  onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = "var(--border-secondary)"; el.style.height = "32px"; }}
-                />
-              </div>
-            )
-          ) : null;
-
-          const config = deckConfigs?.find(d => d.slot === slot);
-          const deckType = config?.type || (slot === "mic" ? "mic" : "music");
-          const deckMap = { A: deckA, B: deckB, C: deckC };
-          const deck = deckMap[slot as "A"|"B"|"C"];
-          const isActive = deck?.status === "playing" || deck?.status === "paused";
-          const play    = () => engine.getDeck(slot)?.play();
-          const pause   = () => engine.getDeck(slot)?.pause();
-          const resume  = () => engine.getDeck(slot)?.resume();
-          const stop    = () => engine.getDeck(slot)?.stop();
-          const vol     = (v: number) => engine.getDeck(slot)?.setVolume(v);
-
-          const sizeStyle: React.CSSProperties = isVideoDeck
-            ? { flex: 3, minWidth: 320, aspectRatio: "16/9" }
-            : compact
-            ? deckType === "desk" ? { flex: 1, minWidth: 220 } : { flex: 1, minWidth: 75, maxWidth: 200 }
-            : fixedW !== null
-              ? { width: fixedW, flexShrink: 0 }
-              : slot === "mic"
-                ? { width: 185, flexShrink: 0 }
-                : deckType === "desk"
-                ? { flex: 1, minWidth: 220 }
-                : { flex: slot === "A" ? (isActive ? 3 : 1.5) : (slot === "B" || slot === "C") ? 0.75 : 1, transition: "flex 0.5s cubic-bezier(0.4,0,0.2,1)", minWidth: (slot === "B" || slot === "C") ? 120 : 180 };
-
-          return (
-            <React.Fragment key={slot}>
-              <div
-                data-deck-slot={slot}
-                data-tour={slot === "A" ? "deck-a" : undefined}
-                style={{
-                  ...sizeStyle, display: "flex", flexDirection: "column", minWidth: 0,
-                  opacity: isDragging ? 0.45 : 1,
-                  outline: isDropTarget ? "2px solid #38bdf8" : "none",
-                  outlineOffset: 2, borderRadius: 0,
-                }}
-              >
-                {deckType === "video" ? (
-                  <VideoStudio embedded />
-                ) : deckType === "cart" ? (
-                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "none", overflow: "hidden" }}>
-                    <BoutiqueCartWall deckSlot={slot} compact={compact} />
-                  </div>
-                ) : deckType === "desk" && compact ? (
-                  <InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} />
-                ) : compact ? (
-                  <ChannelStrip
-                    label={config?.label || slot}
-                    color={config?.color || (deckType === "mic" ? "#ef4444" : deckType === "guest" ? "#a78bfa" : "#34d399")}
-                    deck={deck}
-                    deckSlot={slot}
-                    isMic={deckType === "mic" || deckType === "guest"}
-                    deviceId={inputDevice || ""}
-                    setDeviceId={() => {}}
-                    audioDevices={[]}
-                    isLast={false}
-                    vertical
-                  />
-                ) : deckType === "mic" || slot === "mic" ? (
-                  <MicDeck inputDeviceId={inputDevice || undefined} onDragStart={startDeckDrag(slot as DeckSlot)} />
-                ) : deckType === "desk" ? (
-                  <InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} />
-                ) : !["A","B","C"].includes(slot) ? (
-                  <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "none", overflow: "hidden" }}>
-                    <PlaylistPlayer deckSlot={slot} color={config?.color || "#34d399"} />
-                  </div>
-                ) : (
-                  <OnAirDeck deck={deck} label={config?.label || "Deck " + slot} deckId={slot as "A"|"B"|"C"} onPlay={play} onPause={pause} onResume={resume} onStop={stop} onVolume={vol} onDragStart={startDeckDrag(slot as DeckSlot)} />
-                )}
-              </div>
-              {divider}
-            </React.Fragment>
-          );
-        })}
-        {/* Master Output — permanent right column, expands when cart wall is hidden, collapsible at narrow widths */}
-        <MasterOutput
-          masterLevel={masterLevel}
-          expanded={!showCarts && !masterCollapsed}
-          collapsed={masterCollapsed}
-          onToggleCollapsed={toggleMasterCollapsed}
-        />
-      </div>
       )}
 
       {/* Cart wall — shown when CARTS active or when a deck is configured as cart */}
@@ -2924,10 +3023,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         borderBottom: "1px solid var(--border-primary)",
       }}>
         {[
-          { label: "AUTO-X", active: autoXfade,   onClick: () => setAutoXfade(!autoXfade), color: "#6040c0" },
           { label: "XFADE",  active: xfadeActive, onClick: handleXfade,                    color: "#a78bfa" },
           { label: "DECKS",  active: false,       onClick: () => onConfigureDecks?.(),     color: "#38bdf8" },
-          { label: "FADERS", active: showConsole,  onClick: () => { const v = !showConsole; setShowConsole(v); try { localStorage.setItem("ether_show_console", v ? "1" : "0"); } catch {} }, color: "#22d3ee" },
           { label: "CARTS",  active: false,       onClick: onOpenCarts,                    color: "#f97316" },
         ].map(({ label, active, onClick, color }) => (
           <button key={label} onClick={onClick} style={{
@@ -2935,10 +3032,13 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             border: `1px solid ${active ? color : "var(--border-primary)"}`,
             background: active ? `${color}22` : "var(--bg-tertiary)",
             color:      active ? color : "var(--text-secondary)",
-            fontSize: 10, fontWeight: 800, letterSpacing: "0.08em",
+            fontSize: 12, fontWeight: 800, letterSpacing: "0.08em",
             cursor: "pointer", transition: "all 0.15s",
           }}>{label}</button>
         ))}
+
+        {/* NOW PLAYING — live, with slide/fade animation on track change */}
+        <NowPlayingPill />
       </div>
 
       {/* Main layout — drag-reorderable + resizable */}
@@ -2981,7 +3081,19 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 
 // ── Library Panel ────────────────────────────────────────────
 
-function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void }) {
+// ── Library column definitions ────────────────────────────────
+const ALL_LIB_COLS = ["title","artist","album","year","genre","bpm","format","duration","category","plays"] as const;
+type LibCol = typeof ALL_LIB_COLS[number];
+const LIB_COL_LABELS: Record<LibCol, string> = { title:"Title", artist:"Artist", album:"Album", year:"Year", genre:"Genre", bpm:"BPM", format:"Format", duration:"Duration", category:"Category", plays:"Plays" };
+
+interface EditMeta { id: number; title: string; artist: string; album: string; year: string; genre: string; bpm: string; }
+interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
+
+function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
+  const watermarkedPaths = React.useMemo<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("ether_watermarked_paths") || "[]")); }
+    catch { return new Set(); }
+  }, []);
   const [showImport, setShowImport]   = useState(false);
   const [showNexGen, setShowNexGen]   = useState(false);
   const [showSpotify, setShowSpotify] = useState(false);
@@ -2999,6 +3111,121 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const { isStation } = usePlan();
 
+  // ── Column visibility & widths ─────────────────────────────
+  const [visibleCols, setVisibleCols] = useState<Set<LibCol>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("ether_lib_cols") || '["title","artist","album","genre","bpm","format","duration","category"]')); }
+    catch { return new Set(["title","artist","album","genre","bpm","format","duration","category"] as LibCol[]); }
+  });
+  const [colWidths, setColWidths] = useState<Partial<Record<LibCol, number>>>({});
+  const [showColPicker, setShowColPicker] = useState(false);
+  const colPickerRef = useRef<HTMLDivElement>(null);
+  const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
+
+  const toggleCol = (col: LibCol) => {
+    setVisibleCols(prev => {
+      const n = new Set(prev);
+      n.has(col) ? n.delete(col) : n.add(col);
+      localStorage.setItem("ether_lib_cols", JSON.stringify([...n]));
+      return n;
+    });
+  };
+
+  // ── Right-click context menu ───────────────────────────────
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; song: SongRow } | null>(null);
+  const ctxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null);
+      if (colPickerRef.current && !colPickerRef.current.contains(e.target as Node)) setShowColPicker(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
+  // ── Edit Metadata modal ────────────────────────────────────
+  const [editMeta, setEditMeta] = useState<EditMeta | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [discogsResults, setDiscogsResults] = useState<DiscogsResult[]>([]);
+  const [discogsLoading, setDiscogsLoading] = useState(false);
+  const [discogsError, setDiscogsError] = useState("");
+
+  const openEditMeta = (s: SongRow) => {
+    setEditMeta({ id: s.id, title: s.title || "", artist: s.artist_name || "", album: s.album_title || "", year: "", genre: s.genre || "", bpm: s.bpm != null ? String(s.bpm) : "" });
+    setDiscogsResults([]); setDiscogsError("");
+    setCtxMenu(null);
+  };
+
+  const saveEditMeta = async () => {
+    if (!editMeta) return;
+    setEditSaving(true);
+    try {
+      await (window as any).ether.discogs.updateTrack({
+        id:     editMeta.id,
+        title:  editMeta.title  || undefined,
+        artist: editMeta.artist || undefined,
+        album:  editMeta.album  || undefined,
+        year:   editMeta.year   ? parseInt(editMeta.year, 10) : undefined,
+        genre:  editMeta.genre  || undefined,
+        bpm:    editMeta.bpm    ? parseFloat(editMeta.bpm) : undefined,
+      });
+      await load();
+      setEditMeta(null);
+    } catch (e) { console.error(e); }
+    setEditSaving(false);
+  };
+
+  const lookupDiscogs = async () => {
+    if (!editMeta) return;
+    setDiscogsLoading(true); setDiscogsError("");
+    const res = await (window as any).ether.discogs.search(editMeta.title, editMeta.artist);
+    setDiscogsLoading(false);
+    if (!res.ok) { setDiscogsError(res.error || "Lookup failed"); return; }
+    setDiscogsResults(res.results || []);
+  };
+
+  const applyDiscogsResult = (r: DiscogsResult) => {
+    if (!editMeta) return;
+    const parts = r.title.split(" - ");
+    const album = parts.length > 1 ? parts.slice(1).join(" - ") : r.album;
+    const artist = parts.length > 1 ? parts[0] : r.artist;
+    setEditMeta(prev => prev ? { ...prev, artist: artist || prev.artist, album: album || prev.album, year: r.year ? String(r.year) : prev.year, genre: r.genre || prev.genre } : prev);
+    setDiscogsResults([]);
+  };
+
+  // ── Inline cell editing ────────────────────────────────────
+  const [inlineEdit, setInlineEdit] = useState<{ id: number; col: LibCol; value: string } | null>(null);
+
+  const commitInline = async () => {
+    if (!inlineEdit) return;
+    const { id, col, value } = inlineEdit;
+    setInlineEdit(null);
+    const fieldMap: Partial<Record<LibCol, string>> = { title: "title", artist: "artist", album: "album", year: "year", genre: "genre", bpm: "bpm" };
+    if (!fieldMap[col]) return;
+    const payload: any = { id };
+    if (col === "year") payload.year = parseInt(value, 10) || undefined;
+    else if (col === "bpm") payload.bpm = parseFloat(value) || undefined;
+    else (payload as any)[col] = value;
+    await (window as any).ether.discogs.updateTrack(payload);
+    await load();
+  };
+
+  // ── Column resize drag ─────────────────────────────────────
+  const startColResize = (col: LibCol, e: React.MouseEvent) => {
+    e.preventDefault();
+    const thEl = (e.target as HTMLElement).closest("th") as HTMLElement;
+    dragColRef.current = { col, startX: e.clientX, startW: thEl?.offsetWidth || 120 };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragColRef.current) return;
+      const delta = ev.clientX - dragColRef.current.startX;
+      const newW = Math.max(60, dragColRef.current.startW + delta);
+      setColWidths(prev => ({ ...prev, [dragColRef.current!.col]: newW }));
+    };
+    const onUp = () => { dragColRef.current = null; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     try {
@@ -3013,7 +3240,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
 
   const load = async () => {
     try {
-      const rows = await query<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id ORDER BY s.title LIMIT 500");
+      const rows = await query<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id ORDER BY s.title LIMIT 500");
       setSongs(rows);
       const r = await queryOne<{ c: number }>("SELECT COUNT(*) as c FROM songs");
       setCount(r ? r.c : 0);
@@ -3067,8 +3294,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   });
 
   const S = {
-    btn: (bg: string, color = "#fff") => ({ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600 as any, background: bg, color, border: "none", cursor: "pointer" as any }),
-    btnOutline: { padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600 as any, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" as any, border: "1px solid var(--border-primary)", cursor: "pointer" as any },
+    btn: (bg: string, color = "#fff") => ({ padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600 as any, background: bg, color, border: "none", cursor: "pointer" as any }),
+    btnOutline: { padding: "6px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600 as any, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" as any, border: "1px solid var(--border-primary)", cursor: "pointer" as any },
   };
 
   return (
@@ -3079,7 +3306,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Song Library</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Inter', sans-serif" }}>Song Library</h1>
           <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
             {count} tracks{(search || categoryFilter) ? ` · ${filtered.length} shown` : ""}
             {categoryFilter ? ` in ${categoryFilter}` : ""}
@@ -3110,6 +3337,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
 
       {/* Filters row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input placeholder="Search title or artist…" value={search} onChange={e => setSearch(e.target.value)}
+          style={{ flex: 1, maxWidth: 280, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
         {/* Category filter */}
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
@@ -3144,6 +3373,88 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
       {showImport && <ImportDialog onDone={() => { setShowImport(false); load(); }} />}
       {showNexGen && <NexGenImport onDone={() => { setShowNexGen(false); load(); }} />}
 
+      {/* Context menu */}
+      {ctxMenu && (
+        <div ref={ctxRef} style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", minWidth: 180, borderRadius: 0 }}>
+          {[
+            { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
+            { label: "Load to Deck A", action: () => { onLoadA(ctxMenu.song); setCtxMenu(null); } },
+            { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
+            { label: "Add to Queue",   action: () => { onQueue(ctxMenu.song); setCtxMenu(null); } },
+            { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
+            { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
+            null,
+            { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [ctxMenu.song.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [ctxMenu.song.id]); load(); } }, danger: true },
+          ].map((item, idx) => item === null
+            ? <div key={idx} style={{ height: 1, background: "var(--border-primary)", margin: "2px 0" }} />
+            : <div key={item.label} onMouseDown={() => item.action()} style={{ padding: "9px 16px", fontSize: 13, cursor: "pointer", color: (item as any).danger ? "var(--accent-red)" : "var(--text-primary)", userSelect: "none" as any }}
+                onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                {item.label}
+              </div>
+          )}
+        </div>
+      )}
+
+      {/* Edit Metadata modal */}
+      {editMeta && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 9998, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "var(--bg-primary)", border: "1px solid var(--border-primary)", borderRadius: 0, width: 580, maxWidth: "92vw", boxShadow: "0 16px 48px rgba(0,0,0,0.5)" }}>
+            <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>Edit Metadata</span>
+              <button onClick={() => setEditMeta(null)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18, lineHeight: 1, padding: 0 }}>✕</button>
+            </div>
+            <div style={{ padding: "20px 20px 0" }}>
+              {[
+                { label: "Title",  key: "title",  type: "text" },
+                { label: "Artist", key: "artist", type: "text" },
+                { label: "Album",  key: "album",  type: "text" },
+                { label: "Year",   key: "year",   type: "text" },
+                { label: "Genre",  key: "genre",  type: "text" },
+                { label: "BPM",    key: "bpm",    type: "text" },
+              ].map(({ label, key }) => (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                  <span style={{ width: 56, fontSize: 12, fontWeight: 600, color: "var(--text-tertiary)", textAlign: "right" as any, flexShrink: 0 }}>{label}</span>
+                  <input value={(editMeta as any)[key]} onChange={e => setEditMeta(prev => prev ? { ...prev, [key]: e.target.value } : prev)}
+                    onKeyDown={e => { if (e.key === "Enter") saveEditMeta(); if (e.key === "Escape") setEditMeta(null); }}
+                    style={{ flex: 1, padding: "7px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                </div>
+              ))}
+            </div>
+
+            {/* Discogs lookup */}
+            <div style={{ padding: "8px 20px" }}>
+              <button onClick={lookupDiscogs} disabled={discogsLoading} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.12)", color: "var(--accent-blue)", border: "1px solid rgba(56,189,248,0.3)", cursor: "pointer" }}>
+                {discogsLoading ? "Searching…" : "🔍 Lookup on Discogs"}
+              </button>
+              {discogsError && <span style={{ marginLeft: 10, fontSize: 12, color: "var(--accent-red)" }}>{discogsError}</span>}
+            </div>
+            {discogsResults.length > 0 && (
+              <div style={{ margin: "0 20px 12px", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", maxHeight: 220, overflowY: "auto" as any }}>
+                {discogsResults.map(r => (
+                  <div key={r.id} onClick={() => applyDiscogsResult(r)} style={{ display: "flex", gap: 10, padding: "8px 12px", cursor: "pointer", alignItems: "center", borderBottom: "1px solid var(--border-primary)" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    {r.thumb && <img src={r.thumb} style={{ width: 36, height: 36, objectFit: "cover", flexShrink: 0, borderRadius: 0 }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{r.title}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{[r.year, r.genre, r.format].filter(Boolean).join(" · ")}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ padding: "12px 20px 16px", display: "flex", gap: 8, justifyContent: "flex-end", borderTop: "1px solid var(--border-primary)" }}>
+              <button onClick={() => setEditMeta(null)} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+              <button onClick={saveEditMeta} disabled={editSaving} style={{ padding: "8px 22px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+                {editSaving ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       {loading ? (
         <div style={{ fontSize: 13, color: "var(--text-tertiary)", padding: 24 }}>Loading...</div>
@@ -3155,47 +3466,112 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", position: "relative" as any }}>
+          {showColPicker && (
+            <div ref={colPickerRef} style={{ position: "absolute", right: 8, top: 42, zIndex: 999, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", padding: "8px 0", minWidth: 160 }}>
+              {ALL_LIB_COLS.map(col => (
+                <label key={col} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, color: "var(--text-primary)", userSelect: "none" as any }}>
+                  <input type="checkbox" checked={visibleCols.has(col)} onChange={() => toggleCol(col)} style={{ cursor: "pointer" }} />
+                  {LIB_COL_LABELS[col]}
+                </label>
+              ))}
+            </div>
+          )}
+          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
+            <colgroup>
+              <col style={{ width: 32 }} />
+              <col style={{ width: 36 }} />
+              {ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(col => (
+                <col key={col} style={{ width: colWidths[col] ? colWidths[col] + "px" : undefined }} />
+              ))}
+              <col style={{ width: 140 }} />
+            </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
                 <th style={{ padding: "10px 12px", width: 32 }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
-                <th style={{ padding: "10px 6px", width: 36, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any }}>#</th>
-                <th style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any }}>Title</th>
-                <th style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any }}>Artist</th>
-                <th style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, width: 80 }}>Category</th>
-                <th style={{ padding: "10px 12px", fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, width: 56 }}>Format</th>
-                <th style={{ padding: "10px 12px", width: 120 }}></th>
+                <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any }}>#</th>
+                {ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(col => (
+                  <th key={col} style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "relative" as any, userSelect: "none" as any, width: colWidths[col] || undefined }}>
+                    {LIB_COL_LABELS[col]}
+                    <span onMouseDown={e => startColResize(col, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
+                  </th>
+                ))}
+                <th style={{ padding: "10px 12px", width: 140, textAlign: "right" as any, position: "relative" as any }}>
+                  <button onClick={() => setShowColPicker(p => !p)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
+                </th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((s, i) => (
                 <tr key={s.id}
                   style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+                  onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
                   onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                 >
                   <td style={{ padding: "10px 12px" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
-                  <td style={{ padding: "10px 6px", fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</td>
-                  <td style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title}</td>
-                  <td style={{ padding: "10px 12px", color: "var(--text-secondary)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.artist_name || "—"}</td>
-                  <td style={{ padding: "10px 12px" }}>
-                    <select value={s.category_code || ""} onChange={async (e) => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); load(); }}
-                      style={{ padding: "3px 6px", borderRadius: 0, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
-                      <option value="">—</option>
-                      {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
-                    </select>
-                  </td>
-                  <td style={{ padding: "10px 12px", fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", textTransform: "uppercase" as any }}>{s.file_path ? fmtExt(s.file_path) : "—"}</td>
+                  <td style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{i + 1}</td>
+                  {ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(col => {
+                    const isInline = inlineEdit?.id === s.id && inlineEdit?.col === col;
+                    const editableCols: LibCol[] = ["title","artist","album","year","genre","bpm"];
+                    const isEditable = editableCols.includes(col);
+                    const cellVal = (() => {
+                      switch (col) {
+                        case "title":    return s.title;
+                        case "artist":   return s.artist_name || null;
+                        case "album":    return s.album_title || null;
+                        case "year":     return s.album_year ? String(s.album_year) : null;
+                        case "genre":    return s.genre || null;
+                        case "bpm":      return s.bpm != null ? String(Math.round(s.bpm)) : null;
+                        case "format":   return s.file_path ? fmtExt(s.file_path) : null;
+                        case "duration": return s.duration_ms ? `${Math.floor(s.duration_ms/60000)}:${String(Math.floor((s.duration_ms%60000)/1000)).padStart(2,"0")}` : null;
+                        case "category": return null; // rendered specially
+                        case "plays":    return s.play_count != null ? String(s.play_count) : "0";
+                        default: return null;
+                      }
+                    })();
+
+                    if (col === "category") return (
+                      <td key={col} style={{ padding: "8px 12px" }}>
+                        <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); load(); }}
+                          style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
+                          <option value="">—</option>
+                          {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
+                        </select>
+                      </td>
+                    );
+
+                    if (col === "title") return (
+                      <td key={col} style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}
+                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col, value: cellVal || "" })}>
+                        {s.file_path && watermarkedPaths.has(s.file_path) && (
+                          <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
+                        )}
+                        {isInline
+                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          : cellVal || "—"}
+                      </td>
+                    );
+
+                    return (
+                      <td key={col} style={{ padding: "10px 12px", color: col === "format" || col === "bpm" || col === "duration" || col === "year" ? "var(--text-tertiary)" : "var(--text-secondary)", fontSize: col === "format" ? 12 : 13, fontFamily: col === "format" || col === "bpm" || col === "duration" ? "'JetBrains Mono', ui-monospace, monospace" : undefined, textTransform: col === "format" ? "uppercase" as any : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: isEditable ? "text" : undefined }}
+                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col, value: cellVal || "" })}>
+                        {isInline
+                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          : (cellVal || "—")}
+                      </td>
+                    );
+                  })}
                   <td style={{ padding: "10px 12px", textAlign: "right" as any }}>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
-                      <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
-                      <button onClick={() => onQueue(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
-                      <button onClick={() => onEdit(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
+                      <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
+                      <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
+                      <button onClick={() => onQueue(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
+                      {s.file_path && <button onClick={() => onSendToStudio(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "none", cursor: "pointer" }} title="Send to Studio">Studio</button>}
+                      <button onClick={() => onEdit(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
                       </button>
-                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [s.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [s.id]); load(); } }} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [s.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [s.id]); load(); } }} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
                   </td>
                 </tr>
@@ -3208,13 +3584,154 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit }: { onLoadA: (s: Song
   );
 }
 
-function ClockDisplay({ size = "full" }: { size?: "full" | "lg" | "md" | "sm" | "hidden" }) {
+// ── Now Playing Pill — sits in the toolbar right of CARTS ──
+// Shows active track info with a slide+fade animation when the song changes.
+// Subscribes to the engine for deck state updates.
+function NowPlayingPill() {
+  const [track, setTrack] = useState<{ title: string; artist: string; positionSec: number; durationSec: number } | null>(null);
+
+  useEffect(() => {
+    const pull = () => {
+      const decks = (["A", "B", "C"] as const).map(id => engine.getDeck(id)?.getState?.());
+      const playing = decks.find(d => d?.status === "playing") ?? decks.find(d => d?.status === "paused") ?? null;
+      setTrack(playing && playing.title ? {
+        title: playing.title,
+        artist: playing.artist || "",
+        positionSec: playing.positionSec ?? 0,
+        durationSec: playing.durationSec ?? 0,
+      } : null);
+    };
+    pull();
+    const unsub = engine.on(() => pull());
+    // Update position every second for the progress bar
+    const tick = setInterval(pull, 1000);
+    return () => { unsub(); clearInterval(tick); };
+  }, []);
+
+  // Key forces remount on title change → triggers enter animation
+  const trackKey = track?.title ?? "__empty__";
+  const pct = track && track.durationSec > 0 ? Math.max(0, Math.min(1, track.positionSec / track.durationSec)) : 0;
+  const remaining = track && track.durationSec > 0 ? Math.max(0, track.durationSec - track.positionSec) : 0;
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+  const isEndingSoon = remaining > 0 && remaining < 15;
+
+  return (
+    <>
+      {/* Scoped keyframes — slides in from below with a quick fade + a subtle scale */}
+      <style>{`
+        @keyframes np-enter {
+          0%   { transform: translateY(100%); opacity: 0; }
+          60%  { transform: translateY(-4%);  opacity: 1; }
+          100% { transform: translateY(0);    opacity: 1; }
+        }
+        @keyframes np-pulse-live {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(34,211,238,0.0); }
+          50%      { box-shadow: 0 0 0 2px rgba(34,211,238,0.18); }
+        }
+      `}</style>
+      <div style={{
+        flex: 1, minWidth: 0, maxWidth: 720, marginLeft: 8,
+        display: "flex", alignItems: "center", gap: 10,
+        height: 34, padding: "0 14px",
+        background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
+        border: "1px solid var(--border-primary)",
+        borderRadius: 0,
+        position: "relative", overflow: "hidden",
+        animation: isEndingSoon ? "np-pulse-live 1.6s ease-in-out infinite" : "none",
+      }}>
+        {/* Status dot (pulsing when track is playing) */}
+        <div style={{
+          width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+          background: track ? "#22d3ee" : "#3a3a4a",
+          boxShadow: track ? "0 0 6px rgba(34,211,238,0.7)" : "none",
+          animation: track ? "on-air-breathe 2s ease-in-out infinite" : "none",
+        }} />
+
+        {/* Label */}
+        <span style={{
+          fontSize: 10, fontWeight: 800, letterSpacing: "0.14em",
+          color: "var(--text-tertiary)", textTransform: "uppercase" as const,
+          flexShrink: 0,
+        }}>ON AIR</span>
+
+        {/* Animated content wrapper — overflow hidden for the slide effect */}
+        <div style={{
+          flex: 1, minWidth: 0, position: "relative", overflow: "hidden",
+          height: "100%", display: "flex", alignItems: "center",
+        }}>
+          <div
+            key={trackKey}
+            style={{
+              display: "flex", alignItems: "center", gap: 8, minWidth: 0, width: "100%",
+              animation: "np-enter 0.45s cubic-bezier(0.22,1,0.36,1)",
+            }}
+          >
+            {track ? (
+              <>
+                <span style={{
+                  fontSize: 13, fontWeight: 700, letterSpacing: "-0.01em",
+                  color: "var(--text-primary)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                  flexShrink: 1,
+                }}>{track.title}</span>
+                {track.artist && (
+                  <>
+                    <span style={{ color: "var(--text-tertiary)", fontSize: 12, flexShrink: 0 }}>·</span>
+                    <span style={{
+                      fontSize: 12, color: "var(--text-secondary)",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                      flexShrink: 2, minWidth: 0,
+                    }}>{track.artist}</span>
+                  </>
+                )}
+              </>
+            ) : (
+              <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No track playing</span>
+            )}
+          </div>
+        </div>
+
+        {/* Time remaining — turns amber under 15s */}
+        {track && (
+          <span style={{
+            fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+            color: isEndingSoon ? "#fbbf24" : "var(--text-tertiary)",
+            fontWeight: isEndingSoon ? 700 : 500,
+            flexShrink: 0, minWidth: 46, textAlign: "right" as const,
+            transition: "color 0.3s",
+          }}>-{fmt(remaining)}</span>
+        )}
+
+        {/* Progress bar at bottom edge */}
+        {track && (
+          <div style={{
+            position: "absolute", bottom: 0, left: 0, right: 0,
+            height: 2, background: "rgba(0,0,0,0.2)",
+            pointerEvents: "none",
+          }}>
+            <div style={{
+              height: "100%", width: `${pct * 100}%`,
+              background: isEndingSoon ? "#fbbf24" : "#22d3ee",
+              boxShadow: isEndingSoon ? "0 0 4px rgba(251,191,36,0.6)" : "0 0 4px rgba(34,211,238,0.5)",
+              transition: "width 1s linear, background 0.3s",
+            }} />
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function ClockDisplay({ size = "full" }: { size?: "full" | "lg" | "md" | "sm" | "xs" | "hidden" }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  // At "sm", drop seconds and date to avoid clipping at narrow widths.
+  // At "sm"/"xs", drop seconds and date to avoid clipping at narrow widths.
   const showSeconds = size === "full" || size === "lg" || size === "md";
   const showDate = size === "full" || size === "lg";
   const time = now.toLocaleTimeString([], showSeconds
@@ -3225,11 +3742,12 @@ function ClockDisplay({ size = "full" }: { size?: "full" | "lg" | "md" | "sm" | 
     size === "full" ? 52 :
     size === "lg"   ? 40 :
     size === "md"   ? 32 :
-                      24;
+    size === "sm"   ? 24 :
+                      18; // xs
   const dateSize = size === "full" ? 13 : 11;
   return (
     <div style={{ textAlign: "center", lineHeight: 1 }}>
-      <div style={{ fontFamily: "'DM Mono', monospace", fontSize, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums" }}>{time}</div>
+      <div style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{time}</div>
       {showDate && <div style={{ fontFamily: "'Inter', sans-serif", fontSize: dateSize, color: "var(--text-secondary)", marginTop: 5, letterSpacing: "0.02em" }}>{day}</div>}
     </div>
   );

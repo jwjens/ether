@@ -3,6 +3,7 @@
 mod audio;
 mod commands;
 mod audio_engine;
+mod audio_export;
 mod audio_routing;
 mod lufs;
 mod dashboard;
@@ -87,6 +88,10 @@ fn main() {
             audio_routing::list_audio_output_devices,
             audio_routing::get_deck_routing,
             audio_routing::set_deck_output,
+            audio_export::analyze_loudness,
+            audio_export::trim_silence_file,
+            audio_export::export_episode,
+            audio_export::verify_watermark,
         ])
         .setup(move |app| {
             dashboard::start_dashboard_server(audio_state.clone(), now_playing.clone(), 4242);

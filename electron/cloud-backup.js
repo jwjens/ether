@@ -20,9 +20,25 @@ let db = null;
 let backupInterval = null;
 let config = { endpoint: "", method: "PUT", intervalHours: 6, enabled: false, lastBackup: 0, lastStatus: "never" };
 
+// R2 credentials — stored in station_config_kv, never hardcoded
+let r2Config = { accountId: "", endpoint: "", bucket: "ether-backups", accessKeyId: "", secretAccessKey: "", enabled: true, intervalHours: 6, lastBackup: 0, lastStatus: "never" };
+
+function r2Endpoint() {
+  // Prefer explicit endpoint; fall back to standard R2 URL derived from accountId.
+  if (r2Config.endpoint) return r2Config.endpoint;
+  if (r2Config.accountId) return `https://${r2Config.accountId}.r2.cloudflarestorage.com`;
+  return "";
+}
+
+function r2Ready() {
+  return !!(r2Endpoint() && r2Config.bucket && r2Config.accessKeyId && r2Config.secretAccessKey);
+}
+
 function installCloudBackup(ipcMain, database, opts = {}) {
   db = database;
+  console.log("[CLOUD-BACKUP] db type:", typeof db, !!db);
   const dbPath = opts.dbPath || "";
+  _dbPath = dbPath;
 
   // Ensure config table entry
   try {
@@ -30,9 +46,90 @@ function installCloudBackup(ipcMain, database, opts = {}) {
     if (existing) config = { ...config, ...JSON.parse(existing.value) };
   } catch {}
 
+  // Load R2 credentials from DB — check both key names so old saves are found
+  try {
+    const r2Row = db.prepare("SELECT value FROM station_config_kv WHERE key = 'cloud_backup_r2'").get()
+               || db.prepare("SELECT value FROM station_config_kv WHERE key = 'r2_config'").get();
+    if (r2Row) {
+      const saved = JSON.parse(r2Row.value);
+      Object.assign(r2Config, saved);
+      console.log("[CLOUD-BACKUP] loaded R2 config from DB — bucket:", r2Config.bucket, "accountId:", r2Config.accountId ? r2Config.accountId.slice(0,8)+"…" : "(empty)", "enabled:", r2Config.enabled, "ready:", r2Ready());
+    } else {
+      console.log("[CLOUD-BACKUP] no saved R2 config found in station_config_kv — using defaults");
+    }
+  } catch (e) {
+    console.error("[CLOUD-BACKUP] failed to load R2 config from DB:", e.message);
+  }
+
   // ── IPC handlers ──────────────────────────────────────────────
 
   ipcMain.handle("cloud-backup:get-config", () => config);
+
+  // R2 config — secret is never sent back to the renderer in full
+  ipcMain.handle("cloud-backup:get-r2-config", () => ({
+    accountId:    r2Config.accountId,
+    endpoint:     r2Config.endpoint,
+    bucket:       r2Config.bucket,
+    accessKeyId:  r2Config.accessKeyId,
+    hasSecret:    !!r2Config.secretAccessKey,
+    secretLast4:  r2Config.secretAccessKey ? r2Config.secretAccessKey.slice(-4) : "",
+    enabled:      r2Config.enabled,
+    intervalHours: r2Config.intervalHours,
+    lastBackup:   r2Config.lastBackup || 0,
+    lastStatus:   r2Config.lastStatus || "never",
+  }));
+
+  ipcMain.handle("cloud-backup:set-r2-config", (_evt, incoming) => {
+    console.log("[CLOUD-BACKUP] set-r2-config called — incoming:", {
+      accountId:    incoming.accountId     ? incoming.accountId.slice(0,8)+"…" : "(empty)",
+      bucket:       incoming.bucket        || "(empty)",
+      accessKeyId:  incoming.accessKeyId   ? incoming.accessKeyId.slice(0,8)+"…" : "(empty)",
+      hasSecret:    !!incoming.secretAccessKey,
+      enabled:      incoming.enabled,
+      intervalHours: incoming.intervalHours,
+    });
+    console.log("[CLOUD-BACKUP] set-r2-config called with:", JSON.stringify({...incoming, secretAccessKey: incoming.secretAccessKey ? "***" : "empty"}));
+    r2Config = {
+      accountId:     incoming.accountId     ?? r2Config.accountId,
+      endpoint:      incoming.endpoint      ?? r2Config.endpoint,
+      bucket:        incoming.bucket        ?? r2Config.bucket,
+      accessKeyId:   incoming.accessKeyId   ?? r2Config.accessKeyId,
+      // Only overwrite secret if a new non-empty value was passed
+      secretAccessKey: incoming.secretAccessKey
+        ? incoming.secretAccessKey
+        : r2Config.secretAccessKey,
+      enabled:       incoming.enabled       ?? r2Config.enabled,
+      intervalHours: incoming.intervalHours ?? r2Config.intervalHours,
+      lastBackup:    r2Config.lastBackup,
+      lastStatus:    r2Config.lastStatus,
+    };
+    saveR2Config();
+    console.log("[CLOUD-BACKUP] set-r2-config done — r2Ready():", r2Ready(), "bucket:", r2Config.bucket);
+    if (r2Config.enabled && r2Ready()) startAutoBackup(dbPath);
+    else if (!r2Config.enabled && !config.enabled) stopAutoBackup();
+    return { ok: true, ready: r2Ready() };
+  });
+
+  ipcMain.handle("cloud-backup:test-r2", async () => {
+    if (!r2Ready()) return { ok: false, error: "R2 credentials incomplete — fill in Account ID, Access Key ID, Secret, and Bucket." };
+    try {
+      const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+      const client = new S3Client({
+        region: "auto",
+        endpoint: r2Endpoint(),
+        credentials: { accessKeyId: r2Config.accessKeyId, secretAccessKey: r2Config.secretAccessKey },
+      });
+      await client.send(new PutObjectCommand({
+        Bucket: r2Config.bucket,
+        Key: "ether-connection-test.txt",
+        Body: Buffer.from(`Ether connection test ${new Date().toISOString()}`),
+        ContentType: "text/plain",
+      }));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 
   ipcMain.handle("cloud-backup:set-config", (_evt, newConfig) => {
     config = { ...config, ...newConfig };
@@ -113,8 +210,15 @@ async function runBackup(dbPath) {
 
     const durationMs = Date.now() - startTime;
 
-    // Upload or save
-    if (config.endpoint) {
+    // Upload — R2 takes priority when credentials are present
+    if (r2Ready()) {
+      const key = `ether-backup-${Date.now()}-${checksum}.bak`;
+      await uploadToR2(package_, key);
+      r2Config.lastBackup = Math.floor(Date.now() / 1000);
+      r2Config.lastStatus = "success";
+      saveR2Config();
+      console.log(`[CLOUD-BACKUP] R2 upload: ${r2Config.bucket}/${key}`);
+    } else if (config.endpoint) {
       if (config.endpoint.startsWith("http")) {
         await uploadToHttp(config.endpoint, package_, config.method);
       } else {
@@ -123,6 +227,8 @@ async function runBackup(dbPath) {
         fs.mkdirSync(config.endpoint, { recursive: true });
         fs.writeFileSync(destPath, package_);
       }
+    } else {
+      throw new Error("No upload destination configured (set R2 credentials or an HTTP endpoint)");
     }
 
     // Log success
@@ -146,6 +252,39 @@ async function runBackup(dbPath) {
     } catch {}
     console.error("[CLOUD-BACKUP] Failed:", e.message);
     return { ok: false, error: e.message };
+  }
+}
+
+async function uploadToR2(data, key) {
+  console.log("[CLOUD-BACKUP:uploadToR2] starting upload");
+  console.log("[CLOUD-BACKUP:uploadToR2] endpoint  =", r2Endpoint());
+  console.log("[CLOUD-BACKUP:uploadToR2] bucket    =", r2Config.bucket);
+  console.log("[CLOUD-BACKUP:uploadToR2] key       =", key);
+  console.log("[CLOUD-BACKUP:uploadToR2] size      =", data.length, "bytes");
+  const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+  const client = new S3Client({
+    region: "auto",
+    endpoint: r2Endpoint(),
+    credentials: {
+      accessKeyId:     r2Config.accessKeyId,
+      secretAccessKey: r2Config.secretAccessKey,
+    },
+  });
+  try {
+    await client.send(new PutObjectCommand({
+      Bucket:      r2Config.bucket,
+      Key:         key,
+      Body:        data,
+      ContentType: "application/octet-stream",
+    }));
+    console.log("[CLOUD-BACKUP:uploadToR2] PutObject succeeded");
+  } catch (e) {
+    console.error("[CLOUD-BACKUP:uploadToR2] PutObject FAILED");
+    console.error("[CLOUD-BACKUP:uploadToR2] error.name    =", e.name);
+    console.error("[CLOUD-BACKUP:uploadToR2] error.message =", e.message);
+    console.error("[CLOUD-BACKUP:uploadToR2] error.code    =", e.Code || e.code || "(none)");
+    console.error("[CLOUD-BACKUP:uploadToR2] HTTP status   =", e.$metadata?.httpStatusCode ?? "(unknown)");
+    throw e;
   }
 }
 
@@ -186,17 +325,59 @@ function saveConfig() {
   } catch {}
 }
 
+function saveR2Config() {
+  if (!db) {
+    console.warn("[CLOUD-BACKUP] db not ready, skipping save — will retry in 2s");
+    setTimeout(() => saveR2Config(), 2000);
+    return;
+  }
+  try {
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_r2', ?)").run(JSON.stringify(r2Config));
+    console.log("[CLOUD-BACKUP] saveR2Config — wrote to DB OK, bucket:", r2Config.bucket);
+  } catch (e) {
+    console.error("[CLOUD-BACKUP] saveR2Config FAILED to write DB:", e.message);
+  }
+}
+
 // ── Auto-backup ──────────────────────────────────────────────
 
 function startAutoBackup(dbPath) {
   stopAutoBackup();
-  const intervalMs = (config.intervalHours || 6) * 3600 * 1000;
-  console.log(`[CLOUD-BACKUP] Auto-backup every ${config.intervalHours}h`);
-  backupInterval = setInterval(() => runBackup(dbPath), intervalMs);
+  const hours = r2Ready() ? (r2Config.intervalHours || 6) : (config.intervalHours || 6);
+  const backend = r2Ready() ? "R2" : "HTTP";
+  console.log(`[CLOUD-BACKUP] Auto-backup every ${hours}h via ${backend}`);
+  backupInterval = setInterval(() => runBackup(dbPath), hours * 3600 * 1000);
 }
 
 function stopAutoBackup() {
   if (backupInterval) { clearInterval(backupInterval); backupInterval = null; }
 }
 
-module.exports = { installCloudBackup };
+// Called by main.js after a successful local backup_db copy.
+// Fires a full R2 upload if R2 is enabled and credentials are complete.
+// Returns a result object; never throws — caller can fire-and-forget.
+async function triggerUpload() {
+  console.log("[CLOUD-BACKUP:triggerUpload] called");
+  console.log("[CLOUD-BACKUP:triggerUpload] r2Config.enabled =", r2Config.enabled);
+  console.log("[CLOUD-BACKUP:triggerUpload] r2Ready()        =", r2Ready());
+  console.log("[CLOUD-BACKUP:triggerUpload] r2Endpoint()     =", r2Endpoint() || "(empty)");
+  console.log("[CLOUD-BACKUP:triggerUpload] bucket           =", r2Config.bucket || "(empty)");
+  console.log("[CLOUD-BACKUP:triggerUpload] accessKeyId      =", r2Config.accessKeyId ? r2Config.accessKeyId.slice(0, 8) + "…" : "(empty)");
+  console.log("[CLOUD-BACKUP:triggerUpload] secretAccessKey  =", r2Config.secretAccessKey ? "set (last4=" + r2Config.secretAccessKey.slice(-4) + ")" : "(empty)");
+  console.log("[CLOUD-BACKUP:triggerUpload] _dbPath          =", _dbPath || "(empty)");
+  // Proceed if credentials are present even if enabled flag hasn't persisted yet
+  const credentialsReady = r2Ready() && _dbPath;
+  if (!r2Config.enabled && !credentialsReady) {
+    console.log("[CLOUD-BACKUP:triggerUpload] skipping — not enabled and no credentials");
+    return { skipped: true };
+  }
+  if (!credentialsReady) {
+    console.log("[CLOUD-BACKUP:triggerUpload] skipping — r2Ready() is false (check credentials above)");
+    return { skipped: true };
+  }
+  return runBackup(_dbPath);
+}
+
+let _dbPath = "";
+
+module.exports = { installCloudBackup, triggerUpload };

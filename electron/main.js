@@ -2,6 +2,13 @@
 // Ether Electron main process
 // Replaces src-tauri entirely — Chromium rendering, Node.js backend, NAPI audio
 
+// ── Load .env before anything else so process.env is populated for all modules ──
+try { require("dotenv").config(); } catch (e) { /* dotenv optional in packaged build */ }
+
+// Suppress dev-mode security warnings (webSecurity/CSP/eval needed for Vite HMR;
+// all flags are stripped in the packaged build automatically).
+process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
+
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage } = require("electron");
 
 // ── Sentry (main process) ─────────────────────────────────────
@@ -19,9 +26,6 @@ try {
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
-
-// ── Load .env (API keys etc.) ─────────────────────────────────
-try { require("dotenv").config(); } catch (e) { /* dotenv optional */ }
 
 // ── App identity ──────────────────────────────────────────────
 app.setAppUserModelId("ether");
@@ -65,6 +69,7 @@ try {
 
 // ── Database ──────────────────────────────────────────────────
 let db;
+let cloudBackupTrigger = null; // set when cloud-backup module loads
 
 function getDbPath() {
   // Use same path as Tauri so existing databases are found
@@ -529,29 +534,28 @@ const TRAY_PNG   = path.join(__dirname, "assets/tray-icon.png");
 
 function createSplash() {
   splashWindow = new BrowserWindow({
-    width: 340,
-    height: 340,
-    frame: false,
-    transparent: false,
-    backgroundColor: "#0e0e14",
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    width:         820,
+    height:        480,
+    frame:         false,
+    transparent:   true,
+    alwaysOnTop:   true,
+    center:        true,
+    resizable:      false,
+    skipTaskbar:    true,
+    roundedCorners: true,
+    show:           false,       // hidden until centered
+    webPreferences: {
+      nodeIntegration:  false,
+      contextIsolation: true,
+      webSecurity:      false,   // allow file:// assets (svg, png) in local HTML
+    },
   });
 
-  const svgIcon = fs.readFileSync(path.join(__dirname, "assets/icon.svg"), "utf8");
-  const html = `<!DOCTYPE html><html><head><style>
-    *{margin:0;padding:0;box-sizing:border-box;}
-    html,body{width:340px;height:340px;background:#0e0e14;display:flex;align-items:center;justify-content:center;overflow:hidden;}
-    .logo{width:180px;height:180px;opacity:0;animation:fadeIn 0.6s ease forwards;}
-    @keyframes fadeIn{to{opacity:1;}}
-  </style></head><body>
-    <div class="logo">${svgIcon}</div>
-  </body></html>`;
-
-  splashWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html));
-  splashWindow.center();
+  splashWindow.loadFile(path.join(__dirname, "splash.html"));
+  splashWindow.once("ready-to-show", () => {
+    splashWindow.center();
+    splashWindow.show();
+  });
 }
 
 function createWindow() {
@@ -590,7 +594,9 @@ function createWindow() {
       client.connect(1420, "127.0.0.1", () => {
         client.destroy();
         mainWindow.loadURL(VITE_DEV_URL);
-        mainWindow.webContents.openDevTools();
+        if (!app.isPackaged) {
+          mainWindow.webContents.openDevTools();
+        }
       });
       client.on("error", () => {
         client.destroy();
@@ -607,21 +613,8 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
-  mainWindow.once("ready-to-show", () => {
-    // Fade out splash then show main window
-    if (splashWindow && !splashWindow.isDestroyed()) {
-      splashWindow.webContents.executeJavaScript("document.body.style.transition='opacity 0.35s';document.body.style.opacity='0';");
-      setTimeout(() => {
-        if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
-        splashWindow = null;
-        mainWindow.show();
-        mainWindow.focus();
-      }, 370);
-    } else {
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
+  // Do NOT show here — startup timing is controlled in app.whenReady()
+  // mainWindow stays hidden (show: false) until the splash finishes.
 
   // Hide instead of close (keeps app in tray)
   mainWindow.on("close", (e) => {
@@ -732,12 +725,14 @@ function buildMenu() {
       { label: "Studio Editor", click: () => send("nav:studio") },
       { label: "Video Studio",  click: () => send("nav:videostudio") },
       { label: "Cue Editor", click: () => send("nav:trackedit") },
+      { label: "Clip Editor", click: () => send("nav:clipeditor") },
       { type: "separator" },
       { label: "Import Library...", click: () => send("nav:importlibrary") },
       { type: "separator" },
       { label: "Stream Manager", click: () => send("nav:streaming") },
       { label: "Smart Scheduler", click: () => send("nav:smartschedule") },
       { label: "Listener Analytics", click: () => send("nav:analytics") },
+      { label: "Cloud Log Backup",   click: () => send("nav:cloudbackup") },
       { label: "Audio Routing", click: () => send("nav:multioutput") },
       { label: "Station Manager", click: () => send("nav:stationmanager") },
       { type: "separator" },
@@ -841,15 +836,87 @@ function processInviteFile() {
 let levelPushId = null;
 
 app.whenReady().then(() => {
-  createSplash();
   initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
   processInviteFile(); // VIP invite seeding — runs after DB is ready
+
+  // Cloud backup must init AFTER initDb() so db is not undefined
+  try {
+    const { installCloudBackup, triggerUpload } = require("./cloud-backup.js");
+    installCloudBackup(ipcMain, db, { dbPath: getDbPath() });
+    cloudBackupTrigger = triggerUpload;
+  } catch (e) {
+    console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
+  }
+
+  // Show native splash first; main window stays hidden behind it
+  createSplash();
   createWindow();
   createTray();
   buildMenu();
 
+  // ── Startup sequence ─────────────────────────────────────────
+  // Splash shows for 10s, then:
+  //   1. Splash fades out over 500ms
+  //   2. Splash window closes
+  //   3. Main window fades in over 500ms
+  //   4. Main window focuses (login screen appears naturally inside it)
+  //
+  // Both conditions must be met before the sequence starts:
+  //   • mainWindow has fired ready-to-show (renderer fully painted)
+  //   • 10-second splash timer has elapsed
+  let mainReady   = false;
+  let splashTimer = false;
+
+  function tryShowMain() {
+    if (!mainReady || !splashTimer) return;
+
+    // Step 1 — fade out splash over 500ms
+    const doFadeIn = () => {
+      // Step 2 — close splash
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+
+      // Step 3 — fade main window in: start at opacity 0, ramp to 1 over 500ms
+      mainWindow.setOpacity(0);
+      mainWindow.show();
+
+      let opacity = 0;
+      const STEPS    = 20;           // 20 steps × 25ms = 500ms
+      const STEP_AMT = 1 / STEPS;
+
+      const fadeIn = setInterval(() => {
+        opacity = Math.min(1, opacity + STEP_AMT);
+        if (!mainWindow.isDestroyed()) mainWindow.setOpacity(opacity);
+        if (opacity >= 1) {
+          clearInterval(fadeIn);
+          mainWindow.focus();        // Step 4 — focus; login appears inside the app
+        }
+      }, 25);
+    };
+
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.webContents
+        .executeJavaScript(
+          'document.body.style.transition="opacity 0.5s ease";' +
+          'document.body.style.opacity="0";'
+        )
+        .then(() => setTimeout(doFadeIn, 500))
+        .catch(doFadeIn); // if JS inject fails, proceed anyway
+    } else {
+      doFadeIn();
+    }
+  }
+
+  mainWindow.once("ready-to-show", () => {
+    mainReady = true;
+    tryShowMain();
+  });
+
+  setTimeout(() => {
+    splashTimer = true;
+    tryShowMain();
+  }, 10000);
+
   // Start 30fps real-time audio level push to renderer
-  // Renderer subscribes via window.ether.audio.onLevels(cb) — no polling, no fake sim
   mainWindow.webContents.on("did-finish-load", () => {
     if (levelPushId) clearInterval(levelPushId);
     levelPushId = setInterval(() => {
@@ -978,6 +1045,77 @@ ipcMain.handle("dialog:saveFile", async (_, options) => {
   return result.canceled ? null : result.filePath;
 });
 
+// Watermark verification — reads a WAV file and extracts/verifies the Ether LSB watermark
+ipcMain.handle("watermark:verify", async (_, { filePath }) => {
+  const crypto = require("crypto");
+  try {
+    const buf = fs.readFileSync(filePath);
+    if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WAVE")
+      return { found: false, valid: false, error: "Not a valid WAV file" };
+
+    // Walk chunks to find 'data'
+    let offset = 12, pcmOffset = -1, pcmLen = 0;
+    while (offset < buf.length - 8) {
+      const id  = buf.toString("ascii", offset, offset + 4);
+      const len = buf.readUInt32LE(offset + 4);
+      if (id === "data") { pcmOffset = offset + 8; pcmLen = len; break; }
+      offset += 8 + len + (len & 1);
+    }
+    if (pcmOffset < 0) return { found: false, valid: false, error: "No PCM data found" };
+
+    const numSamples = Math.floor(pcmLen / 2);
+    if (numSamples < 96) return { found: false, valid: false, error: "Audio too short" };
+
+    // Read i16 samples
+    const samples = new Int16Array(numSamples);
+    for (let i = 0; i < numSamples; i++)
+      samples[i] = buf.readInt16LE(pcmOffset + i * 2);
+
+    // Extract `len` bytes from LSBs, MSB-first per byte (mirrors Rust extract_lsb)
+    function extractLsb(off, len) {
+      const out = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        let byte = 0;
+        for (let bit = 0; bit < 8; bit++)
+          byte = (byte << 1) | (samples[off + i * 8 + bit] & 1);
+        out[i] = byte;
+      }
+      return out;
+    }
+
+    const MAGIC = Buffer.from("ETHRWM01");
+    const magic = Buffer.from(extractLsb(0, 8));
+    if (!magic.equals(MAGIC))
+      return { found: false, valid: false, error: "No Ether watermark found" };
+
+    const lb = extractLsb(64, 4);
+    const payloadLen = lb[0] | (lb[1] << 8) | (lb[2] << 16) | (lb[3] << 24);
+    const samplesNeeded = (8 + 4 + payloadLen) * 8;
+    if (payloadLen > 8192 || numSamples < samplesNeeded)
+      return { found: true, valid: false, error: `Invalid payload length: ${payloadLen}` };
+
+    const payloadBytes = extractLsb(96, payloadLen);
+    let payload;
+    try { payload = JSON.parse(Buffer.from(payloadBytes).toString("utf8")); }
+    catch { return { found: true, valid: false, error: "Watermark JSON parse error" }; }
+
+    const { station_id, timestamp, ether_version, content_hash } = payload;
+
+    // Recompute hash: clear LSBs of the watermarked region, keep rest
+    const cleared = Buffer.alloc(numSamples * 2);
+    for (let i = 0; i < numSamples; i++) {
+      const s = i < samplesNeeded ? (samples[i] & ~1) : samples[i];
+      cleared.writeInt16LE(s < -32768 ? -32768 : s > 32767 ? 32767 : s, i * 2);
+    }
+    const computedHash = crypto.createHash("sha256").update(cleared).digest("hex");
+    const valid = computedHash === content_hash;
+
+    return { found: true, valid, stationId: station_id, timestamp, etherVersion: ether_version, contentHash: content_hash, computedHash, error: null };
+  } catch (e) {
+    return { found: false, valid: false, error: e.message };
+  }
+});
+
 // System
 ipcMain.handle("system:getLocalIp", () => audio.getLocalIp());
 ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
@@ -1074,6 +1212,115 @@ ipcMain.handle("db:restore", (_, backupName) => {
     initDb(); // Reopen
     return { data: "Restored successfully", error: null };
   } catch (e) { return { data: null, error: e.message }; }
+});
+
+// ── Legacy Tauri command aliases — called by SettingsPanel ────
+ipcMain.handle("get_local_ip", () => audio.getLocalIp());
+// These were Tauri commands in the original build. Now aliased here so
+// the renderer doesn't need to change its invoke names.
+ipcMain.handle("backup_db", async () => {
+  try {
+    const ts = Math.floor(Date.now() / 1000);
+    const backupDir = path.join(app.getPath("userData"), "backups");
+    fs.mkdirSync(backupDir, { recursive: true });
+    const backupName = `openair-backup-${ts}.db`;
+    fs.copyFileSync(getDbPath(), path.join(backupDir, backupName));
+    // Prune backups older than 7 days
+    const cutoff = ts - 7 * 24 * 3600;
+    fs.readdirSync(backupDir).forEach(n => {
+      const m = n.match(/openair-backup-(\d+)\.db/);
+      if (m && parseInt(m[1]) < cutoff) try { fs.unlinkSync(path.join(backupDir, n)); } catch {}
+    });
+    // Fire R2 upload if configured — non-blocking so local backup always succeeds fast
+    if (cloudBackupTrigger) {
+      cloudBackupTrigger().then(r => {
+        if (r && !r.skipped) console.log("[CLOUD-BACKUP] post-backup_db R2 upload:", r.ok ? "ok" : r.error);
+      }).catch(e => console.warn("[CLOUD-BACKUP] post-backup_db R2 upload failed:", e.message));
+    }
+    return backupName;
+  } catch (e) { throw new Error("Backup failed: " + e.message); }
+});
+
+ipcMain.handle("list_backups", () => {
+  try {
+    const backupDir = path.join(app.getPath("userData"), "backups");
+    if (!fs.existsSync(backupDir)) return [];
+    return fs.readdirSync(backupDir)
+      .filter(n => n.startsWith("openair-backup-") && n.endsWith(".db"))
+      .sort().reverse();
+  } catch { return []; }
+});
+
+// SettingsPanel passes { backupName } (object); db:restore takes a bare string.
+ipcMain.handle("restore_db", (_, { backupName } = {}) => {
+  try {
+    if (!backupName) throw new Error("backupName is required");
+    const backupPath = path.join(app.getPath("userData"), "backups", backupName);
+    if (!fs.existsSync(backupPath)) throw new Error("Backup not found: " + backupName);
+    db.close();
+    fs.copyFileSync(backupPath, getDbPath());
+    initDb();
+    return "Restored from " + backupName + ". Restart Ether for all changes to take effect.";
+  } catch (e) { throw new Error(e.message); }
+});
+
+// ── Clean Filenames ───────────────────────────────────────────
+ipcMain.handle("clean_filenames", async (_evt, { folderPath, commit, stringsToRemove }) => {
+  try {
+    const AUDIO_EXTS = new Set([".mp3", ".flac", ".wav", ".m4a", ".ogg"]);
+    const userStrings = Array.isArray(stringsToRemove) && stringsToRemove.length > 0
+      ? stringsToRemove
+      : ["spotdown_org", "spotdown"];
+
+    function cleanName(base) {
+      let n = base;
+      // Leading timestamp prefix: digits followed by underscore
+      n = n.replace(/^\d+_/, "");
+      // User-supplied strings — longest first to avoid partial matches
+      const sorted = [...userStrings].sort((a, b) => b.length - a.length);
+      for (const s of sorted) {
+        const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        n = n.replace(new RegExp("_?" + escaped + "_?", "gi"), "_");
+      }
+      n = n.replace(/__+/g, "_");
+      n = n.replace(/^_+|_+$/g, "");
+      return n;
+    }
+
+    function walk(dir, results) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { walk(full, results); continue; }
+        const ext = path.extname(e.name).toLowerCase();
+        if (!AUDIO_EXTS.has(ext)) continue;
+        const base = path.basename(e.name, ext);
+        const cleaned = cleanName(base);
+        if (cleaned !== base) results.push({ dir, ext, before: e.name, after: cleaned + ext, fullPath: full });
+      }
+    }
+
+    if (!folderPath || !fs.existsSync(folderPath)) return { ok: false, error: "Folder not found: " + folderPath };
+    const renames = [];
+    walk(folderPath, renames);
+
+    if (commit) {
+      let done = 0, errors = [];
+      for (const r of renames) {
+        try {
+          fs.renameSync(r.fullPath, path.join(r.dir, r.after));
+          done++;
+        } catch (e) { errors.push(r.before + ": " + e.message); }
+      }
+      return { ok: true, renamed: done, renames, errors };
+    }
+
+    return { ok: true, renames, errors: [] };
+  } catch (e) {
+    console.error("[CLEAN-FILENAMES] error:", e.message, e.stack);
+    return { ok: false, error: e.message };
+  }
 });
 
 // Autostart
@@ -1709,13 +1956,7 @@ try {
   console.warn("[REPL] installSiteReplication failed:", e.message);
 }
 
-// ── Cloud DR Backup ─────────────────────────────────────────────
-try {
-  const { installCloudBackup } = require("./cloud-backup.js");
-  installCloudBackup(ipcMain, db, { dbPath: getDbPath() });
-} catch (e) {
-  console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
-}
+// (Cloud backup installed in app.whenReady() after initDb())
 
 // desktopCapturer source enumeration — needed by renderer to populate the
 // screen/window picker. (renderer can't import desktopCapturer directly in
@@ -1936,6 +2177,13 @@ ipcMain.handle("studio:record:chunk", (_, chunk) => {
 ipcMain.handle("studio:record:stop", () => {
   if (_recordStream) { _recordStream.end(); _recordStream = null; }
   return { ok: true };
+});
+
+ipcMain.handle("studio:record:saveClip", async (_, { path: filePath, data }) => {
+  try {
+    fs.writeFileSync(filePath, Buffer.from(data));
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 // ── Weather — OpenWeatherMap (Las Vegas) ──────────────────────
@@ -2236,8 +2484,26 @@ const irisHttpServer = require('http').createServer((req, res) => {
     return;
   }
 
+  // POST /api/captions/iris — Iris app sends its spoken text here so it
+  // appears in the captions overlay even before Whisper could transcribe it.
+  if (req.method === 'POST' && req.url === '/api/captions/iris') {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      try {
+        const { text } = JSON.parse(body);
+        if (text) {
+          whisperEngine.addIrisLine(text);
+          // whisperEngine already emits 'line' which is relayed to renderer below
+        }
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    });
+    return;
+  }
+
   res.statusCode = 404;
-  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id' }));
+  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id, /api/captions/iris' }));
 });
 
 irisHttpServer.listen(3400, '0.0.0.0', () => {
@@ -2394,6 +2660,103 @@ ipcMain.handle("musixmatch:scanLyrics", async (_, { title, artist }) => {
       }
     }
     return { ok: true, found: true, flagged: matches.length > 0, matches };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Discogs metadata lookup ───────────────────────────────────
+
+let _discogsLastCall = 0;
+
+function getDiscogsConfig() {
+  const cfg = readAiConfig();
+  const key    = cfg.keys?.discogs_consumer_key    ? decryptKey(cfg.keys.discogs_consumer_key)    : null;
+  const secret = cfg.keys?.discogs_consumer_secret ? decryptKey(cfg.keys.discogs_consumer_secret) : null;
+  return { key, secret };
+}
+
+ipcMain.handle("discogs:setCredentials", (_, { consumerKey, consumerSecret }) => {
+  const cfg = readAiConfig();
+  if (!cfg.keys) cfg.keys = {};
+  if (consumerKey)    cfg.keys.discogs_consumer_key    = encryptKey(consumerKey);
+  if (consumerSecret) cfg.keys.discogs_consumer_secret = encryptKey(consumerSecret);
+  writeAiConfig(cfg);
+  return true;
+});
+
+ipcMain.handle("discogs:getCredentialStatus", () => {
+  const { key, secret } = getDiscogsConfig();
+  return { hasKey: !!key, hasSecret: !!secret };
+});
+
+ipcMain.handle("discogs:search", async (_, { title, artist }) => {
+  try {
+    const { key, secret } = getDiscogsConfig();
+    if (!key) return { ok: false, error: "No Discogs credentials — add them in Settings > Integrations" };
+
+    // Rate limit: 1 req/sec
+    const now = Date.now();
+    const wait = 1000 - (now - _discogsLastCall);
+    if (wait > 0) await new Promise(r => setTimeout(r, wait));
+    _discogsLastCall = Date.now();
+
+    const q = [title, artist].filter(Boolean).join(" ");
+    const url = `https://api.discogs.com/database/search?type=release&q=${encodeURIComponent(q)}&per_page=5&key=${encodeURIComponent(key)}&secret=${encodeURIComponent(secret)}`;
+    const res = await fetch(url, { headers: { "User-Agent": "EtherRadio/1.0 +https://ether.fm" } });
+    if (!res.ok) return { ok: false, error: `Discogs returned ${res.status}` };
+    const data = await res.json();
+
+    const results = (data.results || []).slice(0, 5).map(r => ({
+      id:        r.id,
+      title:     r.title || "",
+      artist:    Array.isArray(r.artists) ? r.artists.map(a => a.name).join(", ") : (r.title || "").split(" - ")[0] || "",
+      album:     r.title || "",
+      year:      r.year ? parseInt(r.year, 10) : null,
+      genre:     (r.genre || r.style || []).slice(0, 1)[0] || null,
+      thumb:     r.thumb || r.cover_image || null,
+      format:    (r.format || []).join(", ") || null,
+      label:     (r.label || []).join(", ") || null,
+      catno:     r.catno || null,
+    }));
+
+    return { ok: true, results };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle("discogs:updateTrack", (_, { id, title, artist, album, year, genre, bpm }) => {
+  try {
+    // Upsert artist
+    if (artist) {
+      db.prepare("INSERT OR IGNORE INTO artists (name) VALUES (?)").run(artist);
+    }
+    const artistRow = artist ? db.prepare("SELECT id FROM artists WHERE name = ?").get(artist) : null;
+    const artistId = artistRow?.id ?? null;
+
+    // Upsert album + year
+    let albumId = null;
+    if (album) {
+      if (artistId) {
+        db.prepare("INSERT OR IGNORE INTO albums (title, artist_id, year) VALUES (?, ?, ?)").run(album, artistId, year ?? null);
+        const existing = db.prepare("SELECT id FROM albums WHERE title = ? AND artist_id = ?").get(album, artistId);
+        albumId = existing?.id ?? null;
+        if (albumId && year != null) db.prepare("UPDATE albums SET year = ? WHERE id = ?").run(year, albumId);
+      } else {
+        db.prepare("INSERT OR IGNORE INTO albums (title, year) VALUES (?, ?)").run(album, year ?? null);
+        const existing = db.prepare("SELECT id FROM albums WHERE title = ?").get(album);
+        albumId = existing?.id ?? null;
+      }
+    }
+
+    const updates = [];
+    const vals = [];
+    if (title  !== undefined) { updates.push("title = ?");    vals.push(title); }
+    if (artistId !== undefined) { updates.push("artist_id = ?"); vals.push(artistId); }
+    if (albumId  !== undefined) { updates.push("album_id = ?");  vals.push(albumId); }
+    if (genre  !== undefined) { updates.push("genre = ?");    vals.push(genre); }
+    if (bpm    !== undefined) { updates.push("bpm = ?");      vals.push(bpm); }
+    if (updates.length === 0) return { ok: true };
+    vals.push(id);
+    db.prepare(`UPDATE songs SET ${updates.join(", ")} WHERE id = ?`).run(...vals);
+    return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

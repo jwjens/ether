@@ -6,7 +6,9 @@
       "Bash(node:*)",
       "Bash(del:*)",
       "Bash(powershell.exe:*)",
-      "Bash(findstr MasterOutput)"
+      "Bash(findstr MasterOutput)",
+      "Bash(cargo check *)",
+      "Bash(xargs grep *)"
     ]
   }
 }

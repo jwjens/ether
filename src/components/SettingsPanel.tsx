@@ -1,26 +1,93 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
 import { processLibrary as processAllSongs, getProcessingStats } from "../audio/songAnalysis";
+import StreamMetadataPanel from "./StreamMetadataPanel";
+import PairMobileApp from "./PairMobileApp";
+import AIVoiceSettings from "./AIVoiceSettings";
+import BetaProgram from "./BetaProgram";
+
+// ── Settings categories ──────────────────────────────────────
+// 6 buckets that cover all 18 Section components without any one category
+// getting overcrowded. Shown in the sidebar in this order.
+export type SettingsCategory = "station" | "audio" | "programming" | "broadcast" | "integrations" | "system";
+const CATEGORIES: { id: SettingsCategory; label: string; icon: React.ReactNode }[] = [
+  { id: "station",      label: "Station",      icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg> },
+  { id: "audio",        label: "Audio",        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> },
+  { id: "programming",  label: "Programming",  icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
+  { id: "broadcast",    label: "Broadcast",    icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg> },
+  { id: "integrations", label: "Integrations", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
+  { id: "system",       label: "System",       icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
+];
+
+// ── Settings filter context ───────────────────────────────────
+// Each <Section> self-filters against this. Keeps the filter logic in ONE
+// place (the Section component) so adding new sections is just a matter of
+// passing a `category` prop — no need to thread activeCategory/searchText
+// through the JSX tree manually.
+interface FilterCtx {
+  activeCategory: SettingsCategory;
+  searchText: string;
+  registerSection: (title: string, category: SettingsCategory) => void;
+}
+const SettingsFilterContext = createContext<FilterCtx>({
+  activeCategory: "station",
+  searchText: "",
+  registerSection: () => {},
+});
+
+// Called by <Section> (and other category-gated components) to decide if
+// they should render. Returns true when the current filter matches. If the
+// user is searching, category is ignored — search beats category.
+function useShouldRender(title: string, description: string, category: SettingsCategory): boolean {
+  const { activeCategory, searchText } = useContext(SettingsFilterContext);
+  if (searchText.trim()) {
+    const q = searchText.toLowerCase();
+    return title.toLowerCase().includes(q) || description.toLowerCase().includes(q);
+  }
+  return category === activeCategory;
+}
 
 // ── Shared UI primitives ─────────────────────────────────────
 
-function Section({ icon, title, description, children }: { icon: React.ReactNode; title: string; description: string; children: React.ReactNode }) {
+function Section({ icon, title, description, category, children }: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  category?: SettingsCategory;
+  children: React.ReactNode;
+}) {
+  // Default to "station" if no category given — keeps legacy Section usage safe.
+  const shouldRender = useShouldRender(title, description, category ?? "station");
+  if (!shouldRender) return null;
+
   return (
     <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", marginBottom: 12 }}>
       <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid var(--border-primary)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>{icon}</span>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", fontFamily: "'Syne', sans-serif" }}>{title}</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{description}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", fontFamily: "'Inter', sans-serif" }}>{title}</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{description}</div>
           </div>
         </div>
       </div>
       <div style={{ padding: "16px 20px" }}>{children}</div>
     </div>
   );
+}
+
+// ── CategoryGate ──────────────────────────────────────────────
+// Wraps NON-Section components (like <UserManagement />) that should also
+// be gated by category/search. UserManagement renders its own Section
+// internally with the right category, so this is mainly a mount-gate.
+// Skipped during search (children handle their own search-match check).
+function CategoryGate({ category, children }: { category: SettingsCategory; children: React.ReactNode }) {
+  const { activeCategory, searchText } = useContext(SettingsFilterContext);
+  if (searchText.trim()) return <>{children}</>;   // let child self-filter
+  if (category !== activeCategory) return null;
+  return <>{children}</>;
 }
 
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
@@ -48,7 +115,7 @@ function SettingRow({ label, hint, children }: { label: string; hint?: string; c
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "12px 0", borderBottom: "1px solid var(--border-primary)" }}>
       <div style={{ flex: 1 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{label}</div>
-        {hint && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{hint}</div>}
+        {hint && <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{hint}</div>}
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
@@ -59,9 +126,9 @@ function CodeBox({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg-tertiary)", borderRadius: 0, padding: "10px 14px", border: "1px solid var(--border-primary)" }}>
-      <span style={{ flex: 1, fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--accent-cyan)", wordBreak: "break-all" as any }}>{value}</span>
+      <span style={{ flex: 1, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 12, color: "var(--accent-cyan)", wordBreak: "break-all" as any }}>{value}</span>
       <button onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-        style={{ padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", flexShrink: 0 }}>
+        style={{ padding: "3px 10px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", flexShrink: 0 }}>
         {copied ? "✓" : "Copy"}
       </button>
     </div>
@@ -107,7 +174,7 @@ function StationLogoUploader() {
   };
 
   const btnStyle: React.CSSProperties = {
-    height: 32, padding: "0 16px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+    height: 32, padding: "0 16px", borderRadius: 0, fontSize: 13, fontWeight: 600, cursor: "pointer",
     background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)",
   };
 
@@ -125,8 +192,8 @@ function StationLogoUploader() {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <button onClick={upload} style={btnStyle}>{logoUrl ? "Replace Logo..." : "Upload Logo..."}</button>
         {logoUrl && <button onClick={remove} style={{ ...btnStyle, color: "var(--accent-red)", border: "1px solid rgba(239,68,68,0.3)" }}>Remove</button>}
-        {status && <span style={{ fontSize: 11, color: "var(--accent-green)" }}>{status}</span>}
-        <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>PNG, JPG, SVG — shown on On-Shift welcome screen and Theme Studio</div>
+        {status && <span style={{ fontSize: 13, color: "var(--accent-green)" }}>{status}</span>}
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>PNG, JPG, SVG — shown on On-Shift welcome screen and Theme Studio</div>
       </div>
     </div>
   );
@@ -170,16 +237,16 @@ function ExperienceModeSelector() {
             </div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: mode === m.id ? "#9070e0" : "var(--text-primary)", marginBottom: 2 }}>{m.label}</div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{m.desc}</div>
+              <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>{m.desc}</div>
             </div>
-            {saved && mode === m.id && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--accent-green)", fontFamily: "'DM Mono', monospace" }}>SAVED</span>}
+            {saved && mode === m.id && <span style={{ marginLeft: "auto", fontSize: 12, color: "var(--accent-green)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>SAVED</span>}
           </button>
         ))}
       </div>
       {showUpgrade && (
         <div style={{ marginTop: 12, padding: "12px 16px", background: "rgba(96,64,192,0.08)", border: "1px solid #6040c060", fontSize: 12, color: "#9070e0", lineHeight: 1.6 }}>
           <strong>Live Radio unlocked.</strong> All six decks are now visible. Format clocks, hard transitions, and the full rotation engine are active. You can assign purposes to decks in the Deck Configurator.
-          <button onClick={() => setShowUpgrade(false)} style={{ float: "right" as any, background: "none", border: "none", color: "#6040c0", cursor: "pointer", fontSize: 11 }}>✕</button>
+          <button onClick={() => setShowUpgrade(false)} style={{ float: "right" as any, background: "none", border: "none", color: "#6040c0", cursor: "pointer", fontSize: 13 }}>✕</button>
         </div>
       )}
     </div>
@@ -231,7 +298,7 @@ function InviteGenerator() {
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         {(["solo", "standard", "live_radio"] as const).map(m => (
           <button key={m} onClick={() => setMode(m)} style={{
-            padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+            padding: "6px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600, cursor: "pointer",
             background: mode === m ? "rgba(96,64,192,0.15)" : "var(--bg-tertiary)",
             border: `1px solid ${mode === m ? "#6040c0" : "var(--border-primary)"}`,
             color: mode === m ? "#9070e0" : "var(--text-tertiary)",
@@ -243,9 +310,9 @@ function InviteGenerator() {
           padding: "9px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, cursor: name.trim() ? "pointer" : "default",
           background: name.trim() ? "#6040c0" : "var(--bg-tertiary)", border: "none", color: name.trim() ? "#fff" : "var(--text-tertiary)",
         }}>Generate Invite File</button>
-        <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.08em" }}>BUILT BY DENIRO</span>
+        <span style={{ fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.08em" }}>BUILT BY DENIRO</span>
       </div>
-      {status && <div style={{ marginTop: 8, fontSize: 11, color: status.startsWith("Error") ? "var(--accent-red)" : "var(--accent-green)", fontFamily: "'DM Mono', monospace", wordBreak: "break-all" as any }}>{status}</div>}
+      {status && <div style={{ marginTop: 8, fontSize: 13, color: status.startsWith("Error") ? "var(--accent-red)" : "var(--accent-green)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", wordBreak: "break-all" as any }}>{status}</div>}
     </div>
   );
 }
@@ -283,11 +350,11 @@ function SpotifyCredentialForm() {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {status && (
         <div style={{ display: "flex", gap: 16, marginBottom: 4 }}>
-          <span style={{ fontSize: 11, color: status.hasClientId ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 13, color: status.hasClientId ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.hasClientId ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
             Client ID {status.hasClientId ? "saved" : "not set"}
           </span>
-          <span style={{ fontSize: 11, color: status.hasClientSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 13, color: status.hasClientSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.hasClientSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
             Client Secret {status.hasClientSecret ? "saved" : "not set"}
           </span>
@@ -300,7 +367,7 @@ function SpotifyCredentialForm() {
           {saved ? "Saved ✓" : saving ? "Saving…" : "Save"}
         </button>
       </div>
-      <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
         Credentials stored in Electron safeStorage — never in plain text. Requires Client Credentials flow (no user login needed).
       </div>
     </div>
@@ -330,7 +397,7 @@ function MusixmatchKeyForm() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ fontSize: 11, color: hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ fontSize: 13, color: hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ width: 6, height: 6, borderRadius: "50%", background: hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
         {hasKey ? "API key saved — Lyrics Scanner is active" : "No key set — Lyrics Scanner disabled"}
       </div>
@@ -341,8 +408,67 @@ function MusixmatchKeyForm() {
           {saved ? "Saved ✓" : saving ? "Saving…" : "Save"}
         </button>
       </div>
-      <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
         Stored in Electron safeStorage. Free tier supports 2,000 lyrics lookups/day. Flags are advisory only — you approve or reject each track.
+      </div>
+    </div>
+  );
+}
+
+// ── Discogs credential form ───────────────────────────────────
+
+function DiscogsCredentialForm() {
+  const [consumerKey, setConsumerKey]       = useState("");
+  const [consumerSecret, setConsumerSecret] = useState("");
+  const [status, setStatus]                 = useState<{ hasKey: boolean; hasSecret: boolean } | null>(null);
+  const [saving, setSaving]                 = useState(false);
+  const [saved, setSaved]                   = useState(false);
+
+  useEffect(() => {
+    (window as any).ether.discogs.getCredentialStatus().then(setStatus).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!consumerKey.trim() && !consumerSecret.trim()) return;
+    setSaving(true);
+    await (window as any).ether.discogs.setCredentials(consumerKey.trim(), consumerSecret.trim());
+    setStatus({ hasKey: true, hasSecret: true });
+    setConsumerKey(""); setConsumerSecret("");
+    setSaving(false); setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const inputStyle: React.CSSProperties = {
+    flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12,
+    background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+    color: "var(--text-primary)", outline: "none", fontFamily: "monospace",
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {status && (
+        <div style={{ display: "flex", gap: 16, marginBottom: 4 }}>
+          <span style={{ fontSize: 13, color: status.hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.hasKey ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+            Consumer Key {status.hasKey ? "saved" : "not set"}
+          </span>
+          <span style={{ fontSize: 13, color: status.hasSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.hasSecret ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
+            Consumer Secret {status.hasSecret ? "saved" : "not set"}
+          </span>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="password" placeholder="Consumer Key" value={consumerKey} onChange={e => setConsumerKey(e.target.value)} style={inputStyle} />
+        <input type="password" placeholder="Consumer Secret" value={consumerSecret} onChange={e => setConsumerSecret(e.target.value)} style={inputStyle} onKeyDown={e => { if (e.key === "Enter") save(); }} />
+        <button onClick={save} disabled={saving} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: saved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+          {saved ? "Saved ✓" : saving ? "Saving…" : "Save"}
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+        Credentials stored securely. Get your keys at{" "}
+        <a href="#" onClick={e => { e.preventDefault(); (window as any).ether.system.openUrl("https://www.discogs.com/settings/developers"); }} style={{ color: "var(--accent-blue)" }}>discogs.com/settings/developers</a>
+        {" "}— create an app, use Consumer Key + Consumer Secret.
       </div>
     </div>
   );
@@ -351,7 +477,29 @@ function MusixmatchKeyForm() {
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
-  const [tab, setTab] = useState<"general" | "ai" | "security">("general");
+  // Active category — persisted via URL hash so deep links + reloads stay
+  // on the same category. E.g. #settings/audio reopens Settings on Audio.
+  const initialCategory = (() => {
+    try {
+      const m = /#settings\/([a-z]+)/i.exec(window.location.hash);
+      if (m && CATEGORIES.some(c => c.id === m[1])) return m[1] as SettingsCategory;
+    } catch {}
+    return "station" as SettingsCategory;
+  })();
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
+  const [searchText, setSearchText] = useState("");
+
+  // Keep URL hash in sync when the user switches categories — gives them
+  // shareable + bookmarkable deep links to any settings area.
+  useEffect(() => {
+    if (searchText) return;  // don't overwrite hash while searching
+    try {
+      const desired = `#settings/${activeCategory}`;
+      if (window.location.hash !== desired) {
+        history.replaceState(null, "", window.location.pathname + window.location.search + desired);
+      }
+    } catch {}
+  }, [activeCategory, searchText]);
 
   // Station
   const [timezone, setTimezone] = useState("");
@@ -377,6 +525,24 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [backupStatus, setBackupStatus] = useState("");
   const [backupLoading, setBackupLoading] = useState(false);
 
+  // R2 Cloud Backup
+  const [r2Enabled,      setR2Enabled]      = useState(false);
+  const [r2AccountId,    setR2AccountId]    = useState("");
+  const [r2AccessKeyId,  setR2AccessKeyId]  = useState("");
+  const [r2HasSecret,    setR2HasSecret]    = useState(false);
+  const [r2SecretLast4,  setR2SecretLast4]  = useState("");
+  const [r2NewSecret,    setR2NewSecret]    = useState("");
+  const [r2EditSecret,   setR2EditSecret]   = useState(false);
+  const [r2ShowSecret,   setR2ShowSecret]   = useState(false);
+  const [r2Bucket,       setR2Bucket]       = useState("ether-backups");
+  const [r2Interval,     setR2Interval]     = useState(6);
+  const [r2LastBackup,   setR2LastBackup]   = useState(0);
+  const [r2LastStatus,   setR2LastStatus]   = useState("never");
+  const [r2SaveStatus,   setR2SaveStatus]   = useState("");
+  const [r2TestStatus,   setR2TestStatus]   = useState("");
+  const [r2Testing,      setR2Testing]      = useState(false);
+  const [r2Saving,       setR2Saving]       = useState(false);
+
   // AI / Voice Assistant (legacy)
   const [anthropicKey, setAnthropicKey] = useState("");
   const [anthropicKeySaved, setAnthropicKeySaved] = useState(false);
@@ -397,6 +563,15 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [processingProgress, setProcessingProgress] = useState("");
   const [processingDone, setProcessingDone] = useState(0);
   const [processingTotal, setProcessingTotal] = useState(0);
+
+  // Clean Filenames
+  const [cleanFolder, setCleanFolder] = useState("");
+  const [cleanPreview, setCleanPreview] = useState<{before:string;after:string}[]|null>(null);
+  const [cleanResult, setCleanResult] = useState<{renamed:number;errors:string[]}|null>(null);
+  const [cleanError, setCleanError] = useState<string|null>(null);
+  const [cleanBusy, setCleanBusy] = useState(false);
+  const [cleanWords, setCleanWords] = useState<string[]>(["spotdown_org", "spotdown"]);
+  const [cleanWordInput, setCleanWordInput] = useState("");
 
   // Rules
   const [rules, setRules] = useState<any[]>([]);
@@ -436,6 +611,20 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     // Backups
     invoke<string[]>("list_backups").then(setBackups).catch(() => {});
 
+    // R2 cloud backup — use dedicated API so the call is explicit
+    (window as any).ether.cloudBackup.getR2Config().then((cfg: any) => {
+      if (!cfg) return;
+      setR2Enabled(!!cfg.enabled);
+      setR2AccountId(cfg.accountId || "");
+      setR2AccessKeyId(cfg.accessKeyId || "");
+      setR2HasSecret(!!cfg.hasSecret);
+      setR2SecretLast4(cfg.secretLast4 || "");
+      setR2Bucket(cfg.bucket || "ether-backups");
+      setR2Interval(cfg.intervalHours || 6);
+      setR2LastBackup(cfg.lastBackup || 0);
+      setR2LastStatus(cfg.lastStatus || "never");
+    }).catch(() => {});
+
     // Processing stats
     getProcessingStats().then(setProcessingStats).catch(() => {});
 
@@ -465,11 +654,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const toggleAutostart = async () => {
     try {
       if (autostart) {
-        
-        await disable(); setAutostart(false);
+        await (window as any).ether.autostart.disable(); setAutostart(false);
       } else {
-        
-        await enable(); setAutostart(true);
+        await (window as any).ether.autostart.enable(); setAutostart(true);
       }
     } catch {}
   };
@@ -497,6 +684,43 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       const msg = await invoke<string>("restore_db", { backupName: name });
       setBackupStatus(msg);
     } catch (e) { setBackupStatus("Error: " + String(e)); }
+  };
+
+  const saveR2Config = async () => {
+    setR2Saving(true);
+    setR2SaveStatus("");
+    try {
+      const payload: any = {
+        accountId:    r2AccountId.trim(),
+        accessKeyId:  r2AccessKeyId.trim(),
+        bucket:       r2Bucket.trim() || "ether-backups",
+        enabled:      r2Enabled,
+        intervalHours: r2Interval,
+      };
+      if (r2NewSecret.trim()) payload.secretAccessKey = r2NewSecret.trim();
+      // Use the dedicated cloudBackup API — avoids any generic-invoke arg marshaling
+      const ether = (window as any).ether;
+      const result: any = await ether.cloudBackup.setR2Config(payload);
+      setR2SaveStatus(result.ready ? "✓ Saved — R2 ready" : "✓ Saved — fill in all fields + enable to activate");
+      if (r2NewSecret.trim()) {
+        setR2HasSecret(true);
+        setR2SecretLast4(r2NewSecret.trim().slice(-4));
+        setR2EditSecret(false);
+        setR2NewSecret("");
+      }
+    } catch (e) { setR2SaveStatus("Error saving: " + String(e)); }
+    setR2Saving(false);
+    setTimeout(() => setR2SaveStatus(""), 6000);
+  };
+
+  const testR2Connection = async () => {
+    setR2Testing(true);
+    setR2TestStatus("");
+    try {
+      const result: any = await invoke("cloud-backup:test-r2");
+      setR2TestStatus(result.ok ? "✓ Connection successful — bucket is reachable" : "✗ " + result.error);
+    } catch (e) { setR2TestStatus("✗ " + String(e)); }
+    setR2Testing(false);
   };
 
   const formatBackupName = (name: string) => {
@@ -572,35 +796,85 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     setTimeout(() => setAiProviderSaved(false), 1500);
   };
 
-  const tabStyle = (t: string): React.CSSProperties => ({
-    padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 600, cursor: "pointer", border: "none",
-    background: tab === t ? "var(--accent-blue)" : "transparent",
-    color: tab === t ? "#fff" : "var(--text-secondary)",
-    transition: "all 0.15s",
+  const catBtnStyle = (id: SettingsCategory): React.CSSProperties => ({
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "9px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, cursor: "pointer",
+    textAlign: "left" as const, width: "100%",
+    background: activeCategory === id && !searchText ? "var(--bg-tertiary)" : "transparent",
+    color:      activeCategory === id && !searchText ? "var(--accent-blue)" : "var(--text-secondary)",
+    border: "none",
+    borderLeft: "2px solid " + (activeCategory === id && !searchText ? "var(--accent-blue)" : "transparent"),
+    transition: "all 0.12s",
   });
 
-  return (
-    <div style={{ maxWidth: 800, margin: "0 auto", padding: "4px 0 40px", fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 16, fontFamily: "'Syne', sans-serif" }}>Settings</h1>
+  const activeCat = CATEGORIES.find(c => c.id === activeCategory);
 
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, padding: "4px", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", width: "fit-content" }}>
-        <button style={tabStyle("general")} onClick={() => setTab("general")}>General</button>
-        <button style={tabStyle("ai")} onClick={() => setTab("ai")}>AI &amp; Integrations</button>
-        <button style={tabStyle("security")} onClick={() => setTab("security")}>Users &amp; Security</button>
+  return (
+    <SettingsFilterContext.Provider value={{ activeCategory, searchText, registerSection: () => {} }}>
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "4px 0 40px", fontFamily: "'Inter', system-ui, sans-serif" }}>
+
+      {/* Header: title + search */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16, flexWrap: "wrap" as any }}>
+        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Inter', sans-serif" }}>Settings</h1>
+        <div style={{ position: "relative", flex: 1, maxWidth: 400, minWidth: 200 }}>
+          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-tertiary)", pointerEvents: "none", fontSize: 13 }}>🔍</span>
+          <input
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+            placeholder="Search all settings…"
+            style={{
+              width: "100%", padding: "8px 12px 8px 32px", borderRadius: 0,
+              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+              color: "var(--text-primary)", fontSize: 13, outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+          {searchText && (
+            <button onClick={() => setSearchText("")}
+              style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: "2px 6px" }}
+              aria-label="Clear search">×</button>
+          )}
+        </div>
       </div>
 
-      {tab === "general" && <>
+      {/* Two-column layout: sidebar + content */}
+      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, alignItems: "start" }}>
+
+        {/* Left sidebar — category nav */}
+        <nav style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "6px 0", position: "sticky" as const, top: 10 }}>
+          {CATEGORIES.map(c => (
+            <button key={c.id} onClick={() => { setSearchText(""); setActiveCategory(c.id); }} style={catBtnStyle(c.id)}>
+              <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>{c.icon}</span>
+              <span>{c.label}</span>
+            </button>
+          ))}
+        </nav>
+
+        {/* Right content area — all sections live here; each self-filters */}
+        <div>
+          {/* Breadcrumb / context line */}
+          {!searchText && activeCat && (
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "var(--text-tertiary)", marginBottom: 12 }}>
+              {activeCat.label}
+            </div>
+          )}
+          {searchText && (
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
+              Showing settings matching "<b style={{ color: "var(--text-secondary)" }}>{searchText}</b>" across all categories
+            </div>
+          )}
+
+          <>
 
       {/* ── Station ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>} title="Your Station" description="Basic information about your station">
+      <Section category="station" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>} title="Your Station" description="Basic information about your station">
         <SettingRow label="Station name" hint="Shows in the header and window title">
           <div style={{ display: "flex", gap: 8 }}>
             <input value={stationName} onChange={e => setStationName(e.target.value)}
               placeholder="My Radio Station"
               style={{ padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", width: 200, outline: "none" }} />
             <button onClick={saveStationName}
-              style={{ padding: "7px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: stationNameSaved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+              style={{ padding: "7px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: stationNameSaved ? "var(--accent-green)" : "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
               {stationNameSaved ? "Saved!" : "Save"}
             </button>
           </div>
@@ -613,17 +887,17 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         </SettingRow>
         <div style={{ paddingTop: 12 }}>
           <Toggle value={autostart} onChange={toggleAutostart} label="Start Ether automatically when Windows boots" />
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 6, marginLeft: 52 }}>Recommended if you run a 24/7 station</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 6, marginLeft: 52 }}>Recommended if you run a 24/7 station</div>
         </div>
       </Section>
 
       {/* ── Audio ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="Choose where music plays and which mic to use for voice tracking">
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="Choose where music plays and which mic to use for voice tracking">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, minWidth: 0 }}>
           {/* Output */}
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Where music plays</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Your speakers, headphones, or broadcast console</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Your speakers, headphones, or broadcast console</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {outputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No output devices found</div> :
                 outputs.map(d => (
@@ -635,7 +909,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
-                    {currentOutput === d.deviceId && <span style={{ fontSize: 9, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
+                    {currentOutput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
                   </button>
                 ))}
             </div>
@@ -643,7 +917,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           {/* Input */}
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Your microphone</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>For voice tracking and live mic breaks</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>For voice tracking and live mic breaks</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {inputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No microphones found</div> :
                 inputs.map(d => (
@@ -655,13 +929,13 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                     display: "flex", justifyContent: "space-between", alignItems: "center",
                   }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
-                    {currentInput === d.deviceId && <span style={{ fontSize: 9, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
+                    {currentInput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
                   </button>
                 ))}
             </div>
           </div>
         </div>
-        <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>
+        <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>
           ↻ Rescan Devices
         </button>
         {setXfadeDuration && (
@@ -672,7 +946,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                 onChange={e => setXfadeDuration(Number(e.target.value))}
                 style={{ width: 110, accentColor: "#a78bfa", cursor: "pointer" }}
               />
-              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "#a78bfa", minWidth: 28, textAlign: "right" as const }}>
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#a78bfa", minWidth: 28, textAlign: "right" as const }}>
                 {xfadeDuration}s
               </span>
             </div>
@@ -681,7 +955,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       </Section>
 
       {/* ── Music Scheduling Rules ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>} title="Music Scheduling Rules" description="Control how songs are selected — how long before the same artist or song can play again">
+      <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>} title="Music Scheduling Rules" description="Control how songs are selected — how long before the same artist or song can play again">
         <div style={{ display: "flex", flexDirection: "column" as any }}>
           {rules.map((r, i) => {
             const meta = RULE_META[r.rule_type];
@@ -696,26 +970,26 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               }}>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{meta.label}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{meta.hint}</div>
+                  <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{meta.hint}</div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                   <input type="number" value={getDisplayValue(r)}
                     onChange={e => setDisplayValue(r, parseFloat(e.target.value) || 0)}
-                    style={{ width: 60, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", fontWeight: 500, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", textAlign: "center" as any, outline: "none" }} />
+                    style={{ width: 60, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontWeight: 500, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", textAlign: "center" as any, outline: "none" }} />
                   {TIME_RULES.includes(r.rule_type) ? (
                     <select
                       value={ruleUnits[r.id] || "min"}
                       onChange={e => setRuleUnits(prev => ({ ...prev, [r.id]: e.target.value as "min" | "hr" }))}
-                      style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}
+                      style={{ padding: "5px 8px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}
                     >
                       <option value="min">min</option>
                       <option value="hr">hrs</option>
                     </select>
                   ) : (
-                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", width: 42 }}>songs</span>
+                    <span style={{ fontSize: 13, color: "var(--text-tertiary)", width: 42 }}>songs</span>
                   )}
                   <button onClick={() => updateRule(r.id, "is_hard", r.is_hard ? 0 : 1)} style={{
-                    padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
+                    padding: "5px 10px", borderRadius: 0, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none",
                     background: r.is_hard ? "rgba(248,113,113,0.15)" : "var(--bg-tertiary)",
                     color: r.is_hard ? "var(--accent-red)" : "var(--text-tertiary)",
                   }}>{r.is_hard ? "STRICT" : "SOFT"}</button>
@@ -732,35 +1006,71 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
             );
           })}
         </div>
-        <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 0, fontSize: 11, color: "var(--text-tertiary)" }}>
+        <div style={{ marginTop: 12, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 0, fontSize: 13, color: "var(--text-tertiary)" }}>
           <strong style={{ color: "var(--accent-red)" }}>STRICT</strong> — rule is enforced absolutely, no exceptions.&nbsp;&nbsp;
           <strong style={{ color: "var(--text-secondary)" }}>SOFT</strong> — rule is preferred but can be broken if no better option exists.
         </div>
       </Section>
 
       {/* ── Connections ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
+      <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Mobile remote control</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>Open this on any phone or tablet connected to the same WiFi — no app needed</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 8 }}>Open this on any phone or tablet connected to the same WiFi — no app needed</div>
             {dashboardUrl && <CodeBox value={dashboardUrl} />}
           </div>
           <div style={{ borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
             <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Now playing for your website</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>Your website can fetch this URL every 10 seconds to show the current song automatically</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 8 }}>Your website can fetch this URL every 10 seconds to show the current song automatically</div>
             {dashboardUrl && <CodeBox value={dashboardUrl + "/now-playing.json"} />}
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: song title, artist, whether it's playing, and a timestamp</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Returns: song title, artist, whether it's playing, and a timestamp</div>
           </div>
         </div>
       </Section>
 
+      {/* ── Stream Metadata Outputs (PAD/RDS) ── */}
+      <Section
+        category="broadcast"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M2 12h20M19.07 4.93l-14.14 14.14M19.07 19.07l-14.14-14.14"/></svg>}
+        title="Stream Metadata Outputs"
+        description="Push 'now playing' to Icecast, Shoutcast, TuneIn AIR, RDS encoders, or any custom webhook — multiple targets in parallel">
+        <StreamMetadataPanel />
+      </Section>
+
+      {/* ── Pair Mobile App (Ether2Go) ── */}
+      <Section
+        category="integrations"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18.5"/></svg>}
+        title="Pair Mobile App (Ether2Go)"
+        description="Record voice tracks on your phone and upload them straight to the studio">
+        <PairMobileApp />
+      </Section>
+
+      {/* ── AI Voice Generation (Auto-DJ) ── */}
+      <Section
+        category="integrations"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/><path d="M3 9l3-1 3 1"/></svg>}
+        title="AI Voice Generation"
+        description="Pick a TTS provider and voice for AI Auto-DJ — generates station IDs, weather, news intros from text">
+        <AIVoiceSettings />
+      </Section>
+
+      {/* ── Beta Program & Feedback ── */}
+      <Section
+        category="system"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>}
+        title="Beta Program & Feedback"
+        description="Apply for free Station-tier access, or tell us what's broken and what's missing">
+        <BetaProgram />
+      </Section>
+
       {/* ── Now Playing Screen ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>} title="Now Playing Screen" description="Customize what shows on the on-air display window">
+      <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>} title="Now Playing Screen" description="Customize what shows on the on-air display window">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)", marginBottom: 4 }}>Instagram feed</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>Shows recent posts on the Now Playing screen when no ads are running. Enter a profile handle or hashtag.</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Shows recent posts on the Now Playing screen when no ads are running. Enter a profile handle or hashtag.</div>
             <input value={igHandle} onChange={e => setIgHandle(e.target.value)}
               placeholder="@yourstation or #yourhashtag"
               style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", marginBottom: 12, boxSizing: "border-box" as any }} />
@@ -775,7 +1085,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       </Section>
 
       {/* ── Loudness ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>} title="Loudness Normalization" description="Make every song play at the same volume — no more jarring jumps between quiet and loud tracks">
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>} title="Loudness Normalization" description="Make every song play at the same volume — no more jarring jumps between quiet and loud tracks">
         {processingStats && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
             {[
@@ -784,8 +1094,8 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               { label: "Still to analyze", value: processingStats.unprocessed, highlight: processingStats.unprocessed > 0 },
             ].map(s => (
               <div key={s.label} style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "12px 14px", textAlign: "center" as any }}>
-                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: (s as any).highlight ? "var(--accent-amber)" : "var(--text-primary)" }}>{s.value}</div>
-                <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4 }}>{s.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: (s as any).highlight ? "var(--accent-amber)" : "var(--text-primary)" }}>{s.value}</div>
+                <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4 }}>{s.label}</div>
               </div>
             ))}
           </div>
@@ -809,11 +1119,135 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
             Reset
           </button>
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 10 }}>Target is -14 LUFS — the broadcast standard used by most radio stations. This runs in the background and doesn't affect playback.</div>
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>Target is -14 LUFS — the broadcast standard used by most radio stations. This runs in the background and doesn't affect playback.</div>
+      </Section>
+
+      {/* ── Clean Filenames ── */}
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>} title="Clean Filenames" description="Strip spotdown tags and timestamp prefixes from audio filenames — cleans up bulk-downloaded libraries">
+        {/* Words to remove */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>Strings to remove</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <input
+              value={cleanWordInput}
+              onChange={e => setCleanWordInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter" && cleanWordInput.trim() && !cleanWords.includes(cleanWordInput.trim())) {
+                  setCleanWords(w => [...w, cleanWordInput.trim()]); setCleanWordInput("");
+                }
+              }}
+              placeholder="Add word to remove…"
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}
+            />
+            <button
+              onClick={() => {
+                const w = cleanWordInput.trim();
+                if (w && !cleanWords.includes(w)) { setCleanWords(ws => [...ws, w]); setCleanWordInput(""); }
+              }}
+              style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+              Add
+            </button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap" as any, gap: 6 }}>
+            {cleanWords.map(w => (
+              <span key={w} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 0, fontSize: 12, color: "var(--text-secondary)" }}>
+                {w}
+                <button onClick={() => setCleanWords(ws => ws.filter(x => x !== w))} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", fontSize: 14, lineHeight: 1, padding: 0, marginLeft: 2 }}>×</button>
+              </span>
+            ))}
+          </div>
+        </div>
+
+        {/* Folder picker */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <input
+            value={cleanFolder}
+            onChange={e => { setCleanFolder(e.target.value); setCleanPreview(null); setCleanResult(null); setCleanError(null); }}
+            placeholder="Paste folder path or browse…"
+            style={{ flex: 1, padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }}
+          />
+          <button
+            onClick={async () => {
+              const result = await invoke("dialog:openDirectory");
+              if (result) { setCleanFolder(result); setCleanPreview(null); setCleanResult(null); setCleanError(null); }
+            }}
+            style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", whiteSpace: "nowrap" as any }}>
+            Browse…
+          </button>
+        </div>
+
+        {/* Action buttons */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button
+            disabled={!cleanFolder || cleanBusy}
+            onClick={async () => {
+              setCleanBusy(true); setCleanResult(null); setCleanError(null); setCleanPreview(null);
+              try {
+                const r = await invoke("clean_filenames", { folderPath: cleanFolder, commit: false, stringsToRemove: cleanWords });
+                if (!r.ok) { setCleanError(r.error || "Unknown error"); return; }
+                setCleanPreview(r.renames || []);
+              } catch (e: any) {
+                setCleanError(e?.message || String(e));
+              } finally { setCleanBusy(false); }
+            }}
+            style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: (!cleanFolder || cleanBusy) ? "default" : "pointer", opacity: (!cleanFolder || cleanBusy) ? 0.5 : 1 }}>
+            {cleanBusy ? "Scanning…" : "Preview"}
+          </button>
+          {cleanPreview && cleanPreview.length > 0 && !cleanResult && (
+            <button
+              disabled={cleanBusy}
+              onClick={async () => {
+                if (!confirm(`Rename ${cleanPreview.length} file${cleanPreview.length !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+                setCleanBusy(true); setCleanError(null);
+                try {
+                  const r = await invoke("clean_filenames", { folderPath: cleanFolder, commit: true, stringsToRemove: cleanWords });
+                  if (!r.ok) { setCleanError(r.error || "Unknown error"); return; }
+                  setCleanResult({ renamed: r.renamed, errors: r.errors || [] });
+                  setCleanPreview(null);
+                } catch (e: any) {
+                  setCleanError(e?.message || String(e));
+                } finally { setCleanBusy(false); }
+              }}
+              style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-green)", color: "#fff", border: "none", cursor: cleanBusy ? "default" : "pointer" }}>
+              Rename {cleanPreview.length} file{cleanPreview.length !== 1 ? "s" : ""}
+            </button>
+          )}
+        </div>
+
+        {/* Error */}
+        {cleanError && (
+          <div style={{ padding: "10px 14px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 0, fontSize: 12, color: "var(--accent-red)", marginBottom: 10 }}>
+            {cleanError}
+          </div>
+        )}
+        {/* Preview table */}
+        {cleanPreview !== null && cleanPreview.length === 0 && (
+          <div style={{ padding: "10px 14px", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-green)" }}>
+            No files need renaming in that folder.
+          </div>
+        )}
+        {cleanPreview && cleanPreview.length > 0 && (
+          <div style={{ maxHeight: 220, overflowY: "auto", border: "1px solid var(--border-primary)", borderRadius: 0 }}>
+            {cleanPreview.map((r, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "7px 12px", borderBottom: i < cleanPreview.length - 1 ? "1px solid var(--border-primary)" : "none", background: i % 2 ? "var(--bg-tertiary)" : "transparent" }}>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{r.before}</div>
+                <div style={{ fontSize: 11, color: "var(--accent-green)", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>→ {r.after}</div>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Result */}
+        {cleanResult && (
+          <div style={{ padding: "10px 14px", background: cleanResult.errors.length ? "rgba(251,191,36,0.08)" : "rgba(74,222,128,0.08)", border: `1px solid ${cleanResult.errors.length ? "rgba(251,191,36,0.3)" : "rgba(74,222,128,0.2)"}`, borderRadius: 0, fontSize: 12, color: cleanResult.errors.length ? "var(--accent-amber)" : "var(--accent-green)" }}>
+            Renamed {cleanResult.renamed} file{cleanResult.renamed !== 1 ? "s" : ""}.
+            {cleanResult.errors.length > 0 && <div style={{ marginTop: 4 }}>{cleanResult.errors.length} error{cleanResult.errors.length !== 1 ? "s" : ""}: {cleanResult.errors[0]}</div>}
+          </div>
+        )}
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>Also strips leading timestamp prefixes like <code>1776659272680_</code> and collapses double/trailing underscores.</div>
       </Section>
 
       {/* ── Backup ── */}
-      <Section icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">
+      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
           <button onClick={backup} disabled={backupLoading} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
             {backupLoading ? "Saving..." : "Back up now"}
@@ -822,34 +1256,170 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         </div>
         {backups.length > 0 && (
           <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase" as any, marginBottom: 8 }}>Saved backups</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase" as any, marginBottom: 8 }}>Saved backups</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {backups.map(name => (
                 <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-tertiary)", borderRadius: 0, padding: "9px 12px", border: "1px solid var(--border-primary)" }}>
                   <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{formatBackupName(name)}</span>
-                  <button onClick={() => restore(name)} style={{ padding: "4px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                  <button onClick={() => restore(name)} style={{ padding: "4px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
                     Restore
                   </button>
                 </div>
               ))}
             </div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8 }}>Backups older than 7 days are automatically deleted</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Backups older than 7 days are automatically deleted</div>
           </div>
         )}
         {backups.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>No backups yet — click "Back up now" to create your first one</div>}
       </Section>
 
-      {/* ── Experience Mode ── */}
-      <Section
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>}
-        title="Experience Mode"
-        description="Controls which decks are visible by default. Decks with a purpose assigned are always shown."
-      >
-        <ExperienceModeSelector />
+      {/* ── R2 Cloud Backup ── */}
+      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="R2 Cloud Backup" description="Automatic off-site backup to Cloudflare R2 — zero egress fees, your data stays yours">
+
+        {/* Enable toggle */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable automatic R2 backups</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Runs on the schedule below whenever Ether is open</div>
+          </div>
+          <button
+            onClick={() => setR2Enabled(e => !e)}
+            style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700, borderRadius: 0, border: "1px solid", cursor: "pointer", letterSpacing: "0.05em",
+              background: r2Enabled ? "rgba(99,102,241,0.15)" : "var(--bg-tertiary)",
+              borderColor: r2Enabled ? "var(--accent-blue)" : "var(--border-primary)",
+              color: r2Enabled ? "var(--accent-blue)" : "var(--text-tertiary)" }}>
+            {r2Enabled ? "ON" : "OFF"}
+          </button>
+        </div>
+
+        {/* Fields */}
+        {([
+          { label: "Account ID", hint: "Found in R2 → Overview (e.g. a1b2c3d4e5…)", value: r2AccountId, set: setR2AccountId, placeholder: "Your Cloudflare Account ID" },
+          { label: "Access Key ID", hint: "R2 → Manage R2 API Tokens", value: r2AccessKeyId, set: setR2AccessKeyId, placeholder: "Access Key ID" },
+        ] as const).map(({ label, hint, value, set, placeholder }) => (
+          <div key={label} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>{label}</div>
+            <input
+              value={value}
+              onChange={e => set(e.target.value)}
+              placeholder={placeholder}
+              style={{ width: "100%", boxSizing: "border-box" as any, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, fontFamily: "monospace", outline: "none" }}
+            />
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>{hint}</div>
+          </div>
+        ))}
+
+        {/* Secret Access Key */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>Secret Access Key</div>
+          {r2HasSecret && !r2EditSecret ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ flex: 1, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontFamily: "monospace", letterSpacing: "0.1em" }}>
+                ••••••••••••{r2SecretLast4}
+              </div>
+              <button
+                onClick={() => setR2EditSecret(true)}
+                style={{ padding: "7px 12px", fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap" as any }}>
+                Replace
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input
+                type={r2ShowSecret ? "text" : "password"}
+                value={r2NewSecret}
+                onChange={e => setR2NewSecret(e.target.value)}
+                placeholder={r2HasSecret ? "Enter new secret to replace" : "Secret Access Key"}
+                style={{ flex: 1, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, fontFamily: "monospace", outline: "none" }}
+              />
+              <button
+                onClick={() => setR2ShowSecret(s => !s)}
+                title={r2ShowSecret ? "Hide" : "Show"}
+                style={{ padding: "7px 10px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 0 }}>
+                {r2ShowSecret ? "🙈" : "👁"}
+              </button>
+              {r2HasSecret && (
+                <button
+                  onClick={() => { setR2EditSecret(false); setR2NewSecret(""); }}
+                  style={{ padding: "7px 10px", fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 0 }}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>Never stored in plain text — persisted encrypted in station config</div>
+        </div>
+
+        {/* Bucket name */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>Bucket Name</div>
+          <input
+            value={r2Bucket}
+            onChange={e => setR2Bucket(e.target.value)}
+            placeholder="ether-backups"
+            style={{ width: "100%", boxSizing: "border-box" as any, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, fontFamily: "monospace", outline: "none" }}
+          />
+        </div>
+
+        {/* Backup interval */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>Backup Interval</div>
+          <select
+            value={r2Interval}
+            onChange={e => setR2Interval(Number(e.target.value))}
+            style={{ padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, cursor: "pointer", outline: "none" }}>
+            <option value={1}>Every hour</option>
+            <option value={6}>Every 6 hours</option>
+            <option value={12}>Every 12 hours</option>
+            <option value={24}>Daily</option>
+          </select>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any, marginBottom: 12 }}>
+          <button
+            onClick={saveR2Config}
+            disabled={r2Saving}
+            style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
+            {r2Saving ? "Saving…" : "Save"}
+          </button>
+          <button
+            onClick={testR2Connection}
+            disabled={r2Testing}
+            style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", borderRadius: 0, opacity: r2Testing ? 0.6 : 1 }}>
+            {r2Testing ? "Testing…" : "Test Connection"}
+          </button>
+          {r2SaveStatus && <span style={{ fontSize: 12, color: r2SaveStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{r2SaveStatus}</span>}
+        </div>
+        {r2TestStatus && (
+          <div style={{ fontSize: 12, padding: "8px 12px", marginBottom: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: r2TestStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>
+            {r2TestStatus}
+          </div>
+        )}
+
+        {/* Last backup status */}
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", borderTop: "1px solid var(--border-primary)", paddingTop: 12 }}>
+          {r2LastBackup > 0 ? (
+            <>
+              <span style={{ color: r2LastStatus === "success" ? "var(--accent-green)" : "var(--accent-red)", fontWeight: 600 }}>
+                {r2LastStatus === "success" ? "✓" : "✗"}
+              </span>
+              {" "}Last backup: {new Date(r2LastBackup * 1000).toLocaleString()}
+              {r2LastStatus !== "success" && <span style={{ color: "var(--accent-red)", marginLeft: 8 }}>{r2LastStatus}</span>}
+            </>
+          ) : (
+            <span>No R2 backup has run yet</span>
+          )}
+        </div>
+
       </Section>
+
+      {/* Experience Mode removed — deck visibility is now controlled
+          entirely by Configure Decks (the modal in the toolbar). */}
 
       {/* ── Send an Invite ── */}
       <Section
+        category="station"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.9 10.66a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.8 0h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 7.91a16 16 0 0 0 6.29 6.29l1.18-1.18a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 14.92z"/></svg>}
         title="Send an Invite"
         description="Generate a personalised invite file for a new operator. Place it next to the installer and ether will configure their station automatically on first launch."
@@ -859,6 +1429,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
 
       {/* ── Station Identity ── */}
       <Section
+        category="station"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>}
         title="Station Identity"
         description="Upload a station logo — displayed on the On-Shift welcome screen"
@@ -866,11 +1437,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         <StationLogoUploader />
       </Section>
 
-      </> /* end tab === "general" */}
-
-      {tab === "ai" && <>
         {/* ── Active AI Provider ── */}
         <Section
+          category="integrations"
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>}
           title="Active AI Provider"
           description="Choose which AI powers the DeskProducer assistant"
@@ -894,10 +1463,11 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               );
             })}
           </div>
-          {aiProviderSaved && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>✓ Saved</div>}
+          {aiProviderSaved && <div style={{ fontSize: 13, color: "var(--accent-green)", marginTop: 8 }}>✓ Saved</div>}
         </Section>
 
         {/* ── Provider Cards ── */}
+        <CategoryGate category="integrations">
         {([
           {
             id: "anthropic",
@@ -940,15 +1510,15 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <div style={{ width: 10, height: 10, borderRadius: "50%", background: card.color, flexShrink: 0 }} />
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>{card.name}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Inter', sans-serif" }}>{card.name}</div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 600, color: connected ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: connected ? "var(--accent-green)" : "var(--text-tertiary)" }}>
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: connected ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
                   {connected ? "Connected" : "Not connected"}
                 </div>
               </div>
               <div style={{ padding: "14px 20px" }}>
-                <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+                <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>
                   Get your API key at{" "}
                   <a href={card.keyUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl(card.keyUrl); }}>
                     {card.keyUrlLabel}
@@ -960,38 +1530,40 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                     value={card.value}
                     onChange={e => card.set(e.target.value as any)}
                     placeholder={connected ? "••••••••••••••••" : card.placeholder}
-                    style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+                    style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}
                   />
                   <button
                     onClick={() => connectProvider(card.id, card.value)}
                     disabled={!card.value.trim() || busy}
-                    style={{ padding: "8px 16px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "none", cursor: card.value.trim() && !busy ? "pointer" : "default", background: card.value.trim() && !busy ? "var(--accent-blue)" : "var(--bg-tertiary)", color: card.value.trim() && !busy ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
+                    style={{ padding: "8px 16px", borderRadius: 0, fontSize: 13, fontWeight: 600, border: "none", cursor: card.value.trim() && !busy ? "pointer" : "default", background: card.value.trim() && !busy ? "var(--accent-blue)" : "var(--bg-tertiary)", color: card.value.trim() && !busy ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
                     {busy ? "Saving..." : "Connect"}
                   </button>
                   {connected && (
-                    <button onClick={() => disconnectProvider(card.id)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
+                    <button onClick={() => disconnectProvider(card.id)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", transition: "all 0.15s", whiteSpace: "nowrap" as const }}>
                       Disconnect
                     </button>
                   )}
                 </div>
-                {card.value && <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6 }}>{card.hint}</div>}
+                {card.value && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6 }}>{card.hint}</div>}
               </div>
             </div>
           );
         })}
+        </CategoryGate>
 
         {/* ── Weather (OpenWeatherMap) ── */}
         <Section
+          category="integrations"
           icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>}
           title="Weather — OpenWeatherMap"
           description="Powers the Weather button in DeskProducer with real Las Vegas conditions"
         >
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 10 }}>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>
             Free API key at{" "}
             <a href="https://openweathermap.org/api" target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl("https://openweathermap.org/api"); }}>
               openweathermap.org/api
             </a>
-            {" "}— sign up, then copy the key from your dashboard. You can also set <code style={{ fontFamily: "'DM Mono', monospace", fontSize: 10, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0 }}>OPENWEATHERMAP_API_KEY</code> in your .env file.
+            {" "}— sign up, then copy the key from your dashboard. You can also set <code style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 12, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0 }}>OPENWEATHERMAP_API_KEY</code> in your .env file.
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
@@ -999,27 +1571,28 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               value={weatherInput}
               onChange={e => setWeatherInput(e.target.value)}
               placeholder={keyStatus.weather ? "••••••••••••••••" : "Paste API key..."}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}
             />
             <button
               onClick={() => connectProvider("weather", weatherInput)}
               disabled={!weatherInput.trim() || connectingProvider === "weather"}
-              style={{ padding: "8px 16px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "none", cursor: weatherInput.trim() ? "pointer" : "default", background: weatherInput.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)", color: weatherInput.trim() ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s" }}>
+              style={{ padding: "8px 16px", borderRadius: 0, fontSize: 13, fontWeight: 600, border: "none", cursor: weatherInput.trim() ? "pointer" : "default", background: weatherInput.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)", color: weatherInput.trim() ? "#fff" : "var(--text-tertiary)", transition: "all 0.15s" }}>
               {connectingProvider === "weather" ? "Saving..." : "Connect"}
             </button>
             {keyStatus.weather && (
-              <button onClick={() => disconnectProvider("weather")} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)" }}>
+              <button onClick={() => disconnectProvider("weather")} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600, border: "1px solid var(--border-secondary)", cursor: "pointer", background: "transparent", color: "var(--text-tertiary)" }}>
                 Disconnect
               </button>
             )}
           </div>
-          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: keyStatus.weather ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: keyStatus.weather ? "var(--accent-green)" : "var(--text-tertiary)" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: keyStatus.weather ? "var(--accent-green)" : "var(--text-tertiary)", display: "inline-block" }} />
             {keyStatus.weather ? "Connected — Weather button is live" : "Not connected — Weather button will show a placeholder"}
           </div>
         </Section>
       {/* ── Spotify Integration ── */}
       <Section
+        category="integrations"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" style={{ color: "#1db954" }}><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>}
         title="Spotify Integration"
         description="Connect your Spotify Developer credentials to import pre-screened music into your library. Create an app at developer.spotify.com — use Client Credentials flow."
@@ -1029,6 +1602,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
 
       {/* ── Musixmatch Lyrics Scanner ── */}
       <Section
+        category="integrations"
         icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>}
         title="Musixmatch Lyrics Scanner"
         description="Scan imported song lyrics for thematic red flags — violence, explicit language, hate speech, political content. Flags are shown in amber for manual review. Free tier at developer.musixmatch.com."
@@ -1036,13 +1610,23 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         <MusixmatchKeyForm />
       </Section>
 
-      </> /* end tab === "ai" */}
+      {/* ── Discogs Metadata ── */}
+      <Section
+        category="integrations"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>}
+        title="Discogs Metadata"
+        description="Look up track metadata (title, artist, album, year, genre) from the Discogs database. Used by the Library's Edit Metadata dialog. Free API — create a personal access token at discogs.com/settings/developers."
+      >
+        <DiscogsCredentialForm />
+      </Section>
 
-      {tab === "security" && <>
-        <UserManagement />
-      </> /* end tab === "security" */}
+      <UserManagement />
 
+          </>
+        </div>
+      </div>
     </div>
+    </SettingsFilterContext.Provider>
   );
 }
 
@@ -1126,10 +1710,11 @@ function UserManagement() {
   };
 
   const inputStyle: React.CSSProperties = { padding: "6px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", width: "100%" };
-  const btnStyle: React.CSSProperties = { padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", letterSpacing: "0.04em" };
+  const btnStyle: React.CSSProperties = { padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none", letterSpacing: "0.04em" };
 
   return (
     <Section
+      category="station"
       icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
       title="Users & Security"
       description="Manage user profiles, roles, and PINs"
@@ -1143,7 +1728,7 @@ function UserManagement() {
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{u.name}</div>
-              <div style={{ fontSize: 10, color: u.color }}>
+              <div style={{ fontSize: 12, color: u.color }}>
                 {ROLES.find(r => r.value === u.role)?.label || u.role}
                 <span style={{ color: "var(--text-tertiary)", marginLeft: 8 }}>{u.pin_hash ? "PIN set" : "No PIN"}</span>
               </div>
@@ -1181,7 +1766,7 @@ function UserManagement() {
                 {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Color</span>
+                <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Color</span>
                 <div style={{ display: "flex", gap: 4 }}>
                   {ROLE_COLORS.map(c => (
                     <div key={c} onClick={() => setAddColor(c)} style={{ width: 22, height: 22, background: c, cursor: "pointer", border: addColor === c ? "2px solid #fff" : "2px solid transparent" }} />
@@ -1209,7 +1794,7 @@ function UserManagement() {
                 {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
               </select>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Color</span>
+                <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Color</span>
                 <div style={{ display: "flex", gap: 4 }}>
                   {ROLE_COLORS.map(c => (
                     <div key={c} onClick={() => setEditUser({ ...editUser, color: c })} style={{ width: 22, height: 22, background: c, cursor: "pointer", border: editUser.color === c ? "2px solid #fff" : "2px solid transparent" }} />
@@ -1230,11 +1815,11 @@ function UserManagement() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => { setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError(""); }}>
           <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 20, minWidth: 320 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>{pinModal.pin_hash ? "Change" : "Set"} PIN for {pinModal.name}</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 16 }}>Enter a 4-digit PIN or leave blank to remove</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 16 }}>Enter a 4-digit PIN or leave blank to remove</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               <input value={newPin} onChange={e => { setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setPinError(""); }} placeholder="New PIN (4 digits)" type="password" maxLength={4} style={inputStyle} autoFocus />
               <input value={confirmPin} onChange={e => { setConfirmPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setPinError(""); }} placeholder="Confirm PIN" type="password" maxLength={4} style={inputStyle} />
-              {pinError && <div style={{ fontSize: 11, color: "var(--accent-red)" }}>{pinError}</div>}
+              {pinError && <div style={{ fontSize: 13, color: "var(--accent-red)" }}>{pinError}</div>}
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                 <button onClick={handleChangePin} style={{ ...btnStyle, flex: 1, background: "var(--accent-blue)", color: "#fff" }}>Save PIN</button>
                 <button onClick={() => { setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError(""); }} style={{ ...btnStyle, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>Cancel</button>

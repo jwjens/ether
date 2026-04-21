@@ -52,7 +52,10 @@ export interface SceneLayer {
   effects?:   LayerEffects | null;
 }
 
-export interface RtmpDestination { url: string; key: string; label: string; }
+export interface RtmpDestination {
+  url: string; key: string; label: string;
+  backupUrl?: string; backupKey?: string;
+}
 
 // ── Scenes ─────────────────────────────────────────────────────────────────
 export interface Scene {
@@ -80,11 +83,14 @@ export interface EncoderConfig {
   codec:  string;   // "h264/auto", "h264/nvenc", "h265/software", etc.
 }
 
+export type SinkConnectionStatus = "connecting" | "connected" | "reconnecting" | "failed";
+
 export interface VideoStatus {
   streaming: boolean;
   recording: boolean;
   fpsActual: number;
-  sinks: Array<{ id: string; label: string; uptimeMs: number; framesWritten: number }>;
+  sinks: Array<{ id: string; label: string; uptimeMs: number; framesWritten: number; status: SinkConnectionStatus }>;
+  events: Array<{ type: "warning" | "recovery"; id: string; label: string; message?: string; ts: number }>;
 }
 
 export interface DesktopSourcePick {
@@ -412,7 +418,14 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
     const tick = async () => {
       try {
         const s = await ether.video.getStatus();
-        if (alive) setStatus({ ...s, fpsActual: s.fpsActual ?? 0 });
+        if (alive) {
+          setStatus({ ...s, fpsActual: s.fpsActual ?? 0 });
+          // Broadcast to App.tsx so the header indicator dot can show/hide
+          // without lifting VideoEngineProvider out of the Studio tree.
+          window.dispatchEvent(new CustomEvent("ether:video-status", {
+            detail: { streaming: !!s.streaming, recording: !!s.recording },
+          }));
+        }
       } catch {}
     };
     tick();
@@ -624,6 +637,7 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
       try {
         const r = await ether.video.startStream({
           url: d.url, key: d.key, label: d.label || `Dest ${i + 1}`,
+          backupUrl: d.backupUrl || null, backupKey: d.backupKey || null,
           fps: config.fps, bitrate_kbps: config.bitrate_kbps,
           keyframe_interval: config.keyframe_interval, codec: config.codec,
           sinkId,

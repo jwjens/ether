@@ -114,6 +114,18 @@ export default function CloudBackup() {
   const [autoBackup, setAutoBackup]       = useState(false);
   const [lastBackupAt, setLastBackupAt]   = useState<string | null>(null);
 
+  // ── R2 config state ──
+  const [r2Endpoint, setR2Endpoint]       = useState("");
+  const [r2Bucket, setR2Bucket]           = useState("");
+  const [r2AccessKey, setR2AccessKey]     = useState("");
+  const [r2Secret, setR2Secret]           = useState("");
+  const [r2HasSecret, setR2HasSecret]     = useState(false);
+  const [r2Enabled, setR2Enabled]         = useState(false);
+  const [r2Saving, setR2Saving]           = useState(false);
+  const [r2Running, setR2Running]         = useState(false);
+  const [r2History, setR2History]         = useState<{id:number;status:string;size_bytes:number;checksum:string;backed_up_at:number}[]>([]);
+  const [r2Status, setR2Status]           = useState<{ msg: string; type: "ok" | "err" | "info" } | null>(null);
+
   // Load saved credentials
   useEffect(() => {
     (async () => {
@@ -130,6 +142,62 @@ export default function CloudBackup() {
       } catch {}
     })();
   }, []);
+
+  // Load R2 config from main process
+  useEffect(() => {
+    (async () => {
+      try {
+        const cfg = await (window as any).ether.cloudBackup.getR2Config();
+        if (cfg.endpoint)    setR2Endpoint(cfg.endpoint);
+        if (cfg.bucket)      setR2Bucket(cfg.bucket);
+        if (cfg.accessKeyId) setR2AccessKey(cfg.accessKeyId);
+        setR2HasSecret(!!cfg.hasSecret);
+        setR2Enabled(!!cfg.enabled);
+        const hist = await (window as any).ether.cloudBackup.getHistory();
+        setR2History(hist ?? []);
+      } catch {}
+    })();
+  }, []);
+
+  const saveR2Config = async () => {
+    setR2Saving(true);
+    setR2Status({ msg: "Saving...", type: "info" });
+    try {
+      const result = await (window as any).ether.cloudBackup.setR2Config({
+        endpoint:      r2Endpoint.trim(),
+        bucket:        r2Bucket.trim(),
+        accessKeyId:   r2AccessKey.trim(),
+        secretAccessKey: r2Secret.trim() || undefined,
+        enabled:       r2Enabled,
+      });
+      if (r2Secret) { setR2HasSecret(true); setR2Secret(""); }
+      setR2Status({
+        msg: result.ready ? "✓ R2 credentials saved — ready to backup" : "Saved (credentials incomplete — enter access key + secret)",
+        type: result.ready ? "ok" : "info",
+      });
+    } catch (e: any) {
+      setR2Status({ msg: "Save failed: " + e.message, type: "err" });
+    }
+    setR2Saving(false);
+  };
+
+  const runR2Backup = async () => {
+    setR2Running(true);
+    setR2Status({ msg: "Running backup...", type: "info" });
+    try {
+      const result = await (window as any).ether.cloudBackup.runNow();
+      if (result.ok) {
+        setR2Status({ msg: `✓ Backup complete — ${(result.size / 1024).toFixed(1)} KB (${result.checksum})`, type: "ok" });
+        const hist = await (window as any).ether.cloudBackup.getHistory();
+        setR2History(hist ?? []);
+      } else {
+        setR2Status({ msg: "Backup failed: " + result.error, type: "err" });
+      }
+    } catch (e: any) {
+      setR2Status({ msg: "Backup failed: " + e.message, type: "err" });
+    }
+    setR2Running(false);
+  };
 
   const loadBackups = useCallback(async () => {
     if (!licenseKey || !stationId) return;
@@ -320,6 +388,86 @@ export default function CloudBackup() {
             <button onClick={() => setStatus(null)} style={{ background: "none", border: "none", color: statusColor, cursor: "pointer", fontSize: 14 }}>✕</button>
           </div>
         )}
+
+        {/* ── R2 Direct Storage ── */}
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "#f97316", textTransform: "uppercase", marginBottom: 2 }}>Cloudflare R2</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Direct object storage — credentials stored locally, never transmitted</div>
+            </div>
+            {/* enabled toggle */}
+            <button onClick={() => setR2Enabled(e => !e)} style={{ width: 40, height: 22, borderRadius: 0, border: "none", cursor: "pointer", position: "relative", background: r2Enabled ? "#f97316" : "var(--bg-tertiary)", transition: "background 0.2s", flexShrink: 0 }}>
+              <div style={{ position: "absolute", top: 3, left: r2Enabled ? 20 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
+            </button>
+          </div>
+
+          {r2Status && (
+            <div style={{ marginBottom: 10, padding: "8px 12px", background: (r2Status.type === "ok" ? "#34d399" : r2Status.type === "err" ? "#ef4444" : "var(--accent-cyan)") + "14", border: `1px solid ${r2Status.type === "ok" ? "#34d399" : r2Status.type === "err" ? "#ef4444" : "var(--accent-cyan)"}35`, fontSize: 11, color: r2Status.type === "ok" ? "#34d399" : r2Status.type === "err" ? "#ef4444" : "var(--accent-cyan)", display: "flex", justifyContent: "space-between" }}>
+              <span>{r2Status.msg}</span>
+              <button onClick={() => setR2Status(null)} style={{ background: "none", border: "none", color: "inherit", cursor: "pointer" }}>✕</button>
+            </div>
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Endpoint URL</div>
+              <input type="text" value={r2Endpoint} onChange={e => setR2Endpoint(e.target.value)} placeholder="https://<account-id>.r2.cloudflarestorage.com"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Bucket Name</div>
+              <input type="text" value={r2Bucket} onChange={e => setR2Bucket(e.target.value)} placeholder="ether-backups"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Access Key ID</div>
+              <input type="text" value={r2AccessKey} onChange={e => setR2AccessKey(e.target.value)} placeholder="Access key ID"
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>
+                Secret Access Key {r2HasSecret && !r2Secret && <span style={{ color: "#34d399" }}>— saved ✓</span>}
+              </div>
+              <input type="password" value={r2Secret} onChange={e => setR2Secret(e.target.value)}
+                placeholder={r2HasSecret ? "Leave blank to keep saved secret" : "Secret access key"}
+                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={saveR2Config} disabled={r2Saving}
+              style={{ padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgba(249,115,22,0.12)", color: "#f97316", border: "1px solid rgba(249,115,22,0.3)", cursor: "pointer", opacity: r2Saving ? 0.6 : 1 }}>
+              {r2Saving ? "Saving..." : "Save Credentials"}
+            </button>
+            <button onClick={runR2Backup} disabled={r2Running}
+              style={{ padding: "7px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: r2Running ? "var(--bg-tertiary)" : "#f97316", color: r2Running ? "var(--text-tertiary)" : "#000", border: "none", cursor: r2Running ? "default" : "pointer", transition: "all 0.15s" }}>
+              {r2Running ? "⏳ Backing up..." : "▲ Backup to R2 Now"}
+            </button>
+          </div>
+
+          {/* R2 history */}
+          {r2History.length > 0 && (
+            <div style={{ marginTop: 12, borderTop: "1px solid var(--border-primary)", paddingTop: 10 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>Recent Backups</div>
+              {r2History.slice(0, 5).map(h => (
+                <div key={h.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.04)", fontSize: 11 }}>
+                  <span style={{ color: h.status === "success" ? "#34d399" : "#ef4444", fontWeight: 700, width: 14 }}>{h.status === "success" ? "✓" : "✕"}</span>
+                  <span style={{ color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>
+                    {new Date(h.backed_up_at * 1000).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  {h.status === "success" && (
+                    <>
+                      <span style={{ color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{(h.size_bytes / 1024).toFixed(1)} KB</span>
+                      <span style={{ color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{h.checksum}</span>
+                    </>
+                  )}
+                  {h.status !== "success" && <span style={{ color: "#ef4444", fontSize: 10 }}>{h.status}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Credentials */}
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "16px 18px" }}>

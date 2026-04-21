@@ -151,54 +151,120 @@ function mp4Args({ filePath, fps, bitrate_kbps, keyframe_interval, codec }, enco
 
 // ── Sink lifecycle ──────────────────────────────────────────────────────────
 
+const MAX_RETRIES       = 5;
+const RETRY_INTERVAL_MS = 3000;
+const CONNECT_TIMEOUT   = 5000; // ms before treating a quick exit as a failure
+
+// Events queued for the renderer; drained on each getStatus() call.
+const pendingEvents = [];
+
+function pushEvent(type, payload) {
+  pendingEvents.push({ type, ...payload, ts: Date.now() });
+}
+
+// Generic sink (MP4 recording) — no reconnect logic.
 function spawnSink(id, label, args) {
   if (!ffmpegBin) throw new Error("ffmpeg-static not available");
-  if (sinks.has(id)) {
-    console.warn(`[video] sink "${id}" already running, stopping previous`);
-    stopSink(id);
-  }
-  const proc = spawn(ffmpegBin, args, {
-    stdio: ["pipe", "ignore", "pipe"],
-    windowsHide: true,
-  });
-  proc.stderr.on("data", (chunk) => {
-    // Echo ffmpeg's diagnostics to console so users see encoder errors
-    process.stdout.write(`[video/${id}] ${chunk.toString()}`);
-  });
-  proc.on("error", (e) => {
-    console.error(`[video/${id}] ffmpeg spawn error:`, e);
-    sinks.delete(id);
-  });
-  proc.on("exit", (code, sig) => {
-    console.log(`[video/${id}] ffmpeg exited code=${code} signal=${sig}`);
-    sinks.delete(id);
-  });
-  proc.stdin.on("error", (e) => {
-    // EPIPE happens when ffmpeg exits before we close stdin — don't crash
-    if (e.code !== "EPIPE") console.error(`[video/${id}] stdin error:`, e);
-  });
-  sinks.set(id, { proc, label, startedAt: Date.now(), framesWritten: 0 });
+  if (sinks.has(id)) { console.warn(`[video] sink "${id}" already running`); stopSink(id); }
+  const proc = spawn(ffmpegBin, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+  proc.stderr.on("data", (c) => process.stdout.write(`[video/${id}] ${c.toString()}`));
+  proc.on("error",  (e) => { console.error(`[video/${id}] spawn error:`, e); sinks.delete(id); });
+  proc.on("exit",   (code, sig) => { console.log(`[video/${id}] exit code=${code} sig=${sig}`); sinks.delete(id); });
+  proc.stdin.on("error", (e) => { if (e.code !== "EPIPE") console.error(`[video/${id}] stdin:`, e); });
+  sinks.set(id, { proc, label, startedAt: Date.now(), framesWritten: 0, status: "connected" });
   console.log(`[video] sink "${id}" started: ${label}`);
+}
+
+// RTMP sink — with primary/backup failover and up to MAX_RETRIES reconnects.
+function spawnRtmpSink(id, dest, encoders, retryCount = 0) {
+  if (!ffmpegBin) throw new Error("ffmpeg-static not available");
+
+  const { args, encoder, redactedUrl } = rtmpArgs(dest, encoders);
+  const label = dest.label || `RTMP → ${redactedUrl}`;
+  const proc  = spawn(ffmpegBin, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+
+  // After CONNECT_TIMEOUT ms without an exit, promote status to "connected".
+  const connectTimer = setTimeout(() => {
+    const s = sinks.get(id);
+    if (s && s.proc === proc && s.status === "connecting") {
+      s.status = "connected";
+      if (retryCount > 0) pushEvent("recovery", { id, label });
+      console.log(`[video/${id}] connected: ${redactedUrl}`);
+    }
+  }, CONNECT_TIMEOUT);
+
+  proc.stderr.on("data", (c) => process.stdout.write(`[video/${id}] ${c.toString()}`));
+  proc.on("error",  (e) => { clearTimeout(connectTimer); console.error(`[video/${id}] spawn error:`, e); sinks.delete(id); });
+  proc.stdin.on("error", (e) => { if (e.code !== "EPIPE") console.error(`[video/${id}] stdin:`, e); });
+
+  proc.on("exit", (code, sig) => {
+    clearTimeout(connectTimer);
+    const s = sinks.get(id);
+    if (!s || s.proc !== proc) return; // already replaced by a retry
+    if (s.intentionalStop) { sinks.delete(id); return; }
+
+    const uptimeMs = Date.now() - s.startedAt;
+    console.log(`[video/${id}] unexpected exit code=${code} sig=${sig} uptime=${uptimeMs}ms retry=${retryCount}`);
+
+    // Try backup URL once if primary failed quickly and a backup is configured.
+    if (uptimeMs < CONNECT_TIMEOUT && !dest._isBackup && dest.backupUrl) {
+      console.log(`[video/${id}] primary failed, trying backup: ${dest.backupUrl}`);
+      pushEvent("warning", { id, label, message: `${label}: primary failed, switching to backup` });
+      const backupDest = { ...dest, url: dest.backupUrl, key: dest.backupKey || dest.key, _isBackup: true };
+      sinks.delete(id);
+      spawnRtmpSink(id, backupDest, encoders, 0);
+      return;
+    }
+
+    // Schedule reconnect.
+    const nextRetry = retryCount + 1;
+    if (nextRetry > MAX_RETRIES) {
+      console.log(`[video/${id}] max retries reached — failed`);
+      pushEvent("warning", { id, label, message: `${label}: failed after ${MAX_RETRIES} reconnect attempts` });
+      sinks.set(id, { proc: null, label, startedAt: s.startedAt, framesWritten: s.framesWritten,
+                      status: "failed", intentionalStop: false, retryTimer: null });
+      return;
+    }
+
+    console.log(`[video/${id}] reconnecting ${nextRetry}/${MAX_RETRIES} in ${RETRY_INTERVAL_MS}ms`);
+    pushEvent("warning", { id, label, message: `${label}: reconnecting (${nextRetry}/${MAX_RETRIES})` });
+    const primaryDest = { ...dest, _isBackup: false };
+    const retryTimer  = setTimeout(() => {
+      const cur = sinks.get(id);
+      if (!cur || cur.intentionalStop) return;
+      sinks.delete(id);
+      spawnRtmpSink(id, primaryDest, encoders, nextRetry);
+    }, RETRY_INTERVAL_MS);
+
+    sinks.set(id, { proc: null, label, startedAt: s.startedAt, framesWritten: s.framesWritten,
+                    status: "reconnecting", intentionalStop: false, retryTimer });
+  });
+
+  sinks.set(id, { proc, label, startedAt: Date.now(), framesWritten: retryCount > 0 ? (sinks.get(id)?.framesWritten ?? 0) : 0,
+                  status: "connecting", intentionalStop: false, retryTimer: null, destOpts: dest });
+  console.log(`[video] rtmp sink "${id}" started (retry=${retryCount}): ${redactedUrl}`);
 }
 
 function stopSink(id) {
   const s = sinks.get(id);
   if (!s) return false;
-  try { s.proc.stdin.end(); } catch {}
-  // Give ffmpeg up to 3s to flush trailers (mp4 moov, RTMP deleteStream)
-  const killTimer = setTimeout(() => {
-    try { s.proc.kill(); } catch {}
-  }, 3000);
-  s.proc.once("exit", () => clearTimeout(killTimer));
+  s.intentionalStop = true;
+  if (s.retryTimer) clearTimeout(s.retryTimer);
+  if (s.proc) {
+    try { s.proc.stdin.end(); } catch {}
+    // Give ffmpeg up to 3s to flush trailers (mp4 moov, RTMP deleteStream)
+    const killTimer = setTimeout(() => { try { s.proc.kill(); } catch {} }, 3000);
+    s.proc.once("exit", () => clearTimeout(killTimer));
+  }
   sinks.delete(id);
   return true;
 }
 
 function pushChunk(uint8) {
   if (!sinks.size) return;
-  // Convert from ArrayBuffer/Uint8Array to Node Buffer
   const buf = Buffer.from(uint8.buffer || uint8, uint8.byteOffset || 0, uint8.byteLength);
   for (const s of sinks.values()) {
+    if (!s.proc) continue; // reconnecting or failed — skip
     try {
       s.proc.stdin.write(buf);
       s.framesWritten++;
@@ -209,16 +275,19 @@ function pushChunk(uint8) {
 }
 
 function getStatus() {
+  const streamIds = [...sinks.keys()].filter(id => id === "stream" || id.startsWith("stream:"));
   const out = {
-    streaming: sinks.has("stream"),
+    streaming: streamIds.some(id => { const s = sinks.get(id); return s && s.status !== "failed"; }),
     recording: sinks.has("record"),
     sinks: [],
+    events: pendingEvents.splice(0), // drain — caller owns the events
   };
   for (const [id, s] of sinks.entries()) {
     out.sinks.push({
       id, label: s.label,
-      uptimeMs: Date.now() - s.startedAt,
+      uptimeMs: s.proc ? Date.now() - s.startedAt : 0,
       framesWritten: s.framesWritten,
+      status: s.status || "connected",
     });
   }
   return out;
@@ -240,12 +309,12 @@ function installVideoEngine(ipcMain, opts = {}) {
   // pushChunk() already broadcasts to ALL open sinks, so a single MediaRecorder feeds
   // every destination simultaneously.
   ipcMain.handle("video:start-stream", async (_evt, dest) => {
-    // dest = { url, key, label, fps, bitrate_kbps, keyframe_interval, codec, sinkId? }
+    // dest = { url, key, backupUrl?, backupKey?, label, fps, bitrate_kbps, keyframe_interval, codec, sinkId? }
     if (!ffmpegBin) throw new Error("ffmpeg-static not available");
     if (cachedEncoders === null) cachedEncoders = await probeEncoders();
     const sinkId = dest.sinkId || "stream";
-    const { args, encoder, redactedUrl } = rtmpArgs(dest, cachedEncoders);
-    spawnSink(sinkId, `RTMP → ${redactedUrl}`, args);
+    const { encoder, redactedUrl } = rtmpArgs(dest, cachedEncoders);
+    spawnRtmpSink(sinkId, dest, cachedEncoders, 0);
     return { encoder, url: redactedUrl, sinkId };
   });
 

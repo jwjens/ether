@@ -1,30 +1,9 @@
-// ConsoleStrip.tsx — Wheatstone L-Series style console channel strip.
+// ConsoleStrip.tsx — Wheatstone-style broadcast console channel strip.
 //
-// Physical fader feel: the knob has a concave finger groove (darker center
-// with raised edges) so it looks like you can grip it. Three wide center
-// lines for tactile reference. The whole knob is taller vertically.
-//
-// Bottom section: two round illuminated pot buttons like a real console —
-// ON/OFF (top, blue glow when active) and PFL/CUE (bottom, amber glow).
-//
-// Layout:
-//   ┌──────────────────┐
-//   │     DECK A       │  ← label header
-//   ├─────────┬────────┤
-//   │         │        │
-//   │  FADER  │  METER │  ← both fill full height
-//   │  TRACK  │ (mono) │
-//   │         │        │
-//   │  ▄████▄ │  ████  │  ← concave knob + VU bar
-//   │  █ ── █ │  ████  │
-//   │  ▀████▀ │  ████  │
-//   │         │        │
-//   ├─────────┴────────┤
-//   │     -8 dB        │
-//   ├──────────────────┤
-//   │   (●) ON         │  ← round illuminated button, blue glow
-//   │   (●) PFL        │  ← round illuminated button, amber glow
-//   └──────────────────┘
+// Fader: tall narrow rail (min 180px), wide flat horizontal cap (landscape).
+// Scale: +6 (reference), 0, −10, −20, −40, −60, ∞ dB on the right of the rail.
+// 0 dB has a wider tick + a bright notch on the rail surface for tactile reference.
+// VU meter: full height, right side, same color coding as before.
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
@@ -42,8 +21,22 @@ interface Props {
   compact?: boolean;
 }
 
-const KNOB_H = 48;
-const KNOB_W = 52;
+// Fader cap: wide flat horizontal bar, like a real broadcast console cap
+const KNOB_H = 80;  // height of the cap
+const KNOB_W = 46;  // width of the cap
+
+// Fader uses a dB-linear taper: position maps linearly to dB (0 dB at top, −60 dB at bottom).
+// This matches real broadcast console scaling and keeps scale labels evenly distributed.
+const DB_FLOOR = 60; // fader bottom = −60 dB; below this snaps volume to 0
+
+const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
+  { label: "0",   db: 0,         isUnity: true },
+  { label: "−10", db: -10 },
+  { label: "−20", db: -20 },
+  { label: "−40", db: -40 },
+  { label: "−60", db: -60 },
+  { label: "∞",   db: -Infinity },
+];
 
 export default function ConsoleStrip({
   label, color, volume, level, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact,
@@ -51,11 +44,13 @@ export default function ConsoleStrip({
   const midi = useMidiState();
   const [dragging, setDragging] = useState(false);
   const [pflActive, setPflActive] = useState(false);
+  // trackRef: the invisible full-area mouse capture overlay
   const trackRef = useRef<HTMLDivElement>(null);
+  // faderAreaRef: the flex container we measure for faderH
   const faderAreaRef = useRef<HTMLDivElement>(null);
-  const [faderH, setFaderH] = useState(400);
+  const [faderH, setFaderH] = useState(220);
 
-  // Measure actual height
+  // Measure actual rendered height so knob position math stays accurate
   useEffect(() => {
     const el = faderAreaRef.current;
     if (!el) return;
@@ -66,7 +61,7 @@ export default function ConsoleStrip({
     return () => ro.disconnect();
   }, []);
 
-  // MIDI sync
+  // MIDI hardware fader sync
   const midiKey = `deck_${label.toLowerCase().replace(/[^a-z]/g, "")}_volume`;
   const midiVolume = midi.faderPositions[midiKey];
   useEffect(() => {
@@ -75,25 +70,38 @@ export default function ConsoleStrip({
     }
   }, [midiVolume]);
 
-  const knobY = (1 - volume) * (faderH - KNOB_H);
+  // Top offset of the knob cap — dB-linear taper so scale marks are evenly spaced.
+  // 0 dB → knobY=0 (top); −60 dB → knobY=faderH−KNOB_H (bottom).
+  const volDb = volume > 0.001 ? 20 * Math.log10(volume) : -DB_FLOOR;
+  const knobY = (Math.max(-DB_FLOOR, Math.min(0, volDb)) / -DB_FLOOR) * (faderH - KNOB_H);
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setDragging(true);
     const track = trackRef.current;
     if (!track) return;
+    const posToVol = (clientY: number, rect: DOMRect) => {
+      const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+      if (ratio >= 0.999) return 0;
+      const db = -ratio * DB_FLOOR;
+      return Math.pow(10, db / 20);
+    };
     const onMove = (ev: MouseEvent) => {
       const rect = track.getBoundingClientRect();
-      onVolumeChange(1 - Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height)));
+      onVolumeChange(posToVol(ev.clientY, rect));
     };
-    const onUp = () => { setDragging(false); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     const rect = track.getBoundingClientRect();
-    onVolumeChange(1 - Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)));
+    onVolumeChange(posToVol(e.clientY, rect));
   }, [onVolumeChange]);
 
-  const db = volume > 0.001 ? (20 * Math.log10(volume)).toFixed(0) : "-∞";
+  const db = volume > 0.001 ? (20 * Math.log10(volume)).toFixed(0) : "−∞";
   const vuH = Math.min(1, level * (isOn ? 1 : 0.05));
   const vuColor = level > 0.85 ? "var(--accent-red)" : level > 0.6 ? "var(--accent-amber)" : color;
 
@@ -117,98 +125,151 @@ export default function ConsoleStrip({
         {label}
       </div>
 
-      {/* ── Main area: fader + VU ── */}
+      {/* ── Main area: fader column + VU meter ── */}
       <div ref={faderAreaRef} style={{
         flex: 1, width: "100%", display: "flex", gap: 0,
-        padding: "12px 12px 8px",
-        minHeight: 0, overflow: "hidden",
+        padding: "10px 8px 8px",
+        minHeight: 180, overflow: "hidden",
       }}>
 
-        {/* ── Fader track ── */}
-        <div
-          ref={trackRef}
-          onMouseDown={handleMouseDown}
-          style={{
-            flex: 1, height: "100%", position: "relative",
-            cursor: dragging ? "grabbing" : "pointer",
-            display: "flex", justifyContent: "center",
-          }}
-        >
-          {/* Rail groove — recessed look */}
+        {/* ── Fader column: rail, scale, and knob cap ── */}
+        <div style={{
+          width: 72, flexShrink: 0, height: "100%", position: "relative",
+        }}>
+
+          {/* Mouse / touch capture — covers full column, sits above all visuals */}
+          <div
+            ref={trackRef}
+            onMouseDown={handleMouseDown}
+            style={{
+              position: "absolute", inset: 0,
+              cursor: dragging ? "grabbing" : "ns-resize",
+              zIndex: 10,
+            }}
+          />
+
+          {/* Rail groove — narrow recessed channel */}
           <div style={{
-            position: "absolute", left: "50%", transform: "translateX(-50%)",
+            position: "absolute",
+            left: "50%", transform: "translateX(-50%)",
             top: KNOB_H / 2, bottom: KNOB_H / 2,
-            width: 6, background: "#0a0a0f",
-            border: "1px solid #333",
-            boxShadow: "inset 0 2px 4px rgba(0,0,0,0.6)",
+            width: 8,
+            background: "#07070e",
+            border: "1px solid #252535",
+            boxShadow: "inset 0 2px 8px rgba(0,0,0,0.9), inset 0 0 3px rgba(0,0,0,0.5)",
           }} />
 
-          {/* dB tick marks */}
-          {[0, -6, -12, -24, -48].map(dbVal => {
-            const ratio = dbVal === 0 ? 1 : Math.pow(10, dbVal / 20);
-            const y = (1 - ratio) * (faderH - KNOB_H) + KNOB_H / 2;
+          {/* Active fill — colored segment from bottom to knob */}
+          <div style={{
+            position: "absolute",
+            left: "50%", transform: "translateX(-50%)",
+            bottom: KNOB_H / 2,
+            height: Math.max(0, (faderH - KNOB_H) - knobY),
+            width: 6,
+            background: isOn ? color : "#444",
+            opacity: isOn ? 0.42 : 0.07,
+            transition: dragging ? "none" : "height 0.08s ease-out",
+          }} />
+
+          {/* +6 dB reference label at top — not a reachable fader position,
+              shown as a headroom marker matching real broadcast console scales */}
+          <div style={{
+            position: "absolute",
+            top: 0, right: 2,
+            fontSize: 7, lineHeight: 1,
+            fontFamily: "'DM Mono', ui-monospace, monospace",
+            color: "rgba(255,255,255,0.14)",
+            pointerEvents: "none", zIndex: 1,
+          }}>+6</div>
+
+          {/* dB scale: tick marks + labels on the right side of the rail */}
+          {DB_MARKS.map(({ label: lbl, db, isUnity }) => {
+            // y is the pixel offset from top of the fader column where this dB mark falls
+            const y = isFinite(db)
+              ? (Math.max(-DB_FLOOR, Math.min(0, db)) / -DB_FLOOR) * (faderH - KNOB_H) + KNOB_H / 2
+              : (faderH - KNOB_H) + KNOB_H / 2; // ∞ sits at very bottom
             return (
-              <React.Fragment key={dbVal}>
-                <div style={{ position: "absolute", left: 4, top: y, width: 10, height: 1, background: "rgba(255,255,255,0.08)" }} />
-                <div style={{ position: "absolute", right: "55%", top: y - 5, fontSize: 7, color: "rgba(255,255,255,0.15)", fontFamily: "'DM Mono', monospace", textAlign: "right", width: 20 }}>{dbVal}</div>
+              <React.Fragment key={lbl}>
+
+                {/* Tick line — extends right from the rail edge */}
+                <div style={{
+                  position: "absolute",
+                  // left edge starts just outside the rail right edge (50% + half-rail = 50%+4px)
+                  left: "calc(50% + 5px)",
+                  top: y,
+                  width: isUnity ? 16 : 9,
+                  height: 1,
+                  background: isUnity
+                    ? "rgba(255,255,255,0.50)"  // 0 dB notch — notably brighter
+                    : "rgba(255,255,255,0.14)",
+                  pointerEvents: "none", zIndex: 1,
+                }} />
+
+                {/* 0 dB notch highlight on the rail surface — tactile reference point */}
+                {isUnity && (
+                  <div style={{
+                    position: "absolute",
+                    left: "50%", transform: "translateX(-50%)",
+                    top: y - 1, height: 3, width: 10,
+                    background: "rgba(255,255,255,0.22)",
+                    boxShadow: "0 0 5px rgba(255,255,255,0.10)",
+                    pointerEvents: "none", zIndex: 2,
+                  }} />
+                )}
+
+                {/* Label text */}
+                <div style={{
+                  position: "absolute",
+                  top: y - 4, right: 2,
+                  fontSize: 7, lineHeight: 1,
+                  fontFamily: "'DM Mono', ui-monospace, monospace",
+                  color: isUnity
+                    ? "rgba(255,255,255,0.55)"  // 0 dB label more visible
+                    : "rgba(255,255,255,0.24)",
+                  pointerEvents: "none", zIndex: 1,
+                }}>
+                  {lbl}
+                </div>
+
               </React.Fragment>
             );
           })}
 
-          {/* Active fill below knob */}
+          {/* ── Fader knob cap — wide flat horizontal bar ── */}
           <div style={{
-            position: "absolute", left: "50%", transform: "translateX(-50%)",
-            bottom: KNOB_H / 2, height: Math.max(0, volume * (faderH - KNOB_H)),
-            width: 4, background: isOn ? color : "#444",
-            opacity: isOn ? 0.5 : 0.1,
-            transition: dragging ? "none" : "height 0.08s ease-out",
-          }} />
-
-          {/* ── Fader knob — concave finger groove design ── */}
-          <div style={{
-            position: "absolute", left: "50%", transform: "translateX(-50%)",
-            top: knobY, width: KNOB_W, height: KNOB_H,
+            position: "absolute",
+            left: "50%", transform: "translateX(-50%)",
+            top: knobY,
+            width: KNOB_W, height: KNOB_H,
             cursor: "grab",
+            zIndex: 5,
             transition: dragging ? "none" : "top 0.08s ease-out",
-            zIndex: 2,
-            // Outer shell — raised edges
-            background: "linear-gradient(180deg, #555 0%, #3a3a3a 15%, #222 50%, #3a3a3a 85%, #555 100%)",
-            border: `1px solid ${dragging ? color : "#555"}`,
-            borderRadius: 3,
+            // Brushed-aluminum fader cap — light gray so it pops against dark rail
+            background: dragging
+              ? `linear-gradient(180deg, #e0e0e8 0%, #c8c8d0 20%, #b8b8c0 50%, #c8c8d0 80%, #e0e0e8 100%)`
+              : "linear-gradient(180deg, #d4d4dc 0%, #bdbdc6 20%, #aaaaB2 50%, #bdbdc6 80%, #d4d4dc 100%)",
+            border: `1px solid ${dragging ? color : "#9090a0"}`,
+            borderRadius: 2,
             boxShadow: dragging
-              ? `0 0 10px ${color}50, 0 2px 8px rgba(0,0,0,0.6)`
-              : "0 2px 6px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08)",
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            overflow: "hidden",
+              ? `0 0 14px ${color}55, 0 4px 14px rgba(0,0,0,0.85)`
+              : "0 3px 10px rgba(0,0,0,0.75), inset 0 1px 0 rgba(255,255,255,0.16), inset 0 -1px 0 rgba(0,0,0,0.45)",
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {/* Concave finger groove — darker recessed center */}
+            {/* Center grip marker — dark stripe on light cap */}
             <div style={{
-              width: KNOB_W - 8, height: KNOB_H - 12,
-              background: "linear-gradient(180deg, #1a1a1a 0%, #111 40%, #0a0a0a 50%, #111 60%, #1a1a1a 100%)",
-              borderRadius: 2,
-              border: "1px solid #333",
-              boxShadow: "inset 0 3px 6px rgba(0,0,0,0.7), inset 0 -3px 6px rgba(0,0,0,0.4)",
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              gap: 3,
-            }}>
-              {/* Three wide grip lines */}
-              {[0, 1, 2].map(i => (
-                <div key={i} style={{
-                  width: KNOB_W - 20,
-                  height: 2,
-                  background: i === 1
-                    ? "rgba(255,255,255,0.25)"  // center line brighter
-                    : "rgba(255,255,255,0.12)",
-                  borderRadius: 1,
-                }} />
-              ))}
-            </div>
+              width: KNOB_W - 16, height: 2,
+              background: dragging
+                ? `linear-gradient(90deg, transparent, ${color}, transparent)`
+                : "linear-gradient(90deg, transparent, rgba(0,0,0,0.45), transparent)",
+              borderRadius: 1,
+            }} />
           </div>
-        </div>
+
+        </div>{/* end fader column */}
 
         {/* ── Mono VU meter — full height, right side ── */}
         <div style={{
-          flex: 1, minWidth: 20, height: "100%",
+          flex: 1, minWidth: 16, height: "100%",
           background: "#0a0a0f",
           border: "1px solid #303040",
           boxShadow: "inset 0 2px 6px rgba(0,0,0,0.5)",
@@ -230,7 +291,7 @@ export default function ConsoleStrip({
               boxShadow: `0 0 6px ${vuColor}`,
             }} />
           )}
-          {/* dB reference marks */}
+          {/* dB reference marks on meter */}
           {[0, -6, -12, -24, -48].map(dbVal => {
             const ratio = dbVal === 0 ? 1 : Math.pow(10, dbVal / 20);
             return (
@@ -241,7 +302,8 @@ export default function ConsoleStrip({
             );
           })}
         </div>
-      </div>
+
+      </div>{/* end main area */}
 
       {/* ── dB readout ── */}
       <div style={{
@@ -259,9 +321,10 @@ export default function ConsoleStrip({
         gap: 8, padding: "10px 0 12px",
         background: "#141418", borderTop: "1px solid #303040",
       }}>
-        {/* ON / OFF — round pot button with blue glow */}
+
+        {/* ON / OFF — blue glow when active */}
         <button onClick={onToggleOn} style={{
-          width: 36, height: 36, borderRadius: "50%",
+          width: 44, height: 44, borderRadius: 0,
           background: isOn
             ? `radial-gradient(circle at 40% 35%, ${isPlaying ? "#5090ff" : "#3060aa"}, ${isPlaying ? "#2060cc" : "#1a3060"})`
             : "radial-gradient(circle at 40% 35%, #333, #1a1a1a)",
@@ -280,9 +343,9 @@ export default function ConsoleStrip({
           }}>ON</span>
         </button>
 
-        {/* PFL / CUE — round pot button with amber glow */}
+        {/* PFL / CUE — amber glow when active */}
         <button onClick={() => { setPflActive(!pflActive); onPfl?.(); }} style={{
-          width: 36, height: 36, borderRadius: "50%",
+          width: 44, height: 44, borderRadius: 0,
           background: pflActive
             ? "radial-gradient(circle at 40% 35%, #ddaa30, #886610)"
             : "radial-gradient(circle at 40% 35%, #333, #1a1a1a)",
@@ -300,6 +363,7 @@ export default function ConsoleStrip({
             textShadow: pflActive ? "0 0 4px rgba(255,255,255,0.5)" : "none",
           }}>PFL</span>
         </button>
+
       </div>
     </div>
   );

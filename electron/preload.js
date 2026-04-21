@@ -33,6 +33,12 @@ contextBridge.exposeInMainWorld("ether", {
     getKeyStatus: ()               => ipcRenderer.invoke("musixmatch:getKeyStatus"),
     scanLyrics:   (title, artist)  => ipcRenderer.invoke("musixmatch:scanLyrics", { title, artist }),
   },
+  discogs: {
+    setCredentials:      (consumerKey, consumerSecret) => ipcRenderer.invoke("discogs:setCredentials", { consumerKey, consumerSecret }),
+    getCredentialStatus: ()                            => ipcRenderer.invoke("discogs:getCredentialStatus"),
+    search:              (title, artist)               => ipcRenderer.invoke("discogs:search", { title, artist }),
+    updateTrack:         (fields)                      => ipcRenderer.invoke("discogs:updateTrack", fields),
+  },
   library: {
     writeTrack: (track) => ipcRenderer.invoke("library:writeTrack", track),
   },
@@ -130,6 +136,15 @@ contextBridge.exposeInMainWorld("ether", {
   users: {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),
     verifyPin: (pin, stored) => ipcRenderer.invoke("user:verify-pin", pin, stored),
+  },
+  // ── Cloud DR Backup (R2) ────────────────────────────────────
+  cloudBackup: {
+    getConfig:   ()  => ipcRenderer.invoke("cloud-backup:get-config"),
+    setConfig:   (c) => ipcRenderer.invoke("cloud-backup:set-config", c),
+    getR2Config: ()  => ipcRenderer.invoke("cloud-backup:get-r2-config"),
+    setR2Config: (c) => ipcRenderer.invoke("cloud-backup:set-r2-config", c),
+    runNow:      ()  => ipcRenderer.invoke("cloud-backup:run-now"),
+    getHistory:  ()  => ipcRenderer.invoke("cloud-backup:get-history"),
   },
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   on: (channel, cb) => {

@@ -210,8 +210,18 @@ export default function VideoEnginePanel() {
                   {s.stream && s.stream.getAudioTracks().length > 0 && " · audio"}
                 </div>
               </div>
-              <Btn small onClick={() => addLayerFromSource(s.id)}>→ Scene</Btn>
-              <Btn small danger onClick={() => removeSource(s.id)}>×</Btn>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <button
+                  onClick={() => addLayerFromSource(s.id)}
+                  title="Add to scene"
+                  style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "#14b8a6", border: "none", color: "#fff", fontSize: 18, fontWeight: 700, cursor: "pointer", lineHeight: 1, borderRadius: 0 }}
+                >+</button>
+                <button
+                  onClick={() => removeSource(s.id)}
+                  title="Remove source"
+                  style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "#ef4444", border: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", lineHeight: 1, borderRadius: 0 }}
+                >×</button>
+              </div>
             </div>
           );
         })}
@@ -589,14 +599,20 @@ export default function VideoEnginePanel() {
         {destinations.map((dest, i) => {
           const presetId = presetIdFor(dest.url);
           const preset = RTMP_PRESETS.find(p => p.id === presetId);
-          // Find the matching sink in status (if live)
           const sinkId = destinations.length === 1 ? "stream" : `stream:${i}`;
-          const sink = status?.sinks.find(s => s.id === sinkId);
+          const sink   = status?.sinks.find(s => s.id === sinkId);
+          const connStatus = sink?.status ?? (isStreaming ? "connecting" : null);
+          const borderColor = connStatus === "connected"    ? GRN
+                            : connStatus === "reconnecting" ? AMB
+                            : connStatus === "failed"       ? RED
+                            : BOR;
+          const statusDot   = connStatus === "connected"    ? { color: GRN,  label: "LIVE" }
+                            : connStatus === "reconnecting" ? { color: AMB,  label: "RECONNECTING…" }
+                            : connStatus === "failed"       ? { color: RED,  label: "FAILED" }
+                            : connStatus === "connecting"   ? { color: TXT2, label: "CONNECTING…" }
+                            : null;
           return (
-            <div key={i} style={{
-              padding: "6px 6px 8px", marginBottom: 6,
-              background: BG2, border: `1px solid ${sink ? GRN : BOR}`,
-            }}>
+            <div key={i} style={{ padding: "6px 6px 8px", marginBottom: 6, background: BG2, border: `1px solid ${borderColor}` }}>
               <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
                 <select
                   value={presetId}
@@ -631,16 +647,32 @@ export default function VideoEnginePanel() {
                 type="password"
                 onChange={(e) => patchDestination(i, { key: e.target.value })}
                 placeholder="Stream key"
-                style={{ ...inStyle, width: "100%" }}
+                style={{ ...inStyle, width: "100%", marginBottom: 3 }}
               />
-              {preset?.help && (
-                <div style={{ fontSize: 8, color: TXT2, marginTop: 3, lineHeight: 1.3 }}>
-                  {preset.help}
-                </div>
+              <input
+                value={dest.backupUrl ?? ""}
+                onChange={(e) => patchDestination(i, { backupUrl: e.target.value || undefined })}
+                placeholder="Backup RTMP URL (optional failover)"
+                style={{ ...inStyle, width: "100%", marginBottom: dest.backupUrl ? 3 : 0, opacity: 0.7 }}
+              />
+              {dest.backupUrl && (
+                <input
+                  value={dest.backupKey ?? ""}
+                  onChange={(e) => patchDestination(i, { backupKey: e.target.value || undefined })}
+                  placeholder="Backup stream key (if different)"
+                  type="password"
+                  style={{ ...inStyle, width: "100%" }}
+                />
               )}
-              {sink && (
-                <div style={{ fontSize: 8, color: GRN, marginTop: 3, fontFamily: "ui-monospace, monospace" }}>
-                  ● LIVE — {Math.floor(sink.uptimeMs / 1000)}s · {sink.framesWritten} chunks
+              {preset?.help && (
+                <div style={{ fontSize: 8, color: TXT2, marginTop: 3, lineHeight: 1.3 }}>{preset.help}</div>
+              )}
+              {statusDot && (
+                <div style={{ fontSize: 8, color: statusDot.color, marginTop: 3, fontFamily: "ui-monospace, monospace", display: "flex", gap: 6 }}>
+                  <span>● {statusDot.label}</span>
+                  {sink && connStatus === "connected" && (
+                    <span style={{ color: TXT2 }}>{Math.floor(sink.uptimeMs / 1000)}s · {sink.framesWritten} chunks</span>
+                  )}
                 </div>
               )}
             </div>

@@ -1,6 +1,6 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
-import etherMarkSvg from "../assets/ether-logo-mark-only.svg";
+import etherMarkSvg from "../assets/ether-logo.svg";
 import { UserContext, AppUser, useRole } from "./UserContext";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 const emit = (e: string, p?: any): Promise<void> => Promise.resolve((window as any).ether.emit(e, p));
@@ -44,6 +44,7 @@ import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import PodcastStudio from "./components/PodcastStudio";
 import Studio from "./components/Studio";
+import ClipEditor from "./components/ClipEditor";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot } from "./components/HealthMonitor";
 import WidgetCanvas from "./canvas/WidgetCanvas";
@@ -52,7 +53,7 @@ import TrackEditor from "./components/TrackEditor";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay, AppContextMenu } from "./components/SkinPicker";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "libraryimport" | "studio";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "libraryimport" | "studio" | "clipeditor";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -738,7 +739,7 @@ export default function App() {
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "studio") ? 0 : 16, display: "flex", flexDirection: "column" }}>
+        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "studio" || panel === "clipeditor") ? 0 : 16, display: "flex", flexDirection: "column" }}>
           {(panel === "live" || panel === "podcast") && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
               {panel === "podcast" ? (
@@ -767,7 +768,13 @@ export default function App() {
               )}
             </div>
           )}
-          {panel !== "live" && panel !== "podcast" && (
+          {(panel === "studio" || panel === "clipeditor") && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
+              {panel === "studio"     && <Studio />}
+              {panel === "clipeditor" && <ClipEditor />}
+            </div>
+          )}
+          {panel !== "live" && panel !== "podcast" && panel !== "studio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
               {panel === "clocks" && <Scheduler />}
@@ -793,7 +800,6 @@ export default function App() {
                 </div>
               )}
               {panel === "libraryimport" && <LibraryImport onClose={() => setPanel("library")} />}
-              {panel === "studio" && <Studio />}
             </div>
           )}
           <DMCANotice />
@@ -1011,7 +1017,8 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Export Episode" onClick={() => { set("live"); togglePanel("export"); }} />
         <Item separator />
         <Item label="Podcast Studio" onClick={() => set("podcast")} />
-        <Item label="Video Studio" onClick={() => set("studio")} />
+        <Item label="Video Studio"  onClick={() => set("studio")} />
+        <Item label="Clip Editor"   onClick={() => set("clipeditor")} />
         <Item label="Cart Wall" onClick={() => set("cartwall")} />
         <Item label="Playlist Player" onClick={() => set("playlist")} />
         <Item label="Auto-Cue Library..." onClick={() => set("autocue")} />

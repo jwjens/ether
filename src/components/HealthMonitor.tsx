@@ -388,8 +388,7 @@ export function HealthStatusDot({ onClick, compact = false }: { onClick: () => v
     const check = async () => {
       try {
         await query("SELECT 1");
-        const q = engine.getQueue();
-        setStatus(q.length === 0 ? "warn" : "ok");
+        setStatus("ok");
       } catch {
         setStatus("error");
       }
@@ -400,7 +399,7 @@ export function HealthStatusDot({ onClick, compact = false }: { onClick: () => v
   }, []);
 
   const color = status === "ok" ? "var(--accent-green)" : status === "warn" ? "var(--accent-amber)" : "var(--accent-red)";
-  const label = status === "ok" ? "All systems normal" : status === "warn" ? "Queue empty" : "System error";
+  const label = status === "ok" ? "All systems normal" : status === "warn" ? "Warning" : "System error";
   const shortLabel = status === "ok" ? "NOMINAL" : status === "warn" ? "WARN" : "ERROR";
 
   return (

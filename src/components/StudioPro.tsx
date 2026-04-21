@@ -35,6 +35,8 @@ import React, {
 } from "react";
 import WaveformGL from "./WaveformGL";
 import VoiceTracker from "./VoiceTracker";
+import { execute, query } from "../db/client";
+import { useUser } from "../UserContext";
 
 // ── File-URL shim ────────────────────────────────────────────────
 
@@ -60,6 +62,8 @@ const FADE_ZONE        = 12;
 const DRAWER_H         = 320;
 const BASE_PPS         = 80;
 const MAX_UNDO         = 50;
+const MAX_AUTOSAVES    = 10;
+const AUTOSAVE_LABEL   = "Auto-save";
 const AUTOMATION_LANE_H = 64;
 const AUTOMATION_BAR_H  = 28;        // per-track header bar above stacked auto-lanes
 
@@ -156,6 +160,7 @@ interface StudioTrack {
   sidechainAmountDb: number;
   automationOpen:    boolean;
   automationLanes:   AutomationLane[];
+  originalContent:   boolean;
 }
 
 type TrackPatch = Partial<Omit<StudioTrack, "id" | "regions">>;
@@ -201,6 +206,28 @@ interface MixerSnapshot {
   takenAt: number;
   tracksJson: any;     // shallow snapshot of all tracks (FX state, gain/pan/etc.; not buffers)
   master: { masterGainDb: number; limiterEnabled: boolean; limiterThresh: number; masterEq7: number[]; masterComp: TrackCompressor };
+}
+
+interface SessionVersion {
+  id:             string;
+  session_id:     string;
+  version_number: number;
+  label:          string | null;
+  snapshot:       string;   // JSON
+  created_at:     number;
+  track_count?:   number;   // parsed from snapshot for display
+}
+
+interface StudioNote {
+  id:          string;
+  session_id:  string;
+  position_ms: number;
+  track_id:    string | null;
+  author:      string;
+  text:        string;
+  color:       string;
+  resolved:    number; // 0 | 1
+  created_at:  number;
 }
 
 interface State {
@@ -290,6 +317,7 @@ function newTrack(name: string, color: string): StudioTrack {
     sidechainAmountDb: 12,
     automationOpen: false,
     automationLanes: [],
+    originalContent: false,
   };
 }
 
@@ -425,6 +453,89 @@ function encodeWav(buffer: AudioBuffer): ArrayBuffer {
   return ab;
 }
 
+// ── LSB watermark embedding (mirrors Rust audio_export.rs) ──────
+// Magic: "ETHRWM01" | 4-byte LE payload length | JSON payload
+// One bit per i16 sample, MSB-first per byte.
+async function embedWatermarkInWav(
+  wavBuffer: ArrayBuffer,
+  meta: { stationId: string; timestamp: string; etherVersion: string }
+): Promise<ArrayBuffer> {
+  const view    = new DataView(wavBuffer);
+  const buf     = new Uint8Array(wavBuffer);
+
+  // Find the 'data' chunk
+  let pcmOffset = -1, pcmLen = 0;
+  let off = 12;
+  while (off < buf.length - 8) {
+    const id  = String.fromCharCode(buf[off], buf[off+1], buf[off+2], buf[off+3]);
+    const len = view.getUint32(off + 4, true);
+    if (id === "data") { pcmOffset = off + 8; pcmLen = len; break; }
+    off += 8 + len + (len & 1);
+  }
+  if (pcmOffset < 0) return wavBuffer;
+
+  const numSamples = Math.floor(pcmLen / 2);
+  const samples    = new Int16Array(numSamples);
+  for (let i = 0; i < numSamples; i++)
+    samples[i] = view.getInt16(pcmOffset + i * 2, true);
+
+  // Hash with LSBs cleared (watermark-region will be cleared; rest untouched)
+  // We compute the hash after embedding (Rust clears watermarked LSBs before hashing)
+  // So: clear first-N sample LSBs, hash all, then embed.
+  const MAGIC        = new TextEncoder().encode("ETHRWM01");
+  // Build placeholder payload to know N
+  const placeholderPayload = JSON.stringify({
+    station_id: meta.stationId, timestamp: meta.timestamp,
+    ether_version: meta.etherVersion, content_hash: "0".repeat(64),
+  });
+  const placeholderLen = new TextEncoder().encode(placeholderPayload).length;
+  const samplesNeeded  = (8 + 4 + placeholderLen) * 8;
+
+  if (numSamples < samplesNeeded) return wavBuffer; // too short
+
+  // Clear LSBs of watermarked region for hashing
+  const cleared = new Int16Array(samples);
+  for (let i = 0; i < samplesNeeded; i++) cleared[i] = (cleared[i] & ~1) as number;
+  const clearedBytes = new Uint8Array(cleared.buffer);
+  const hashBuf      = await crypto.subtle.digest("SHA-256", clearedBytes);
+  const hashHex      = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2, "0")).join("");
+
+  // Build final payload
+  const payloadStr   = JSON.stringify({
+    station_id: meta.stationId, timestamp: meta.timestamp,
+    ether_version: meta.etherVersion, content_hash: hashHex,
+  });
+  const payloadBytes = new TextEncoder().encode(payloadStr);
+  const payloadLen   = payloadBytes.length;
+
+  // Build watermark byte sequence
+  const wm = new Uint8Array(8 + 4 + payloadLen);
+  wm.set(MAGIC, 0);
+  wm[8]  =  payloadLen        & 0xff;
+  wm[9]  = (payloadLen >>  8) & 0xff;
+  wm[10] = (payloadLen >> 16) & 0xff;
+  wm[11] = (payloadLen >> 24) & 0xff;
+  wm.set(payloadBytes, 12);
+
+  // Embed: one bit per sample, MSB-first per byte
+  const totalBits = wm.length * 8;
+  if (numSamples < totalBits) return wavBuffer;
+  for (let b = 0; b < wm.length; b++) {
+    for (let bit = 0; bit < 8; bit++) {
+      const bitVal = (wm[b] >> (7 - bit)) & 1;
+      const idx    = b * 8 + bit;
+      samples[idx] = ((samples[idx] & ~1) | bitVal) as number;
+    }
+  }
+
+  // Write modified samples back into a copy of the buffer
+  const out     = wavBuffer.slice(0);
+  const outView = new DataView(out);
+  for (let i = 0; i < numSamples; i++)
+    outView.setInt16(pcmOffset + i * 2, samples[i], true);
+  return out;
+}
+
 // ── Reducer ──────────────────────────────────────────────────────
 
 function mapRegion(t: StudioTrack, rid: string, f: (r: StudioRegion) => StudioRegion): StudioTrack {
@@ -438,34 +549,34 @@ function reducer(s: State, a: Action): State {
   switch (a.type) {
     case "ADD_TRACK": {
       const n = s.tracks.length + 1;
-      return { tracks: [...s.tracks, newTrack(a.name || `Track ${n}`, nextColor(s.tracks))] };
+      return { ...s, tracks: [...s.tracks, newTrack(a.name || `Track ${n}`, nextColor(s.tracks))] };
     }
     case "DELETE_TRACK": {
-      return { tracks: s.tracks.filter(t => t.id !== a.id) };
+      return { ...s, tracks: s.tracks.filter(t => t.id !== a.id) };
     }
     case "UPDATE_TRACK": {
-      return { tracks: s.tracks.map(t => t.id === a.id ? { ...t, ...a.patch } : t) };
+      return { ...s, tracks: s.tracks.map(t => t.id === a.id ? { ...t, ...a.patch } : t) };
     }
     case "CLEAR_TRACK": {
-      return { tracks: s.tracks.map(t => t.id === a.id ? { ...t, regions: [] } : t) };
+      return { ...s, tracks: s.tracks.map(t => t.id === a.id ? { ...t, regions: [] } : t) };
     }
     case "ADD_REGION": {
-      return { tracks: s.tracks.map(t => {
+      return { ...s, tracks: s.tracks.map(t => {
         if (t.id !== a.trackId) return t;
         const regions = a.replaceAll ? [a.region] : [...t.regions, a.region];
         return { ...t, regions };
       }) };
     }
     case "DELETE_REGION": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? { ...t, regions: t.regions.filter(r => r.id !== a.regionId) } : t) };
     }
     case "UPDATE_REGION": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? mapRegion(t, a.regionId, r => ({ ...r, ...a.patch })) : t) };
     }
     case "MOVE_REGION": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? mapRegion(t, a.regionId, r => ({ ...r, offsetMs: Math.max(0, a.offsetMs) })) : t) };
     }
     case "MOVE_REGION_TO_TRACK": {
@@ -477,14 +588,14 @@ function reducer(s: State, a: Action): State {
       const region = srcTrack.regions.find(r => r.id === a.regionId);
       if (!region) return s;
       const moved: StudioRegion = { ...region, offsetMs: Math.max(0, a.offsetMs) };
-      return { tracks: s.tracks.map(t => {
+      return { ...s, tracks: s.tracks.map(t => {
         if (t.id === a.srcTrackId) return { ...t, regions: t.regions.filter(r => r.id !== a.regionId) };
         if (t.id === a.destTrackId) return { ...t, regions: [...t.regions, moved] };
         return t;
       }) };
     }
     case "TRIM_REGION": {
-      return { tracks: s.tracks.map(t => {
+      return { ...s, tracks: s.tracks.map(t => {
         if (t.id !== a.trackId) return t;
         return mapRegion(t, a.regionId, r => {
           const dur = r.buffer ? r.buffer.duration * 1000 : 0;
@@ -502,7 +613,7 @@ function reducer(s: State, a: Action): State {
       }) };
     }
     case "SPLIT_REGION": {
-      return { tracks: s.tracks.map(t => {
+      return { ...s, tracks: s.tracks.map(t => {
         if (t.id !== a.trackId) return t;
         const idx = t.regions.findIndex(r => r.id === a.regionId);
         if (idx < 0) return t;
@@ -516,27 +627,27 @@ function reducer(s: State, a: Action): State {
       }) };
     }
     case "ADD_AUTOMATION_LANE": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? { ...t, automationOpen: true, automationLanes: [...t.automationLanes, { id: uuid(), param: a.param, points: [] }] }
         : t) };
     }
     case "REMOVE_AUTOMATION_LANE": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? { ...t, automationLanes: t.automationLanes.filter(l => l.id !== a.laneId) }
         : t) };
     }
     case "SET_AUTOMATION_PARAM": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? mapLane(t, a.laneId, l => ({ ...l, param: a.param, points: [] /* clear when changing param */ }))
         : t) };
     }
     case "ADD_AUTO_POINT": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? mapLane(t, a.laneId, l => ({ ...l, points: [...l.points, a.point].sort((x, y) => x.timeMs - y.timeMs) }))
         : t) };
     }
     case "MOVE_AUTO_POINT": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? mapLane(t, a.laneId, l => ({
             ...l,
             points: l.points
@@ -546,7 +657,7 @@ function reducer(s: State, a: Action): State {
         : t) };
     }
     case "DELETE_AUTO_POINT": {
-      return { tracks: s.tracks.map(t => t.id === a.trackId
+      return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? mapLane(t, a.laneId, l => ({ ...l, points: l.points.filter(p => p.id !== a.pointId) }))
         : t) };
     }
@@ -627,7 +738,10 @@ interface TrackAudioParams {
 
 // ── Main component ───────────────────────────────────────────────
 
+const NOTE_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#ef4444"];
+
 export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle }: Props) {
+  const currentUser = useUser();
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     tracks: studioCache?.tracks ?? [
       newTrack("Track 1", PALETTE[0]),
@@ -681,8 +795,29 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [snapshots, setSnapshots] = useState<MixerSnapshot[]>(() => studioCache?.snapshots ?? []);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
 
+  // Session version control
+  const [sessionId, setSessionId]           = useState<string>(() => uuid());
+  const [sessionName, setSessionName]       = useState("Untitled Session");
+  const [sessionNameEditing, setSessionNameEditing] = useState(false);
+  const [versions, setVersions]             = useState<SessionVersion[]>([]);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
+  const sessionNameInputRef = useRef<HTMLInputElement>(null);
+
+  // Collaboration notes
+  const [notes, setNotes]                   = useState<StudioNote[]>([]);
+  const [notesOpen, setNotesOpen]           = useState(false);
+  const [noteInput, setNoteInput]           = useState<{ posMs: number; x: number; y: number } | null>(null);
+  const [noteInputText, setNoteInputText]   = useState("");
+  const [notePopover, setNotePopover]       = useState<string | null>(null); // note id
+
   // Keyboard help overlay
   const [helpOpen, setHelpOpen] = useState(false);
+  const [lastExportPath, setLastExportPath] = useState<string | null>(null);
+  const [wmDialogPath, setWmDialogPath]     = useState<string | null>(null);
+  const [wmResult, setWmResult]             = useState<any>(null);
+  const [wmVerifying, setWmVerifying]       = useState(false);
+  const [exportWmDialog, setExportWmDialog] = useState<{ resolve: (v: boolean) => void } | null>(null);
 
   // Right-click context menu
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: { label: string; onClick: () => void; danger?: boolean; separator?: boolean }[] } | null>(null);
@@ -801,7 +936,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     snapshots,
   ]);
 
-  // ── Auto-save every 5 min to localStorage (lightweight backup) ──
+  // ── Auto-save every 5 min to localStorage + DB ───────────────
   useEffect(() => {
     const id = setInterval(() => {
       try {
@@ -823,8 +958,13 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         });
         localStorage.setItem("studiopro_autosave", data);
       } catch {}
+      // Also persist to DB version history silently
+      saveVersion(AUTOSAVE_LABEL, true);
     }, 5 * 60 * 1000);
     return () => clearInterval(id);
+  // saveVersion is stable (useCallback). Including it would re-create the interval on every
+  // version save, which we don't want — intentionally excluded.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.tracks, state.markers, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp, bpm, zoom]);
 
   // Click scheduler refs
@@ -917,15 +1057,19 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     const onSend = (e: Event) => {
       const d = (e as CustomEvent).detail || {};
       if (!d.filePath) return;
-      let id = d.trackId as string | undefined;
-      if (!id) {
-        dispatch({ type: "ADD_TRACK", name: d.filePath.split(/[\\/]/).pop() });
+      if (d.trackId) {
+        loadAudio(d.trackId as string, d.filePath, { title: d.title });
+        return;
+      }
+      const emptyTrack = (stateRef.current?.tracks || []).find(t => t.regions.length === 0);
+      if (emptyTrack) {
+        loadAudio(emptyTrack.id, d.filePath, { title: d.title });
+      } else {
+        dispatch({ type: "ADD_TRACK" });
         setTimeout(() => {
           const newest = (stateRef.current?.tracks || []).slice(-1)[0];
           if (newest) loadAudio(newest.id, d.filePath, { title: d.title });
         }, 0);
-      } else {
-        loadAudio(id, d.filePath, { title: d.title });
       }
     };
     const onLoadDeck = (e: Event) => {
@@ -1020,9 +1164,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   // ── Refs that bridge keydown and later-defined functions ──────
 
-  const playRef    = useRef<(() => void) | null>(null);
-  const stopRef    = useRef<(() => void) | null>(null);
-  const playingRef = useRef(false);
+  const playRef        = useRef<(() => void) | null>(null);
+  const stopRef        = useRef<(() => void) | null>(null);
+  const saveVersionRef = useRef<() => void>(() => {});
+  const playingRef     = useRef(false);
   useEffect(() => { playingRef.current = playing; }, [playing]);
 
   // ── Keyboard ──────────────────────────────────────────────────
@@ -1075,6 +1220,11 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "d") {
         e.preventDefault(); e.stopImmediatePropagation();
         duplicateSelectedRegion();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "s") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        saveVersionRef.current();
         return;
       }
       const tgt = e.target as HTMLElement | null;
@@ -1732,6 +1882,14 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const exportWav = useCallback(async () => {
     const liveTracks = tracks.filter(t => t.regions.some(r => r.buffer) && !t.muted && (!anySolo || t.solo));
     if (!liveTracks.length) { setStatus("Nothing to export."); return; }
+
+    // Ask about watermark if any live track is marked as original content
+    const hasOriginal = liveTracks.some(t => t.originalContent);
+    let embedWm = false;
+    if (hasOriginal) {
+      embedWm = await new Promise<boolean>(resolve => setExportWmDialog({ resolve }));
+    }
+
     const sr = 44100;
     const totalSec = totalDurMs / 1000;
 
@@ -1921,7 +2079,18 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     });
 
     const rendered = await offline.startRendering();
-    const wav = encodeWav(rendered);
+    let   wavBuf   = encodeWav(rendered);
+
+    if (embedWm) {
+      setStatus("Embedding watermark…");
+      const stationId = await (window as any).ether?.invoke?.("repl:get-site-id").catch(() => "unknown") ?? "unknown";
+      wavBuf = await embedWatermarkInWav(wavBuf, {
+        stationId,
+        timestamp:    new Date().toISOString(),
+        etherVersion: "2.1.1",
+      });
+    }
+
     const ether = (window as any).ether;
     if (ether?.dialog?.saveFile && ether?.fs?.writeFile) {
       try {
@@ -1931,17 +2100,25 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         });
         const path = typeof res === "string" ? res : res?.filePath;
         if (path) {
-          await ether.fs.writeFile(path, new Uint8Array(wav));
-          setStatus(`✓ Exported: ${path}`);
+          await ether.fs.writeFile(path, new Uint8Array(wavBuf));
+          setStatus(`✓ Exported${embedWm ? " (watermarked)" : ""}: ${path}`);
+          setLastExportPath(embedWm ? path : null);
+          if (embedWm) {
+            try {
+              const wmp = JSON.parse(localStorage.getItem("ether_watermarked_paths") || "[]");
+              if (!wmp.includes(path)) wmp.push(path);
+              localStorage.setItem("ether_watermarked_paths", JSON.stringify(wmp));
+            } catch {}
+          }
           return;
         }
       } catch (e: any) {
         setStatus(`✗ Save failed: ${e?.message || e}`);
       }
     }
-    const blob = new Blob([wav], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const blob = new Blob([wavBuf], { type: "audio/wav" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
     a.href = url; a.download = `StudioPro_Mix_${Date.now()}.wav`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
@@ -2046,6 +2223,29 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
     setStatus(`✓ Exported ${exported} stem${exported === 1 ? "" : "s"}`);
   }, [tracks, totalDurMs]);
+
+  // ── Watermark verification ────────────────────────────────────
+
+  const verifyWatermark = useCallback(async (filePath: string) => {
+    setWmDialogPath(filePath);
+    setWmResult(null);
+    setWmVerifying(true);
+    try {
+      const result = await (window as any).ether.invoke("watermark:verify", { filePath });
+      setWmResult(result);
+    } catch (e: any) {
+      setWmResult({ found: false, valid: false, error: e?.message || "Verification failed" });
+    } finally {
+      setWmVerifying(false);
+    }
+  }, []);
+
+  const openVerifyFilePicker = useCallback(async () => {
+    const paths = await (window as any).ether.invoke("dialog:openFile", {
+      filters: [{ name: "WAV Audio", extensions: ["wav"] }],
+    });
+    if (paths?.[0]) verifyWatermark(paths[0]);
+  }, [verifyWatermark]);
 
   // ── Save / Load session JSON ──────────────────────────────────
 
@@ -2560,6 +2760,269 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     setStatus("✓ Sent to stream engine");
   }, [renderMixOffline]);
 
+  // ── Session Version Control ───────────────────────────────────
+
+  // DB schema init (idempotent)
+  useEffect(() => {
+    (async () => {
+      try {
+        await execute(`CREATE TABLE IF NOT EXISTS studio_sessions (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )`);
+        await execute(`CREATE TABLE IF NOT EXISTS studio_session_versions (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          version_number INTEGER NOT NULL,
+          label TEXT,
+          snapshot TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES studio_sessions(id)
+        )`);
+        await execute(`CREATE TABLE IF NOT EXISTS studio_notes (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          position_ms INTEGER NOT NULL,
+          track_id TEXT,
+          author TEXT NOT NULL,
+          text TEXT NOT NULL,
+          color TEXT DEFAULT '#f59e0b',
+          resolved INTEGER DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )`);
+        // Create a default session row for this sessionId
+        const now = Date.now();
+        await execute(
+          `INSERT OR IGNORE INTO studio_sessions (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`,
+          [sessionId, sessionName, now, now]
+        );
+      } catch (e) {
+        console.warn("[StudioPro] DB init failed:", e);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Build a serializable snapshot (same shape as saveSession, no AudioBuffers)
+  const buildSnapshot = useCallback((): string => {
+    const tracksJson = stateRef.current.tracks.map(t => ({
+      ...t,
+      regions: t.regions
+        .filter(r => r.filePath && !r.filePath.startsWith("blob:"))
+        .map(r => ({
+          id: r.id, filePath: r.filePath,
+          offsetMs: r.offsetMs, trimStartMs: r.trimStartMs, trimEndMs: r.trimEndMs,
+          fadeInMs: r.fadeInMs, fadeOutMs: r.fadeOutMs, clipGainDb: r.clipGainDb,
+        })),
+      // Strip non-serializable fields
+      buffer: undefined, peaks: undefined,
+    }));
+    return JSON.stringify({
+      version: 1, savedAt: Date.now(),
+      tracks: tracksJson, markers: stateRef.current.markers,
+      master: { masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp },
+      bpm, zoom,
+    });
+  }, [masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp, bpm, zoom]);
+
+  // Load all versions for current session from DB
+  const loadVersions = useCallback(async () => {
+    try {
+      const rows = await query<SessionVersion>(
+        `SELECT id, session_id, version_number, label, created_at,
+                json_array_length(json(snapshot), '$.tracks') as track_count
+         FROM studio_session_versions
+         WHERE session_id = ?
+         ORDER BY version_number DESC`,
+        [sessionId]
+      );
+      setVersions(rows ?? []);
+    } catch (e) {
+      console.warn("[StudioPro] loadVersions failed:", e);
+    }
+  }, [sessionId]);
+
+  // ── Collaboration Notes ───────────────────────────────────────
+
+  const loadNotes = useCallback(async () => {
+    try {
+      const rows = await query<StudioNote>(
+        `SELECT * FROM studio_notes WHERE session_id = ? ORDER BY position_ms ASC`,
+        [sessionId]
+      );
+      setNotes(rows ?? []);
+    } catch (e) {
+      console.warn("[StudioPro] loadNotes failed:", e);
+    }
+  }, [sessionId]);
+
+  useEffect(() => { loadNotes(); }, [loadNotes]);
+
+  const addNote = useCallback(async (posMs: number, text: string) => {
+    const author = currentUser?.name || "Unknown";
+    // Assign color based on how many distinct authors exist so far
+    const authors = Array.from(new Set(notes.map(n => n.author)));
+    if (!authors.includes(author)) authors.push(author);
+    const color = NOTE_COLORS[authors.indexOf(author) % NOTE_COLORS.length];
+    const note: StudioNote = {
+      id: uuid(), session_id: sessionId, position_ms: posMs,
+      track_id: null, author, text, color, resolved: 0, created_at: Date.now(),
+    };
+    try {
+      await execute(
+        `INSERT INTO studio_notes (id, session_id, position_ms, track_id, author, text, color, resolved, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [note.id, note.session_id, note.position_ms, note.track_id, note.author, note.text, note.color, note.resolved, note.created_at]
+      );
+      setNotes(prev => [...prev, note].sort((a, b) => a.position_ms - b.position_ms));
+    } catch (e) {
+      console.warn("[StudioPro] addNote failed:", e);
+    }
+  }, [sessionId, currentUser, notes]);
+
+  const resolveNote = useCallback(async (id: string) => {
+    try {
+      await execute(`UPDATE studio_notes SET resolved = 1 WHERE id = ?`, [id]);
+      setNotes(prev => prev.map(n => n.id === id ? { ...n, resolved: 1 } : n));
+    } catch (e) {
+      console.warn("[StudioPro] resolveNote failed:", e);
+    }
+  }, []);
+
+  const deleteNote = useCallback(async (id: string) => {
+    try {
+      await execute(`DELETE FROM studio_notes WHERE id = ?`, [id]);
+      setNotes(prev => prev.filter(n => n.id !== id));
+    } catch (e) {
+      console.warn("[StudioPro] deleteNote failed:", e);
+    }
+  }, []);
+
+  // Save a version snapshot to DB
+  const saveVersion = useCallback(async (labelArg?: string, isAutosave = false) => {
+    try {
+      // Determine label
+      let label = labelArg;
+      if (!label && !isAutosave) {
+        const input = prompt("Name this version:", `Version ${(versions.length + 1)}`);
+        if (input === null) return; // cancelled
+        label = input || `Version ${versions.length + 1}`;
+      }
+      if (isAutosave) label = AUTOSAVE_LABEL;
+
+      const now = Date.now();
+      const snapshot = buildSnapshot();
+
+      // Next version number
+      const maxRow = await query<{ mx: number | null }>(
+        `SELECT MAX(version_number) as mx FROM studio_session_versions WHERE session_id = ?`,
+        [sessionId]
+      );
+      const nextNum = (maxRow[0]?.mx ?? 0) + 1;
+
+      await execute(
+        `INSERT INTO studio_session_versions (id, session_id, version_number, label, snapshot, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [uuid(), sessionId, nextNum, label, snapshot, now]
+      );
+
+      // Update session updated_at
+      await execute(`UPDATE studio_sessions SET updated_at = ?, name = ? WHERE id = ?`,
+        [now, sessionName, sessionId]);
+
+      // Trim auto-saves if over limit
+      if (isAutosave) {
+        const autoRows = await query<{ id: string }>(
+          `SELECT id FROM studio_session_versions WHERE session_id = ? AND label = ?
+           ORDER BY version_number ASC`,
+          [sessionId, AUTOSAVE_LABEL]
+        );
+        const toDelete = autoRows.slice(0, Math.max(0, autoRows.length - MAX_AUTOSAVES));
+        for (const r of toDelete) {
+          await execute(`DELETE FROM studio_session_versions WHERE id = ?`, [r.id]);
+        }
+      }
+
+      await loadVersions();
+      if (!isAutosave) setStatus(`✓ Version saved: ${label}`);
+    } catch (e: any) {
+      console.warn("[StudioPro] saveVersion failed:", e);
+      if (!isAutosave) setStatus(`✗ Version save failed: ${e?.message}`);
+    }
+  }, [sessionId, sessionName, versions.length, buildSnapshot, loadVersions]);
+
+  // Restore a version (auto-saves current state first)
+  const restoreVersion = useCallback(async (v: SessionVersion) => {
+    if (!confirm(`Restore "${v.label || `Version ${v.version_number}`}"?\n\nYour current state will be auto-saved first so nothing is lost.`)) return;
+    // Auto-save current state before restoring
+    await saveVersion(`Before restore to v${v.version_number}`, false);
+
+    try {
+      // We need the full snapshot — fetch it
+      const rows = await query<{ snapshot: string }>(
+        `SELECT snapshot FROM studio_session_versions WHERE id = ?`, [v.id]
+      );
+      const snap = rows[0]?.snapshot;
+      if (!snap) { setStatus("✗ Snapshot data missing"); return; }
+      const session = JSON.parse(snap);
+
+      setStatus("Restoring version — re-fetching audio...");
+      const ctx = getCtx();
+      const restoredTracks: StudioTrack[] = [];
+      for (const tj of session.tracks || []) {
+        const restoredRegions: StudioRegion[] = [];
+        for (const rj of tj.regions || []) {
+          if (!rj.filePath) continue;
+          try {
+            const url = rj.filePath.startsWith("http") || rj.filePath.startsWith("blob:")
+              ? rj.filePath : convertFileSrc(rj.filePath);
+            const resp = await fetch(url);
+            const ab = await resp.arrayBuffer();
+            const buffer = await ctx.decodeAudioData(ab);
+            const peaks = extractPeaks(buffer);
+            restoredRegions.push({ ...newRegion({}), ...rj, buffer, peaks });
+          } catch {}
+        }
+        restoredTracks.push({ ...newTrack(tj.name || "Track", tj.color || PALETTE[0]), ...tj, regions: restoredRegions });
+      }
+      dispatch({ type: "REPLACE", tracks: restoredTracks });
+      if (session.master) {
+        if (typeof session.master.masterGainDb === "number")    setMasterGainDb(session.master.masterGainDb);
+        if (typeof session.master.limiterEnabled === "boolean") setLimiterEnabled(session.master.limiterEnabled);
+        if (typeof session.master.limiterThresh === "number")   setLimiterThresh(session.master.limiterThresh);
+        if (Array.isArray(session.master.masterEq7))            setMasterEq7(session.master.masterEq7);
+        if (session.master.masterComp)                          setMasterComp(session.master.masterComp);
+      }
+      if (typeof session.bpm  === "number") setBpm(session.bpm);
+      if (typeof session.zoom === "number") setZoom(session.zoom);
+      setPreviewVersionId(null);
+      setStatus(`✓ Restored: ${v.label || `Version ${v.version_number}`}`);
+      await loadVersions();
+    } catch (e: any) {
+      setStatus(`✗ Restore failed: ${e?.message}`);
+    }
+  }, [saveVersion, loadVersions]);
+
+  // Rename session
+  const renameSession = useCallback(async (newName: string) => {
+    const name = newName.trim() || "Untitled Session";
+    setSessionName(name);
+    try {
+      await execute(`UPDATE studio_sessions SET name = ?, updated_at = ? WHERE id = ?`,
+        [name, Date.now(), sessionId]);
+    } catch {}
+  }, [sessionId]);
+
+  // Keep ref in sync so keyboard handler can call saveVersion without stale closure
+  useEffect(() => { saveVersionRef.current = () => saveVersion(); }, [saveVersion]);
+
+  // Load versions when history panel opens
+  useEffect(() => {
+    if (versionHistoryOpen) loadVersions();
+  }, [versionHistoryOpen, loadVersions]);
+
   // ── Snapshots ─────────────────────────────────────────────────
 
   const takeSnapshot = useCallback(() => {
@@ -2699,7 +3162,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   // ── Render ────────────────────────────────────────────────────
 
   return (
-    <div style={{
+    <div data-studiopro="true" style={{
       display: "flex", flexDirection: "column",
       width: "100%", height: "100%",
       background: "#0a0a0c", color: "#eee",
@@ -2710,7 +3173,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       <div style={{
         height: TOOLBAR_H, flex: `0 0 ${TOOLBAR_H}px`,
         background: "#080808", borderBottom: "1px solid #1a1a1e",
-        display: "flex", alignItems: "center", padding: "0 12px", gap: 10,
+        display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
+        overflow: "hidden",
       }}>
         <TBtn onClick={returnToStart} title="Return to start">⏮</TBtn>
         <TBtn onClick={playing ? stop : play} title={playing ? "Stop" : "Play (Space)"} active={playing}>
@@ -2721,7 +3185,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={toggleRecord} title="Record" danger={recording}>
           {recording ? "◼ Rec" : "Rec"}
         </TBtn>
-        <div style={{ width: 1, height: 20, background: "#1a1a1e" }} />
+        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
         <TBtn
           onClick={() => {
             if (!loopRange) { setStatus("Drag on the ruler to set a loop range"); return; }
@@ -2736,7 +3200,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={() => setGridEnabled(v => !v)} title="Beat grid" active={gridEnabled}>▦</TBtn>
 
         <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-          <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 18, color: "#fff", letterSpacing: 1 }}>
+          <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 16, color: "#fff", letterSpacing: 1 }}>
             {fmtTimecode(playheadMs)}
           </div>
         </div>
@@ -2744,19 +3208,65 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <label style={lbl}>BPM</label>
         <input type="number" min={40} max={240} value={bpm}
           onChange={(e) => setBpm(Math.max(40, Math.min(240, +e.target.value || 120)))}
-          style={{ width: 50, background: "#111", color: "#eee", border: "1px solid #222", padding: "4px 6px", fontSize: 11, borderRadius: 0 }}
+          style={{ width: 44, background: "#111", color: "#eee", border: "1px solid #222", padding: "3px 4px", fontSize: 10, borderRadius: 0 }}
         />
+        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
         <TBtn onClick={() => setZoom(z => Math.max(0.25, z / 1.25))} title="Zoom out">−</TBtn>
-        <span style={{ fontSize: 11, color: "#888", minWidth: 34, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+        <span style={{ fontSize: 10, color: "#888", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
         <TBtn onClick={() => setZoom(z => Math.min(8, z * 1.25))} title="Zoom in">+</TBtn>
-        <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>Master FX</TBtn>
+        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
+        <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>FX</TBtn>
         <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
         <NormalizeMenu onPick={(t) => autoNormalize(t)} />
-        <TBtn onClick={sendToCartwall} title="Render mix and send to cart wall">📤 Cart</TBtn>
-        <TBtn onClick={streamThisMix}  title="Render mix and send to stream engine">📡 Stream</TBtn>
+        <TBtn onClick={sendToCartwall} title="Render mix and send to cart wall">📤</TBtn>
+        <TBtn onClick={streamThisMix}  title="Render mix and send to stream engine">📡</TBtn>
+        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
+        {/* Session name — double-click to rename */}
+        {sessionNameEditing ? (
+          <input
+            ref={sessionNameInputRef}
+            defaultValue={sessionName}
+            autoFocus
+            onBlur={e => { renameSession(e.target.value); setSessionNameEditing(false); }}
+            onKeyDown={e => {
+              if (e.key === "Enter") { renameSession((e.target as HTMLInputElement).value); setSessionNameEditing(false); }
+              if (e.key === "Escape") setSessionNameEditing(false);
+            }}
+            style={{
+              height: 24, padding: "0 6px", background: "#1a1a2e", color: "#fff",
+              border: "1px solid #4f4fcc", outline: "none", fontSize: 10,
+              fontFamily: "Inter, system-ui, sans-serif", borderRadius: 0, width: 110,
+            }}
+          />
+        ) : (
+          <div
+            onDoubleClick={() => setSessionNameEditing(true)}
+            title="Double-click to rename session"
+            style={{
+              height: 24, padding: "0 6px", display: "flex", alignItems: "center",
+              background: "#111", border: "1px solid #222", color: "#aaa",
+              fontSize: 10, cursor: "default", maxWidth: 120, flexShrink: 0,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
+          >
+            {sessionName}
+          </div>
+        )}
+        <TBtn onClick={() => setNotesOpen(v => !v)} title="Collaboration notes" active={notesOpen}>
+          Notes{notes.filter(n => !n.resolved).length > 0 ? ` (${notes.filter(n => !n.resolved).length})` : ""}
+        </TBtn>
+        <TBtn onClick={() => setVersionHistoryOpen(v => !v)} title="Version history" active={versionHistoryOpen}>Hist ▾</TBtn>
         <TBtn onClick={saveSession} title="Save session to disk">💾</TBtn>
         <TBtn onClick={loadSession} title="Load session from disk">📂</TBtn>
         <ExportMenu onExportMix={exportWav} onExportStems={() => exportStems()} />
+        {lastExportPath && (
+          <button
+            onClick={() => verifyWatermark(lastExportPath)}
+            title={`Verify watermark: ${lastExportPath}`}
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", background: "rgba(0,200,168,0.1)", border: "1px solid #00c8a8", color: "#00c8a8", fontSize: 10, fontWeight: 700, cursor: "pointer", letterSpacing: "0.06em" }}
+          >🛡 ✓ Watermarked</button>
+        )}
+        <TBtn onClick={openVerifyFilePicker} title="Verify watermark on any WAV file">🛡 Verify</TBtn>
         <DeckMenu onPick={sendToDeck} />
         <TBtn onClick={() => setVtOpen(v => !v)} title="Voice Tracker" active={vtOpen}>VT ▾</TBtn>
       </div>
@@ -2842,6 +3352,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 onSetAutomationParam={(laneId, param) => dispatch({ type: "SET_AUTOMATION_PARAM", trackId: t.id, laneId, param })}
                 onContext={(e) => openTrackContextMenu(e, t.id)}
                 reductionDb={compReductionRef.current.get(t.id) || 0}
+                onToggleOriginal={() => dispatch({ type: "UPDATE_TRACK", id: t.id, patch: { originalContent: !t.originalContent } })}
               />
             ))}
             <AddTrackMenu onAdd={addTrackFromTemplate} />
@@ -2855,6 +3366,15 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         >
           {/* Ruler */}
           <div onMouseDown={onRulerMouseDown}
+            onContextMenu={(e) => {
+              if (!timelineRef.current) return;
+              e.preventDefault();
+              e.stopPropagation();
+              const rect = timelineRef.current.getBoundingClientRect();
+              const posMs = Math.max(0, xToMs(e.clientX - rect.left + timelineRef.current.scrollLeft));
+              setNoteInput({ posMs, x: e.clientX, y: e.clientY });
+              setNoteInputText("");
+            }}
             style={{
               height: RULER_H, width: msToX(totalDurMs),
               position: "sticky", top: 0, zIndex: 3,
@@ -2914,6 +3434,79 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 borderRight: `2px solid ${loopEnabled ? "#fde047" : "#fde04766"}`,
                 pointerEvents: "none",
               }} />
+            )}
+            {/* Note flags */}
+            {notes.filter(n => !n.resolved).map(n => (
+              <div key={n.id}
+                onClick={(e) => { e.stopPropagation(); setNotePopover(prev => prev === n.id ? null : n.id); }}
+                title={`${n.author}: ${n.text}`}
+                style={{
+                  position: "absolute", bottom: 0, left: msToX(n.position_ms) - 5,
+                  width: 10, cursor: "pointer", zIndex: 5,
+                }}
+              >
+                <div style={{
+                  width: 0, height: 0,
+                  borderLeft: "5px solid transparent", borderRight: "5px solid transparent",
+                  borderBottom: `8px solid ${n.color}`,
+                }} />
+                <div style={{ width: 2, height: 6, background: n.color, marginLeft: 4 }} />
+                {notePopover === n.id && (
+                  <div style={{
+                    position: "absolute", bottom: "100%", left: 0,
+                    background: "#1a1a1e", border: `1px solid ${n.color}`,
+                    padding: "6px 8px", minWidth: 160, maxWidth: 240, zIndex: 20,
+                    fontFamily: "Inter, system-ui, sans-serif", fontSize: 11,
+                    boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
+                  }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <div style={{ color: n.color, fontWeight: 700, marginBottom: 3 }}>{n.author}</div>
+                    <div style={{ color: "#ddd", lineHeight: 1.4 }}>{n.text}</div>
+                    <div style={{ color: "#555", fontSize: 10, marginTop: 4 }}>{fmtTimecode(n.position_ms)}</div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <button onClick={() => { setPlayheadMs(n.position_ms); setNotePopover(null); }}
+                        style={{ flex: 1, padding: "3px 0", fontSize: 10, background: "rgba(255,255,255,0.05)", color: "#aaa", border: "1px solid #333", cursor: "pointer" }}>
+                        Jump
+                      </button>
+                      <button onClick={() => { resolveNote(n.id); setNotePopover(null); }}
+                        style={{ flex: 1, padding: "3px 0", fontSize: 10, background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", cursor: "pointer" }}>
+                        Resolve
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+            {/* Inline note input */}
+            {noteInput && (
+              <div style={{
+                position: "fixed", top: noteInput.y, left: noteInput.x,
+                zIndex: 99999, background: "#1a1a1e", border: "1px solid #f59e0b",
+                padding: "4px 6px", display: "flex", gap: 4, alignItems: "center",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
+              }}>
+                <input
+                  autoFocus
+                  value={noteInputText}
+                  onChange={e => setNoteInputText(e.target.value)}
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter" && noteInputText.trim()) {
+                      await addNote(noteInput.posMs, noteInputText.trim());
+                      setNoteInput(null); setNoteInputText("");
+                    }
+                    if (e.key === "Escape") { setNoteInput(null); setNoteInputText(""); }
+                  }}
+                  placeholder="Add note… (Enter to save)"
+                  style={{
+                    width: 200, padding: "3px 6px", background: "#111", color: "#fff",
+                    border: "none", outline: "none", fontSize: 11,
+                    fontFamily: "Inter, system-ui, sans-serif",
+                  }}
+                />
+                <button onClick={() => { setNoteInput(null); setNoteInputText(""); }}
+                  style={{ background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 12 }}>✕</button>
+              </div>
             )}
           </div>
 
@@ -3131,13 +3724,52 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         />
       )}
 
+      {/* Version history panel */}
+      {versionHistoryOpen && (
+        <VersionHistoryPanel
+          sessionName={sessionName}
+          versions={versions}
+          previewVersionId={previewVersionId}
+          onPreview={id => setPreviewVersionId(id === previewVersionId ? null : id)}
+          onRestore={restoreVersion}
+          onSaveVersion={() => saveVersion()}
+          onClose={() => setVersionHistoryOpen(false)}
+        />
+      )}
+
+      {notesOpen && (
+        <NotesDrawer
+          notes={notes}
+          onJump={(ms) => setPlayheadMs(ms)}
+          onResolve={resolveNote}
+          onDelete={deleteNote}
+          onClose={() => setNotesOpen(false)}
+        />
+      )}
+
       {/* Keyboard help overlay */}
       {helpOpen && <KeyboardHelpOverlay onClose={() => setHelpOpen(false)} />}
 
+      {exportWmDialog && (
+        <ExportWatermarkDialog
+          onConfirm={(v) => { setExportWmDialog(null); exportWmDialog.resolve(v); }}
+        />
+      )}
+
+      {wmDialogPath && (
+        <WatermarkVerifyDialog
+          filePath={wmDialogPath}
+          result={wmResult}
+          verifying={wmVerifying}
+          onClose={() => { setWmDialogPath(null); setWmResult(null); }}
+        />
+      )}
+
       <style>{`
-        .studiopro-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
-        .studiopro-scroll::-webkit-scrollbar-track { background: #1a1a1e; }
-        .studiopro-scroll::-webkit-scrollbar-thumb { background: #333340; }
+        .studiopro-scroll::-webkit-scrollbar { width: 14px; height: 14px; }
+        .studiopro-scroll::-webkit-scrollbar-track { background: #0d0d0f; }
+        .studiopro-scroll::-webkit-scrollbar-thumb { background: #333340; border: 2px solid #0d0d0f; }
+        .studiopro-scroll::-webkit-scrollbar-thumb:hover { background: #4a4a5a; }
       `}</style>
     </div>
   );
@@ -3162,12 +3794,13 @@ function TBtn({ children, onClick, title, active, danger }: {
   return (
     <button onClick={onClick} title={title}
       style={{
-        height: 28, minWidth: 28, padding: "0 8px",
+        height: 24, minWidth: 24, padding: "0 6px",
         background: danger ? "#7f1d1d" : active ? "#1e293b" : "#111",
         color: danger ? "#fff" : "#eee",
         border: `1px solid ${danger ? "#ef4444" : active ? "#334155" : "#222"}`,
-        fontSize: 12, cursor: "pointer", borderRadius: 0,
+        fontSize: 10, cursor: "pointer", borderRadius: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
+        letterSpacing: 0, whiteSpace: "nowrap", flexShrink: 0,
       }}
     >{children}</button>
   );
@@ -3178,7 +3811,7 @@ function DeckMenu({ onPick }: { onPick: (d: "A" | "B" | "C") => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div style={{ position: "relative" }}>
-      <TBtn onClick={() => setOpen(o => !o)} title="Send to deck">Send to Deck ▾</TBtn>
+      <TBtn onClick={() => setOpen(o => !o)} title="Send to deck">To Deck ▾</TBtn>
       {open && (
         <div onMouseLeave={() => setOpen(false)}
           style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#111", border: "1px solid #222", zIndex: 20, minWidth: 120 }}
@@ -3291,12 +3924,15 @@ function TrackHeaderRow({
   onRemoveAutomationLane: (laneId: string) => void;
   onSetAutomationParam: (laneId: string, param: AutomationParam) => void;
   onContext: (e: React.MouseEvent) => void;
+  onToggleOriginal: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(track.name);
   useEffect(() => setName(track.name), [track.name]);
   const [showFxMenu, setShowFxMenu] = useState(false);
   const fxAnyOpen = fxOpenSet.size > 0;
+  const [shieldWarned, setShieldWarned] = useState(() => localStorage.getItem("ether_shield_warned") === "1");
+  const [shieldTooltip, setShieldTooltip] = useState(false);
 
   return (
     <div onClick={onSelect}
@@ -3347,6 +3983,27 @@ function TrackHeaderRow({
             onClick={(e) => { e.stopPropagation(); onPatch({ armed: !track.armed }); }}>⏺</MiniBtn>
           <MiniBtn active={fxAnyOpen} activeColor="#22c55e"
             onClick={(e) => { e.stopPropagation(); setShowFxMenu(v => !v); }}>FX</MiniBtn>
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!shieldWarned && !track.originalContent) {
+                  setShieldTooltip(true);
+                  setTimeout(() => setShieldTooltip(false), 5000);
+                  localStorage.setItem("ether_shield_warned", "1");
+                  setShieldWarned(true);
+                }
+                onToggleOriginal();
+              }}
+              title="Mark as original content you own"
+              style={{ background: "transparent", border: "none", color: track.originalContent ? "#00c8a8" : "#555", fontSize: 11, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}
+            >🛡</button>
+            {shieldTooltip && (
+              <div style={{ position: "absolute", bottom: "100%", left: 0, zIndex: 50, width: 180, background: "#1e1e24", border: "1px solid #2a2a35", padding: "6px 8px", fontSize: 10, color: "#c0c0d8", lineHeight: 1.4, marginBottom: 4 }}>
+                Only enable for content <strong>you created or own</strong>. Do not mark commercial music or content owned by others.
+              </div>
+            )}
+          </div>
           <input type="range" min={-48} max={6} step={0.5} value={track.gainDb}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => onPatch({ gainDb: +e.target.value })}
@@ -4189,6 +4846,111 @@ function FxWindow({
             <FxSidechainSection track={track} allTracks={allTracks} onPatch={onPatch} />
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Export Watermark Confirmation Dialog ──────────────────────
+
+function ExportWatermarkDialog({ onConfirm }: { onConfirm: (embed: boolean) => void }) {
+  const [checked, setChecked] = useState(true);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: 420, background: "#111114", border: "1px solid #2a2a35", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#e8e8f0" }}>Export Mix</div>
+        <div style={{ fontSize: 12, color: "#8080b0", lineHeight: 1.5 }}>
+          One or more tracks are marked as <span style={{ color: "#00c8a8" }}>original content</span>. You can embed an invisible content provenance watermark into this export.
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 12px", background: "#0d0d0f", border: "1px solid #2a2a35" }}>
+          <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} style={{ width: 14, height: 14, accentColor: "#00c8a8" }} />
+          <div>
+            <div style={{ fontSize: 12, color: "#e8e8f0", fontWeight: 600 }}>🛡 Embed content provenance watermark</div>
+            <div style={{ fontSize: 10, color: "#6060a0", marginTop: 2 }}>Invisibly encodes station ID, timestamp, and content hash into the audio.</div>
+          </div>
+        </label>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={() => onConfirm(false)} style={{ padding: "6px 16px", background: "#1e1e24", border: "1px solid #2a2a35", color: "#8080b0", fontSize: 12, cursor: "pointer" }}>Export without watermark</button>
+          <button onClick={() => onConfirm(checked)} style={{ padding: "6px 16px", background: "#00c8a8", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Export</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Watermark Verify Dialog ────────────────────────────────────
+
+function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
+  filePath: string;
+  result: any;
+  verifying: boolean;
+  onClose: () => void;
+}) {
+  const fname = filePath.replace(/\\/g, "/").split("/").pop() ?? filePath;
+  const valid   = result?.valid === true;
+  const found   = result?.found === true;
+  const hash    = result?.contentHash ?? "";
+  const hashPreview = hash ? hash.slice(0, 16) + "…" : "—";
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div style={{ width: 440, background: "#111114", border: "1px solid #2a2a35", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#e8e8f0", letterSpacing: "-0.01em" }}>🛡 Watermark Verification</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#606080", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ fontSize: 11, color: "#6060a0", padding: "5px 8px", background: "#0d0d0f", border: "1px solid #1e1e28", wordBreak: "break-all" as const }}>
+          {fname}
+        </div>
+
+        {verifying && (
+          <div style={{ fontSize: 12, color: "#6060a0", textAlign: "center" as const, padding: "10px 0" }}>Verifying…</div>
+        )}
+
+        {!verifying && result && (
+          <>
+            {!found ? (
+              <div style={{ fontSize: 12, color: "#ef4444", padding: "8px 10px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+                {result.error ?? "No Ether watermark found in this file."}
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: 8, fontSize: 12 }}>
+                  {[
+                    ["Station ID",      result.stationId    ?? "—"],
+                    ["Timestamp",       result.timestamp    ?? "—"],
+                    ["Ether Version",   result.etherVersion ?? "—"],
+                    ["SHA-256 Hash",    hashPreview],
+                  ].map(([label, value]) => (
+                    <React.Fragment key={label}>
+                      <span style={{ color: "#6060a0", paddingRight: 8 }}>{label}</span>
+                      <span style={{ color: "#c0c0d8", fontFamily: "ui-monospace, monospace", fontSize: 11 }}>{value}</span>
+                    </React.Fragment>
+                  ))}
+                </div>
+
+                <div style={{
+                  marginTop: 4, padding: "9px 12px",
+                  background: valid ? "rgba(0,200,168,0.08)" : "rgba(239,68,68,0.08)",
+                  border: `1px solid ${valid ? "rgba(0,200,168,0.3)" : "rgba(239,68,68,0.3)"}`,
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <span style={{ fontSize: 14 }}>{valid ? "✓" : "✗"}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: valid ? "#00c8a8" : "#ef4444" }}>
+                    {valid ? "Content is authentic and unmodified" : "Content has been modified"}
+                  </span>
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+          <button onClick={onClose} style={{ padding: "6px 18px", background: "#1e1e24", border: "1px solid #2a2a35", color: "#c0c0d8", fontSize: 12, cursor: "pointer" }}>Close</button>
+        </div>
       </div>
     </div>
   );
@@ -5403,6 +6165,270 @@ function Goniometer({ lAnalyser, rAnalyser, size }: {
       <canvas ref={canvasRef}
         style={{ width: size, height: size, display: "block", background: "#050508", margin: "0 auto" }}
       />
+    </div>
+  );
+}
+
+// ── Version History Panel ────────────────────────────────────────
+
+function VersionHistoryPanel({
+  sessionName, versions, previewVersionId,
+  onPreview, onRestore, onSaveVersion, onClose,
+}: {
+  sessionName: string;
+  versions: SessionVersion[];
+  previewVersionId: string | null;
+  onPreview: (id: string) => void;
+  onRestore: (v: SessionVersion) => void;
+  onSaveVersion: () => void;
+  onClose: () => void;
+}) {
+  const fmtDate = (ts: number) => {
+    const d = new Date(ts);
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " +
+           d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const safeVersions = versions ?? [];
+  const autoSaves   = safeVersions.filter(v => v.label === "Auto-save");
+  const manualSaves = safeVersions.filter(v => v.label !== "Auto-save");
+
+  const VersionRow = ({ v }: { v: SessionVersion }) => {
+    const isPreview = previewVersionId === v.id;
+    const isAuto    = v.label === "Auto-save";
+    return (
+      <div
+        onClick={() => onPreview(v.id)}
+        style={{
+          padding: "10px 14px", cursor: "pointer",
+          background: isPreview ? "rgba(99,102,241,0.12)" : "transparent",
+          borderLeft: `3px solid ${isPreview ? "#6366f1" : "transparent"}`,
+          borderBottom: "1px solid #1a1a1e",
+          transition: "background 0.12s",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+              color: isAuto ? "#555" : "#6366f1",
+              background: isAuto ? "rgba(255,255,255,0.04)" : "rgba(99,102,241,0.15)",
+              padding: "2px 6px", flexShrink: 0,
+            }}>
+              v{v.version_number}
+            </span>
+            <span style={{
+              fontSize: 12, color: isAuto ? "#666" : "#ccc",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              fontStyle: isAuto ? "italic" : "normal",
+            }}>
+              {v.label || `Version ${v.version_number}`}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            {typeof v.track_count === "number" && (
+              <span style={{ fontSize: 10, color: "#555" }}>{v.track_count}t</span>
+            )}
+            <span style={{ fontSize: 10, color: "#444" }}>{fmtDate(v.created_at)}</span>
+          </div>
+        </div>
+
+        {isPreview && (
+          <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+            <button
+              onClick={e => { e.stopPropagation(); onRestore(v); }}
+              style={{
+                flex: 1, padding: "7px 0", background: "#6366f1", border: "none",
+                color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                fontFamily: "Inter, system-ui, sans-serif",
+              }}
+            >
+              Restore this version
+            </button>
+            <button
+              onClick={e => { e.stopPropagation(); onPreview(v.id); }}
+              style={{
+                padding: "7px 12px", background: "#1a1a1e", border: "1px solid #333",
+                color: "#888", fontSize: 11, cursor: "pointer",
+              }}
+            >
+              Collapse
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{
+      position: "absolute", top: 0, right: 0, bottom: 0,
+      width: 320, background: "#0d0d10", borderLeft: "1px solid #1a1a1e",
+      display: "flex", flexDirection: "column", zIndex: 60,
+      boxShadow: "-8px 0 32px rgba(0,0,0,0.6)",
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: "14px 16px 12px", borderBottom: "1px solid #1a1a1e",
+        display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+      }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#eee", marginBottom: 2 }}>Version History</div>
+          <div style={{ fontSize: 10, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+            {sessionName}
+          </div>
+        </div>
+        <button onClick={onClose}
+          style={{ background: "transparent", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
+          ✕
+        </button>
+      </div>
+
+      {/* Save Version button */}
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid #1a1a1e", flexShrink: 0 }}>
+        <button
+          onClick={onSaveVersion}
+          style={{
+            width: "100%", padding: "8px 0",
+            background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.35)",
+            color: "#a5b4fc", fontSize: 12, fontWeight: 700, cursor: "pointer",
+            fontFamily: "Inter, system-ui, sans-serif", letterSpacing: "0.02em",
+          }}
+        >
+          + Save Version Now
+        </button>
+      </div>
+
+      {/* Version list */}
+      <div className="studiopro-scroll" style={{ flex: 1, overflowY: "auto" }}>
+        {safeVersions.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: "#555", fontSize: 12 }}>
+            No versions saved yet.<br />
+            <span style={{ fontSize: 11 }}>Click "+ Save Version Now" or use Ctrl+Shift+S.</span>
+          </div>
+        ) : (
+          <>
+            {manualSaves.length > 0 && (
+              <>
+                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+                  Manual saves ({manualSaves.length})
+                </div>
+                {manualSaves.map(v => <VersionRow key={v.id} v={v} />)}
+              </>
+            )}
+            {autoSaves.length > 0 && (
+              <>
+                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+                  Auto-saves ({autoSaves.length}/{10})
+                </div>
+                {autoSaves.map(v => <VersionRow key={v.id} v={v} />)}
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: "10px 14px", borderTop: "1px solid #1a1a1e", flexShrink: 0 }}>
+        <div style={{ fontSize: 10, color: "#444", lineHeight: 1.6 }}>
+          Auto-saves every 5 min · Max {10} auto-saves kept · Restoring auto-saves current state first
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Notes Drawer ─────────────────────────────────────────────────
+
+function NotesDrawer({
+  notes, onJump, onResolve, onDelete, onClose,
+}: {
+  notes: StudioNote[];
+  onJump: (ms: number) => void;
+  onResolve: (id: string) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  const active   = notes.filter(n => !n.resolved);
+  const resolved = notes.filter(n =>  n.resolved);
+
+  const NoteRow = ({ n }: { n: StudioNote }) => (
+    <div style={{
+      padding: "10px 14px", borderBottom: "1px solid #111",
+      opacity: n.resolved ? 0.45 : 1,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <div style={{ width: 8, height: 8, borderRadius: "50%", background: n.color, flexShrink: 0 }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: n.color }}>{n.author}</span>
+        <span style={{ fontSize: 10, color: "#555", fontFamily: "ui-monospace, monospace", marginLeft: "auto" }}>
+          {fmtTimecode(n.position_ms)}
+        </span>
+      </div>
+      <div style={{
+        fontSize: 12, color: n.resolved ? "#555" : "#ccc", lineHeight: 1.5,
+        textDecoration: n.resolved ? "line-through" : "none",
+      }}>{n.text}</div>
+      <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+        <button onClick={() => onJump(n.position_ms)}
+          style={{ padding: "2px 8px", fontSize: 10, background: "rgba(255,255,255,0.04)", color: "#888", border: "1px solid #222", cursor: "pointer" }}>
+          Jump to
+        </button>
+        {!n.resolved && (
+          <button onClick={() => onResolve(n.id)}
+            style={{ padding: "2px 8px", fontSize: 10, background: "rgba(16,185,129,0.08)", color: "#10b981", border: "1px solid rgba(16,185,129,0.25)", cursor: "pointer" }}>
+            Resolve
+          </button>
+        )}
+        <button onClick={() => onDelete(n.id)}
+          style={{ padding: "2px 8px", fontSize: 10, background: "transparent", color: "#444", border: "none", cursor: "pointer", marginLeft: "auto" }}>
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      position: "absolute", right: 0, top: 0, bottom: 0, width: 300,
+      background: "#0d0d0f", borderLeft: "1px solid #1a1a1e",
+      display: "flex", flexDirection: "column", zIndex: 15,
+      fontFamily: "Inter, system-ui, sans-serif",
+    }}>
+      <div style={{
+        padding: "10px 14px", borderBottom: "1px solid #1a1a1e",
+        display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#ccc" }}>
+          Notes {active.length > 0 && <span style={{ color: "#f59e0b" }}>({active.length})</span>}
+        </span>
+        <button onClick={onClose}
+          style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 14, padding: 0 }}>
+          ✕
+        </button>
+      </div>
+      <div style={{ fontSize: 9, color: "#555", padding: "6px 14px", borderBottom: "1px solid #111", flexShrink: 0 }}>
+        RIGHT-CLICK RULER TO ADD A NOTE
+      </div>
+      <div className="studiopro-scroll" style={{ flex: 1, overflowY: "auto" }}>
+        {notes.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: "#444", fontSize: 12 }}>
+            No notes yet.<br />
+            <span style={{ fontSize: 11 }}>Right-click the timeline ruler to add one.</span>
+          </div>
+        ) : (
+          <>
+            {active.map(n => <NoteRow key={n.id} n={n} />)}
+            {resolved.length > 0 && (
+              <>
+                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "#444", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
+                  Resolved ({resolved.length})
+                </div>
+                {resolved.map(n => <NoteRow key={n.id} n={n} />)}
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

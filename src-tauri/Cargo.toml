@@ -39,6 +39,9 @@ mp3lame-encoder = { version = "0.1", optional = true }
 serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
+# Cryptographic hashing — for audio watermark
+sha2 = "0.10"
+
 # HTTP
 tiny_http = "0.12"
 ureq      = "2.10"

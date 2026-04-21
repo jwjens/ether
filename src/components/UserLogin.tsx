@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import etherLogoDark from "../assets/ether-logo-dark.svg";
+import etherLogoMark from "../assets/ether-logo.svg";
 import { query, execute } from "../db/client";
 
 export interface AppUser {
@@ -98,7 +98,7 @@ export default function UserLogin({ onLogin }: Props) {
 
       {/* Logo */}
       <div style={{ marginBottom: 40, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
-        <img src={etherLogoDark} width={72} height={72} alt="" style={{ borderRadius: 0 }} />
+        <img src={etherLogoMark} width={72} height={72} alt="" style={{ borderRadius: 0 }} />
         <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
         <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const }}>Technologies</div>
       </div>
