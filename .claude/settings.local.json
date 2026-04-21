@@ -12,7 +12,9 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(git push *)",
-      "Bash(git tag *)"
+      "Bash(git tag *)",
+      "Bash(npm run *)",
+      "Bash(npx electron *)"
     ]
   }
 }

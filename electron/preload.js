@@ -155,6 +155,15 @@ contextBridge.exposeInMainWorld("ether", {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),
     verifyPin: (pin, stored) => ipcRenderer.invoke("user:verify-pin", pin, stored),
   },
+  // ── Multi-station management (operator tier) ───────────────
+  stations: {
+    list:      ()         => ipcRenderer.invoke("stations:list"),
+    getActive: ()         => ipcRenderer.invoke("stations:get-active"),
+    switch:    (id)       => ipcRenderer.invoke("stations:switch", id),
+    create:    (data)     => ipcRenderer.invoke("stations:create", data),
+    update:    (id, data) => ipcRenderer.invoke("stations:update", id, data),
+    delete:    (id)       => ipcRenderer.invoke("stations:delete", id),
+  },
   // ── Cloud DR Backup (R2) ────────────────────────────────────
   cloudBackup: {
     getConfig:   ()  => ipcRenderer.invoke("cloud-backup:get-config"),

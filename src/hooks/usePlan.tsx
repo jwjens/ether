@@ -16,9 +16,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { query, execute } from "../db/client";
 
-export type PlanTier = "free" | "pro" | "station";
+export type PlanTier = "free" | "pro" | "station" | "operator";
 
-const TIER_RANK: Record<PlanTier, number> = { free: 0, pro: 1, station: 2 };
+const TIER_RANK: Record<PlanTier, number> = { free: 0, pro: 1, station: 2, operator: 3 };
 
 /** Returns true if the user's current plan meets or exceeds the required tier */
 export function requirePlan(required: PlanTier, current: PlanTier): boolean {
@@ -50,6 +50,12 @@ export function usePlan() {
   }, []);
 
   useEffect(() => {
+    // Dev override always wins — must run before _cached check so a real license
+    // in the DB doesn't prevent the flag from taking effect on subsequent boots
+    if (import.meta.env.VITE_DEV_FORCE_OPERATOR_TIER === "true") {
+      notifyAll("operator");
+      return;
+    }
     if (_cached) { setPlan(_cached); return; }
     // Load from DB
     (async () => {
@@ -68,9 +74,10 @@ export function usePlan() {
 
   return {
     plan,
-    isPro:     requirePlan("pro",     plan),
-    isStation: requirePlan("station", plan),
-    isFree:    plan === "free",
+    isPro:      requirePlan("pro",      plan),
+    isStation:  requirePlan("station",  plan),
+    isOperator: requirePlan("operator", plan),
+    isFree:     plan === "free",
   };
 }
 
@@ -84,6 +91,9 @@ interface UpgradePromptProps {
 }
 
 export function UpgradePrompt({ feature, required, compact = false, onUpgrade }: UpgradePromptProps) {
+  // Operator tier is enterprise-only — never show a self-serve upgrade prompt
+  if (required === "operator") return null;
+
   const label  = required === "pro" ? "Pro" : "Station";
   const color  = required === "pro" ? "#22d3ee" : "#a78bfa";
   const price  = required === "pro" ? "$19/mo" : "$79/mo";

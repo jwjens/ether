@@ -49,7 +49,6 @@ import SchedulePreview from "./components/SchedulePreview";
 import SchedulerReasons from "./components/SchedulerReasons";
 import VoiceTrackInbox from "./components/VoiceTrackInbox";
 import AIVoiceStudio from "./components/AIVoiceStudio";
-import StationsManager from "./components/StationsManager";
 import ActiveStationBadge from "./components/ActiveStationBadge";
 import GSelectorImport from "./components/GSelectorImport";
 import HelpPanel from "./components/HelpPanel";
@@ -383,6 +382,7 @@ export default function App() {
   const [wizardDone, setWizardDone] = useState(false);
   const [firstRunChecked, setFirstRunChecked] = useState(false);
   const [stationName, setStationName] = useState("Ether");
+  const [switchToast, setSwitchToast] = useState("");
   // Video live indicator — updated via custom event from VideoEngineContext
   const [videoLive, setVideoLive] = useState(false);
   useEffect(() => {
@@ -932,6 +932,22 @@ export default function App() {
     : "";
   const anyDeckPlaying = [deckA, deckB, deckC].some(d => d?.status === "playing");
 
+  const handleStationSwitch = async (id: number, name: string): Promise<boolean> => {
+    if (anyDeckPlaying || queueLen > 0) {
+      if (!confirm("Switching stations will stop playback and clear all decks. Continue?")) return false;
+      engine.getDeck("A")?.stop(); engine.getDeck("B")?.stop(); engine.getDeck("C")?.stop();
+      engine.clearQueue(); setQueueLen(0);
+    }
+    const r = await (window as any).ether.stations.switch(id);
+    if (!r?.ok) return false;
+    await (window as any).ether.db.execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('active_station_id', ?)", [String(id)]);
+    window.dispatchEvent(new CustomEvent("station-switched", { detail: { id, name } }));
+    setStationName(name);
+    setSwitchToast(`Switched to ${name}`);
+    setTimeout(() => setSwitchToast(""), 3000);
+    return true;
+  };
+
   // Expose now-playing state for mobile companion via backend API
   useEffect(() => {
     const playing = [
@@ -1057,6 +1073,7 @@ export default function App() {
             </button>
           )}
           <HealthStatusDot onClick={() => setPanel("health")} compact={viewport.veryNarrow} />
+          <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
           {!viewport.veryNarrow && <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />}
           {currentPlan === "free" && (
             <button onClick={() => setPanel("subscription")} title="Upgrade to Pro" style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
@@ -1344,7 +1361,7 @@ export default function App() {
               {panel === "reasons" && <SchedulerReasons onClose={() => setPanel("live")} />}
               {panel === "vtinbox" && <VoiceTrackInbox onClose={() => setPanel("live")} />}
               {panel === "aivoice" && <AIVoiceStudio onClose={() => setPanel("live")} />}
-              {panel === "stations" && <StationsManager onClose={() => setPanel("live")} />}
+
               {panel === "gselector" && <GSelectorImport onClose={() => setPanel("live")} />}
               {panel === "help" && <HelpPanel onClose={() => setPanel("live")} />}
               {panel === "spots" && <Spots />}
@@ -1374,7 +1391,7 @@ export default function App() {
                 </PlanGate>
               )}
               {panel === "stationmanager" && (
-                <PlanGate requires="station" feature="Multi-Station Console">
+                <PlanGate requires="operator" feature="Multi-Station Console">
                   <StationManager onStationSwitch={(id, name) => setStationName(name)} />
                 </PlanGate>
               )}
@@ -1509,6 +1526,11 @@ export default function App() {
         onDismiss={updater.dismiss}
       />}
       {restoreInfo && <SessionRestoreToast info={restoreInfo} onDismiss={() => setRestoreInfo(null)} />}
+      {switchToast && (
+        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: "1px solid rgba(56,189,248,0.4)", color: "#38bdf8", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
+          {switchToast}
+        </div>
+      )}
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0, letterSpacing: "0.02em", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>

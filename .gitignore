@@ -23,3 +23,5 @@ fix-*.js
 .env
 
 .env
+
+.env.development

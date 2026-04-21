@@ -1,401 +1,261 @@
 /**
- * StationManager.tsx
- * Ether Technologies — Multi-Station Console (Station plan)
- *
- * Manages multiple station profiles within one Ether install.
- * Each station has its own: name, branding color, music library,
- * format clocks, scheduling, audio routing, and stream settings.
- *
- * All data lives in one SQLite DB, namespaced by station_id.
- * Switching stations updates the active context and reloads all panels.
+ * StationManager.tsx — Manage Stations panel (operator tier).
+ * Opened via "Manage Stations..." in the header switcher dropdown.
+ * Uses ether.stations.* IPC (never raw SQL) so the safety gate is respected.
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { query, execute } from "../db/client";
-
-// ─── Types ────────────────────────────────────────────────────
+import { query } from "../db/client";
 
 interface Station {
-  id:          number;
-  name:        string;
-  short_name:  string;
-  color:       string;
-  frequency:   string | null;
-  format:      string | null;
-  stream_url:  string | null;
-  is_active:   boolean;
-  created_at:  number;
+  id:                 number;
+  name:               string;
+  callsign?:          string;
+  frequency?:         string;
+  city?:              string;
+  state?:             string;
+  icecast_server_url?: string;
+  icecast_mount?:      string;
+  icecast_password?:   string;
+  icecast_bitrate?:    number;
+  icecast_format?:     string;
+  is_active:          number;
+  created_at:         number;
 }
 
 interface StationStats {
-  song_count:     number;
-  clock_count:    number;
-  last_scheduled: string | null;
+  song_count:  number;
+  clock_count: number;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
-
-const COLORS = ["#38bdf8","#a78bfa","#34d399","#f87171","#fbbf24","#fb923c","#e879f9","#22d3ee"];
+interface Props {
+  onStationSwitch?: (id: number, name: string) => void;
+}
 
 function fmtDate(epoch: number) {
+  if (!epoch) return "—";
   return new Date(epoch * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-// ─── Station Card ─────────────────────────────────────────────
+// ─── Station row ──────────────────────────────────────────────
 
-function StationCard({
-  station, stats, isActive, onSwitch, onEdit, onDelete,
+function StationRow({
+  station, stats, onEdit, onDelete,
 }: {
   station:  Station;
   stats:    StationStats;
-  isActive: boolean;
-  onSwitch: (id: number) => void;
   onEdit:   (s: Station) => void;
   onDelete: (id: number) => void;
 }) {
+  const isActive = !!station.is_active;
+
   return (
-    <div style={{
-      background: isActive ? station.color + "08" : "var(--bg-secondary)",
-      border: `1px solid ${isActive ? station.color + "40" : "var(--border-primary)"}`,
-      borderRadius: 0, overflow: "hidden",
-      boxShadow: isActive ? `0 0 0 2px ${station.color}25` : "none",
-      transition: "all 0.15s",
-    }}>
-      {/* Header stripe */}
-      <div style={{ height: 4, background: station.color }} />
-
-      <div style={{ padding: "16px 18px" }}>
-        {/* Station identity */}
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
-          <div style={{
-            width: 46, height: 46, borderRadius: 0, flexShrink: 0,
-            background: station.color + "20",
-            border: `1px solid ${station.color}35`,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 800,
-            color: station.color,
-          }}>
-            {station.short_name.slice(0, 3).toUpperCase()}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em", marginBottom: 2 }}>{station.name}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {station.frequency && (
-                <span style={{ fontSize: 9, fontWeight: 700, color: station.color, background: station.color + "15", borderRadius: 0, padding: "1px 7px", border: `1px solid ${station.color}30` }}>{station.frequency}</span>
-              )}
-              {station.format && (
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)", background: "var(--bg-tertiary)", borderRadius: 0, padding: "1px 7px", border: "1px solid var(--border-primary)" }}>{station.format}</span>
-              )}
-            </div>
-          </div>
+    <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
+      <td style={{ padding: "10px 14px", verticalAlign: "middle" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {isActive && (
-            <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 0, background: station.color + "15", border: `1px solid ${station.color}30`, flexShrink: 0 }}>
-              <div style={{ width: 5, height: 5, borderRadius: "50%", background: station.color, animation: "pulse-dot 1.5s ease-in-out infinite" }} />
-              <span style={{ fontSize: 9, fontWeight: 800, color: station.color, letterSpacing: "0.1em" }}>ACTIVE</span>
-            </div>
+            <span style={{
+              fontSize: 8, fontWeight: 900, color: "#22c55e",
+              letterSpacing: "0.06em", padding: "1px 5px",
+              border: "1px solid rgba(34,197,94,0.3)",
+              background: "rgba(34,197,94,0.1)", flexShrink: 0,
+            }}>●</span>
           )}
-        </div>
-
-        {/* Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 14 }}>
-          {[
-            { label: "Songs",    value: stats.song_count },
-            { label: "Clocks",   value: stats.clock_count },
-            { label: "Created",  value: fmtDate(station.created_at) },
-          ].map(s => (
-            <div key={s.label} style={{ background: "var(--bg-tertiary)", borderRadius: 0, padding: "8px 10px", border: "1px solid var(--border-primary)" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", fontFamily: s.label === "Songs" || s.label === "Clocks" ? "'DM Mono', monospace" : undefined }}>{s.value}</div>
-              <div style={{ fontSize: 8, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 1 }}>{s.label}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Stream URL */}
-        {station.stream_url && (
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", borderRadius: 0, padding: "5px 9px", marginBottom: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            📡 {station.stream_url}
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{station.name}</div>
+            {(station.callsign || station.frequency) && (
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "monospace", marginTop: 1 }}>
+                {[station.callsign, station.frequency, station.city].filter(Boolean).join(" · ")}
+              </div>
+            )}
           </div>
-        )}
-
-        {/* Actions */}
-        <div style={{ display: "flex", gap: 6 }}>
-          {!isActive && (
-            <button onClick={() => onSwitch(station.id)} style={{
-              flex: 1, padding: "8px", borderRadius: 0, fontSize: 11, fontWeight: 700,
-              background: station.color, color: "#000", border: "none", cursor: "pointer",
-              transition: "all 0.15s",
-            }}>
-              Switch to Station
-            </button>
-          )}
-          {isActive && (
-            <div style={{ flex: 1, padding: "8px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", textAlign: "center" }}>
-              Currently Active
-            </div>
-          )}
-          <button onClick={() => onEdit(station)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>✏️</button>
-          {!isActive && (
-            <button onClick={() => onDelete(station.id)} style={{ padding: "8px 12px", borderRadius: 0, fontSize: 11, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
-            >🗑</button>
-          )}
         </div>
-      </div>
-    </div>
+      </td>
+      <td style={{ padding: "10px 14px", verticalAlign: "middle", fontSize: 12, color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
+        {fmtDate(station.created_at)}
+      </td>
+      <td style={{ padding: "10px 14px", verticalAlign: "middle", fontSize: 12, color: "var(--text-tertiary)" }}>
+        {stats.song_count} songs · {stats.clock_count} clocks
+      </td>
+      <td style={{ padding: "10px 14px", verticalAlign: "middle" }}>
+        <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          <button onClick={() => onEdit(station)} style={actionBtn}>Rename</button>
+          <button
+            title="Coming in Phase 3 — requires copying all station-scoped data across 23 tables"
+            disabled
+            style={{ ...actionBtn, opacity: 0.35, cursor: "not-allowed" }}
+          >Duplicate</button>
+          <button
+            onClick={() => onDelete(station.id)}
+            disabled={isActive}
+            title={isActive ? "Cannot delete the active station" : `Delete ${station.name}`}
+            style={{
+              ...actionBtn,
+              color: isActive ? "var(--text-tertiary)" : "#f87171",
+              opacity: isActive ? 0.35 : 1,
+              cursor: isActive ? "not-allowed" : "pointer",
+            }}
+          >Delete</button>
+        </div>
+      </td>
+    </tr>
   );
 }
 
-// ─── Station Editor Modal ─────────────────────────────────────
+// ─── Editor modal ─────────────────────────────────────────────
 
 function StationEditor({
   station, onSave, onClose,
 }: {
   station: Partial<Station> | null;
-  onSave:  (data: Partial<Station>) => void;
+  onSave:  (data: Partial<Station>) => Promise<void>;
   onClose: () => void;
 }) {
-  const [form, setForm] = useState<Partial<Station>>(station || {
-    name: "", short_name: "", color: COLORS[0], frequency: "", format: "", stream_url: "",
+  const [form, setForm]   = useState<Partial<Station>>(station || {
+    name: "", callsign: "", frequency: "", city: "",
+    icecast_server_url: "", icecast_mount: "/live",
+    icecast_password: "", icecast_bitrate: 128, icecast_format: "mp3",
   });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState<string | null>(null);
 
-  const set = (k: keyof Station, v: any) => setForm(p => ({ ...p, [k]: v }));
+  const set = <K extends keyof Station>(k: K, v: Station[K]) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    if (!form.name?.trim()) { setError("Name is required"); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(form);
+    } catch (e: any) {
+      setError(e?.message || "Failed to save");
+      setSaving(false);
+    }
+  };
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 9999,
-      background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)",
-      display: "flex", alignItems: "center", justifyContent: "center",
-    }} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{
-        width: 480, background: "#0d0d18",
-        border: "1px solid rgba(255,255,255,0.1)", borderRadius: 0,
-        overflow: "hidden",
-        boxShadow: "0 40px 100px rgba(0,0,0,0.6)",
-      }}>
-        {/* Header stripe */}
-        <div style={{ height: 4, background: form.color || COLORS[0] }} />
-
-        <div style={{ padding: "24px 28px" }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", marginBottom: 20, fontFamily: "'Syne', sans-serif" }}>
-            {station?.id ? "Edit Station" : "Add New Station"}
+    <div
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+      style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}
+    >
+      <div style={{ width: 480, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden", boxShadow: "0 30px 80px rgba(0,0,0,0.5)" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
+            {station?.id ? `Edit — ${station.name}` : "New Station"}
           </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>×</button>
+        </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* Name */}
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Station Name *</div>
-              <input value={form.name || ""} onChange={e => set("name", e.target.value)} placeholder="KETH Radio" style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
-            </div>
+        <div style={{ padding: 20 }}>
+          {error && (
+            <div style={{ marginBottom: 14, padding: "9px 12px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", fontSize: 12 }}>{error}</div>
+          )}
 
-            {/* Short name + Frequency */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Short Name / Call Sign *</div>
-                <input value={form.short_name || ""} onChange={e => set("short_name", e.target.value)} placeholder="KETH" maxLength={6} style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono', monospace", textTransform: "uppercase" }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Frequency</div>
-                <input value={form.frequency || ""} onChange={e => set("frequency", e.target.value)} placeholder="98.7 FM" style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
-              </div>
-            </div>
+          <EF label="Station Name *">
+            <input autoFocus value={form.name || ""} onChange={e => set("name", e.target.value)}
+              onKeyDown={e => e.key === "Enter" && save()}
+              placeholder="KETH Radio" style={inp} />
+          </EF>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <EF label="Callsign"><input value={form.callsign || ""} onChange={e => set("callsign", e.target.value)} placeholder="KETH" style={inp} /></EF>
+            <EF label="Frequency"><input value={form.frequency || ""} onChange={e => set("frequency", e.target.value)} placeholder="98.7 FM" style={inp} /></EF>
+          </div>
+          <EF label="City"><input value={form.city || ""} onChange={e => set("city", e.target.value)} placeholder="Las Vegas" style={inp} /></EF>
 
-            {/* Format */}
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Format</div>
-              <select value={form.format || ""} onChange={e => set("format", e.target.value)} style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "#1a1a2e", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", colorScheme: "dark", boxSizing: "border-box" }}>
-                <option value="">Select format...</option>
-                {["Adult Contemporary","CHR / Top 40","Country","Rock","Classic Rock","Hip-Hop / R&B","Jazz","Classical","News/Talk","Sports","Religious","Easy Listening","Electronic/Dance","Alternative","Oldies","Latin"].map(f => (
-                  <option key={f} value={f} style={{ background: "#1a1a2e" }}>{f}</option>
-                ))}
+          <div style={{ borderTop: "1px solid var(--border-primary)", margin: "14px 0 12px", paddingTop: 4 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 8 }}>ICECAST</div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <EF label="Server URL"><input value={form.icecast_server_url || ""} onChange={e => set("icecast_server_url", e.target.value)} placeholder="127.0.0.1" style={inp} /></EF>
+            <EF label="Mount"><input value={form.icecast_mount || ""} onChange={e => set("icecast_mount", e.target.value)} placeholder="/live" style={inp} /></EF>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <EF label="Password"><input value={form.icecast_password || ""} onChange={e => set("icecast_password", e.target.value)} placeholder="hackme" type="password" style={inp} /></EF>
+            <EF label="Bitrate">
+              <select value={form.icecast_bitrate || 128} onChange={e => set("icecast_bitrate", parseInt(e.target.value))} style={{ ...inp, background: "var(--bg-tertiary)", colorScheme: "dark" }}>
+                {[64,96,128,192,256,320].map(b => <option key={b} value={b}>{b} kbps</option>)}
               </select>
-            </div>
-
-            {/* Stream URL */}
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 5, letterSpacing: "0.08em", textTransform: "uppercase" }}>Stream URL (Icecast)</div>
-              <input value={form.stream_url || ""} onChange={e => set("stream_url", e.target.value)} placeholder="http://icecast.example.com:8000/stream" style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box", fontFamily: "'DM Mono', monospace" }} />
-            </div>
-
-            {/* Color */}
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 8, letterSpacing: "0.08em", textTransform: "uppercase" }}>Station Color</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {COLORS.map(c => (
-                  <button key={c} onClick={() => set("color", c)} style={{
-                    width: 28, height: 28, borderRadius: "50%", border: "none", cursor: "pointer",
-                    background: c,
-                    boxShadow: form.color === c ? `0 0 0 3px #000, 0 0 0 5px ${c}` : "none",
-                    transition: "all 0.1s",
-                    transform: form.color === c ? "scale(1.15)" : "scale(1)",
-                  }} />
-                ))}
-              </div>
-            </div>
+            </EF>
+            <EF label="Format">
+              <select value={form.icecast_format || "mp3"} onChange={e => set("icecast_format", e.target.value)} style={{ ...inp, background: "var(--bg-tertiary)", colorScheme: "dark" }}>
+                <option value="mp3">MP3</option>
+                <option value="aac">AAC</option>
+                <option value="ogg">OGG</option>
+              </select>
+            </EF>
           </div>
+        </div>
 
-          {/* Buttons */}
-          <div style={{ display: "flex", gap: 8, marginTop: 24 }}>
-            <button onClick={onClose} style={{ flex: 1, padding: "10px", borderRadius: 0, fontSize: 12, background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
-            <button onClick={() => {
-              if (!form.name?.trim() || !form.short_name?.trim()) return alert("Name and call sign are required.");
-              onSave(form);
-            }} style={{ flex: 2, padding: "10px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: form.color || COLORS[0], color: "#000", border: "none", cursor: "pointer" }}>
-              {station?.id ? "Save Changes" : "Create Station"}
-            </button>
-          </div>
+        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border-primary)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} style={cancelBtn}>Cancel</button>
+          <button onClick={save} disabled={saving} style={{ ...cancelBtn, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.7 : 1 }}>
+            {saving ? "Saving…" : station?.id ? "Save Changes" : "Create Station"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────
-
-interface Props {
-  onStationSwitch?: (stationId: number, stationName: string) => void;
-}
+// ─── Main component ───────────────────────────────────────────
 
 export default function StationManager({ onStationSwitch }: Props) {
-  const [stations, setStations]       = useState<Station[]>([]);
-  const [stats, setStats]             = useState<Record<number, StationStats>>({});
-  const [activeId, setActiveId]       = useState<number | null>(null);
-  const [loading, setLoading]         = useState(true);
-  const [editing, setEditing]         = useState<Partial<Station> | null | false>(false);
-  const [switching, setSwitching]     = useState<number | null>(null);
-
-  // ── Init DB schema ─────────────────────────────────────────
-
-  const initSchema = useCallback(async () => {
-    await execute(`CREATE TABLE IF NOT EXISTS stations (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      name        TEXT NOT NULL,
-      short_name  TEXT NOT NULL,
-      color       TEXT DEFAULT '#38bdf8',
-      frequency   TEXT,
-      format      TEXT,
-      stream_url  TEXT,
-      is_active   INTEGER DEFAULT 0,
-      created_at  INTEGER DEFAULT (strftime('%s','now'))
-    )`).catch(() => {});
-
-    // Ensure active_station_id exists in config
-    await execute(`INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('active_station_id', '1')`).catch(() => {});
-  }, []);
-
-  // ── Load ───────────────────────────────────────────────────
+  const ether = (window as any).ether;
+  const [stations,  setStations]  = useState<Station[]>([]);
+  const [stats,     setStats]     = useState<Record<number, StationStats>>({});
+  const [loading,   setLoading]   = useState(true);
+  const [editing,   setEditing]   = useState<Partial<Station> | null | false>(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      await initSchema();
+      const list = await ether.stations.list();
+      if (!Array.isArray(list)) return;
+      setStations(list);
 
-      const rows = await query<Station>("SELECT * FROM stations ORDER BY id");
-
-      // If no stations exist, create default from current config
-      if (rows.length === 0) {
-        const nameRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'station_name'");
-        const defaultName = nameRows[0]?.value || "My Station";
-        await execute(
-          "INSERT INTO stations (name, short_name, color, is_active) VALUES (?, ?, ?, 1)",
-          [defaultName, defaultName.slice(0, 4).toUpperCase(), "#38bdf8"]
-        );
-        const newRows = await query<Station>("SELECT * FROM stations ORDER BY id");
-        setStations(newRows);
-      } else {
-        setStations(rows);
-      }
-
-      // Get active station
-      const activeRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'active_station_id'");
-      const activeId = parseInt(activeRows[0]?.value || "1");
-      setActiveId(activeId);
-
-      // Load stats for each station
-      const statsMap: Record<number, StationStats> = {};
-      for (const s of rows.length > 0 ? rows : await query<Station>("SELECT * FROM stations ORDER BY id")) {
-        const [songCount, clockCount, lastSched] = await Promise.all([
+      const map: Record<number, StationStats> = {};
+      for (const s of list as Station[]) {
+        const [sc, cc] = await Promise.all([
           query<{ c: number }>(`SELECT COUNT(*) as c FROM songs WHERE station_id = ${s.id} OR station_id IS NULL`),
           query<{ c: number }>(`SELECT COUNT(*) as c FROM clocks WHERE station_id = ${s.id} OR station_id IS NULL`),
-          query<{ d: string }>(`SELECT MAX(log_date) as d FROM scheduled_log WHERE station_id = ${s.id} OR station_id IS NULL`),
         ]);
-        statsMap[s.id] = {
-          song_count:     songCount[0]?.c ?? 0,
-          clock_count:    clockCount[0]?.c ?? 0,
-          last_scheduled: lastSched[0]?.d ?? null,
-        };
+        map[s.id] = { song_count: sc[0]?.c ?? 0, clock_count: cc[0]?.c ?? 0 };
       }
-      setStats(statsMap);
-    } catch (e) {
-      console.error("[StationManager] load error:", e);
-    }
+      setStats(map);
+    } catch (e) { console.error("[StationManager]", e); }
     setLoading(false);
-  }, [initSchema]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Switch station ─────────────────────────────────────────
-
-  const switchStation = async (id: number) => {
-    setSwitching(id);
-    try {
-      // Update active flag
-      await execute("UPDATE stations SET is_active = 0");
-      await execute("UPDATE stations SET is_active = 1 WHERE id = ?", [id]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('active_station_id', ?)", [String(id)]);
-
-      // Update station_name to match
-      const station = stations.find(s => s.id === id);
-      if (station) {
-        await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_name', ?)", [station.name]);
-        onStationSwitch?.(id, station.name);
-      }
-
-      setActiveId(id);
-    } catch (e) {
-      console.error("[StationManager] switch error:", e);
-    }
-    setSwitching(null);
-  };
-
-  // ── Save station ───────────────────────────────────────────
-
   const saveStation = async (data: Partial<Station>) => {
-    try {
-      if (data.id) {
-        await execute(
-          "UPDATE stations SET name=?, short_name=?, color=?, frequency=?, format=?, stream_url=? WHERE id=?",
-          [data.name, data.short_name, data.color, data.frequency || null, data.format || null, data.stream_url || null, data.id]
-        );
-      } else {
-        await execute(
-          "INSERT INTO stations (name, short_name, color, frequency, format, stream_url) VALUES (?,?,?,?,?,?)",
-          [data.name, data.short_name, data.color || COLORS[0], data.frequency || null, data.format || null, data.stream_url || null]
-        );
-      }
-      setEditing(false);
-      load();
-    } catch (e: any) {
-      alert("Failed to save station: " + e.message);
+    if (data.id) {
+      const r = await ether.stations.update(data.id, data);
+      if (!r?.ok) throw new Error(r?.error || "Update failed");
+      if (data.is_active) onStationSwitch?.(data.id, data.name!);
+    } else {
+      const r = await ether.stations.create(data);
+      if (!r?.ok) throw new Error(r?.error || "Create failed");
     }
-  };
-
-  // ── Delete station ─────────────────────────────────────────
-
-  const deleteStation = async (id: number) => {
-    if (!confirm("Delete this station? Its music library and clocks will remain in the database but unassigned.")) return;
-    await execute("DELETE FROM stations WHERE id = ?", [id]);
+    setEditing(false);
     load();
   };
 
-  // ─── Render ──────────────────────────────────────────────
+  const deleteStation = async (id: number) => {
+    const s = stations.find(x => x.id === id);
+    if (!confirm(
+      `Delete station "${s?.name}"?\n\nAll station-scoped data (schedules, logs, library associations) will be permanently removed. This cannot be undone.`
+    )) return;
+    await ether.stations.delete(id);
+    load();
+  };
 
   if (loading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", gap: 10, color: "var(--text-tertiary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
-        <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid var(--border-primary)", borderTopColor: "var(--accent-cyan)", animation: "spin 0.7s linear infinite" }} />
-        Loading stations...
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+        <div style={{ width: 16, height: 16, border: "2px solid var(--border-primary)", borderTopColor: "#38bdf8", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+        Loading stations…
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       </div>
     );
   }
@@ -406,97 +266,94 @@ export default function StationManager({ onStationSwitch }: Props) {
       {/* Header */}
       <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Station Plan</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Station Manager</div>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Operator</div>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Station Manager</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {stations.length} station{stations.length !== 1 ? "s" : ""} configured · {stations.find(s => s.id === activeId)?.name || "None"} active
+            {stations.length} station{stations.length !== 1 ? "s" : ""} · {stations.find(s => s.is_active)?.name ?? "none"} active
           </div>
         </div>
         <button
           onClick={() => setEditing({})}
-          style={{ padding: "9px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#a78bfa", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 0 20px rgba(167,139,250,0.3)" }}
+          style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#a78bfa", color: "#000", border: "none", cursor: "pointer" }}
         >
           + Add Station
         </button>
       </div>
 
-      {/* Station grid */}
+      {/* Table */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
         {stations.length === 0 ? (
           <div style={{ textAlign: "center", padding: "60px 24px", color: "var(--text-tertiary)" }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>📻</div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 6 }}>No stations yet</div>
-            <div style={{ fontSize: 12 }}>Click "Add Station" to create your first station profile.</div>
+            <div style={{ fontSize: 28, marginBottom: 12 }}>📻</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)" }}>No stations yet</div>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 16 }}>
-            {stations.map(station => (
-              <div key={station.id} style={{ opacity: switching === station.id ? 0.6 : 1, transition: "opacity 0.2s" }}>
-                <StationCard
-                  station={station}
-                  stats={stats[station.id] ?? { song_count: 0, clock_count: 0, last_scheduled: null }}
-                  isActive={station.id === activeId}
-                  onSwitch={switchStation}
-                  onEdit={s => setEditing(s)}
+          <table style={{ width: "100%", borderCollapse: "collapse", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
+            <thead>
+              <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
+                {["Station", "Created", "Library", "Actions"].map(h => (
+                  <th key={h} style={{ padding: "8px 14px", textAlign: h === "Actions" ? "right" : "left", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stations.map(s => (
+                <StationRow
+                  key={s.id}
+                  station={s}
+                  stats={stats[s.id] ?? { song_count: 0, clock_count: 0 }}
+                  onEdit={st => setEditing(st)}
                   onDelete={deleteStation}
                 />
-              </div>
-            ))}
-
-            {/* Add station card */}
-            <button
-              onClick={() => setEditing({})}
-              style={{
-                background: "transparent",
-                border: "2px dashed var(--border-primary)",
-                borderRadius: 0, padding: "32px 24px",
-                cursor: "pointer", color: "var(--text-tertiary)",
-                display: "flex", flexDirection: "column", alignItems: "center", gap: 10,
-                transition: "all 0.15s", minHeight: 200,
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#a78bfa"; (e.currentTarget as HTMLElement).style.color = "#a78bfa"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
-            >
-              <div style={{ fontSize: 28 }}>+</div>
-              <div style={{ fontSize: 12, fontWeight: 600 }}>Add Station</div>
-            </button>
-          </div>
+              ))}
+            </tbody>
+          </table>
         )}
 
-        {/* Remote console link */}
-        <div style={{ marginTop: 24, padding: "16px 18px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ fontSize: 24, flexShrink: 0 }}>🌐</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3 }}>Remote Web Console</div>
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-              View all stations' now-playing status and send commands from anywhere.
-              Available at your Railway dashboard URL.
-            </div>
-          </div>
-          <button
-            onClick={async () => {
-              try {
-                const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
-                await invoke("open_url", { url: "https://ether-backend-production.up.railway.app/console" });
-              } catch { window.open("https://ether-backend-production.up.railway.app/console", "_blank"); }
-            }}
-            style={{ padding: "8px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgba(167,139,250,0.12)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer", flexShrink: 0 }}
-          >
-            Open Console ↗
-          </button>
+        {/* Phase 3 note */}
+        <div style={{ marginTop: 20, padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+          <strong style={{ color: "var(--text-secondary)" }}>Phase 3 note:</strong> Creating a second station is locked until the renderer INSERT audit is complete (40 callsites). Duplicate station is also Phase 3. See checklist at top of <code>electron/main.js</code>.
         </div>
       </div>
 
-      {/* Editor modal */}
       {editing !== false && (
         <StationEditor
-          station={editing || null}
+          station={editing}
           onSave={saveStation}
           onClose={() => setEditing(false)}
         />
       )}
 
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+// ─── Shared styles ────────────────────────────────────────────
+
+const inp: React.CSSProperties = {
+  width: "100%", padding: "7px 9px", borderRadius: 0, fontSize: 13,
+  background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+  color: "var(--text-primary)", outline: "none", boxSizing: "border-box",
+};
+
+const cancelBtn: React.CSSProperties = {
+  padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 600,
+  background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+  border: "1px solid var(--border-primary)", cursor: "pointer",
+};
+
+const actionBtn: React.CSSProperties = {
+  padding: "4px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600,
+  background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+  border: "1px solid var(--border-primary)", cursor: "pointer",
+};
+
+function EF({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", marginBottom: 4, letterSpacing: "0.07em", textTransform: "uppercase" }}>{label}</div>
+      {children}
     </div>
   );
 }

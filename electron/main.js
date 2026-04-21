@@ -2,6 +2,54 @@
 // Ether Electron main process
 // Replaces src-tauri entirely — Chromium rendering, Node.js backend, NAPI audio
 
+// ─── PHASE 3 CHECKLIST — renderer INSERT callsites missing station_id ───────────
+// Before setting multistation_insert_audit_complete=true in station_config_kv,
+// every callsite below must pass station_id explicitly (read via ether.stations.getActive()).
+// Until then, stations:create blocks creation of a second station (see safety gate).
+//
+// Table               File                               INSERT location
+// categories          src/App.tsx                        ~line 3269
+// categories          src/components/CreateShowWizard    ~line 164
+// categories          src/components/ImportDialog.tsx    ~line 40
+// categories          src/components/LibraryImport.tsx   ~line 387
+// categories          src/components/Scheduler.tsx       ~line 295
+// play_log            src/db/client.ts                   ~line 128
+// play_log            src/audio/showClock.ts             ~line 121
+// artists             src/components/ImportDialog.tsx    ~line 110
+// artists             src/components/LibraryImport.tsx   ~line 373
+// artists             src/components/NexGenImport.tsx    ~line 112
+// songs               src/components/ImportDialog.tsx    ~line 116
+// songs               src/components/LibraryImport.tsx   ~line 396
+// songs               src/components/NexGenImport.tsx    ~line 123
+// clock_slots         src/components/GSelectorImport.tsx ~line 234
+// clock_slots         src/components/Scheduler.tsx       ~line 773
+// clock_slots         src/components/Scheduler.tsx       ~line 788
+// clock_slots         src/components/Scheduler.tsx       ~line 805
+// scheduled_log       src/components/ProgramLog.tsx      ~line 222
+// scheduled_log       src/components/ProgramLog.tsx      ~line 289
+// scheduled_log       src/components/ProgramLog.tsx      ~line 297
+// scheduled_log       src/components/ProgramLog.tsx      ~line 338
+// shows               src/components/CreateShowWizard    ~line 182
+// shows               src/components/ProgramLog.tsx      ~line 1473
+// shows               src/components/Scheduler.tsx       ~line 116
+// clocks              src/components/CreateShowWizard    ~line 146
+// clocks              src/components/Scheduler.tsx       ~line 741
+// voice_tracks        src/components/BroadcastEditor.tsx ~line 1304
+// voice_tracks        src/components/VoiceTracker.tsx    ~line 558
+// operators           src/components/OnShiftScreen.tsx   ~line 212
+// operator_notes      src/components/OnShiftScreen.tsx   ~line 199
+// spots               src/components/Spots.tsx           ~line 48
+// spots               src/components/Spots.tsx           ~line 67
+// spots               src/components/Spots.tsx           ~line 157
+// cart_slots          src/components/CartWall.tsx        ~line 69
+// announcements       src/components/Announcements.tsx   ~line 102
+// macros              src/components/MacroEngine.tsx     ~line 207
+// liner_cards         src/components/ShowPrep.tsx        ~line 274
+// prep_notes          src/components/ShowPrep.tsx        ~line 391
+// format_clocks       src/components/ClockEditor.tsx     ~line 168
+// published_episodes  src/components/PublishEpisode.tsx  ~line 428
+// ─────────────────────────────────────────────────────────────────────────────────
+
 // ── Load .env before anything else so process.env is populated for all modules ──
 try { require("dotenv").config(); } catch (e) { /* dotenv optional in packaged build */ }
 
@@ -414,20 +462,6 @@ function runMigrations() {
     );
   `);
 
-  // Seed default separation rules if empty
-  const ruleCount = db.prepare("SELECT COUNT(*) as c FROM separation_rules").get();
-  if (ruleCount.c === 0) {
-    db.exec(`
-      INSERT INTO separation_rules (rule_type, scope, value, is_hard, is_active, description) VALUES
-        ('artist_separation_min', 'global', 60, 1, 1, 'Minimum minutes between songs by the same artist'),
-        ('song_separation_min',   'global', 180, 1, 1, 'Minimum minutes before a song can repeat'),
-        ('title_separation_min',  'global', 120, 1, 1, 'Minimum minutes between songs with the same title'),
-        ('max_same_gender',       'global', 3,   0, 1, 'Max consecutive songs of the same gender'),
-        ('max_same_category',     'global', 3,   0, 1, 'Max consecutive songs from the same category');
-    `);
-    console.log("[DB] Seeded default separation rules");
-  }
-
   // Add any missing columns via ALTER TABLE (safe to re-run)
   const alterSafe = (sql) => { try { db.exec(sql); } catch(e) { /* column already exists */ } };
   alterSafe("ALTER TABLE songs ADD COLUMN is_explicit INTEGER DEFAULT 0");
@@ -499,6 +533,91 @@ function runMigrations() {
     );
   `);
 
+  // ── Phase 1: Multi-station schema ────────────────────────────
+  // Add Icecast columns to stations table
+  alterSafe("ALTER TABLE stations ADD COLUMN icecast_server_url TEXT DEFAULT '127.0.0.1'");
+  alterSafe("ALTER TABLE stations ADD COLUMN icecast_mount TEXT DEFAULT '/live'");
+  alterSafe("ALTER TABLE stations ADD COLUMN icecast_password TEXT DEFAULT 'hackme'");
+  alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
+  alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
+
+  // Seed station 1 if no stations exist yet (pull existing kv values if present)
+  const stationCount = db.prepare("SELECT COUNT(*) as c FROM stations").get();
+  if (stationCount.c === 0) {
+    const serverKv = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
+    const pwKv     = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
+    const nameKv   = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name'").get();
+    db.prepare(
+      "INSERT INTO stations (id, name, callsign, is_active, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format) VALUES (1, ?, '', 1, ?, '/live', ?, 128, 'mp3')"
+    ).run(nameKv?.value || 'Station 1', serverKv?.value?.trim() || '127.0.0.1', pwKv?.value?.trim() || 'hackme');
+    console.log("[DB] Seeded station 1");
+  } else {
+    // Ensure station 1 Icecast columns are filled if they were just added and are empty
+    const s1 = db.prepare("SELECT * FROM stations WHERE id=1").get();
+    if (s1 && !s1.icecast_server_url) {
+      const serverKv = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
+      const pwKv     = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
+      db.prepare(
+        "UPDATE stations SET icecast_server_url=?, icecast_mount='/live', icecast_password=? WHERE id=1"
+      ).run(serverKv?.value?.trim() || '127.0.0.1', pwKv?.value?.trim() || 'hackme');
+    }
+  }
+
+  // Add station_id to all station-scoped tables
+  const stationTables = [
+    'artists', 'albums', 'categories', 'songs', 'separation_rules',
+    'clocks', 'clock_slots', 'shows', 'play_log', 'scheduled_log',
+    'spots', 'cart_slots', 'announcements', 'voice_tracks',
+    'smart_schedule_rules', 'liner_cards', 'prep_notes',
+    'published_episodes', 'format_clocks', 'generated_schedule',
+    'operators', 'operator_notes', 'deck_configs',
+    'macros', 'rtmp_destinations',
+  ];
+  for (const tbl of stationTables) {
+    alterSafe(`ALTER TABLE ${tbl} ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1`);
+  }
+
+  // Recreate station_config_kv with composite PK (station_id, key) — idempotent
+  const kvcols = db.prepare("PRAGMA table_info(station_config_kv)").all();
+  const kvHasStationId = kvcols.some(c => c.name === 'station_id');
+  if (!kvHasStationId) {
+    const oldRows = db.prepare("SELECT key, value FROM station_config_kv").all();
+    db.exec(`
+      ALTER TABLE station_config_kv RENAME TO _station_config_kv_old;
+      CREATE TABLE station_config_kv (
+        station_id INTEGER NOT NULL DEFAULT 0,
+        key TEXT NOT NULL,
+        value TEXT,
+        PRIMARY KEY (station_id, key)
+      );
+    `);
+    const ins = db.prepare("INSERT OR IGNORE INTO station_config_kv (station_id, key, value) VALUES (?, ?, ?)");
+    const migrate = db.transaction(() => {
+      for (const row of oldRows) ins.run(0, row.key, row.value);
+    });
+    migrate();
+    db.exec("DROP TABLE _station_config_kv_old");
+    console.log("[DB] Migrated station_config_kv to composite PK (station_id, key)");
+  }
+
+  // Seed default separation rules — runs after Phase 1 so station_id column exists
+  const ruleCount = db.prepare("SELECT COUNT(*) as c FROM separation_rules").get();
+  if (ruleCount.c === 0) {
+    const sid = getActiveStationId();
+    const insertRule = db.prepare(
+      "INSERT INTO separation_rules (station_id, rule_type, scope, value, is_hard, is_active, description) VALUES (?,?,?,?,?,?,?)"
+    );
+    const seedRules = db.transaction(() => {
+      insertRule.run(sid, 'artist_separation_min', 'global', 60,  1, 1, 'Minimum minutes between songs by the same artist');
+      insertRule.run(sid, 'song_separation_min',   'global', 180, 1, 1, 'Minimum minutes before a song can repeat');
+      insertRule.run(sid, 'title_separation_min',  'global', 120, 1, 1, 'Minimum minutes between songs with the same title');
+      insertRule.run(sid, 'max_same_gender',        'global', 3,   0, 1, 'Max consecutive songs of the same gender');
+      insertRule.run(sid, 'max_same_category',      'global', 3,   0, 1, 'Max consecutive songs from the same category');
+    });
+    seedRules();
+    console.log("[DB] Seeded default separation rules for station", sid);
+  }
+
   // FTS index for song search
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(title, artist, content='songs', content_rowid='id');
@@ -511,6 +630,14 @@ function runMigrations() {
   `);
 
   console.log("[DB] Schema ready");
+}
+
+// ── Active station helper ─────────────────────────────────────
+function getActiveStationId() {
+  try {
+    const row = db.prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get();
+    return row?.id ?? 1;
+  } catch { return 1; }
 }
 
 // ── Deck config seeder ────────────────────────────────────────
@@ -1950,7 +2077,7 @@ ipcMain.handle("studio:rtmp:save", (_, { id, name, url, key }) => {
     db.prepare("UPDATE rtmp_destinations SET name=?, url=?, stream_key=? WHERE id=?").run(name, url, key || "", id);
     return { id };
   } else {
-    const r = db.prepare("INSERT INTO rtmp_destinations (name, url, stream_key) VALUES (?,?,?)").run(name, url, key || "");
+    const r = db.prepare("INSERT INTO rtmp_destinations (station_id, name, url, stream_key) VALUES (?,?,?,?)").run(getActiveStationId(), name, url, key || "");
     return { id: r.lastInsertRowid };
   }
 });
@@ -2836,9 +2963,9 @@ ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spo
     if (existing) return { ok: true, id: existing.id, skipped: true };
 
     const result = db.prepare(`
-      INSERT INTO songs (title, artist_id, album_id, duration_ms, is_explicit, spotify_uri, rotation_status, daypart_mask)
-      VALUES (?, ?, ?, ?, 0, ?, 'active', 16777215)
-    `).run(title, artistId, albumId, durationMs || 0, spotifyUri || null);
+      INSERT INTO songs (station_id, title, artist_id, album_id, duration_ms, is_explicit, spotify_uri, rotation_status, daypart_mask)
+      VALUES (?, ?, ?, ?, ?, 0, ?, 'active', 16777215)
+    `).run(getActiveStationId(), title, artistId, albumId, durationMs || 0, spotifyUri || null);
     return { ok: true, id: result.lastInsertRowid, skipped: false };
   } catch (e) { return { ok: false, error: e.message }; }
 });
@@ -3010,7 +3137,10 @@ ipcMain.handle('playout:get-server', () => {
 
 ipcMain.handle('playout:set-server', (_, ip) => {
   try {
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('playout_server', ?)").run(String(ip).trim());
+    const trimmed = String(ip).trim();
+    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('playout_server', ?)").run(trimmed);
+    // Keep stations table in sync so stream:go-live reads the updated value
+    db.prepare("UPDATE stations SET icecast_server_url=? WHERE id=?").run(trimmed, getActiveStationId());
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
@@ -3074,10 +3204,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
          AND ((s.daypart_mask >> ?) & 1) = 1
        ORDER BY COALESCE(s.last_played_at, 0) ASC`
     );
+    const activeStationId = getActiveStationId();
     const stmtInsert = db.prepare(
       `INSERT INTO generated_schedule
-         (scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         (station_id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
 
     // Per-generation tracking maps (survive across hours/days)
@@ -3160,7 +3291,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
               : slotDurationS;
 
             stmtInsert.run(
-              currentTs, picked.id, picked.title, picked.artist_name || '',
+              activeStationId, currentTs, picked.id, picked.title, picked.artist_name || '',
               picked.file_path ? path.basename(picked.file_path) : '', durationS, slot.category_id, show.clock_id
             );
             currentTs += durationS;
@@ -3261,11 +3392,12 @@ function _streamFile(filePath) {
 
 ipcMain.handle('stream:go-live', async () => {
   try {
-    const row   = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
-    const server = row?.value?.trim() || '44.244.52.207';
-    const pwRow  = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
-    const pw     = pwRow?.value?.trim() || 'hackme';
-    _liveIcecastUrl  = `icecast://source:${pw}@${server}:8000/live`;
+    const stationId = getActiveStationId();
+    const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
+    const server    = station?.icecast_server_url?.trim() || '44.244.52.207';
+    const pw        = station?.icecast_password?.trim()   || 'hackme';
+    const mount     = station?.icecast_mount?.trim()      || '/live';
+    _liveIcecastUrl  = `icecast://source:${pw}@${server}:8000${mount}`;
     _liveStreamArmed = true;
     console.log(`[stream] Armed → ${_liveIcecastUrl}`);
     // If a track is already playing, start streaming it immediately
@@ -3295,6 +3427,67 @@ ipcMain.handle('stream:stop-live', () => {
 });
 
 ipcMain.handle('stream:get-status', () => ({ live: _liveStreamArmed }));
+
+// ── Stations CRUD ─────────────────────────────────────────────
+ipcMain.handle('stations:list', () =>
+  db.prepare("SELECT * FROM stations ORDER BY id").all()
+);
+
+ipcMain.handle('stations:get-active', () =>
+  db.prepare("SELECT * FROM stations WHERE is_active=1 LIMIT 1").get() ?? null
+);
+
+ipcMain.handle('stations:switch', (_, id) => {
+  db.exec("UPDATE stations SET is_active=0");
+  db.prepare("UPDATE stations SET is_active=1 WHERE id=?").run(id);
+  return { ok: true };
+});
+
+ipcMain.handle('stations:create', (_, data) => {
+  // Safety gate: block second-station creation until Phase 3 INSERT audit is complete.
+  // 40 renderer callsites still rely on DEFAULT station_id=1 — see checklist at top of file.
+  // To unlock: INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('multistation_insert_audit_complete','true')
+  const existingCount = db.prepare("SELECT COUNT(*) as c FROM stations").get().c;
+  if (existingCount >= 1) {
+    const auditRow = db.prepare("SELECT value FROM station_config_kv WHERE key='multistation_insert_audit_complete'").get();
+    if (auditRow?.value !== 'true') {
+      return {
+        ok: false,
+        error: "Cannot create additional stations: renderer INSERT audit incomplete. " +
+          "40 callsites still rely on DEFAULT station_id=1 (see checklist at top of electron/main.js). " +
+          "Set multistation_insert_audit_complete=true in station_config_kv after Phase 3 audit to enable.",
+      };
+    }
+  }
+  const info = db.prepare(
+    `INSERT INTO stations (name, callsign, frequency, city, state, country, website,
+       icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+  ).run(
+    data.name || 'New Station', data.callsign || '', data.frequency || '',
+    data.city || '', data.state || '', data.country || 'US', data.website || '',
+    data.icecast_server_url || '127.0.0.1', data.icecast_mount || '/live',
+    data.icecast_password || 'hackme', data.icecast_bitrate || 128, data.icecast_format || 'mp3'
+  );
+  return { ok: true, id: info.lastInsertRowid };
+});
+
+ipcMain.handle('stations:update', (_, id, data) => {
+  const allowed = [
+    'name','callsign','frequency','city','state','country','website','is_active',
+    'icecast_server_url','icecast_mount','icecast_password','icecast_bitrate','icecast_format',
+  ];
+  const fields = Object.keys(data).filter(k => allowed.includes(k));
+  if (fields.length === 0) return { ok: false, error: 'no valid fields' };
+  const sets = fields.map(k => `${k}=?`).join(', ');
+  db.prepare(`UPDATE stations SET ${sets} WHERE id=?`).run(...fields.map(k => data[k]), id);
+  return { ok: true };
+});
+
+ipcMain.handle('stations:delete', (_, id) => {
+  db.prepare("DELETE FROM stations WHERE id=?").run(id);
+  return { ok: true };
+});
 
 let _libSyncAbort = false;
 
