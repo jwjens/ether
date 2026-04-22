@@ -3,7 +3,8 @@
 // Reads from the play_log table only. No scheduling functionality.
 
 import { useState, useEffect, useCallback } from "react";
-import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface LogEntry {
   id: number;
@@ -42,6 +43,7 @@ interface Props {
 }
 
 export default function PlayLog({ onClose }: Props) {
+  const { stationId } = useActiveStation();
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -56,12 +58,14 @@ export default function PlayLog({ onClose }: Props) {
       // Convert ISO dates → unix timestamps (start of day / end of day)
       const fromTs = Math.floor(new Date(dateFrom + "T00:00:00").getTime() / 1000);
       const toTs   = Math.floor(new Date(dateTo   + "T23:59:59").getTime() / 1000);
-      const rows = await query<LogEntry>(
+      // station_id scoping: Strategy B — single table with existing WHERE clause
+      const rows = await queryScoped<LogEntry>(
         `SELECT * FROM play_log
          WHERE played_at >= ? AND played_at <= ?
          ORDER BY played_at DESC
          LIMIT 2000`,
-        [fromTs, toTs]
+        [fromTs, toTs],
+        stationId
       );
       setEntries(rows);
     } catch (e) {

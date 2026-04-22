@@ -19,6 +19,8 @@ const readDir = (path: string) =>
   (window as any).ether.fs.readDir(path);
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
+import { queryScoped, executeScopedInsert } from "./db/stationScoped";
+import { useActiveStation } from "./hooks/useActiveStation";
 import { engine, DeckState } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
@@ -374,6 +376,7 @@ function useViewport() {
 }
 
 export default function App() {
+  const { stationId } = useActiveStation();
   const viewport = useViewport();
   // Macro automation: listen for hotkey-triggered macros + start clock watcher
   useMacroHotkeys();
@@ -672,7 +675,7 @@ export default function App() {
 
   useEffect(() => {
     engine.setRefillCallback(async () => {
-      const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500");
+      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 500", [stationId], stationId, { skipScoping: true });
       return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }));
     });
   }, []);
@@ -827,7 +830,7 @@ export default function App() {
       } else if (autoAdv) {
         await fillQueueFromSchedule().then(async (count) => {
           if (count === 0) {
-            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100");
+            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
             engine.addToQueue(rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" })));
           }
           const q2 = engine.getQueue();
@@ -858,10 +861,10 @@ export default function App() {
         const count = await fillQueueFromSchedule();
         if (count === 0) {
           engine.setRefillCallback(async () => {
-            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500");
+            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 500", [stationId], stationId, { skipScoping: true });
             return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }));
           });
-          const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100");
+          const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
           const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
           engine.addToQueue(items); setQueueLen(items.length);
         }
@@ -2467,6 +2470,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
 
 // ── Full-page Playlist Panel ───────────────────────────────────
 function PlaylistPanel({ onClose }: { onClose: () => void }) {
+  const { stationId } = useActiveStation();
   const [tracks, setTracks] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
   const [currentIdx, setCurrentIdx] = useState<number | null>(null);
@@ -2478,7 +2482,8 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   const [repeat, setRepeat] = useState(false);
 
   useEffect(() => {
-    query<any>("SELECT id, title, artist, file_path as filePath, duration_ms as durationMs FROM songs ORDER BY artist, title LIMIT 500")
+    // station_id scoping: Strategy B — single table
+    queryScoped<any>("SELECT id, title, artist, file_path as filePath, duration_ms as durationMs FROM songs ORDER BY artist, title LIMIT 500", [], stationId)
       .then(setLibrary).catch(() => {});
   }, []);
 
@@ -3149,6 +3154,7 @@ interface EditMeta { id: number; title: string; artist: string; album: string; y
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
 function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
+  const { stationId } = useActiveStation();
   const watermarkedPaths = React.useMemo<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem("ether_watermarked_paths") || "[]")); }
     catch { return new Set(); }
@@ -3288,7 +3294,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     try {
-      await execute("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor]);
+      // station_id scoping: executeScopedInsert prepends station_id column
+      await executeScopedInsert("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor], stationId);
       setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
       setShowCreateCat(false);
       load();
@@ -3299,11 +3306,14 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
   const load = async () => {
     try {
-      const rows = await query<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id ORDER BY s.title LIMIT 500");
+      // station_id scoping: manual JOIN — songs.station_id filters all 4 tables (artists/albums/categories joined by FK)
+      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.station_id = ? ORDER BY s.title LIMIT 500", [stationId], stationId, { skipScoping: true });
       setSongs(rows);
-      const r = await queryOne<{ c: number }>("SELECT COUNT(*) as c FROM songs");
+      // station_id scoping: Strategy B — single table
+      const [r] = await queryScoped<{ c: number }>("SELECT COUNT(*) as c FROM songs", [], stationId);
       setCount(r ? r.c : 0);
-      setCatList(await query<{ id: number; code: string; color: string | null }>("SELECT id, code, color FROM categories ORDER BY code"));
+      // station_id scoping: Strategy B — single table
+      setCatList(await queryScoped<{ id: number; code: string; color: string | null }>("SELECT id, code, color FROM categories ORDER BY code", [], stationId));
     } catch (e) { console.error(e); setStatus("Error: " + e); }
     setLoading(false);
   };
@@ -3313,19 +3323,21 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };
   const deleteSelected = async () => {
     if (!confirm("Delete " + selectedIds.size + " song(s)?")) return;
-    for (const id of selectedIds) await execute("DELETE FROM songs WHERE id=?", [id]);
+    for (const id of selectedIds) await execute("DELETE FROM songs WHERE id=? AND station_id=?", [id, stationId]);
     setSelectedIds(new Set()); load();
   };
   const deleteAll = async () => {
     if (!confirm("Delete ALL " + count + " songs?")) return;
-    await execute("DELETE FROM songs", []); setSelectedIds(new Set()); load();
+    // station_id scoping: manual WHERE — DELETE without original WHERE must be scoped explicitly
+    await execute("DELETE FROM songs WHERE station_id=?", [stationId]); setSelectedIds(new Set()); load();
   };
   const analyzeLufs = async () => {
-    const songs = await query<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50");
+    // station_id scoping: Strategy B — single table with existing WHERE
+    const songs = await queryScoped<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND gain_db = 0 LIMIT 50", [], stationId);
     if (songs.length === 0) { setStatus("All songs already analyzed"); setTimeout(() => setStatus(""), 3000); return; }
     setStatus("Analyzing... 0/" + songs.length); let done = 0;
     for (const song of songs) {
-      try { const gain = await invoke<number>("analyze_lufs", { filePath: song.file_path }); await execute("UPDATE songs SET gain_db=? WHERE id=?", [gain, song.id]); } catch {}
+      try { const gain = await invoke<number>("analyze_lufs", { filePath: song.file_path }); await execute("UPDATE songs SET gain_db=? WHERE id=? AND station_id=?", [gain, song.id, stationId]); } catch {}
       done++; setStatus("Analyzing... " + done + "/" + songs.length);
     }
     setStatus("Done! Analyzed " + done + " songs."); setTimeout(() => setStatus(""), 4000);
@@ -3334,12 +3346,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     const folder = await open({ directory: true, title: "Select new music folder location" });
     if (!folder) return;
     const newBase = (folder as string).replace(/\\/g, "/");
-    const broken = await query<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL");
+    // station_id scoping: Strategy B — single table with existing WHERE
+    const broken = await queryScoped<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL", [], stationId);
     let fixed = 0;
     for (const song of broken) {
       const filename = song.file_path.split(/[\/]/).pop();
       if (!filename) continue;
-      await execute("UPDATE songs SET file_path=? WHERE id=? AND file_path!=?", [newBase + "/" + filename, song.id, newBase + "/" + filename]); fixed++;
+      await execute("UPDATE songs SET file_path=? WHERE id=? AND file_path!=? AND station_id=?", [newBase + "/" + filename, song.id, newBase + "/" + filename, stationId]); fixed++;
     }
     setStatus("Relocated " + fixed + " songs"); setTimeout(() => setStatus(""), 4000); load();
   };
@@ -3405,7 +3418,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
         </select>
         {/* Assign category to filtered songs */}
-        <select onChange={async (e) => { if (!e.target.value) return; const catId = catList.find(c => c.code === e.target.value)?.id || null; for (const s of filtered) await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); e.target.value = ""; load(); }}
+        <select onChange={async (e) => { if (!e.target.value) return; const catId = catList.find(c => c.code === e.target.value)?.id || null; for (const s of filtered) await execute("UPDATE songs SET category_id=? WHERE id=? AND station_id=?", [catId, s.id, stationId]); e.target.value = ""; load(); }}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">Assign category...</option>
           {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}
@@ -3443,7 +3456,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
             { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
             { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
             null,
-            { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [ctxMenu.song.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [ctxMenu.song.id]); load(); } }, danger: true },
+            { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [ctxMenu.song.id]); } catch {} await execute("DELETE FROM songs WHERE id=? AND station_id=?", [ctxMenu.song.id, stationId]); load(); } }, danger: true },
           ].map((item, idx) => item === null
             ? <div key={idx} style={{ height: 1, background: "var(--border-primary)", margin: "2px 0" }} />
             : <div key={item.label} onMouseDown={() => item.action()} style={{ padding: "9px 16px", fontSize: 13, cursor: "pointer", color: (item as any).danger ? "var(--accent-red)" : "var(--text-primary)", userSelect: "none" as any }}
@@ -3592,7 +3605,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
                     if (col === "category") return (
                       <td key={col} style={{ padding: "8px 12px" }}>
-                        <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await execute("UPDATE songs SET category_id=? WHERE id=?", [catId, s.id]); load(); }}
+                        <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await execute("UPDATE songs SET category_id=? WHERE id=? AND station_id=?", [catId, s.id, stationId]); load(); }}
                           style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
                           <option value="">—</option>
                           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
@@ -3630,7 +3643,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       <button onClick={() => onEdit(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
                       </button>
-                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [s.id]); } catch {} await execute("DELETE FROM songs WHERE id=?", [s.id]); load(); } }} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { try { await execute("DELETE FROM songs_fts WHERE rowid=?", [s.id]); } catch {} await execute("DELETE FROM songs WHERE id=? AND station_id=?", [s.id, stationId]); load(); } }} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
                   </td>
                 </tr>

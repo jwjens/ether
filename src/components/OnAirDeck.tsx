@@ -3,8 +3,9 @@ import ArtistCard from "./ArtistCard";
 import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { DeckState } from "../audio/engine-rodio";
-import { query } from "../db/client";
-import { execute } from "../db/client";
+import { query, execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import { fetchArt } from "./UpNext";
 
 interface Props {
@@ -29,6 +30,7 @@ function fmt(sec: number): string {
 
 
 export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume, onDragStart, bpm, introEndSec }: Props) {
+  const { stationId } = useActiveStation();
   const [blink, setBlink] = useState(false);
   const [categoryColor, setCategoryColor] = useState<string | null>(null);
   const [categoryName, setCategoryName] = useState<string | null>(null);
@@ -51,12 +53,15 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   // Look up category color when track changes
   useEffect(() => {
     if (!title) { setCategoryColor(null); setCategoryName(null); return; }
-    query<{ color: string; name: string; code: string }>(
+    // station_id scoping: manual JOIN — songs.station_id sufficient; categories joined by FK
+    queryScoped<{ color: string; name: string; code: string }>(
       `SELECT c.color, c.name, c.code FROM songs s
        LEFT JOIN categories c ON c.id = s.category_id
-       WHERE s.title = ? AND s.file_path IS NOT NULL
+       WHERE s.title = ? AND s.file_path IS NOT NULL AND s.station_id = ?
        LIMIT 1`,
-      [title]
+      [title, stationId],
+      stationId,
+      { skipScoping: true }
     ).then(rows => {
       setCategoryColor(rows[0]?.color || null);
       setCategoryName(rows[0]?.name || rows[0]?.code || null);

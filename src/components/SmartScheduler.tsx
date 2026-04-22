@@ -4,7 +4,9 @@
 // → generates format clock rules automatically
 
 import { useState, useEffect } from "react";
-import { query, execute } from "../db/client";
+import { execute } from "../db/client";
+import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import { processLibrary as analyzeLibrary } from "../audio/songAnalysis";
 import { getScheduleStatus } from "../audio/loggen";
 
@@ -79,6 +81,7 @@ function fmt12(h: number) {
 }
 
 export default function SmartScheduler({ onClose }: Props) {
+  const { stationId } = useActiveStation();
   const [rules, setRules] = useState<SmartRule[]>(() => {
     try {
       const s = localStorage.getItem("ether_smart_rules");
@@ -126,9 +129,10 @@ export default function SmartScheduler({ onClose }: Props) {
   const [unanalyzedCount, setUnanalyzedCount] = useState(0);
 
   useEffect(() => {
-    query<{count:number}>("SELECT COUNT(*) as count FROM songs WHERE bpm IS NULL OR energy IS NULL")
+    // station_id scoping: Strategy B — single table
+    queryScoped<{count:number}>("SELECT COUNT(*) as count FROM songs WHERE bpm IS NULL OR energy IS NULL", [], stationId)
       .then(r => setUnanalyzedCount(r[0]?.count || 0)).catch(()=>{});
-  }, []);
+  }, [stationId]);
 
   const analyzeAll = async () => {
     setAnalyzing(true);
@@ -137,20 +141,22 @@ export default function SmartScheduler({ onClose }: Props) {
     });
     setAnalyzing(false);
     setAnalyzeProgress(null);
-    // Recount
-    query<{count:number}>("SELECT COUNT(*) as count FROM songs WHERE bpm IS NULL OR energy IS NULL")
+    // Recount — station_id scoping: Strategy B
+    queryScoped<{count:number}>("SELECT COUNT(*) as count FROM songs WHERE bpm IS NULL OR energy IS NULL", [], stationId)
       .then(r => setUnanalyzedCount(r[0]?.count || 0)).catch(()=>{});
   };
 
   const saveRules = (r: SmartRule[]) => {
     setRules(r);
     localStorage.setItem("ether_smart_rules", JSON.stringify(r));
-    // Write to DB so the scheduler engine can read them
-    execute("DELETE FROM smart_schedule_rules", []).catch(() => {});
+    // Write to DB — DELETE: manual WHERE station_id (no other WHERE clause to append to)
+    execute("DELETE FROM smart_schedule_rules WHERE station_id = ?", [stationId]).catch(() => {});
     r.forEach(rule => {
-      execute(
+      // station_id scoping: executeScopedInsert prepends station_id column
+      executeScopedInsert(
         "INSERT OR REPLACE INTO smart_schedule_rules (id, data) VALUES (?, ?)",
-        [rule.id, JSON.stringify(rule)]
+        [rule.id, JSON.stringify(rule)],
+        stationId
       ).catch(() => {});
     });
     setSaved(true);

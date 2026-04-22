@@ -13,7 +13,8 @@
 // preview + jump-to-edit links.
 
 import { useEffect, useState } from "react";
-import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface ShowRow {
   id: number;
@@ -82,6 +83,7 @@ function fmtDate(d: Date): string {
 }
 
 export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
+  const { stationId } = useActiveStation();
   const [shows, setShows] = useState<ShowRow[]>([]);
   const [clockSlots, setClockSlots] = useState<Record<number, ClockSlot[]>>({});
   const [pinnedByHour, setPinnedByHour] = useState<Record<string, PinnedRow[]>>({});
@@ -97,12 +99,14 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
     setLoading(true);
     try {
       // 1. Load all active shows + their clock names
-      const showRows = await query<ShowRow>(
+      // station_id scoping: manual JOIN — shows.station_id filters scope; format_clocks joined by FK
+      const showRows = await queryScoped<ShowRow>(
         `SELECT sh.id, sh.name, sh.start_hour, sh.end_hour, sh.day_of_week, sh.clock_id,
                 fc.name as clock_name
          FROM shows sh
          LEFT JOIN format_clocks fc ON fc.id = sh.clock_id
-         WHERE sh.is_active = 1`
+         WHERE sh.is_active = 1 AND sh.station_id = ?`,
+        [stationId], stationId, { skipScoping: true }
       ).catch(() => []);
       setShows(showRows);
 
@@ -110,13 +114,16 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
       const clockIds = Array.from(new Set(showRows.map(s => s.clock_id).filter(Boolean) as number[]));
       const slotsByClock: Record<number, ClockSlot[]> = {};
       if (clockIds.length > 0) {
-        const slots = await query<ClockSlot>(
+        // station_id scoping: manual JOIN — clock_slots.station_id filters scope; categories joined by FK
+        const slots = await queryScoped<ClockSlot>(
           `SELECT cs.*, c.code as category_code, c.color as category_color
            FROM clock_slots cs
            LEFT JOIN categories c ON c.id = cs.category_id
-           WHERE cs.clock_id IN (${clockIds.map(() => "?").join(",")})
+           WHERE cs.clock_id IN (${clockIds.map(() => "?").join(",")}) AND cs.station_id = ?
            ORDER BY cs.clock_id, cs.position`,
-          clockIds
+          [...clockIds, stationId],
+          stationId,
+          { skipScoping: true }
         ).catch(() => []);
         slots.forEach(s => {
           if (!slotsByClock[s.clock_id]) slotsByClock[s.clock_id] = [];
@@ -128,14 +135,17 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
       // 3. Load pinned songs (recurring + upcoming one-shots)
       const now = Math.floor(Date.now() / 1000);
       const windowEnd = now + windowHours * 3600;
-      const pinnedRows = await query<PinnedRow>(
+      // station_id scoping: pinned_songs is not a scoped table; filter via songs.station_id
+      const pinnedRows = await queryScoped<PinnedRow>(
         `SELECT p.*, s.title, a.name as artist_name
          FROM pinned_songs p
-         JOIN songs s ON s.id = p.song_id
+         JOIN songs s ON s.id = p.song_id AND s.station_id = ?
          LEFT JOIN artists a ON a.id = s.artist_id
          WHERE (p.recur_dow != 0)
             OR (p.recur_dow = 0 AND p.play_at_unix >= ? AND p.play_at_unix <= ? AND p.consumed_at = 0)`,
-        [now, windowEnd]
+        [stationId, now, windowEnd],
+        stationId,
+        { skipScoping: true }
       ).catch(() => []);
 
       // Bucket pinned by date+hour
@@ -166,14 +176,17 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
         dates.add(d.toISOString().slice(0, 10));
       }
       const dateList = Array.from(dates);
-      const scheduledRows = await query<ScheduledRow>(
+      // station_id scoping: manual JOIN — scheduled_log.station_id + songs.station_id both filtered
+      const scheduledRows = await queryScoped<ScheduledRow>(
         `SELECT sl.*, s.title, a.name as artist_name
          FROM scheduled_log sl
-         LEFT JOIN songs s ON s.id = sl.song_id
+         LEFT JOIN songs s ON s.id = sl.song_id AND s.station_id = ?
          LEFT JOIN artists a ON a.id = s.artist_id
-         WHERE sl.log_date IN (${dateList.map(() => "?").join(",")})
+         WHERE sl.log_date IN (${dateList.map(() => "?").join(",")}) AND sl.station_id = ?
          ORDER BY sl.log_date, sl.hour, sl.id`,
-        dateList
+        [stationId, ...dateList, stationId],
+        stationId,
+        { skipScoping: true }
       ).catch(() => []);
 
       const schedBucket: Record<string, ScheduledRow[]> = {};

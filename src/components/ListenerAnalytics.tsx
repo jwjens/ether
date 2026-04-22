@@ -11,7 +11,9 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { query, execute } from "../db/client";
+import { execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -137,6 +139,7 @@ type Tab = "overview" | "songs" | "artists" | "schedule";
 type Range = "7d" | "30d" | "90d" | "all";
 
 export default function ListenerAnalytics({ onClose }: Props) {
+  const { stationId } = useActiveStation();
   const [tab, setTab]             = useState<Tab>("overview");
   const [range, setRange]         = useState<Range>("30d");
   const [loading, setLoading]     = useState(true);
@@ -167,14 +170,15 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
       const days = rangeDays[range];
       const since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
-      const whereClause = since > 0 ? `WHERE pl.played_at >= ${since}` : "";
+      // station_id scoping: Strategy C — station_id is the base condition in all dynamic builders
+      const whereClause = since > 0 ? `WHERE pl.station_id = ${stationId} AND pl.played_at >= ${since}` : `WHERE pl.station_id = ${stationId}`;
       const sinceClause = since > 0 ? `AND played_at >= ${since}` : "";
 
-      // Overview stats
+      // Overview stats — station_id scoping: Strategy C dynamic builders
       const [playsRow, songsRow, artistsRow] = await Promise.all([
-        query<{ c: number }>(`SELECT COUNT(*) as c FROM play_log ${since > 0 ? `WHERE played_at >= ${since}` : ""}`),
-        query<{ c: number }>(`SELECT COUNT(DISTINCT title) as c FROM play_log ${since > 0 ? `WHERE played_at >= ${since}` : ""}`),
-        query<{ c: number }>(`SELECT COUNT(DISTINCT artist) as c FROM play_log WHERE artist IS NOT NULL ${since > 0 ? `AND played_at >= ${since}` : ""}`),
+        queryScoped<{ c: number }>(`SELECT COUNT(*) as c FROM play_log WHERE station_id = ? ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
+        queryScoped<{ c: number }>(`SELECT COUNT(DISTINCT title) as c FROM play_log WHERE station_id = ? ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
+        queryScoped<{ c: number }>(`SELECT COUNT(DISTINCT artist) as c FROM play_log WHERE station_id = ? AND artist IS NOT NULL ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
       ]);
 
       const plays = playsRow[0]?.c ?? 0;
@@ -183,8 +187,8 @@ export default function ListenerAnalytics({ onClose }: Props) {
       setUniqueArtists(artistsRow[0]?.c ?? 0);
       setAvgPlaysPerDay(days ? Math.round(plays / days * 10) / 10 : 0);
 
-      // Top songs — join with songs table for metadata
-      const songs = await query<TopSong>(`
+      // Top songs — station_id scoping: manual JOIN with explicit scoping on all tables
+      const songs = await queryScoped<TopSong>(`
         SELECT pl.title, pl.artist, COUNT(*) as play_count,
                MAX(pl.played_at) as last_played,
                s.category_code, s.category_color, s.bpm, s.energy, s.lufs_measured
@@ -194,64 +198,65 @@ export default function ListenerAnalytics({ onClose }: Props) {
                  c.code as category_code, c.color as category_color,
                  a.name as artist_name
           FROM songs s2
-          LEFT JOIN categories c ON c.id = s2.category_id
-          LEFT JOIN artists a ON a.id = s2.artist_id
+          LEFT JOIN categories c ON c.id = s2.category_id AND c.station_id = ${stationId}
+          LEFT JOIN artists a ON a.id = s2.artist_id AND a.station_id = ${stationId}
+          WHERE s2.station_id = ${stationId}
         ) s ON s.title = pl.title
         ${whereClause}
         GROUP BY pl.title
         ORDER BY play_count DESC
         LIMIT 50
-      `);
+      `, [], stationId, { skipScoping: true });
       setTopSongs(songs);
 
-      // Top artists
-      const artists = await query<TopArtist>(`
+      // Top artists — station_id scoping: Strategy C dynamic builder
+      const artists = await queryScoped<TopArtist>(`
         SELECT artist, COUNT(*) as play_count,
                COUNT(DISTINCT title) as unique_songs,
                MAX(played_at) as last_played
         FROM play_log
-        WHERE artist IS NOT NULL ${sinceClause}
+        WHERE station_id = ? AND artist IS NOT NULL ${sinceClause}
         GROUP BY artist
         ORDER BY play_count DESC
         LIMIT 50
-      `);
+      `, [stationId], stationId, { skipScoping: true });
       setTopArtists(artists);
 
-      // Hourly distribution
-      const hourlyRaw = await query<{ hour: number; play_count: number; unique_artists: number }>(`
+      // Hourly distribution — station_id scoping: Strategy C dynamic builder
+      const hourlyRaw = await queryScoped<{ hour: number; play_count: number; unique_artists: number }>(`
         SELECT CAST(strftime('%H', datetime(played_at, 'unixepoch', 'localtime')) AS INTEGER) as hour,
                COUNT(*) as play_count,
                COUNT(DISTINCT artist) as unique_artists
         FROM play_log
-        WHERE 1=1 ${sinceClause}
+        WHERE station_id = ? ${sinceClause}
         GROUP BY hour ORDER BY hour
-      `);
+      `, [stationId], stationId, { skipScoping: true });
       const hourlyMap: Record<number, HourlyData> = {};
       hourlyRaw.forEach(r => { hourlyMap[r.hour] = r; });
       setHourly(Array.from({ length: 24 }, (_, h) => hourlyMap[h] ?? { hour: h, play_count: 0, unique_artists: 0 }));
 
-      // Category breakdown — from scheduled_log for accuracy
-      const cats = await query<CategoryBreakdown>(`
+      // Category breakdown — station_id scoping: Strategy C dynamic builder
+      const cats = await queryScoped<CategoryBreakdown>(`
         SELECT category_code, category_color,
                COUNT(*) as play_count,
                SUM(duration_ms) as total_ms
         FROM scheduled_log
-        WHERE status = 'played' OR status = 'scheduled'
+        WHERE station_id = ? AND (status = 'played' OR status = 'scheduled')
         ${since > 0 ? `AND created_at >= ${since}` : ""}
         GROUP BY category_code
         ORDER BY play_count DESC
-      `);
+      `, [stationId], stationId, { skipScoping: true });
       setCategories(cats.filter(c => c.category_code));
 
-      // Daily trend — last N days
+      // Daily trend — station_id scoping: Strategy C dynamic builder
       const trendDays = days ?? 30;
-      const trend = await query<DailyTrend>(`
+      const trend = await queryScoped<DailyTrend>(`
         SELECT date(datetime(played_at, 'unixepoch', 'localtime')) as date,
                COUNT(*) as play_count
         FROM play_log
-        WHERE played_at >= ${Math.floor(Date.now() / 1000) - trendDays * 86400}
+        WHERE station_id = ? AND played_at >= ${Math.floor(Date.now() / 1000) - trendDays * 86400}
         GROUP BY date ORDER BY date
-      `);
+      `, [stationId], stationId, { skipScoping: true });
       // Fill in missing days
       const trendMap: Record<string, number> = {};
       trend.forEach(r => { trendMap[r.date] = r.play_count; });
@@ -263,10 +268,10 @@ export default function ListenerAnalytics({ onClose }: Props) {
       }
       setDailyTrend(trendFilled);
 
-      // Recent plays
-      const recent = await query<PlayEntry>(`
+      // Recent plays — station_id scoping: Strategy B (single table, queryScoped injects)
+      const recent = await queryScoped<PlayEntry>(`
         SELECT * FROM play_log ORDER BY played_at DESC LIMIT 20
-      `);
+      `, [], stationId);
       setRecentPlays(recent);
 
     } catch (e) {

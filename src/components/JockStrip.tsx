@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { query } from "../db/client";
 import { engine, DeckState } from "../audio/engine-rodio";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface SongResult {
   id: number;
@@ -24,6 +25,7 @@ function fmtDur(ms: number): string {
 }
 
 export default function JockStrip({ deckA, deckB, dropDown = false, externalSearch, onSearchChange }: Props & { dropDown?: boolean; externalSearch?: string; onSearchChange?: (v: string) => void }) {
+  const { stationId } = useActiveStation();
   const [search, setSearch] = useState("");
 
   // Sync external search (from header bar)
@@ -39,9 +41,12 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
   useEffect(() => {
     if (search.length < 2) { setResults([]); setShowResults(false); return; }
     const timer = setTimeout(async () => {
-      const rows = await query<SongResult>(
-        "SELECT s.id, s.title, s.file_path, s.duration_ms, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND (s.title LIKE ? OR a.name LIKE ?) ORDER BY s.title LIMIT 12",
-        ["%" + search + "%", "%" + search + "%"]
+      // station_id scoping: manual JOIN — songs.station_id filters both tables (artists joined by FK)
+      const rows = await queryScoped<SongResult>(
+        "SELECT s.id, s.title, s.file_path, s.duration_ms, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? AND (s.title LIKE ? OR a.name LIKE ?) ORDER BY s.title LIMIT 12",
+        [stationId, "%" + search + "%", "%" + search + "%"],
+        stationId,
+        { skipScoping: true }
       );
       setResults(rows);
       setShowResults(true);

@@ -4,7 +4,8 @@
 // Clicking a block calls onShowClick(showId) — App.tsx navigates to the Scheduler.
 
 import { useState, useEffect } from "react";
-import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -70,6 +71,7 @@ interface BroadcastCalendarProps {
 }
 
 export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProps) {
+  const { stationId } = useActiveStation();
   const [shows, setShows]           = useState<Show[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
   const [fullDay, setFullDay]       = useState(false);
@@ -89,13 +91,15 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const load = async () => {
     try {
-      const rows = await query<Show>(
+      // station_id scoping: manual JOIN — shows.station_id filters scope; clocks joined by FK
+      const rows = await queryScoped<Show>(
         `SELECT s.id, s.name, s.start_hour, s.end_hour, s.days, s.color,
                 c.name AS clock_name
          FROM shows s
          LEFT JOIN clocks c ON c.id = s.clock_id
-         WHERE s.is_active = 1
-         ORDER BY s.start_hour`
+         WHERE s.is_active = 1 AND s.station_id = ?
+         ORDER BY s.start_hour`,
+        [stationId], stationId, { skipScoping: true }
       );
       setShows(rows);
     } catch { /* ignore — DB may not be ready yet on first render */ }

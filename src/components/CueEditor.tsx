@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
-import { queryOne, execute } from "../db/client";
+import { execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface Props {
   songId: number;
@@ -25,6 +27,7 @@ function fmtMs(ms: number): string {
 }
 
 export default function CueEditor({ songId, filePath, onSaved }: Props) {
+  const { stationId } = useActiveStation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [peaks, setPeaks] = useState<number[]>([]);
   const [duration, setDuration] = useState(0);
@@ -73,7 +76,8 @@ export default function CueEditor({ songId, filePath, onSaved }: Props) {
         setPeaks(p);
 
         // Load saved cue points
-        const row = await queryOne<CuePoints>("SELECT cue_in_ms, cue_out_ms, intro_end_ms, outro_start_ms, duration_ms FROM songs WHERE id = ?", [songId]);
+        // station_id scoping: Strategy B — single table with WHERE id=?
+        const [row] = await queryScoped<CuePoints>("SELECT cue_in_ms, cue_out_ms, intro_end_ms, outro_start_ms, duration_ms FROM songs WHERE id = ?", [songId], stationId);
         if (row) {
           setCueIn(row.cue_in_ms || 0);
           setCueOut(row.cue_out_ms || durMs);
@@ -241,9 +245,10 @@ export default function CueEditor({ songId, filePath, onSaved }: Props) {
   };
 
   const save = async () => {
+    // station_id scoping: Strategy B — UPDATE on single table with WHERE id=?
     await execute(
-      "UPDATE songs SET cue_in_ms=?, cue_out_ms=?, intro_end_ms=?, outro_start_ms=?, duration_ms=?, updated_at=unixepoch() WHERE id=?",
-      [cueIn, cueOut, introEnd, outroStart, duration, songId]
+      "UPDATE songs SET cue_in_ms=?, cue_out_ms=?, intro_end_ms=?, outro_start_ms=?, duration_ms=?, updated_at=unixepoch() WHERE id=? AND station_id=?",
+      [cueIn, cueOut, introEnd, outroStart, duration, songId, stationId]
     );
     onSaved();
   };

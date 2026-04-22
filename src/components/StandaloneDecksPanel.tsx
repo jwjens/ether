@@ -9,6 +9,8 @@ import type { DeckState } from "../audio/engine-rodio";
 import type { DeckConfig, DeckType } from "./DeckConfigurator";
 import OnAirDeck from "./OnAirDeck";
 import MicDeck from "./MicDeck";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Per-deck audio state poller ───────────────────────────────
 
@@ -57,11 +59,13 @@ function MusicDeckPanel({ slot }: { slot: string }) {
 // ── Main panel ────────────────────────────────────────────────
 
 export default function StandaloneDecksPanel() {
+  const { stationId, isReady } = useActiveStation();
   const [configs, setConfigs] = useState<DeckConfig[]>([]);
 
   useEffect(() => {
-    (window as any).ether.db
-      .query("SELECT slot, type, label, color, enabled FROM deck_configs ORDER BY slot")
+    if (!isReady) return;
+    // station_id scoping: Strategy B (refactored from ether.db.query to standard queryScoped path)
+    queryScoped<any>("SELECT slot, type, label, color, enabled FROM deck_configs ORDER BY slot", [], stationId)
       .then((rows: any[]) => {
         const SLOT_ORDER = ["A", "B", "C", "D", "E", "F"];
         const sorted = [...rows].sort(
@@ -81,7 +85,7 @@ export default function StandaloneDecksPanel() {
           { slot: "C", type: "music", label: "Deck C", color: "#34d399", enabled: true },
         ]);
       });
-  }, []);
+  }, [isReady, stationId]);
 
   if (configs.length === 0) {
     return (

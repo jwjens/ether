@@ -60,7 +60,8 @@ import { useEffect, useState } from "react";
     } catch {}
   } catch {}
 })();
-import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import TrackEditor from "./TrackEditor";
 
 interface Song {
@@ -130,13 +131,17 @@ export default function CueEditorWindow() {
       setFilePath(decoded);
 
       try {
+        const stationId = getActiveStationIdSync();
         const rows = await Promise.race([
-          query<Song>(
+          // station_id scoping: manual JOIN — both tables are scoped but artists joined by FK
+          queryScoped<Song>(
             `SELECT s.id, s.title, a.name as artist_name, s.file_path,
                     s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start
              FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.file_path = ? LIMIT 1`,
-            [decoded]
+             WHERE s.file_path = ? AND s.station_id = ? LIMIT 1`,
+            [decoded, stationId],
+            stationId,
+            { skipScoping: true }
           ),
           new Promise<Song[]>((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000))
         ]) as Song[];

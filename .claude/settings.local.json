@@ -21,7 +21,13 @@
       "Bash(sed -n '165,175p' src/components/TrackEditor.tsx)",
       "Bash(sed -n '293,300p' src/components/PublishEpisode.tsx)",
       "Bash(sed -n '340,348p' src/components/PublishEpisode.tsx)",
-      "Bash(sed -n '58,65p' src/components/UpNext.tsx)"
+      "Bash(sed -n '58,65p' src/components/UpNext.tsx)",
+      "Bash(awk NR>=2460 && NR<=2465 *)",
+      "Bash(awk NR>=2467 && NR<=2485 *)",
+      "Bash(awk NR>=3280 && NR<=3300 *)",
+      "Bash(awk -F: '{print NR, $1, $2}')",
+      "Bash(awk '{if \\($2 > 2465 && $2 <= 3650\\) print}')",
+      "Bash(git stash *)"
     ]
   }
 }

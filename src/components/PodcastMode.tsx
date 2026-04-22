@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { engine } from "../audio/engine-rodio";
-import { query, execute } from "../db/client";
+import { execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ═══════════════════════════════════════════════════════════════
 // 1. AUTO-DUCK
@@ -373,6 +375,7 @@ interface ExportSession {
 }
 
 export function OneClickExport() {
+  const { stationId } = useActiveStation();
   const [status, setStatus] = useState<"idle" | "scanning" | "exporting" | "done" | "error">("idle");
   const [progress, setProgress] = useState(0);
   const [outputPath, setOutputPath] = useState<string | null>(null);
@@ -386,13 +389,16 @@ export function OneClickExport() {
 
   const loadSessions = async () => {
     try {
-      const rows = await query<{ date: string; count: number; total_ms: number }>(
+      // station_id scoping: Strategy B — single table, queryScoped injects WHERE station_id
+      const rows = await queryScoped<{ date: string; count: number; total_ms: number }>(
         `SELECT date(datetime(played_at, 'unixepoch'), 'localtime') as date,
          COUNT(*) as count, SUM(duration_ms) as total_ms
          FROM play_log
          GROUP BY date
          ORDER BY date DESC
-         LIMIT 10`
+         LIMIT 10`,
+        [],
+        stationId
       );
       setSessions(rows.map((r, i) => ({
         id: r.date,
@@ -412,14 +418,17 @@ export function OneClickExport() {
 
     // Fetch all tracks from session
     try {
-      const tracks = await query<{ title: string; artist: string; file_path: string; played_at: number }>(
+      // station_id scoping: manual JOIN — play_log + songs both scoped
+      const tracks = await queryScoped<{ title: string; artist: string; file_path: string; played_at: number }>(
         `SELECT pl.title, pl.artist, s.file_path, pl.played_at
          FROM play_log pl
-         LEFT JOIN songs s ON s.title = pl.title
-         WHERE date(datetime(pl.played_at, 'unixepoch'), 'localtime') = ?
+         LEFT JOIN songs s ON s.title = pl.title AND s.station_id = ?
+         WHERE pl.station_id = ? AND date(datetime(pl.played_at, 'unixepoch'), 'localtime') = ?
          AND s.file_path IS NOT NULL
          ORDER BY pl.played_at ASC`,
-        [selectedSession]
+        [stationId, stationId, selectedSession],
+        stationId,
+        { skipScoping: true }
       );
 
       setStatus("exporting");
@@ -525,6 +534,7 @@ export function OneClickExport() {
 // ═══════════════════════════════════════════════════════════════
 
 export function ShowNotesAI() {
+  const { stationId } = useActiveStation();
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [notes, setNotes] = useState("");
   const [copied, setCopied] = useState(false);
@@ -535,10 +545,13 @@ export function ShowNotesAI() {
     setStatus("loading");
     try {
       // Fetch recent play log
-      const tracks = await query<{ title: string; artist: string; played_at: number }>(
+      // station_id scoping: Strategy B — single table with existing WHERE
+      const tracks = await queryScoped<{ title: string; artist: string; played_at: number }>(
         `SELECT title, artist, played_at FROM play_log
          WHERE date(datetime(played_at, 'unixepoch'), 'localtime') = date('now', 'localtime')
-         ORDER BY played_at ASC LIMIT 30`
+         ORDER BY played_at ASC LIMIT 30`,
+        [],
+        stationId
       );
 
       const trackList = tracks.map((t, i) =>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { execute, query, queryOne } from "../db/client";
+import { execute } from "../db/client";
 import { queryScoped, executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
@@ -90,11 +90,13 @@ function ImportPanel({ onImported }: ImportPanelProps) {
         "INSERT OR IGNORE INTO songs (title, artist_id, file_path, duration_ms) VALUES (?, ?, ?, ?)",
         [title, artistId, filePath, durationMs], stationId
       );
-      // TODO 3b-ii: JOIN query — convert when JOIN scoping is supported
-      const songRow = await queryOne<Song>(
-        "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ?",
-        [filePath]
-      );
+      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
+      const [songRow] = await queryScoped<Song>(
+        "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? AND s.station_id = ?",
+        [filePath, stationId],
+        stationId,
+        { skipScoping: true }
+      ) ?? [];
       return songRow ?? null;
     } catch (e) {
       console.error("Import error:", e);
@@ -313,10 +315,13 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
   useEffect(() => {
     if (filePathProp && !songProp) {
       const fallback: Song = { id: 0, title: filePathProp.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Unknown", artist_name: "", file_path: filePathProp, duration_ms: 0 };
+      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
       Promise.race([
-        query<Song>(
-          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? LIMIT 1",
-          [filePathProp]
+        queryScoped<Song>(
+          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? AND s.station_id = ? LIMIT 1",
+          [filePathProp, stationId],
+          stationId,
+          { skipScoping: true }
         ),
         new Promise<Song[]>((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))
       ]).then((rows: Song[]) => {
@@ -809,8 +814,9 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
 
   if (!song) return (
     <ImportPanel onImported={(s) => {
-      queryOne<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`, [s.id])
-        .then(full => { if (full && onSaved) onSaved(full); })
+      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
+      queryScoped<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.station_id = ?`, [s.id, stationId], stationId, { skipScoping: true })
+        .then(([full]) => { if (full && onSaved) onSaved(full); })
         .catch(() => {});
     }} />
   );

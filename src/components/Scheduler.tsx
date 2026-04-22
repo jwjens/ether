@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { query, execute, queryOne } from "../db/client";
+import { execute, queryOne } from "../db/client";
 import { queryScoped, executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import CreateShowWizard from "./CreateShowWizard";
@@ -99,8 +99,11 @@ function ShowsTab() {
 
   const load = async () => {
     if (!isReady) return;
-    // JOIN query — left for 3b-ii; clocks is simple
-    setShows(await query<Show>("SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour"));
+    // station_id scoping: manual JOIN — shows.station_id filters scope; clocks joined by FK
+    setShows(await queryScoped<Show>(
+      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? ORDER BY s.start_hour",
+      [stationId], stationId, { skipScoping: true }
+    ));
     setClocks(await queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId));
   };
   useEffect(() => { load(); }, [isReady]);
@@ -255,8 +258,11 @@ function CategoriesTab() {
 
   const load = async () => {
     if (!isReady) return;
-    // Subquery SELECT — left for 3b-ii
-    const rows = await query<Category & { song_count: number }>("SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c ORDER BY c.code");
+    // station_id scoping: manual — subquery in SELECT; outer scoped by categories.station_id, inner by songs.station_id
+    const rows = await queryScoped<Category & { song_count: number }>(
+      "SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id AND station_id = ?) as song_count FROM categories c WHERE c.station_id = ? ORDER BY c.code",
+      [stationId, stationId], stationId, { skipScoping: true }
+    );
     setCats(rows);
   };
   useEffect(() => { load(); }, [isReady]);
@@ -705,22 +711,28 @@ function ClocksTab() {
   };
 
   const loadSlots = async (clockId: number) => {
-    const raw = await query<ClockSlot>(
+    // station_id scoping: manual JOIN — clock_slots.station_id filters scope; categories joined by FK
+    const raw = await queryScoped<ClockSlot>(
       `SELECT cs.*, c.code as category_code, c.color as category_color
        FROM clock_slots cs
        LEFT JOIN categories c ON c.id = cs.category_id
-       WHERE cs.clock_id = ? ORDER BY cs.position`,
-      [clockId]
+       WHERE cs.clock_id = ? AND cs.station_id = ? ORDER BY cs.position`,
+      [clockId, stationId],
+      stationId,
+      { skipScoping: true }
     );
     // Enrich music slots with a representative song
     const enriched = await Promise.all(raw.map(async s => {
       if (s.slot_type === "music" && s.category_id) {
         try {
-          const songs = await query<{ id: number; title: string; artist_name: string | null; duration_ms: number; file_path: string }>(
+          // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
+          const songs = await queryScoped<{ id: number; title: string; artist_name: string | null; duration_ms: number; file_path: string }>(
             `SELECT s.id, s.title, a.name as artist_name, s.duration_ms, s.file_path
              FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.category_id = ? ORDER BY RANDOM() LIMIT 1`,
-            [s.category_id]
+             WHERE s.category_id = ? AND s.station_id = ? ORDER BY RANDOM() LIMIT 1`,
+            [s.category_id, stationId],
+            stationId,
+            { skipScoping: true }
           );
           if (songs.length > 0) {
             let durMs = songs[0].duration_ms;

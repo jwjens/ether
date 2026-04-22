@@ -5,7 +5,8 @@ import { LiveHourClock, SongHistoryStrip } from "../../components/LiveFeatures";
 import { DeckState } from "../../audio/engine-rodio";
 import { WidgetInstance } from "../WidgetRegistry";
 import { useState } from "react";
-import { query } from "../../db/client";
+import { queryScoped } from "../../db/stationScoped";
+import { useActiveStation } from "../../hooks/useActiveStation";
 
 interface BaseProps { instance: WidgetInstance; }
 interface EngineProps extends BaseProps { engine: any; }
@@ -141,13 +142,16 @@ export function LogoWidget({ instance }: BaseProps) {
 
 // ── LibraryWidget ─────────────────────────────────────────────
 export function LibraryWidget({ instance, engine }: EngineProps) {
+  const { stationId } = useActiveStation();
   const [songs, setSongs] = useState<any[]>([]);
   const [search, setSearch] = useState("");
 
   const load = async () => {
     try {
-      const rows = await query<any>(
-        "SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY s.title LIMIT 200"
+      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
+      const rows = await queryScoped<any>(
+        "SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY s.title LIMIT 200",
+        [stationId], stationId, { skipScoping: true }
       );
       setSongs(rows);
     } catch {}

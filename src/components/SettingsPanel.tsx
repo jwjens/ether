@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
 import { processLibrary as processAllSongs, getProcessingStats } from "../audio/songAnalysis";
 import StreamMetadataPanel from "./StreamMetadataPanel";
@@ -765,6 +767,7 @@ function DiscogsCredentialForm() {
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
+  const { stationId } = useActiveStation();
   // Active category — persisted via URL hash so deep links + reloads stay
   // on the same category. E.g. #settings/audio reopens Settings on Audio.
   const initialCategory = (() => {
@@ -917,7 +920,8 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     getProcessingStats().then(setProcessingStats).catch(() => {});
 
     // Rules
-    query<any>("SELECT * FROM separation_rules ORDER BY id").then(setRules).catch(() => {});
+    // station_id scoping: Strategy B — single table
+    queryScoped<any>("SELECT * FROM separation_rules ORDER BY id", [], stationId).then(setRules).catch(() => {});
 
     // Audio devices
     loadDevices();
@@ -1033,8 +1037,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   };
 
   const updateRule = async (id: number, field: string, val: number) => {
-    await execute("UPDATE separation_rules SET " + field + " = ? WHERE id = ?", [val, id]);
-    query<any>("SELECT * FROM separation_rules ORDER BY id").then(setRules);
+    await execute("UPDATE separation_rules SET " + field + " = ? WHERE id = ? AND station_id = ?", [val, id, stationId]);
+    // station_id scoping: Strategy B — single table
+    queryScoped<any>("SELECT * FROM separation_rules ORDER BY id", [], stationId).then(setRules);
   };
 
   const handleProcessAll = async () => {
@@ -1405,7 +1410,8 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           <button onClick={handleProcessAll} disabled={processing} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer" }}>
             {processing ? "Analyzing..." : "Analyze all songs"}
           </button>
-          <button onClick={async () => { await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0"); getProcessingStats().then(setProcessingStats); }}
+          {/* station_id scoping: manual WHERE — UPDATE without original WHERE must be scoped explicitly */}
+          <button onClick={async () => { await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0 WHERE station_id=?", [stationId]); getProcessingStats().then(setProcessingStats); }}
             style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
             Reset
           </button>

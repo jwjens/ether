@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
-import { query, execute } from "../db/client";
+import { execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface LogEntry {
   id: number;
@@ -27,6 +29,7 @@ const DECK_COLORS: Record<string, string> = {
 };
 
 export default function Logs() {
+  const { stationId } = useActiveStation();
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState<"today" | "week" | "month" | "all">("today");
@@ -34,24 +37,35 @@ export default function Logs() {
   const [dateTo, setDateTo] = useState("");
 
   const load = async () => {
-    let where = "";
+    // station_id scoping: Strategy C — dynamic WHERE builder; station_id is the base condition
+    let sql = "SELECT * FROM play_log WHERE station_id = ?";
+    const params: any[] = [stationId];
+    let countSql = "SELECT COUNT(*) as c FROM play_log WHERE station_id = ?";
+    const countParams: any[] = [stationId];
+
     if (filter === "today") {
       const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-      where = " WHERE played_at >= " + startOfDay;
+      sql += " AND played_at >= " + startOfDay;
+      countSql += " AND played_at >= " + startOfDay;
     } else if (filter === "week") {
       const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
-      where = " WHERE played_at >= " + weekAgo;
+      sql += " AND played_at >= " + weekAgo;
+      countSql += " AND played_at >= " + weekAgo;
     } else if (filter === "month") {
       const monthAgo = Math.floor(Date.now() / 1000) - 30 * 86400;
-      where = " WHERE played_at >= " + monthAgo;
+      sql += " AND played_at >= " + monthAgo;
+      countSql += " AND played_at >= " + monthAgo;
     } else if (dateFrom && dateTo) {
       const from = Math.floor(new Date(dateFrom).getTime() / 1000);
       const to = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
-      where = " WHERE played_at >= " + from + " AND played_at <= " + to;
+      sql += " AND played_at >= " + from + " AND played_at <= " + to;
+      countSql += " AND played_at >= " + from + " AND played_at <= " + to;
     }
-    const rows = await query<LogEntry>("SELECT * FROM play_log" + where + " ORDER BY played_at DESC LIMIT 200");
+    sql += " ORDER BY played_at DESC LIMIT 200";
+
+    const rows = await queryScoped<LogEntry>(sql, params, stationId, { skipScoping: true });
     setEntries(rows);
-    const r = await query<{ c: number }>("SELECT COUNT(*) as c FROM play_log" + where);
+    const r = await queryScoped<{ c: number }>(countSql, countParams, stationId, { skipScoping: true });
     setTotal(r.length > 0 ? r[0].c : 0);
   };
 
@@ -60,7 +74,8 @@ export default function Logs() {
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileData, setReconcileData] = useState<{ scheduled: any[]; actual: any[]; matched: any[] } | null>(null);
 
-  const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await execute("DELETE FROM play_log"); load(); };
+  // station_id scoping: manual WHERE — DELETE without original WHERE must be scoped explicitly
+  const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await execute("DELETE FROM play_log WHERE station_id = ?", [stationId]); load(); };
 
   // As-Run reconciliation: compare scheduled_log vs play_log for the current filter period
   const runReconcile = async () => {
@@ -71,13 +86,16 @@ export default function Logs() {
     else if (dateFrom) startEpoch = Math.floor(new Date(dateFrom).getTime() / 1000);
     if (dateTo) endEpoch = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
 
-    const scheduled = await query<any>(
+    // station_id scoping: Strategy B — both tables have existing WHERE clauses
+    const scheduled = await queryScoped<any>(
       "SELECT *, created_at as epoch FROM scheduled_log WHERE created_at >= ? AND created_at <= ? ORDER BY hour, position",
-      [startEpoch, endEpoch]
+      [startEpoch, endEpoch],
+      stationId
     ) || [];
-    const actual = await query<any>(
+    const actual = await queryScoped<any>(
       "SELECT * FROM play_log WHERE played_at >= ? AND played_at <= ? ORDER BY played_at",
-      [startEpoch, endEpoch]
+      [startEpoch, endEpoch],
+      stationId
     ) || [];
 
     // Match: for each scheduled item, find the closest actual play by title (case-insensitive, within 10 min)
