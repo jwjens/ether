@@ -10,6 +10,7 @@
 //   5. Log the transition to play_log
 
 import { query, execute } from "../db/client";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { engine } from "./engine-rodio";
 import { fillQueueFromSchedule } from "./loggen";
 
@@ -33,8 +34,10 @@ export interface NextTransition {
 /** Returns the next upcoming show transition within the next 24 hours, or null. */
 export async function getNextTransition(): Promise<NextTransition | null> {
   try {
+    const stationId = getActiveStationIdSync();
     const shows = await query<ShowRow>(
-      "SELECT id, name, start_hour, end_hour, days FROM shows WHERE is_active = 1"
+      "SELECT id, name, start_hour, end_hour, days FROM shows WHERE is_active = 1 AND station_id = ?",
+      [stationId]
     );
     if (shows.length === 0) return null;
 
@@ -88,11 +91,13 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
 
   // Fallback: if no smart rules matched, pull any rotation-eligible tracks
   if (count === 0) {
+    const stationId = getActiveStationIdSync();
     const rows = await query<{ file_path: string; title: string; artist_name: string }>(
       `SELECT s.file_path, s.title, a.name AS artist_name
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
-       ORDER BY RANDOM() LIMIT 20`
+       WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive' AND s.station_id = ?
+       ORDER BY RANDOM() LIMIT 20`,
+      [stationId]
     );
     engine.addToQueue(rows.map(r => ({
       filePath: r.file_path,
@@ -117,9 +122,10 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
 
   // 5. Log the transition in the play log so operators can see it
   try {
+    const stationId = getActiveStationIdSync();
     await execute(
-      "INSERT INTO play_log (title, artist, deck, session_id) VALUES (?, ?, ?, ?)",
-      [`[Show Transition: ${showName}]`, "", "AUTO", `show-${newHour}`]
+      "INSERT INTO play_log (station_id, title, artist, deck, session_id) VALUES (?, ?, ?, ?, ?)",
+      [stationId, `[Show Transition: ${showName}]`, "", "AUTO", `show-${newHour}`]
     );
   } catch { /* non-critical */ }
 
@@ -151,9 +157,10 @@ export function watchShowTransitions(
 
     try {
       const today = String(now.getDay());
+      const stationId = getActiveStationIdSync();
       const shows = await query<ShowRow>(
-        "SELECT * FROM shows WHERE is_active = 1 AND start_hour = ?",
-        [h]
+        "SELECT * FROM shows WHERE is_active = 1 AND start_hour = ? AND station_id = ?",
+        [h, stationId]
       );
       const show = shows.find(s => s.days.includes(today));
       if (!show) return; // no show starts at this exact hour

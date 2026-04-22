@@ -27,7 +27,8 @@
       "Bash(awk NR>=3280 && NR<=3300 *)",
       "Bash(awk -F: '{print NR, $1, $2}')",
       "Bash(awk '{if \\($2 > 2465 && $2 <= 3650\\) print}')",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(tee /tmp/tsc_out.txt)"
     ]
   }
 }

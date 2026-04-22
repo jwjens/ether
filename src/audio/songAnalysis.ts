@@ -12,6 +12,7 @@
 
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { execute, query } from "../db/client";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 
 // ── Types (mirror Rust structs) ───────────────────────────────
 
@@ -97,6 +98,7 @@ export async function analyzeAndSave(songId: number, filePath: string): Promise<
   if (!result) return null;
 
   try {
+    const stationId = getActiveStationIdSync();
     await execute(
       `UPDATE songs SET
         lufs_measured = ?,
@@ -109,7 +111,7 @@ export async function analyzeAndSave(songId: number, filePath: string): Promise<
         duration_ms   = ?,
         is_processed  = 1,
         updated_at    = unixepoch()
-       WHERE id = ?`,
+       WHERE id = ? AND station_id = ?`,
       [
         result.loudness.lufs_integrated,
         result.loudness.peak_db,
@@ -120,6 +122,7 @@ export async function analyzeAndSave(songId: number, filePath: string): Promise<
         result.cue_points.outro_start,
         Math.round(result.duration_secs * 1000),
         songId,
+        stationId,
       ]
     );
   } catch (e) {
@@ -138,13 +141,15 @@ export async function processLibrary(
   options: { force?: boolean; batchSize?: number } = {}
 ): Promise<{ processed: number; failed: number; skipped: number }> {
   const { force = false, batchSize = 4 } = options;
+  const stationId = getActiveStationIdSync();
 
   const whereClause = force
-    ? "file_path IS NOT NULL"
-    : "file_path IS NOT NULL AND (is_processed = 0 OR bpm IS NULL OR lufs_measured IS NULL)";
+    ? "file_path IS NOT NULL AND station_id = ?"
+    : "file_path IS NOT NULL AND station_id = ? AND (is_processed = 0 OR bpm IS NULL OR lufs_measured IS NULL)";
 
   const songs = await query<{ id: number; title: string; file_path: string }>(
-    `SELECT id, title, file_path FROM songs WHERE ${whereClause} ORDER BY id`
+    `SELECT id, title, file_path FROM songs WHERE ${whereClause} ORDER BY id`,
+    [stationId]
   );
 
   let processed = 0;
@@ -186,13 +191,14 @@ export async function processLibrary(
 // ── Processing stats (same API as processor.ts getProcessingStats) ──
 
 export async function getProcessingStats() {
+  const stationId = getActiveStationIdSync();
   const [total, processed, unprocessed, avgLufs, loudest, quietest] = await Promise.all([
-    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE file_path IS NOT NULL"),
-    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 1"),
-    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 0 AND file_path IS NOT NULL"),
-    query<{ avg: number }>("SELECT AVG(lufs_measured) as avg FROM songs WHERE is_processed = 1"),
-    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 ORDER BY lufs_measured DESC LIMIT 1"),
-    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 ORDER BY lufs_measured ASC LIMIT 1"),
+    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE file_path IS NOT NULL AND station_id = ?", [stationId]),
+    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 1 AND station_id = ?", [stationId]),
+    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 0 AND file_path IS NOT NULL AND station_id = ?", [stationId]),
+    query<{ avg: number }>("SELECT AVG(lufs_measured) as avg FROM songs WHERE is_processed = 1 AND station_id = ?", [stationId]),
+    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 AND station_id = ? ORDER BY lufs_measured DESC LIMIT 1", [stationId]),
+    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 AND station_id = ? ORDER BY lufs_measured ASC LIMIT 1", [stationId]),
   ]);
 
   return {
@@ -216,12 +222,13 @@ export async function autoCueSong(songId: number, filePath: string): Promise<voi
 
     // Only apply if the auto-detected values are meaningful
     if (cues.intro_end > 0.3 || cues.outro_start < 9999) {
+      const stationId = getActiveStationIdSync();
       await execute(
         `UPDATE songs SET
            intro_end   = COALESCE(NULLIF(intro_end, 0), ?),
            outro_start = COALESCE(outro_start, ?)
-         WHERE id = ?`,
-        [cues.intro_end, cues.outro_start, songId]
+         WHERE id = ? AND station_id = ?`,
+        [cues.intro_end, cues.outro_start, songId, stationId]
       );
     }
   } catch (e) {

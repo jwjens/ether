@@ -14,6 +14,7 @@
 // Falls back to filtered random if no rules match or library isn't analyzed yet.
 
 import { query, execute, queryOne } from "../db/client";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { engine } from "./engine-rodio";
 
 interface SmartRule {
@@ -104,10 +105,11 @@ function getContentFilter(): { blockExplicit: boolean } {
 
 // ── Separation rules from DB ───────────────────────────────────
 
-async function getSepRules(): Promise<SepRules> {
+async function getSepRules(stationId: number): Promise<SepRules> {
   try {
     const rows = await query<{ rule_type: string; value: number }>(
-      "SELECT rule_type, value FROM separation_rules WHERE is_active = 1"
+      "SELECT rule_type, value FROM separation_rules WHERE is_active = 1 AND station_id = ?",
+      [stationId]
     );
     const artistRow = rows.find(r => r.rule_type === "artist_separation_min");
     const songRow   = rows.find(r => r.rule_type === "song_separation_min");
@@ -139,12 +141,17 @@ function buildBaseConditions(
   hour: number,
   sep: SepRules,
   blockExplicit: boolean,
-  params: any[]
+  params: any[],
+  stationId: number
 ): string {
   let cond = "s.file_path IS NOT NULL";
 
   // Never auto-play songs marked inactive in rotation
   cond += " AND s.rotation_status != 'inactive'";
+
+  // Station scope
+  cond += " AND s.station_id = ?";
+  params.push(stationId);
 
   // Daypart mask: bit N of daypart_mask must be 1 for the current hour N.
   // Default mask is 16777215 (all 24 bits set = unrestricted).
@@ -166,9 +173,9 @@ function buildBaseConditions(
   // The subquery finds all artist_ids with a recent spin, then excludes them.
   cond += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
     SELECT DISTINCT s2.artist_id FROM songs s2
-    WHERE s2.artist_id IS NOT NULL AND s2.last_played_at > (unixepoch() - ?)
+    WHERE s2.artist_id IS NOT NULL AND s2.station_id = ? AND s2.last_played_at > (unixepoch() - ?)
   ))`;
-  params.push(sep.artist_sep_sec);
+  params.push(stationId, sep.artist_sep_sec);
 
   return cond;
 }
@@ -179,12 +186,13 @@ async function pickSongsForRule(
   rule: SmartRule,
   count: number,
   sep: SepRules,
-  blockExplicit: boolean
+  blockExplicit: boolean,
+  stationId: number
 ): Promise<Song[]> {
   const hour = new Date().getHours();
   const params: any[] = [];
 
-  let conditions = buildBaseConditions(hour, sep, blockExplicit, params);
+  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
 
   // Energy filter
   const ef = energyFilter(rule.energyLevel);
@@ -233,11 +241,12 @@ async function pickSongsForRule(
 async function pickRandom(
   count: number,
   sep: SepRules,
-  blockExplicit: boolean
+  blockExplicit: boolean,
+  stationId: number
 ): Promise<Song[]> {
   const hour = new Date().getHours();
   const params: any[] = [];
-  const conditions = buildBaseConditions(hour, sep, blockExplicit, params);
+  const conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
   params.push(count);
 
   return query<Song>(
@@ -259,7 +268,7 @@ async function pickRandom(
 
 interface ClockSlotRow { category_id: number; }
 
-async function getActiveShowClock(): Promise<{ clockId: number; showName: string } | null> {
+async function getActiveShowClock(stationId: number): Promise<{ clockId: number; showName: string } | null> {
   try {
     const hour = new Date().getHours();
     const day  = String(new Date().getDay());
@@ -271,7 +280,8 @@ async function getActiveShowClock(): Promise<{ clockId: number; showName: string
       start_hour: number; end_hour: number; days: string;
     }>(
       `SELECT clock_id, name, start_hour, end_hour, days
-       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL`
+       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?`,
+      [stationId]
     );
 
     for (const row of rows) {
@@ -309,13 +319,14 @@ async function pickSongsFromClock(
   clockId: number,
   count: number,
   sep: SepRules,
-  blockExplicit: boolean
+  blockExplicit: boolean,
+  stationId: number
 ): Promise<Song[]> {
   const slots = await query<ClockSlotRow>(
     `SELECT category_id FROM clock_slots
-     WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL
+     WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND station_id = ?
      ORDER BY position`,
-    [clockId]
+    [clockId, stationId]
   );
   if (slots.length === 0) {
     console.warn(`[loggen] Clock ${clockId} has no music slots with categories assigned`);
@@ -331,7 +342,7 @@ async function pickSongsFromClock(
     if (songs.length >= count) break;
 
     const params: any[] = [];
-    let cond = buildBaseConditions(hour, sep, blockExplicit, params);
+    let cond = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
     cond += " AND s.category_id = ?";
     params.push(slot.category_id);
 
@@ -377,16 +388,16 @@ interface ScheduledTrack {
 
 interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
 
-async function readGeneratedSchedule(count: number): Promise<ScheduledTrack[]> {
+async function readGeneratedSchedule(count: number, stationId: number): Promise<ScheduledTrack[]> {
   const rows = await query<ScheduledTrackRow>(
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
             s.file_path, s.intro_end, s.outro_start
      FROM generated_schedule gs
-     LEFT JOIN songs s ON s.id = gs.song_id
-     WHERE gs.id > ?
+     LEFT JOIN songs s ON s.id = gs.song_id AND s.station_id = ?
+     WHERE gs.id > ? AND gs.station_id = ?
      ORDER BY gs.scheduled_at
      LIMIT ?`,
-    [_schedCursor, count]
+    [stationId, _schedCursor, stationId, count]
   );
   if (rows.length > 0) {
     _schedCursor = rows[rows.length - 1].row_id;
@@ -403,14 +414,15 @@ async function readGeneratedSchedule(count: number): Promise<ScheduledTrack[]> {
 
 export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
   try {
+    const stationId = getActiveStationIdSync();
     const hour = new Date().getHours();
     maybeDaypartLog(hour);
 
     // ── Priority 1: generated schedule ───────────────────────
-    let scheduled = await readGeneratedSchedule(targetCount);
+    let scheduled = await readGeneratedSchedule(targetCount, stationId);
     if (scheduled.length === 0 && _schedCursor > 0) {
       _schedCursor = 0;
-      scheduled = await readGeneratedSchedule(targetCount);
+      scheduled = await readGeneratedSchedule(targetCount, stationId);
     }
     if (scheduled.length > 0) {
       // Resolve each track: prefer local file_path, fall back to R2 cache download
@@ -440,15 +452,15 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
 
     console.log("[loggen] generated_schedule empty — falling back to live picking");
 
-    const sep  = await getSepRules();
+    const sep  = await getSepRules(stationId);
     const { blockExplicit } = getContentFilter();
     let songs: Song[] = [];
     let source = "random";
 
     // ── Priority 2: active show's format clock ────────────────
-    const showClock = await getActiveShowClock();
+    const showClock = await getActiveShowClock(stationId);
     if (showClock) {
-      songs = await pickSongsFromClock(showClock.clockId, targetCount, sep, blockExplicit);
+      songs = await pickSongsFromClock(showClock.clockId, targetCount, sep, blockExplicit, stationId);
       source = `clock "${showClock.showName}"`;
     }
 
@@ -456,7 +468,7 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
     if (songs.length < targetCount / 2) {
       const rule = getActiveRule();
       if (rule) {
-        const ruleSongs = await pickSongsForRule(rule, targetCount - songs.length, sep, blockExplicit);
+        const ruleSongs = await pickSongsForRule(rule, targetCount - songs.length, sep, blockExplicit, stationId);
         songs = [...songs, ...ruleSongs];
         source = showClock ? `${source} + rule "${rule.description}"` : `rule "${rule.description}"`;
       }
@@ -464,7 +476,7 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
 
     // ── Priority 4: filtered random ───────────────────────────
     if (songs.length < targetCount / 2) {
-      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit);
+      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit, stationId);
       songs = [...songs, ...extra];
       if (songs.length > 0 && source === "random") source = "random (no show/rules matched)";
     }

@@ -2,6 +2,7 @@
 // Audio processing utilities — LUFS measurement and ReplayGain normalization
 
 import { query, execute } from "../db/client";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { readFile } from "@tauri-apps/plugin-fs";
 
 export interface ProcessingStats {
@@ -15,6 +16,7 @@ export interface ProcessingStats {
 
 export async function getProcessingStats(): Promise<ProcessingStats> {
   try {
+    const stationId = getActiveStationIdSync();
     const rows = await query<{
       total: number; processed: number;
       avg_lufs: number | null; loudest: string | null; quietest: string | null;
@@ -23,9 +25,10 @@ export async function getProcessingStats(): Promise<ProcessingStats> {
         COUNT(*) as total,
         COUNT(lufs_measured) as processed,
         ROUND(AVG(lufs_measured), 1) as avg_lufs,
-        (SELECT title FROM songs WHERE lufs_measured IS NOT NULL ORDER BY lufs_measured DESC LIMIT 1) as loudest,
-        (SELECT title FROM songs WHERE lufs_measured IS NOT NULL ORDER BY lufs_measured ASC LIMIT 1) as quietest
-       FROM songs WHERE file_path IS NOT NULL`
+        (SELECT title FROM songs WHERE lufs_measured IS NOT NULL AND station_id = ? ORDER BY lufs_measured DESC LIMIT 1) as loudest,
+        (SELECT title FROM songs WHERE lufs_measured IS NOT NULL AND station_id = ? ORDER BY lufs_measured ASC LIMIT 1) as quietest
+       FROM songs WHERE file_path IS NOT NULL AND station_id = ?`,
+      [stationId, stationId, stationId]
     );
     const r = rows[0] ?? { total: 0, processed: 0, avg_lufs: null, loudest: null, quietest: null };
     return {
@@ -44,8 +47,10 @@ export async function getProcessingStats(): Promise<ProcessingStats> {
 export async function processAllSongs(
   onProgress?: (done: number, total: number, title: string) => void
 ): Promise<number> {
+  const stationId = getActiveStationIdSync();
   const songs = await query<{ id: number; title: string; file_path: string }>(
-    "SELECT id, title, file_path FROM songs WHERE file_path IS NOT NULL AND lufs_measured IS NULL LIMIT 500"
+    "SELECT id, title, file_path FROM songs WHERE file_path IS NOT NULL AND lufs_measured IS NULL AND station_id = ? LIMIT 500",
+    [stationId]
   );
 
   let done = 0;
@@ -54,8 +59,8 @@ export async function processAllSongs(
       onProgress?.(done, songs.length, song.title);
       const { lufs, peak, gain } = await measureLufs(song.file_path);
       await execute(
-        "UPDATE songs SET lufs_measured=?, peak_db=?, gain_db=? WHERE id=?",
-        [lufs, peak, gain, song.id]
+        "UPDATE songs SET lufs_measured=?, peak_db=?, gain_db=? WHERE id=? AND station_id=?",
+        [lufs, peak, gain, song.id, stationId]
       );
       done++;
     } catch {

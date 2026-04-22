@@ -622,7 +622,7 @@ export default function App() {
     (globalThis as any).__resetScheduleCursor = resetScheduleCursor;
     // Column additions now handled by db/client.ts migration system
     return engine.onPlayStart(async (deckId, title, artist, filePath) => {
-      try { await logPlay(title, artist, deckId); }
+      try { await logPlay(title, artist, deckId, undefined, stationId); }
       catch (e) { console.error('Log write error:', e); }
       consoleLog("audio", `[DECK ${deckId}] Playing: ${title}${artist ? ` — ${artist}` : ""}`);
       // Keep Iris informed about what's on air
