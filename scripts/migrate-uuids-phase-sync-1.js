@@ -101,6 +101,14 @@ function abort(msg) {
   process.exit(1);
 }
 
+module.exports = {
+  payloadTransformer: function payloadTransformer(payload, fromVersion) {
+    return payload;
+  },
+};
+
+if (require.main === module) {
+
 // ── Startup ───────────────────────────────────────────────────
 
 console.log("[migrate-uuids] DB path:", dbPath);
@@ -319,3 +327,5 @@ if (!allOk) {
 console.log("[migrate-uuids] All verifications passed. UUID migration complete. ✓");
 db.close();
 process.exit(0);
+
+}

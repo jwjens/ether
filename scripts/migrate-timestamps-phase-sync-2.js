@@ -132,11 +132,21 @@ function convertToIso(val, format, fallback) {
   }
 }
 
-function abort(msg) {
-  console.error(`\n[migrate-timestamps] ABORT: ${msg}`);
-  db.close();
-  process.exit(1);
-}
+module.exports = {
+  // TODO-SYNC(A2.4): [N-70] VIOLATION — identity transformer is non-compliant.
+  // Migration 2 adds created_at/updated_at/deleted_at to all 27 synced tables.
+  // Per [N-70], this transformer MUST add those fields with defaults when
+  // transforming v1 payloads from any synced table.
+  // Blocking question [Q-15]: default semantics for backfilled timestamps at
+  // receive-time (wall-clock-now vs null-let-SQL-fill vs mutation's own HLC wall ms)?
+  // Safe for now: no v1 peers exist in the wild. MUST be fixed before first v1 client
+  // ever sends a mutation to a v2+ peer.
+  payloadTransformer: function payloadTransformer(payload, fromVersion) {
+    return payload;
+  },
+};
+
+if (require.main === module) {
 
 // ── Startup ───────────────────────────────────────────────────
 
@@ -150,6 +160,12 @@ if (!fs.existsSync(dbPath)) {
 
 const Database = require(path.join(__dirname, "../node_modules/better-sqlite3"));
 const db = new Database(dbPath);
+
+function abort(msg) {
+  console.error(`\n[migrate-timestamps] ABORT: ${msg}`);
+  db.close();
+  process.exit(1);
+}
 
 // Single constant for the entire migration run — used for tables with no domain timestamp source.
 const migrationTimestamp = new Date().toISOString();
@@ -380,3 +396,5 @@ if (!allOk) {
 console.log("[migrate-timestamps] All verifications passed. Timestamp migration complete. ✓");
 db.close();
 process.exit(0);
+
+}

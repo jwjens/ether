@@ -69,6 +69,8 @@ function abort(db, msg) {
   process.exit(1);
 }
 
+if (require.main === module) {
+
 // ── Startup ───────────────────────────────────────────────────
 
 console.log("[migrate-mutations] DB path:", dbPath);
@@ -312,3 +314,5 @@ console.log(`[migrate-mutations] client_id: ${generatedClientId}`);
 console.log(`[migrate-mutations] hlc_last:  0:0:${generatedClientId}`);
 db.close();
 process.exit(0);
+
+}
