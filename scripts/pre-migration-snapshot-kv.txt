@@ -1,0 +1,36 @@
+station_config_kv snapshot — PRE-MIGRATION
+Generated: 2026-04-22T02:24:19.020Z
+Total rows: 30
+
+station_id | key                                | value (first 80 chars)
+--------------------------------------------------------------------------------------------------------------
+         0 | active_station_id                   | 1
+         0 | canvas_active_name                  | Live Assist
+         0 | canvas_layout                       | [{"id":"queue-1","type":"queue","x":0,"y":0,"w":3,"h":11,"config":{}},{"id":"dec
+         0 | canvas_layout_version               | 2
+         0 | canvas_profiles                     | [{"id":"live-assist-1776728166611","name":"Live Assist","widgets":[{"id":"queue-
+         0 | clipeditor_format                   | {"formatId":"vertical","device":{"label":"iPhone 15 Pro Max","w":1290,"h":2796}}
+         0 | cloud_backup_config                 | {"endpoint":"","method":"PUT","intervalHours":6,"enabled":false,"lastBackup":177
+         0 | cloud_backup_r2                     | {"accountId":"9392ba937a6fdc8f18cec7705cbccf19","endpoint":"","bucket":"ether-ba
+         0 | dmca_acknowledged                   | 1
+         0 | eq_deck_A                           | [0,0,0,0,0,0,0,0,0,0]
+         0 | eq_deck_B                           | [0,0,0,0,0,0,0,0,0,0]
+         0 | eq_master                           | [-4.2,-3.4,-2.6,0,0.7,1.5,2.7,3.5,4.9,6.4]
+         0 | experience_mode                     | live_radio
+         0 | first_run_complete                  | 1
+         0 | last_error                          | {"message":"STREAM_URL is not defined","stack":"ReferenceError: STREAM_URL is no
+         0 | last_operator_id                    | 1
+         0 | license_key                         | ETHER-OWNER-2026
+         0 | plan_tier                           | station
+         0 | station_name                        | Opportunity Village
+         0 | station_tagline                     | OV Radio
+         0 | studio_bitrate                      | medium
+         0 | studio_resolution                   | 1440p
+         0 | studio_rtmp_url                     | 
+         0 | studio_scenes                       | [{"id":"main","name":"Main","lowerThirds":[],"layout":"camera-only"},{"id":"1776
+         0 | studio_stream_key                   | 
+         0 | theme_custom_vars                   | {"--bg-primary":"#0e0e12","--bg-secondary":"#111116","--bg-tertiary":"#141420","
+         0 | theme_font_id                       | system
+         0 | theme_preset_id                     | dark-studio
+         0 | tour_done_version                   | 1.5.2
+         0 | venue_type                          | radio

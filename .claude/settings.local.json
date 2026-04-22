@@ -28,7 +28,12 @@
       "Bash(awk -F: '{print NR, $1, $2}')",
       "Bash(awk '{if \\($2 > 2465 && $2 <= 3650\\) print}')",
       "Bash(git stash *)",
-      "Bash(tee /tmp/tsc_out.txt)"
+      "Bash(tee /tmp/tsc_out.txt)",
+      "Bash(sqlite3 --version)",
+      "Bash(where sqlite3 *)",
+      "Bash(node_modules/.bin/electron --no-sandbox scripts/audit-kv-electron.js)",
+      "Bash(node_modules/.bin/electron --no-sandbox -)",
+      "Bash(node_modules/.bin/electron --no-sandbox scripts/diag-stations.js)"
     ]
   }
 }

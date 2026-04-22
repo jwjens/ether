@@ -1,0 +1,12 @@
+const path = require("path");
+const os = require("os");
+const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+const dbPath = path.join(appData, "com.ether.radio", "openair.db");
+const Database = require(path.join(__dirname, "../node_modules/better-sqlite3"));
+const db = new Database(dbPath, { readonly: true });
+console.log("=== active_station_id in station_config_kv ===");
+console.log(db.prepare("SELECT station_id, key, value FROM station_config_kv WHERE key = 'active_station_id'").all());
+console.log("\n=== stations table ===");
+console.log(db.prepare("SELECT id, name, is_active FROM stations ORDER BY id").all());
+db.close();
+process.exit(0);

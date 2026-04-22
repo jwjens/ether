@@ -81,7 +81,7 @@ function StationRow({
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
           <button onClick={() => onEdit(station)} style={actionBtn}>Rename</button>
           <button
-            title="Coming in Phase 3 — requires copying all station-scoped data across 23 tables"
+            title="Duplicate station — coming soon"
             disabled
             style={{ ...actionBtn, opacity: 0.35, cursor: "not-allowed" }}
           >Duplicate</button>
@@ -310,10 +310,7 @@ export default function StationManager({ onStationSwitch }: Props) {
           </table>
         )}
 
-        {/* Phase 3 note */}
-        <div style={{ marginTop: 20, padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
-          <strong style={{ color: "var(--text-secondary)" }}>Phase 3 note:</strong> Creating a second station is locked until the renderer INSERT audit is complete (40 callsites). Duplicate station is also Phase 3. See checklist at top of <code>electron/main.js</code>.
-        </div>
+
       </div>
 
       {editing !== false && (

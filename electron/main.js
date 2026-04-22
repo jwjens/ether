@@ -3461,8 +3461,9 @@ ipcMain.handle('stations:create', (_, data) => {
   }
   const info = db.prepare(
     `INSERT INTO stations (name, callsign, frequency, city, state, country, website,
-       icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+       icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format,
+       is_active)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)`
   ).run(
     data.name || 'New Station', data.callsign || '', data.frequency || '',
     data.city || '', data.state || '', data.country || 'US', data.website || '',

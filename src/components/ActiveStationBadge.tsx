@@ -156,14 +156,6 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
             Manage Stations…
           </button>
 
-          {/* Phase info banner */}
-          <div style={{
-            padding: "7px 12px 8px",
-            borderTop: "1px solid var(--border-primary)",
-            fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.4,
-          }}>
-            ℹ Multi-station data isolation activates after Phase 3 database audit. New station creation is currently locked.
-          </div>
         </div>
       )}
 
