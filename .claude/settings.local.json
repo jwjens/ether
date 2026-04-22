@@ -33,7 +33,9 @@
       "Bash(where sqlite3 *)",
       "Bash(node_modules/.bin/electron --no-sandbox scripts/audit-kv-electron.js)",
       "Bash(node_modules/.bin/electron --no-sandbox -)",
-      "Bash(node_modules/.bin/electron --no-sandbox scripts/diag-stations.js)"
+      "Bash(node_modules/.bin/electron --no-sandbox scripts/diag-stations.js)",
+      "Bash(node_modules/.bin/electron --no-sandbox scripts/audit-scoped-tables.js)",
+      "Bash(node_modules/.bin/electron --no-sandbox scripts/investigate-pre-uuid.js)"
     ]
   }
 }
