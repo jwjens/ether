@@ -1,0 +1,33 @@
+Timestamp migration snapshot — POST-MIGRATION
+Generated: 2026-04-22T17:04:52.022Z
+Tables: 27
+
+table_name                     | row_count | columns
+--------------------------------------------------------------------------------------------------------------
+albums                         | 0         | id, title, artist_id, year, created_at, station_id, uuid, updated_at, deleted_at
+announcements                  | 0         | id, title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active, last_played_at, created_at, station_id, uuid, updated_at, deleted_at
+artists                        | 261       | id, name, sort_name, gender, created_at, station_id, uuid, updated_at, deleted_at
+cart_slots                     | 0         | id, slot_number, title, file_path, color, hotkey, station_id, uuid, created_at, updated_at, deleted_at
+categories                     | 12        | id, code, name, color, spins_per_hour, priority, station_id, uuid, created_at, updated_at, deleted_at
+clock_slots                    | 90        | id, clock_id, position, slot_type, category_id, label, duration_min, station_id, uuid, created_at, updated_at, deleted_at
+clocks                         | 10        | id, name, show_id, description, color, station_id, uuid, created_at, updated_at, deleted_at
+deck_configs                   | 6         | slot, type, label, color, enabled, purpose, station_id, uuid, created_at, updated_at, deleted_at
+format_clocks                  | 0         | id, name, slots, created_at, daypart, slots_json, station_id, uuid, updated_at, deleted_at
+generated_schedule             | 3024      | id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at
+liner_cards                    | 0         | id, title, body, category, color, pinned, created_at, station_id, uuid, updated_at, deleted_at
+macros                         | 0         | id, name, description, trigger_type, trigger_value, actions, hotkey, is_active, color, created_at, station_id, uuid, updated_at, deleted_at
+operator_notes                 | 0         | id, operator_id, note, updated_at, station_id, uuid, created_at, deleted_at
+operators                      | 1         | id, name, initials, created_at, theme, station_id, uuid, updated_at, deleted_at
+play_log                       | 2853      | id, title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at
+prep_notes                     | 0         | id, title, body, show_date, category, created_at, station_id, uuid, updated_at, deleted_at
+published_episodes             | 0         | id, title, file_path, show_id, published_at, station_id, uuid, created_at, updated_at, deleted_at
+rtmp_destinations              | 0         | id, name, url, stream_key, is_active, station_id, uuid, created_at, updated_at, deleted_at
+scheduled_log                  | 0         | id, log_date, hour, position, song_id, title, artist, category_id, duration_ms, clock_id, created_at, overflow, fade_out_at_ms, fade_duration_ms, chain_type, station_id, uuid, updated_at, deleted_at
+separation_rules               | 5         | id, rule_type, scope, value, is_hard, is_active, description, station_id, uuid, created_at, updated_at, deleted_at
+shows                          | 5         | id, name, start_hour, end_hour, days, color, description, is_active, clock_id, station_id, uuid, created_at, updated_at, deleted_at
+smart_schedule_rules           | 0         | id, description, days, start_hour, end_hour, energy_level, bpm_min, bpm_max, genre, is_active, station_id, uuid, created_at, updated_at, deleted_at
+songs                          | 357       | id, title, file_path, artist_id, album_id, category_id, genre, duration_ms, bpm, energy, mood, gender, rotation_status, daypart_mask, no_repeat_hours, lufs_measured, peak_db, gain_db, is_processed, cue_in, cue_out, cue_in_ms, cue_out_ms, intro_end, outro_start, intro_end_ms, outro_start_ms, intro_version_path, has_intro, last_played_at, play_count, is_explicit, created_at, updated_at, raw_metadata, spotify_uri, station_id, uuid, deleted_at
+spots                          | 0         | id, title, file_path, spot_type, advertiser, start_date, end_date, max_plays_day, play_count, last_played_at, is_active, notes, created_at, isci_code, cart_number, agency, length_sec, station_id, uuid, updated_at, deleted_at
+station_config_kv              | 33        | station_id, key, value, uuid, created_at, updated_at, deleted_at
+voice_tracks                   | 0         | id, title, file_path, show_id, clock_slot_id, duration_ms, recorded_by, recorded_at, station_id, uuid, created_at, updated_at, deleted_at
+stations                       | 1         | id, name, callsign, frequency, city, state, country, website, is_active, created_at, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format, uuid, updated_at, deleted_at
