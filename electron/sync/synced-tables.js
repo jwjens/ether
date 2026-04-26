@@ -3,6 +3,11 @@
 // Every column from the live DB at time of authoring appears here.
 // To add a new synced table or column: update this file, run scripts/verify-synced-tables.js, bump schema_version per §8.
 // Do NOT edit category values without consulting the protocol doc.
+//
+// PHASE 4 (Apr 2026): adds `scope: 'install' | 'station'` to every entry per
+// docs/phase-4-library-architecture.md commitment #7. Reclassifies songs/artists/albums
+// to install-scoped (Direction C). Adds 4 new entries: station_programming, mood_tags,
+// station_programming_moods, pinned_songs.
 
 'use strict';
 
@@ -19,8 +24,10 @@ const SYNCED_TABLES = [
   'generated_schedule',
   'liner_cards',
   'macros',
+  'mood_tags',
   'operator_notes',
   'operators',
+  'pinned_songs',
   'play_log',
   'prep_notes',
   'published_episodes',
@@ -32,6 +39,8 @@ const SYNCED_TABLES = [
   'songs',
   'spots',
   'station_config_kv',
+  'station_programming',
+  'station_programming_moods',
   'stations',
   'voice_tracks',
 ];
@@ -41,6 +50,7 @@ const REGISTRY = {
   albums: {
     tableName: 'albums',
     primaryKey: ['id'],
+    scope: 'install',
     columns: {
       id:         'scalar',
       title:      'scalar',
@@ -57,28 +67,30 @@ const REGISTRY = {
   announcements: {
     tableName: 'announcements',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
-      id:           'scalar',
-      title:        'scalar',
-      file_path:    'blob-ref',
-      trigger_time: 'scalar',
-      days:         'scalar',
-      duck_music:   'scalar',
-      resume_music: 'scalar',
-      duck_level:   'scalar',
-      is_active:    'scalar',
+      id:             'scalar',
+      title:          'scalar',
+      file_path:      'blob-ref',
+      trigger_time:   'scalar',
+      days:           'scalar',
+      duck_music:     'scalar',
+      resume_music:   'scalar',
+      duck_level:     'scalar',
+      is_active:      'scalar',
       last_played_at: 'scalar',
-      created_at:   'scalar',
-      station_id:   'scalar',
-      uuid:         'scalar',
-      updated_at:   'scalar',
-      deleted_at:   'scalar',
+      created_at:     'scalar',
+      station_id:     'scalar',
+      uuid:           'scalar',
+      updated_at:     'scalar',
+      deleted_at:     'scalar',
     },
   },
 
   artists: {
     tableName: 'artists',
     primaryKey: ['id'],
+    scope: 'install',
     columns: {
       id:         'scalar',
       name:       'scalar',
@@ -95,6 +107,7 @@ const REGISTRY = {
   cart_slots: {
     tableName: 'cart_slots',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:          'scalar',
       slot_number: 'scalar',
@@ -113,6 +126,7 @@ const REGISTRY = {
   categories: {
     tableName: 'categories',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:             'scalar',
       code:           'scalar',
@@ -131,6 +145,7 @@ const REGISTRY = {
   clock_slots: {
     tableName: 'clock_slots',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:           'scalar',
       clock_id:     'scalar',
@@ -150,6 +165,7 @@ const REGISTRY = {
   clocks: {
     tableName: 'clocks',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:          'scalar',
       name:        'scalar',
@@ -167,6 +183,7 @@ const REGISTRY = {
   deck_configs: {
     tableName: 'deck_configs',
     primaryKey: ['slot'],
+    scope: 'station',
     columns: {
       slot:       'scalar',
       type:       'scalar',
@@ -185,6 +202,7 @@ const REGISTRY = {
   format_clocks: {
     tableName: 'format_clocks',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:         'scalar',
       name:       'scalar',
@@ -202,6 +220,7 @@ const REGISTRY = {
   generated_schedule: {
     tableName: 'generated_schedule',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:           'scalar',
       scheduled_at: 'scalar',
@@ -224,6 +243,7 @@ const REGISTRY = {
   liner_cards: {
     tableName: 'liner_cards',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:         'scalar',
       title:      'scalar',
@@ -242,6 +262,7 @@ const REGISTRY = {
   macros: {
     tableName: 'macros',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:            'scalar',
       name:          'scalar',
@@ -260,9 +281,26 @@ const REGISTRY = {
     },
   },
 
+  mood_tags: {
+    tableName: 'mood_tags',
+    primaryKey: ['id'],
+    scope: 'install',
+    columns: {
+      id:          'scalar',
+      uuid:        'scalar',
+      name:        'scalar',
+      description: 'scalar',
+      color:       'scalar',
+      created_at:  'scalar',
+      updated_at:  'scalar',
+      deleted_at:  'scalar',
+    },
+  },
+
   operator_notes: {
     tableName: 'operator_notes',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:          'scalar',
       operator_id: 'scalar',
@@ -278,6 +316,7 @@ const REGISTRY = {
   operators: {
     tableName: 'operators',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:         'scalar',
       name:       'scalar',
@@ -291,32 +330,60 @@ const REGISTRY = {
     },
   },
 
+  pinned_songs: {
+    tableName: 'pinned_songs',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:            'scalar',
+      song_id:       'scalar',
+      slot_hour:     'scalar',
+      slot_position: 'scalar',
+      recur_dow:     'scalar',
+      play_at_unix:  'scalar',
+      start_unix:    'scalar',
+      end_unix:      'scalar',
+      force_play:    'scalar',
+      pinned_by:     'scalar',
+      reason:        'scalar',
+      consumed_at:   'scalar',
+      created_at:    'scalar',
+      station_id:    'scalar',
+      uuid:          'scalar',
+      updated_at:    'scalar',
+      deleted_at:    'scalar',
+    },
+  },
+
   play_log: {
     tableName: 'play_log',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
-      id:               'scalar',
-      title:            'scalar',
-      artist:           'scalar',
-      deck:             'scalar',
-      deck_id:          'scalar',
-      duration_ms:      'scalar',
-      session_id:       'scalar',
-      played_at:        'scalar',
-      scheduled_log_id: 'scalar',
-      show_name:        'scalar',
-      category_code:    'scalar',
-      station_id:       'scalar',
-      uuid:             'scalar',
-      created_at:       'scalar',
-      updated_at:       'scalar',
-      deleted_at:       'scalar',
+      id:                  'scalar',
+      title:               'scalar',
+      artist:              'scalar',
+      deck:                'scalar',
+      deck_id:             'scalar',
+      duration_ms:         'scalar',
+      session_id:          'scalar',
+      played_at:           'scalar',
+      scheduled_log_id:    'scalar',
+      show_name:           'scalar',
+      category_code:       'scalar',
+      station_id:          'scalar',
+      uuid:                'scalar',
+      created_at:          'scalar',
+      updated_at:          'scalar',
+      deleted_at:          'scalar',
+      programming_row_id:  'scalar',
     },
   },
 
   prep_notes: {
     tableName: 'prep_notes',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:         'scalar',
       title:      'scalar',
@@ -334,6 +401,7 @@ const REGISTRY = {
   published_episodes: {
     tableName: 'published_episodes',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:           'scalar',
       title:        'scalar',
@@ -351,6 +419,7 @@ const REGISTRY = {
   rtmp_destinations: {
     tableName: 'rtmp_destinations',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:         'scalar',
       name:       'scalar',
@@ -368,6 +437,7 @@ const REGISTRY = {
   scheduled_log: {
     tableName: 'scheduled_log',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:               'scalar',
       log_date:         'scalar',
@@ -394,6 +464,7 @@ const REGISTRY = {
   separation_rules: {
     tableName: 'separation_rules',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:          'scalar',
       rule_type:   'scalar',
@@ -413,6 +484,7 @@ const REGISTRY = {
   shows: {
     tableName: 'shows',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:          'scalar',
       name:        'scalar',
@@ -434,6 +506,7 @@ const REGISTRY = {
   smart_schedule_rules: {
     tableName: 'smart_schedule_rules',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:           'scalar',
       description:  'scalar',
@@ -456,6 +529,7 @@ const REGISTRY = {
   songs: {
     tableName: 'songs',
     primaryKey: ['id'],
+    scope: 'install',
     columns: {
       id:                  'scalar',
       title:               'scalar',
@@ -502,34 +576,36 @@ const REGISTRY = {
   spots: {
     tableName: 'spots',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
-      id:            'scalar',
-      title:         'scalar',
-      file_path:     'blob-ref',
-      spot_type:     'scalar',
-      advertiser:    'scalar',
-      start_date:    'scalar',
-      end_date:      'scalar',
-      max_plays_day: 'scalar',
-      play_count:    'scalar',
+      id:             'scalar',
+      title:          'scalar',
+      file_path:      'blob-ref',
+      spot_type:      'scalar',
+      advertiser:     'scalar',
+      start_date:     'scalar',
+      end_date:       'scalar',
+      max_plays_day:  'scalar',
+      play_count:     'scalar',
       last_played_at: 'scalar',
-      is_active:     'scalar',
-      notes:         'scalar',
-      created_at:    'scalar',
-      isci_code:     'scalar',
-      cart_number:   'scalar',
-      agency:        'scalar',
-      length_sec:    'scalar',
-      station_id:    'scalar',
-      uuid:          'scalar',
-      updated_at:    'scalar',
-      deleted_at:    'scalar',
+      is_active:      'scalar',
+      notes:          'scalar',
+      created_at:     'scalar',
+      isci_code:      'scalar',
+      cart_number:    'scalar',
+      agency:         'scalar',
+      length_sec:     'scalar',
+      station_id:     'scalar',
+      uuid:           'scalar',
+      updated_at:     'scalar',
+      deleted_at:     'scalar',
     },
   },
 
   station_config_kv: {
     tableName: 'station_config_kv',
     primaryKey: ['station_id', 'key'],
+    scope: 'station',
     columns: {
       station_id: 'scalar',
       key:        'scalar',
@@ -541,9 +617,49 @@ const REGISTRY = {
     },
   },
 
+  station_programming: {
+    tableName: 'station_programming',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:              'scalar',
+      uuid:            'scalar',
+      song_id:         'scalar',
+      station_id:      'scalar',
+      category_id:     'scalar',
+      energy:          'scalar',
+      daypart_mask:    'scalar',
+      rotation_status: 'scalar',
+      no_repeat_hours: 'scalar',
+      last_played_at:  'scalar',
+      play_count:      'scalar',
+      notes:           'scalar',
+      added_at:        'scalar',
+      created_at:      'scalar',
+      updated_at:      'scalar',
+      deleted_at:      'scalar',
+    },
+  },
+
+  station_programming_moods: {
+    tableName: 'station_programming_moods',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:                    'scalar',
+      uuid:                  'scalar',
+      station_programming_id:'scalar',
+      mood_tag_id:           'scalar',
+      created_at:            'scalar',
+      updated_at:            'scalar',
+      deleted_at:            'scalar',
+    },
+  },
+
   stations: {
     tableName: 'stations',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:                  'scalar',
       name:                'scalar',
@@ -569,6 +685,7 @@ const REGISTRY = {
   voice_tracks: {
     tableName: 'voice_tracks',
     primaryKey: ['id'],
+    scope: 'station',
     columns: {
       id:             'scalar',
       title:          'scalar',

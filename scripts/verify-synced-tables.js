@@ -23,6 +23,7 @@ const Database = require(path.join(__dirname, '../node_modules/better-sqlite3'))
 const db = new Database(dbPath, { readonly: true });
 
 const VALID_CATEGORIES = new Set(['scalar', 'json-text', 'blob-ref', 'local-only']);
+const VALID_SCOPES     = new Set(['install', 'station']);
 
 let allPass = true;
 
@@ -48,9 +49,9 @@ function getDbCols(tableName) {
 
 // ── Check 1: every registry table exists in DB and has a uuid column ─────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 1 — Every SYNCED_TABLES entry exists in DB with uuid column');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 let check1Failures = 0;
 for (const tableName of SYNCED_TABLES) {
@@ -72,9 +73,9 @@ if (check1Failures === 0) pass(`All ${SYNCED_TABLES.length} registry tables exis
 
 // ── Check 2: every DB table with uuid column appears in SYNCED_TABLES ────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 2 — Every DB table with uuid column appears in SYNCED_TABLES');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 const dbSyncedTables = getDbSyncedTables();
 const registrySet    = new Set(SYNCED_TABLES);
@@ -88,11 +89,11 @@ for (const tableName of dbSyncedTables) {
 }
 if (check2Failures === 0) pass(`All ${dbSyncedTables.length} DB tables with uuid column are in SYNCED_TABLES`);
 
-// ── Check 3: every DB column appears in registry ──────────────────────────────
+// ── Check 3: every DB column appears in registry ─────────────────────────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 3 — Every DB column appears in each table\'s registry');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 let check3Failures = 0;
 for (const tableName of SYNCED_TABLES) {
@@ -109,11 +110,11 @@ for (const tableName of SYNCED_TABLES) {
 }
 if (check3Failures === 0) pass('All DB columns are present in their registry entries');
 
-// ── Check 4: no phantom columns in registry ───────────────────────────────────
+// ── Check 4: no phantom columns in registry ──────────────────────────────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 4 — No phantom columns in registry (every registry column exists in DB)');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 let check4Failures = 0;
 for (const tableName of SYNCED_TABLES) {
@@ -129,11 +130,11 @@ for (const tableName of SYNCED_TABLES) {
 }
 if (check4Failures === 0) pass('No phantom columns found in registry');
 
-// ── Check 5: all category values are valid ────────────────────────────────────
+// ── Check 5: all category values are valid ───────────────────────────────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 5 — All category values are one of: scalar, json-text, blob-ref, local-only');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 let check5Failures = 0;
 for (const tableName of SYNCED_TABLES) {
@@ -148,11 +149,11 @@ for (const tableName of SYNCED_TABLES) {
 }
 if (check5Failures === 0) pass('All category values are valid');
 
-// ── Check 6: BLOB type columns are categorized as blob-ref per [N-20] ─────────
+// ── Check 6: BLOB type columns are categorized as blob-ref per [N-20] ────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 6 — Columns with SQLite type BLOB are categorized as blob-ref [N-20]');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 let check6Failures = 0;
 for (const tableName of SYNCED_TABLES) {
@@ -173,9 +174,9 @@ if (check6Failures === 0) pass('All BLOB-type columns are correctly categorized 
 
 // ── Check 7: column count totals ─────────────────────────────────────────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
 console.log('CHECK 7 — Column count totals');
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 let totalCols  = 0;
 let nScalar    = 0;
@@ -204,16 +205,46 @@ if (totalCols !== catSum) {
   pass(`Column totals consistent (${totalCols} = ${nScalar} + ${nJsonText} + ${nBlobRef} + ${nLocalOnly})`);
 }
 
-// ── Final summary ─────────────────────────────────────────────────────────────
+// ── Check 8: every entry has a valid scope field per Phase 4 ─────────────────
 
-console.log('\n═══════════════════════════════════════════════════════════');
+console.log('\n═════════════════════════════════════════════════════════════════');
+console.log('CHECK 8 — Every REGISTRY entry has scope: \'install\' | \'station\' (Phase 4)');
+console.log('═════════════════════════════════════════════════════════════════');
+
+let check8Failures = 0;
+let nInstall = 0;
+let nStation = 0;
+for (const tableName of SYNCED_TABLES) {
+  const entry = REGISTRY[tableName];
+  if (!entry) continue;
+  if (entry.scope === undefined) {
+    fail(`"${tableName}" has no scope field`);
+    check8Failures++;
+    continue;
+  }
+  if (!VALID_SCOPES.has(entry.scope)) {
+    fail(`"${tableName}" has invalid scope "${entry.scope}" (expected 'install' or 'station')`);
+    check8Failures++;
+    continue;
+  }
+  if (entry.scope === 'install') nInstall++;
+  else nStation++;
+}
+if (check8Failures === 0) {
+  pass(`All ${SYNCED_TABLES.length} entries have valid scope (${nInstall} install, ${nStation} station)`);
+}
+
+// ── Final summary ────────────────────────────────────────────────────────────
+
+console.log('\n═════════════════════════════════════════════════════════════════');
 if (allPass) {
   console.log('ALL CHECKS PASSED ✓');
   console.log(`Total: ${totalCols} | scalar: ${nScalar} | json-text: ${nJsonText} | blob-ref: ${nBlobRef} | local-only: ${nLocalOnly}`);
+  console.log(`Scope: ${nInstall} install | ${nStation} station`);
 } else {
   console.error('ONE OR MORE CHECKS FAILED ✗ — see FAIL lines above');
 }
-console.log('═══════════════════════════════════════════════════════════');
+console.log('═════════════════════════════════════════════════════════════════');
 
 db.close();
 process.exit(allPass ? 0 : 1);
