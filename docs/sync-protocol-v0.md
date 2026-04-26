@@ -494,7 +494,7 @@ For reviewers and implementers who just need the field list without the prose.
 |---|---|---|---|---|---|
 | 1 | `id` | TEXT | N | Y | Mutation UUID |
 | 2 | `client_id` | TEXT | N | Y | Originating client |
-| 3 | `station_id` | TEXT | N | Y | Tenant scope |
+| 3 | `station_id` | TEXT | **Y** | Y | Tenant scope; NULL for install-scoped writes [N-89] |
 | 4 | `actor_id` | TEXT | Y | Y | Operator who made the change |
 | 5 | `table_name` | TEXT | N | Y | Target table |
 | 6 | `row_id` | TEXT | N | Y | Target row UUID |
@@ -511,6 +511,16 @@ For reviewers and implementers who just need the field list without the prose.
 | 17 | `conflict_resolution` | TEXT | Y | Y | JSON merge record |
 
 Wire = 14. Local-only = 3 (`applied_at`, `origin`, `sync_status`).
+
+---
+
+## 16. Phase 5 amendment — install-scoped mutations [N-89]/[N-90]
+
+**[N-89] — `station_id` is NULL for install-scoped table writes.**
+Mutations for install-scoped tables (`songs`, `artists`, `albums`, `mood_tags`) store NULL in `station_id`. These tables carry no station affiliation — the same row is shared across all stations on the install. Callers MUST pass `null` explicitly; `undefined` remains a programmer error and the writer rejects it. The `String()` coercion in `[Q-14]` applies only when `station_id` is non-null; null passes through to SQL as NULL. Schema change: `migrations.station_id` was `TEXT NOT NULL` in v3; relaxed to `TEXT` (nullable) in v5 migration `migrate-mutations-null-station-phase-sync-5.js`.
+
+**[N-90] — Receiver semantics for install-scoped mutations (station_id = NULL).**
+A sync receiver that receives a mutation with `station_id = NULL` applies it to the install-scoped table without any station filtering. The receiver MUST NOT substitute its own `station_id` into the row or the mutation record. Idempotency checks for install-scoped mutations use `(table_name, row_id, hlc)` only, ignoring `station_id`. Station-scoped mutations continue to use `(station_id, table_name, row_id, hlc)` for idempotency as before.
 
 ---
 

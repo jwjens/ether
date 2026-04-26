@@ -217,8 +217,10 @@ function logMutation(db, opts) {
     );
   }
 
-  if (station_id === undefined || station_id === null) {
-    throw new Error('[mutation-writer] station_id is required');
+  // [N-89]: null is valid for install-scoped tables (songs/artists/albums/mood_tags).
+  // undefined means the caller forgot to pass it — that is still an error.
+  if (station_id === undefined) {
+    throw new Error('[mutation-writer] station_id must be provided (pass null for install-scoped tables) [N-89]');
   }
 
   if (op === 'insert') {
@@ -256,7 +258,8 @@ function logMutation(db, opts) {
   const client_id        = getClientId(db);
   const now_iso          = new Date().toISOString();
   const hlc              = nextClock(db);             // updates system_state.hlc_last as side effect
-  const station_id_str   = String(station_id);        // [Q-14]: always stringify
+  // [Q-14] applies when non-null; null passes through as SQL NULL for install-scoped tables [N-89]
+  const station_id_str   = station_id === null ? null : String(station_id);
   const actual_table     = op === 'checkpoint' ? '__checkpoint__' : table_name;
   const actual_row_id    = op === 'checkpoint' ? '' : row_id;
 

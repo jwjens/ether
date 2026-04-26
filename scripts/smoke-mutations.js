@@ -99,6 +99,9 @@ if (svRows.includes(3)) {
   fail('schema_version does not contain 3', `got ${JSON.stringify(svRows)}`);
 }
 
+// Current max schema_version — used by writer tests to validate mutation.schema_version
+const currentSchemaVersion = svRows[svRows.length - 1];
+
 // ── Check 2: mutations table — 17 columns with expected names ─
 
 section('CHECK 2 — mutations table has 17 columns with expected names');
@@ -356,8 +359,8 @@ withSavepoint('test_1', () => {
   if (HLC_RE.test(mut.hlc))                           pass('TEST 1 — hlc matches HLC format');
   else                                                fail('TEST 1 — hlc format', `got "${mut.hlc}"`);
 
-  if (mut.schema_version === 3)                       pass('TEST 1 — schema_version === 3');
-  else                                                fail('TEST 1 — schema_version', `expected 3 got ${mut.schema_version}`);
+  if (mut.schema_version === currentSchemaVersion)    pass(`TEST 1 — schema_version === ${currentSchemaVersion}`);
+  else                                                fail('TEST 1 — schema_version', `expected ${currentSchemaVersion} got ${mut.schema_version}`);
 
   if (mut.origin === 'local')                         pass('TEST 1 — origin === "local"');
   else                                                fail('TEST 1 — origin', `expected "local" got "${mut.origin}"`);
@@ -746,6 +749,77 @@ withSavepoint('test_9', () => {
   if (wire.payload_after !== null && typeof wire.payload_after === 'object')
                                                       pass('TEST 9 — wire.payload_after is object (not string) [N-51]');
   else                                                fail('TEST 9 — wire.payload_after should be parsed object', `got ${typeof wire.payload_after}`);
+});
+
+// ── TEST 10: null station_id for install-scoped table ─────────
+
+section('TEST 10 — null station_id accepted for install-scoped table (mood_tags) [N-89]');
+
+withSavepoint('test_10', () => {
+  const countBefore = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
+  const now  = new Date().toISOString();
+  const uuid = crypto.randomUUID();
+  const row  = { id: undefined, uuid, name: 'smoke-test-mood', description: null, color: '#ff0000', created_at: now, updated_at: now, deleted_at: null };
+  const payload_after = writer.serializePayload(row, 'mood_tags');
+
+  // station_id: null — install-scoped, must not throw [N-89]
+  let threw = false;
+  try {
+    writer.withMutation(db, {
+      table_name:     'mood_tags',
+      row_id:         uuid,
+      op:             'insert',
+      payload_before: null,
+      payload_after,
+      station_id:     null,
+      actor_id:       null,
+    }, () => {
+      db.prepare(
+        'INSERT INTO mood_tags (uuid, name, description, color, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(uuid, row.name, row.description, row.color, row.created_at, row.updated_at, row.deleted_at);
+    });
+  } catch (e) {
+    threw = true;
+    fail('TEST 10 — withMutation(null station_id) should not throw', e.message);
+  }
+
+  if (!threw) pass('TEST 10 — withMutation(station_id: null) did not throw [N-89]');
+
+  const countAfter = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
+  if (countAfter === countBefore + 1)     pass('TEST 10 — mutations count +1');
+  else                                    fail('TEST 10 — mutations count', `before=${countBefore} after=${countAfter}`);
+
+  const mut = db.prepare('SELECT * FROM mutations WHERE row_id=?').get(uuid);
+  if (!mut) { fail('TEST 10 — mutation row not found'); return; }
+  pass('TEST 10 — mutation row found by row_id');
+
+  if (mut.station_id === null)            pass('TEST 10 — mut.station_id is SQL NULL (not string "null") [N-89]');
+  else                                    fail('TEST 10 — mut.station_id should be NULL', `got "${mut.station_id}"`);
+
+  if (mut.op === 'insert')                pass('TEST 10 — op === "insert"');
+  else                                    fail('TEST 10 — op', `expected "insert" got "${mut.op}"`);
+
+  if (mut.payload_before === null)        pass('TEST 10 — payload_before is null [N-29]');
+  else                                    fail('TEST 10 — payload_before should be null');
+
+  if (mut.payload_after && mut.payload_after.includes('smoke-test-mood'))
+                                          pass('TEST 10 — payload_after contains mood_tags name');
+  else                                    fail('TEST 10 — payload_after', `got "${mut.payload_after}"`);
+
+  // Confirm undefined station_id still throws [N-89]
+  let undefinedThrew = false;
+  try {
+    writer.withMutation(db, {
+      table_name: 'mood_tags', row_id: crypto.randomUUID(), op: 'insert',
+      payload_before: null, payload_after,
+      /* station_id intentionally omitted → undefined */
+      actor_id: null,
+    }, () => {});
+  } catch (e) {
+    undefinedThrew = e.message.includes('[N-89]');
+  }
+  if (undefinedThrew)                     pass('TEST 10 — undefined station_id throws with [N-89] reference');
+  else                                    fail('TEST 10 — undefined station_id should throw [N-89]');
 });
 
 // ── Summary ───────────────────────────────────────────────────
