@@ -164,14 +164,6 @@ contextBridge.exposeInMainWorld("ether", {
     update:    (id, data) => ipcRenderer.invoke("stations:update", id, data),
     delete:    (id)       => ipcRenderer.invoke("stations:delete", id),
   },
-  // ── Station programming layer (Phase 4, Direction C) ───────
-  stationProgramming: {
-    list:      (stationId, opts)  => ipcRenderer.invoke('station_programming:list',      stationId, opts),
-    getById:   (uuid)             => ipcRenderer.invoke('station_programming:get-by-id', uuid),
-    create:    (payload)          => ipcRenderer.invoke('station_programming:create',    payload),
-    update:    (uuid, patch)      => ipcRenderer.invoke('station_programming:update',    uuid, patch),
-    delete:    (uuid, stationId)  => ipcRenderer.invoke('station_programming:delete',    uuid, stationId),
-  },
   // ── Cloud DR Backup (R2) ────────────────────────────────────
   cloudBackup: {
     getConfig:   ()  => ipcRenderer.invoke("cloud-backup:get-config"),
@@ -192,4 +184,5 @@ contextBridge.exposeInMainWorld("ether", {
     else ipcRenderer.removeAllListeners(channel);
   },
   emit: (channel, payload) => ipcRenderer.send(channel, payload),
+  ...require('./preload-handlers')(ipcRenderer),
 });

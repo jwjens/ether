@@ -1020,12 +1020,11 @@ app.whenReady().then(() => {
     console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
   }
 
-  // station_programming IPC handlers (Phase 4 library layer)
+  // sync IPC handlers — all tables (Phase 3.5+)
   try {
-    const { installStationProgramming } = require("./sync/handlers/station_programming");
-    installStationProgramming(ipcMain, db);
+    require('./sync/handlers').installAll(ipcMain, db);
   } catch (e) {
-    console.warn("[station_programming] install failed:", e.message);
+    console.warn("[sync/handlers] installAll failed:", e.message);
   }
 
   // Show native splash first; main window stays hidden behind it
