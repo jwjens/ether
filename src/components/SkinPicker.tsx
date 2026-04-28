@@ -578,8 +578,8 @@ export function SkinPickerOverlay({
   // Font
   const [fontId, setFontId]             = useState("system");
   // Operator theme
-  const [operators, setOperators]       = useState<{ id: number; name: string }[]>([]);
-  const [opThemeId, setOpThemeId]       = useState<number | null>(null);
+  const [operators, setOperators]       = useState<{ id: number; uuid: string; name: string }[]>([]);
+  const [opThemeUuid, setOpThemeUuid]   = useState<string | null>(null);
   // Station logo
   const [logoUrl, setLogoUrl]           = useState<string | null>(null);
 
@@ -587,7 +587,7 @@ export function SkinPickerOverlay({
   useEffect(() => {
     (async () => {
       try {
-        const ops = await (window as any).ether.db.query("SELECT id, name FROM operators ORDER BY id", []);
+        const ops = await (window as any).ether.db.query("SELECT id, uuid, name FROM operators ORDER BY id", []);
         if (ops.data) setOperators(ops.data);
         const logoRow = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='station_logo'", []);
         if (logoRow.data?.length) setLogoUrl(logoRow.data[0].value);
@@ -617,10 +617,10 @@ export function SkinPickerOverlay({
   const handleSave = async () => {
     await saveTheme(activePreset, vars, fontId);
     // Save operator theme if one is selected
-    if (opThemeId !== null) {
-      await (window as any).ether.db.execute(
-        "UPDATE operators SET theme=? WHERE id=?",
-        [JSON.stringify({ presetId: activePreset, vars }), opThemeId]
+    if (opThemeUuid !== null) {
+      await (window as any).ether.operators.update(
+        opThemeUuid,
+        { theme: JSON.stringify({ presetId: activePreset, vars }) }
       );
     }
     onSelect(activePreset);
@@ -875,18 +875,18 @@ export function SkinPickerOverlay({
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {operators.map(op => (
-                      <button key={op.id} onClick={() => setOpThemeId(opThemeId === op.id ? null : op.id)} style={{
+                      <button key={op.id} onClick={() => setOpThemeUuid(opThemeUuid === op.uuid ? null : op.uuid)} style={{
                         display: "flex", alignItems: "center", gap: 10,
                         padding: "9px 14px", border: "none", borderRadius: 0,
-                        background: opThemeId === op.id ? "rgba(255,255,255,0.05)" : "transparent",
-                        outline: opThemeId === op.id ? "1px solid var(--accent-green)" : "1px solid var(--border-primary)",
-                        color: opThemeId === op.id ? "var(--accent-green)" : "var(--text-secondary)",
+                        background: opThemeUuid === op.uuid ? "rgba(255,255,255,0.05)" : "transparent",
+                        outline: opThemeUuid === op.uuid ? "1px solid var(--accent-green)" : "1px solid var(--border-primary)",
+                        color: opThemeUuid === op.uuid ? "var(--accent-green)" : "var(--text-secondary)",
                         cursor: "pointer", textAlign: "left",
                         transition: "all 0.1s",
                       }}>
-                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: opThemeId === op.id ? "var(--accent-green)" : "var(--text-tertiary)", flexShrink: 0 }} />
-                        <span style={{ fontSize: 11, fontWeight: opThemeId === op.id ? 700 : 400 }}>{op.name}</span>
-                        {opThemeId === op.id && <span style={{ fontSize: 10, marginLeft: "auto", opacity: 0.7 }}>will receive current theme on Save</span>}
+                        <div style={{ width: 6, height: 6, borderRadius: "50%", background: opThemeUuid === op.uuid ? "var(--accent-green)" : "var(--text-tertiary)", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, fontWeight: opThemeUuid === op.uuid ? 700 : 400 }}>{op.name}</span>
+                        {opThemeUuid === op.uuid && <span style={{ fontSize: 10, marginLeft: "auto", opacity: 0.7 }}>will receive current theme on Save</span>}
                       </button>
                     ))}
                   </div>
