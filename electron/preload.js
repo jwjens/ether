@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require("electron");
+const handlers = require('./preload-handlers')(ipcRenderer);
 
 contextBridge.exposeInMainWorld("ether", {
   audio: {
@@ -164,6 +165,10 @@ contextBridge.exposeInMainWorld("ether", {
     update:    (id, data) => ipcRenderer.invoke("stations:update", id, data),
     delete:    (id)       => ipcRenderer.invoke("stations:delete", id),
   },
+  // ── Typed sync handlers — opt-in per migrated table (Phase 3.5+) ───────
+  stationProgramming: handlers.stationProgramming,
+  stationConfigKv:    handlers.stationConfigKv,
+  operators:          handlers.operators,
   // ── Cloud DR Backup (R2) ────────────────────────────────────
   cloudBackup: {
     getConfig:   ()  => ipcRenderer.invoke("cloud-backup:get-config"),
@@ -184,5 +189,4 @@ contextBridge.exposeInMainWorld("ether", {
     else ipcRenderer.removeAllListeners(channel);
   },
   emit: (channel, payload) => ipcRenderer.send(channel, payload),
-  ...require('./preload-handlers')(ipcRenderer),
 });

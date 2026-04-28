@@ -710,6 +710,7 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
       webSecurity: false, // Allow localhost in dev
     },
     show: false,
@@ -1020,11 +1021,16 @@ app.whenReady().then(() => {
     console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
   }
 
-  // sync IPC handlers — all tables (Phase 3.5+)
+  // sync IPC handlers — opt-in per migrated table (Phase 3.5+)
   try {
-    require('./sync/handlers').installAll(ipcMain, db);
+    const { installStationProgramming } = require('./sync/handlers/station_programming');
+    const { installStationConfigKv }    = require('./sync/handlers/station_config_kv');
+    const { installOperators }          = require('./sync/handlers/operators');
+    installStationProgramming(ipcMain, db);
+    installStationConfigKv(ipcMain, db);
+    installOperators(ipcMain, db);
   } catch (e) {
-    console.warn("[sync/handlers] installAll failed:", e.message);
+    console.warn("[sync/handlers] install failed:", e.message);
   }
 
   // Show native splash first; main window stays hidden behind it
