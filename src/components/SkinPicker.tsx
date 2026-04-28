@@ -18,7 +18,6 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { execute, query } from "../db/client";
 
 // ─── CSS variable map ──────────────────────────────────────────
 
@@ -305,28 +304,32 @@ export function applyTheme(vars: ThemeVars, fontStack?: string) {
 
 // ─── Persistence ───────────────────────────────────────────────
 
-async function saveTheme(presetId: string, vars: ThemeVars, fontId?: string) {
-  try {
-    await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('theme_preset_id',?)", [presetId]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('theme_custom_vars',?)", [JSON.stringify(vars)]);
-    if (fontId !== undefined) {
-      await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('theme_font_id',?)", [fontId]);
-    }
-  } catch {}
+async function saveTheme(presetId: string, vars: ThemeVars, stationId: number | null, fontId?: string) {
+  if (stationId == null) return;
+  const kv = (window as any).ether.stationConfigKv;
+  const r1 = await kv.upsertByKey(stationId, 'theme_preset_id', presetId);
+  if (!r1.ok) console.error('[saveTheme] theme_preset_id:', r1.error);
+  const r2 = await kv.upsertByKey(stationId, 'theme_custom_vars', JSON.stringify(vars));
+  if (!r2.ok) console.error('[saveTheme] theme_custom_vars:', r2.error);
+  if (fontId !== undefined) {
+    const r3 = await kv.upsertByKey(stationId, 'theme_font_id', fontId);
+    if (!r3.ok) console.error('[saveTheme] theme_font_id:', r3.error);
+  }
 }
 
-async function loadTheme(): Promise<{ presetId: string; vars: ThemeVars; fontId: string } | null> {
+async function loadTheme(stationId: number): Promise<{ presetId: string; vars: ThemeVars; fontId: string } | null> {
   try {
-    const [pidRow, varsRow, fontRow] = await Promise.all([
-      query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='theme_preset_id'"),
-      query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='theme_custom_vars'"),
-      query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='theme_font_id'"),
-    ]);
-    if (!pidRow.length || !varsRow.length) return null;
+    const result = await (window as any).ether.stationConfigKv.list(stationId);
+    if (!result.ok) return null;
+    const rows: { key: string; value: string }[] = result.rows;
+    const get = (key: string) => rows.find(r => r.key === key)?.value;
+    const presetId      = get('theme_preset_id');
+    const customVarsRaw = get('theme_custom_vars');
+    if (!presetId || !customVarsRaw) return null;
     return {
-      presetId: pidRow[0].value,
-      vars: JSON.parse(varsRow[0].value),
-      fontId: fontRow.length ? fontRow[0].value : "system",
+      presetId,
+      vars:   JSON.parse(customVarsRaw),
+      fontId: get('theme_font_id') ?? 'system',
     };
   } catch { return null; }
 }
@@ -344,6 +347,7 @@ export function useSkin() {
   const [skinId, setSkinIdState]       = useState(DEFAULT_PRESET.id);
   const [fontId, setFontIdState]       = useState("system");
   const [editorOpen, setEditorOpen]    = useState(false);
+  const [stationId, setStationId]      = useState<number | null>(null);
 
   // Register setter so AppContextMenu can open the editor
   useEffect(() => {
@@ -356,14 +360,21 @@ export function useSkin() {
   // so that any color updates to presets take effect on the next app start without
   // requiring the user to re-select the theme.
   useEffect(() => {
-    loadTheme().then(saved => {
+    (async () => {
+      const station = await (window as any).ether.invoke('stations:get-active');
+      const sid: number | null = station?.id ?? null;
+      setStationId(sid);
+
+      if (sid == null) { applyTheme(DEFAULT_PRESET.vars); return; }
+
+      const saved = await loadTheme(sid);
       if (saved) {
         // If saved theme has a light background, force back to dark-studio
         const bgPrimary = saved.vars["--bg-primary"] || "";
         if (bgPrimary.startsWith("#f") || bgPrimary.startsWith("#e") || bgPrimary === "#ffffff") {
           setSkinIdState(DEFAULT_PRESET.id);
           applyTheme(DEFAULT_PRESET.vars);
-          saveTheme(DEFAULT_PRESET.id, DEFAULT_PRESET.vars);
+          saveTheme(DEFAULT_PRESET.id, DEFAULT_PRESET.vars, sid);
           return;
         }
         setSkinIdState(saved.presetId);
@@ -378,7 +389,7 @@ export function useSkin() {
       } else {
         applyTheme(DEFAULT_PRESET.vars);
       }
-    });
+    })();
   }, []);
 
   const setSkin = useCallback((id: string) => {
@@ -386,8 +397,8 @@ export function useSkin() {
     setSkinIdState(id);
     const fontStack = FONT_OPTIONS.find(f => f.id === fontId)?.stack;
     applyTheme(preset.vars, fontStack);
-    saveTheme(id, preset.vars, fontId);
-  }, [fontId]);
+    saveTheme(id, preset.vars, stationId, fontId);
+  }, [fontId, stationId]);
 
   return {
     skinId,
@@ -581,18 +592,31 @@ export function SkinPickerOverlay({
   const [operators, setOperators]       = useState<{ id: number; uuid: string; name: string }[]>([]);
   const [opThemeUuid, setOpThemeUuid]   = useState<string | null>(null);
   // Station logo
-  const [logoUrl, setLogoUrl]           = useState<string | null>(null);
+  const [logoUrl, setLogoUrl]                   = useState<string | null>(null);
+  const [activeStationId, setActiveStationId]   = useState<number | null>(null);
 
   // Load operators and logo on mount
   useEffect(() => {
     (async () => {
       try {
+        const station = await (window as any).ether.invoke('stations:get-active');
+        const sid: number | null = station?.id ?? null;
+        setActiveStationId(sid);
+
         const ops = await (window as any).ether.db.query("SELECT id, uuid, name FROM operators ORDER BY id", []);
         if (ops.data) setOperators(ops.data);
-        const logoRow = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='station_logo'", []);
-        if (logoRow.data?.length) setLogoUrl(logoRow.data[0].value);
-        const fontRow = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='theme_font_id'", []);
-        if (fontRow.data?.length) setFontId(fontRow.data[0].value);
+
+        if (sid != null) {
+          const kvResult = await (window as any).ether.stationConfigKv.list(sid);
+          if (kvResult.ok) {
+            const rows: { key: string; value: string }[] = kvResult.rows;
+            const get = (key: string) => rows.find(r => r.key === key)?.value;
+            const logo = get('station_logo');
+            const font = get('theme_font_id');
+            if (logo) setLogoUrl(logo);
+            if (font) setFontId(font);
+          }
+        }
       } catch {}
     })();
   }, []);
@@ -651,19 +675,19 @@ export function SkinPickerOverlay({
     const result = await (window as any).ether.station.uploadLogo();
     if (result?.ok && result.dataUrl) {
       setLogoUrl(result.dataUrl);
-      await (window as any).ether.db.execute(
-        "INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('station_logo',?)",
-        [result.dataUrl]
-      );
+      if (activeStationId != null) {
+        const r = await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'station_logo', result.dataUrl);
+        if (!r.ok) console.error('[handleLogoUpload] station_logo:', r.error);
+      }
     }
   };
 
   const handleLogoRemove = async () => {
     setLogoUrl(null);
-    await (window as any).ether.db.execute(
-      "DELETE FROM station_config_kv WHERE key='station_logo'",
-      []
-    );
+    if (activeStationId != null) {
+      const r = await (window as any).ether.stationConfigKv.removeByKey(activeStationId, 'station_logo');
+      if (!r.ok) console.error('[handleLogoRemove] station_logo:', r.error);
+    }
   };
 
   const tierBtn = (id: "presets" | "tuning" | "identity", label: string) => (
