@@ -140,6 +140,8 @@ function prepNotesDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPrepNotes(ipcMain, db) {
@@ -168,6 +170,7 @@ function installPrepNotes(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[prep_notes] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   prepNotesCreate,
   prepNotesUpdate,
   prepNotesDelete,
+
 };

@@ -140,6 +140,8 @@ function operatorsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installOperators(ipcMain, db) {
@@ -168,6 +170,7 @@ function installOperators(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[operators] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   operatorsCreate,
   operatorsUpdate,
   operatorsDelete,
+
 };

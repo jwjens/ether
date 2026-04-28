@@ -140,6 +140,8 @@ function stationProgrammingMoodsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStationProgrammingMoods(ipcMain, db) {
@@ -168,6 +170,7 @@ function installStationProgrammingMoods(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[station_programming_moods] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   stationProgrammingMoodsCreate,
   stationProgrammingMoodsUpdate,
   stationProgrammingMoodsDelete,
+
 };

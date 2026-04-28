@@ -28,6 +28,7 @@ const {
   cartSlotsCreate,
   cartSlotsUpdate,
   cartSlotsDelete,
+
 } = require('../electron/sync/handlers/cart_slots');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 

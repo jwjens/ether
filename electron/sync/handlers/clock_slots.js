@@ -140,6 +140,8 @@ function clockSlotsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installClockSlots(ipcMain, db) {
@@ -168,6 +170,7 @@ function installClockSlots(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[clock_slots] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   clockSlotsCreate,
   clockSlotsUpdate,
   clockSlotsDelete,
+
 };

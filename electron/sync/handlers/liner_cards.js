@@ -140,6 +140,8 @@ function linerCardsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installLinerCards(ipcMain, db) {
@@ -168,6 +170,7 @@ function installLinerCards(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[liner_cards] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   linerCardsCreate,
   linerCardsUpdate,
   linerCardsDelete,
+
 };

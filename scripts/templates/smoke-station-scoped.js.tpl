@@ -28,6 +28,10 @@ const {
   {{CAMEL_NAME}}Create,
   {{CAMEL_NAME}}Update,
   {{CAMEL_NAME}}Delete,
+{{#IF_KV}}
+  {{CAMEL_NAME}}UpsertByKey,
+  {{CAMEL_NAME}}RemoveByKey,
+{{/IF_KV}}
 } = require('../electron/sync/handlers/{{TABLE_NAME}}');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -361,6 +365,90 @@ if (!sampleRow) {
   });
 }
 
+{{#IF_KV}}
+// ── TEST 9: upsertByKey ──────────────────────────────────────────────────────
+
+section('TEST 9 — upsertByKey: insert, update, reactivate (SAVEPOINT-isolated)');
+
+withSavepoint('smoke_{{TABLE_NAME}}_9', () => {
+  const testKey   = 'smoke_kv_' + crypto.randomBytes(4).toString('hex');
+  const mutBefore = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
+
+  // A — fresh insert
+  const row1 = {{CAMEL_NAME}}UpsertByKey(db, 1, testKey, 'val_one');
+  if (row1 && row1.{{KV_KEY_COL}} === testKey && row1.{{KV_VALUE_COL}} === 'val_one' && row1.deleted_at === null)
+    pass('TEST 9 — upsertByKey creates fresh row');
+  else
+    fail('TEST 9 — fresh insert', JSON.stringify(row1));
+
+  // B — update same key (same row, new value)
+  const row2 = {{CAMEL_NAME}}UpsertByKey(db, 1, testKey, 'val_two');
+  if (row2 && row2.uuid === row1.uuid && row2.{{KV_VALUE_COL}} === 'val_two')
+    pass('TEST 9 — upsertByKey updates existing row on second call');
+  else
+    fail('TEST 9 — update path', JSON.stringify(row2));
+
+  // C — soft-delete the row, then reactivate via upsertByKey
+  {{CAMEL_NAME}}Delete(db, row1.uuid, 1);
+  const deadRow = db.prepare(`SELECT deleted_at FROM {{TABLE_NAME}} WHERE uuid=?`).get(row1.uuid);
+  if (deadRow && deadRow.deleted_at !== null)
+    pass('TEST 9 — row soft-deleted before reactivation test');
+  else
+    fail('TEST 9 — soft-delete before reactivation failed', JSON.stringify(deadRow));
+
+  const row3 = {{CAMEL_NAME}}UpsertByKey(db, 1, testKey, 'val_three');
+  if (row3 && row3.uuid === row1.uuid && row3.deleted_at === null && row3.{{KV_VALUE_COL}} === 'val_three')
+    pass('TEST 9 — upsertByKey reactivates soft-deleted row with new value');
+  else
+    fail('TEST 9 — reactivation path', JSON.stringify(row3));
+
+  // insert + update + delete + update(reactivate) = 4 mutations
+  const mutAfter = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
+  if (mutAfter === mutBefore + 4)
+    pass('TEST 9 — 4 mutations logged (insert, update, delete, reactivate)');
+  else
+    fail('TEST 9 — mutation count', `expected +4 got ${mutAfter - mutBefore}`);
+});
+
+// ── TEST 10: removeByKey ─────────────────────────────────────────────────────
+
+section('TEST 10 — removeByKey: soft-delete and no-op (SAVEPOINT-isolated)');
+
+withSavepoint('smoke_{{TABLE_NAME}}_10', () => {
+  const testKey   = 'smoke_rm_' + crypto.randomBytes(4).toString('hex');
+  const mutBefore = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
+
+  {{CAMEL_NAME}}UpsertByKey(db, 1, testKey, 'to_remove');
+
+  const r1 = {{CAMEL_NAME}}RemoveByKey(db, 1, testKey);
+  if (r1 && r1.ok === true && !r1.alreadyMissing)
+    pass('TEST 10 — removeByKey returns { ok: true } for live row');
+  else
+    fail('TEST 10 — removeByKey first call', JSON.stringify(r1));
+
+  const dbRow = db.prepare(
+    `SELECT deleted_at FROM {{TABLE_NAME}} WHERE station_id=1 AND {{KV_KEY_COL}}=? ORDER BY rowid DESC LIMIT 1`
+  ).get(testKey);
+  if (dbRow && dbRow.deleted_at !== null)
+    pass('TEST 10 — row has deleted_at set after removeByKey');
+  else
+    fail('TEST 10 — deleted_at not set', JSON.stringify(dbRow));
+
+  const r2 = {{CAMEL_NAME}}RemoveByKey(db, 1, testKey);
+  if (r2 && r2.ok === true && r2.alreadyMissing === true)
+    pass('TEST 10 — removeByKey on already-missing key returns alreadyMissing: true');
+  else
+    fail('TEST 10 — no-op path', JSON.stringify(r2));
+
+  // upsert (insert) + remove = 2 mutations; second remove is no-op = 0
+  const mutAfter = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
+  if (mutAfter === mutBefore + 2)
+    pass('TEST 10 — 2 mutations logged (upsert + remove; no-op logs nothing)');
+  else
+    fail('TEST 10 — mutation count', `expected +2 got ${mutAfter - mutBefore}`);
+});
+
+{{/IF_KV}}
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 
 section('POST-TEST — zero residue verification');

@@ -56,6 +56,16 @@ function loadTemplate(name) {
   return fs.readFileSync(tplPath, 'utf8');
 }
 
+// ── Conditional block processor ───────────────────────────────────────────────
+// Strips or includes {{#IF_KV}}...{{/IF_KV}} blocks before token substitution.
+// Must run before render() so non-KV tables never expose KV-specific tokens.
+
+function stripConditionals(template, isKv) {
+  return template.replace(/\{\{#IF_KV\}\}([\s\S]*?)\{\{\/IF_KV\}\}/g, (_, block) =>
+    isKv ? block : ''
+  );
+}
+
 // ── Variable substitution ─────────────────────────────────────────────────────
 // Replaces all {{KEY}} markers in template with vars[KEY].
 // Throws on unknown keys so templates can't silently emit unreplaced markers.
@@ -118,6 +128,9 @@ function computeVars(tableName, entry) {
     MUT_SID_CREATE:      mutSidCreate,
     MUT_SID_UPDATE:      mutSidUpdate,
     MUT_SID_DELETE:      mutSidDelete,
+    IS_KV:               String(!!entry.isKv),
+    KV_KEY_COL:          entry.kvKeyCol   ?? '',
+    KV_VALUE_COL:        entry.kvValueCol ?? '',
   };
 }
 
@@ -125,9 +138,13 @@ function computeVars(tableName, entry) {
 // Generates one camelCase namespace entry for preload-handlers.js.
 // Station-scoped list() takes stationId; install-scoped list() takes opts only.
 
-function buildPreloadNamespace(camelName, tableName, scope) {
-  const ch = tableName; // IPC channel prefix = table name (snake_case)
-  const i  = '    ';    // inner indent (4 spaces inside the namespace object)
+function buildPreloadNamespace(camelName, tableName, scope, isKv) {
+  const ch      = tableName;
+  const i       = '    ';
+  const kvLines = isKv ? [
+    `${i}upsertByKey: (stationId, key, value) => ipcRenderer.invoke('${ch}:upsert-by-key', stationId, key, value),`,
+    `${i}removeByKey:  (stationId, key)        => ipcRenderer.invoke('${ch}:remove-by-key',  stationId, key),`,
+  ] : [];
   if (scope === 'station') {
     return [
       `  ${camelName}: {`,
@@ -136,6 +153,7 @@ function buildPreloadNamespace(camelName, tableName, scope) {
       `${i}create:  (payload)         => ipcRenderer.invoke('${ch}:create',    payload),`,
       `${i}update:  (uuid, patch)     => ipcRenderer.invoke('${ch}:update',    uuid, patch),`,
       `${i}delete:  (uuid, stationId) => ipcRenderer.invoke('${ch}:delete',    uuid, stationId),`,
+      ...kvLines,
       `  },`,
     ].join('\n');
   } else {
@@ -146,6 +164,7 @@ function buildPreloadNamespace(camelName, tableName, scope) {
       `${i}create:  (payload)         => ipcRenderer.invoke('${ch}:create',    payload),`,
       `${i}update:  (uuid, patch)     => ipcRenderer.invoke('${ch}:update',    uuid, patch),`,
       `${i}delete:  (uuid)            => ipcRenderer.invoke('${ch}:delete',    uuid),`,
+      ...kvLines,
       `  },`,
     ].join('\n');
   }
@@ -202,21 +221,22 @@ function main() {
     const scope = entry.scope;
 
     // Handler file: electron/sync/handlers/<tableName>.js
+    const isKv = !!entry.isKv;
     emit(
       path.join(HANDLERS_DIR, `${tableName}.js`),
-      render(HANDLER_TPL[scope], vars)
+      render(stripConditionals(HANDLER_TPL[scope], isKv), vars)
     );
 
     // Smoke file: scripts/smoke-<tableName>-handlers.js
     emit(
       path.join(SCRIPTS_DIR, `smoke-${tableName}-handlers.js`),
-      render(SMOKE_TPL[scope], vars)
+      render(stripConditionals(SMOKE_TPL[scope], isKv), vars)
     );
 
     // Accumulate coordination data
     requireLines.push(`const { ${vars.INSTALL_FN} } = require('./${tableName}');`);
     installCallLines.push(`  ${vars.INSTALL_FN}(ipcMain, db);`);
-    namespaceBlocks.push(buildPreloadNamespace(vars.CAMEL_NAME, tableName, scope));
+    namespaceBlocks.push(buildPreloadNamespace(vars.CAMEL_NAME, tableName, scope, !!entry.isKv));
   }
 
   // electron/sync/handlers/index.js — calls installStationProgramming + all 30 generated

@@ -140,6 +140,8 @@ function categoriesDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installCategories(ipcMain, db) {
@@ -168,6 +170,7 @@ function installCategories(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[categories] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   categoriesCreate,
   categoriesUpdate,
   categoriesDelete,
+
 };

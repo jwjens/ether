@@ -140,6 +140,8 @@ function spotsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSpots(ipcMain, db) {
@@ -168,6 +170,7 @@ function installSpots(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[spots] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   spotsCreate,
   spotsUpdate,
   spotsDelete,
+
 };

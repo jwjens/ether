@@ -140,6 +140,8 @@ function separationRulesDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSeparationRules(ipcMain, db) {
@@ -168,6 +170,7 @@ function installSeparationRules(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[separation_rules] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   separationRulesCreate,
   separationRulesUpdate,
   separationRulesDelete,
+
 };

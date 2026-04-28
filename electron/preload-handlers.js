@@ -224,6 +224,8 @@ module.exports = function buildHandlers(ipcRenderer) {
     create:  (payload)         => ipcRenderer.invoke('station_config_kv:create',    payload),
     update:  (uuid, patch)     => ipcRenderer.invoke('station_config_kv:update',    uuid, patch),
     delete:  (uuid, stationId) => ipcRenderer.invoke('station_config_kv:delete',    uuid, stationId),
+    upsertByKey: (stationId, key, value) => ipcRenderer.invoke('station_config_kv:upsert-by-key', stationId, key, value),
+    removeByKey:  (stationId, key)        => ipcRenderer.invoke('station_config_kv:remove-by-key',  stationId, key),
   },
   stationProgrammingMoods: {
     list:    (stationId, opts) => ipcRenderer.invoke('station_programming_moods:list',      stationId, opts),

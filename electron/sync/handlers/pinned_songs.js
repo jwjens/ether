@@ -140,6 +140,8 @@ function pinnedSongsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPinnedSongs(ipcMain, db) {
@@ -168,6 +170,7 @@ function installPinnedSongs(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[pinned_songs] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   pinnedSongsCreate,
   pinnedSongsUpdate,
   pinnedSongsDelete,
+
 };

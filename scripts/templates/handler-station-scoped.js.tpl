@@ -140,6 +140,66 @@ function {{CAMEL_NAME}}Delete(db, uuid, stationId) {
   return { ok: true };
 }
 
+{{#IF_KV}}
+function {{CAMEL_NAME}}UpsertByKey(db, stationId, key, value) {
+  validateScope();
+  if (stationId == null) throw new Error(`[{{TABLE_NAME}}] station_id required for upsertByKey`);
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND {{KV_KEY_COL}} = ?`
+  ).get(stationId, key);
+  const now = new Date().toISOString();
+  if (!existing) {
+    const uuid = crypto.randomUUID();
+    const row  = { station_id: stationId, {{KV_KEY_COL}}: key, {{KV_VALUE_COL}}: value, uuid, created_at: now, updated_at: now, deleted_at: null };
+    const payloadAfter = serializePayload(row, TABLE);
+    withMutation(db, {
+      table_name: TABLE, row_id: uuid, op: 'insert',
+      payload_before: null, payload_after: payloadAfter,
+      station_id: stationId, actor_id: null,
+    }, () => {
+      db.prepare(
+        `INSERT INTO ${TABLE} ({{INSERT_COLS}}) VALUES ({{INSERT_PLACEHOLDERS}})`
+      ).run({{INSERT_ROW_BINDINGS}});
+    });
+    return {{CAMEL_NAME}}Get(db, uuid);
+  }
+  const before  = serializePayload(existing, TABLE);
+  const updated = { ...existing, {{KV_VALUE_COL}}: value, deleted_at: null, updated_at: now };
+  const after   = serializePayload(updated, TABLE);
+  withMutation(db, {
+    table_name: TABLE, row_id: existing.uuid, op: 'update',
+    payload_before: before, payload_after: after,
+    station_id: stationId, actor_id: null,
+  }, () => {
+    db.prepare(
+      `UPDATE ${TABLE} SET {{KV_VALUE_COL}} = ?, deleted_at = NULL, updated_at = ? WHERE uuid = ?`
+    ).run(value, now, existing.uuid);
+  });
+  return {{CAMEL_NAME}}Get(db, existing.uuid);
+}
+
+function {{CAMEL_NAME}}RemoveByKey(db, stationId, key) {
+  validateScope();
+  if (stationId == null) throw new Error(`[{{TABLE_NAME}}] station_id required for removeByKey`);
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND {{KV_KEY_COL}} = ? AND deleted_at IS NULL`
+  ).get(stationId, key);
+  if (!existing) return { ok: true, alreadyMissing: true };
+  const before = serializePayload(existing, TABLE);
+  const now    = new Date().toISOString();
+  withMutation(db, {
+    table_name: TABLE, row_id: existing.uuid, op: 'delete',
+    payload_before: before, payload_after: null,
+    station_id: stationId, actor_id: null,
+  }, () => {
+    db.prepare(
+      `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
+    ).run(now, now, existing.uuid);
+  });
+  return { ok: true };
+}
+{{/IF_KV}}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function {{INSTALL_FN}}(ipcMain, db) {
@@ -168,6 +228,18 @@ function {{INSTALL_FN}}(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+{{#IF_KV}}
+  ipcMain.handle('{{TABLE_NAME}}:upsert-by-key', (_, stationId, key, value) => {
+    try { return { ok: true, row: {{CAMEL_NAME}}UpsertByKey(db, stationId, key, value) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('{{TABLE_NAME}}:remove-by-key', (_, stationId, key) => {
+    try { return { ok: true, ...{{CAMEL_NAME}}RemoveByKey(db, stationId, key) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+{{/IF_KV}}
   console.log('[{{TABLE_NAME}}] handlers installed');
 }
 
@@ -179,4 +251,8 @@ module.exports = {
   {{CAMEL_NAME}}Create,
   {{CAMEL_NAME}}Update,
   {{CAMEL_NAME}}Delete,
+{{#IF_KV}}
+  {{CAMEL_NAME}}UpsertByKey,
+  {{CAMEL_NAME}}RemoveByKey,
+{{/IF_KV}}
 };

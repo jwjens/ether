@@ -140,6 +140,8 @@ function deckConfigsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installDeckConfigs(ipcMain, db) {
@@ -168,6 +170,7 @@ function installDeckConfigs(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[deck_configs] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   deckConfigsCreate,
   deckConfigsUpdate,
   deckConfigsDelete,
+
 };

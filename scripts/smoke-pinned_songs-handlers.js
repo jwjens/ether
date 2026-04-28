@@ -28,6 +28,7 @@ const {
   pinnedSongsCreate,
   pinnedSongsUpdate,
   pinnedSongsDelete,
+
 } = require('../electron/sync/handlers/pinned_songs');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 

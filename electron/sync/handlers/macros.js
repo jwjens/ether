@@ -140,6 +140,8 @@ function macrosDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMacros(ipcMain, db) {
@@ -168,6 +170,7 @@ function installMacros(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[macros] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   macrosCreate,
   macrosUpdate,
   macrosDelete,
+
 };

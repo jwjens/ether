@@ -140,6 +140,8 @@ function operatorNotesDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installOperatorNotes(ipcMain, db) {
@@ -168,6 +170,7 @@ function installOperatorNotes(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[operator_notes] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   operatorNotesCreate,
   operatorNotesUpdate,
   operatorNotesDelete,
+
 };

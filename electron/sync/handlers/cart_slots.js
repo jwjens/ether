@@ -140,6 +140,8 @@ function cartSlotsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installCartSlots(ipcMain, db) {
@@ -168,6 +170,7 @@ function installCartSlots(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[cart_slots] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   cartSlotsCreate,
   cartSlotsUpdate,
   cartSlotsDelete,
+
 };

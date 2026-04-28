@@ -140,6 +140,8 @@ function playLogDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPlayLog(ipcMain, db) {
@@ -168,6 +170,7 @@ function installPlayLog(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[play_log] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   playLogCreate,
   playLogUpdate,
   playLogDelete,
+
 };

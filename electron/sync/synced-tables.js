@@ -663,6 +663,9 @@ const REGISTRY = {
     tableName: 'station_config_kv',
     primaryKey: ['station_id', 'key'],
     scope: 'station',
+    isKv: true,
+    kvKeyCol: 'key',
+    kvValueCol: 'value',
     columns: {
       station_id: 'scalar',
       key:        'scalar',

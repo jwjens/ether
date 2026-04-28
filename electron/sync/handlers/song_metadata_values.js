@@ -140,6 +140,8 @@ function songMetadataValuesDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSongMetadataValues(ipcMain, db) {
@@ -168,6 +170,7 @@ function installSongMetadataValues(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[song_metadata_values] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   songMetadataValuesCreate,
   songMetadataValuesUpdate,
   songMetadataValuesDelete,
+
 };

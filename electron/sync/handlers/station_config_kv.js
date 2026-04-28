@@ -140,6 +140,66 @@ function stationConfigKvDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+function stationConfigKvUpsertByKey(db, stationId, key, value) {
+  validateScope();
+  if (stationId == null) throw new Error(`[station_config_kv] station_id required for upsertByKey`);
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND key = ?`
+  ).get(stationId, key);
+  const now = new Date().toISOString();
+  if (!existing) {
+    const uuid = crypto.randomUUID();
+    const row  = { station_id: stationId, key: key, value: value, uuid, created_at: now, updated_at: now, deleted_at: null };
+    const payloadAfter = serializePayload(row, TABLE);
+    withMutation(db, {
+      table_name: TABLE, row_id: uuid, op: 'insert',
+      payload_before: null, payload_after: payloadAfter,
+      station_id: stationId, actor_id: null,
+    }, () => {
+      db.prepare(
+        `INSERT INTO ${TABLE} (station_id, key, value, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(row.station_id, row.key, row.value, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+    });
+    return stationConfigKvGet(db, uuid);
+  }
+  const before  = serializePayload(existing, TABLE);
+  const updated = { ...existing, value: value, deleted_at: null, updated_at: now };
+  const after   = serializePayload(updated, TABLE);
+  withMutation(db, {
+    table_name: TABLE, row_id: existing.uuid, op: 'update',
+    payload_before: before, payload_after: after,
+    station_id: stationId, actor_id: null,
+  }, () => {
+    db.prepare(
+      `UPDATE ${TABLE} SET value = ?, deleted_at = NULL, updated_at = ? WHERE uuid = ?`
+    ).run(value, now, existing.uuid);
+  });
+  return stationConfigKvGet(db, existing.uuid);
+}
+
+function stationConfigKvRemoveByKey(db, stationId, key) {
+  validateScope();
+  if (stationId == null) throw new Error(`[station_config_kv] station_id required for removeByKey`);
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND key = ? AND deleted_at IS NULL`
+  ).get(stationId, key);
+  if (!existing) return { ok: true, alreadyMissing: true };
+  const before = serializePayload(existing, TABLE);
+  const now    = new Date().toISOString();
+  withMutation(db, {
+    table_name: TABLE, row_id: existing.uuid, op: 'delete',
+    payload_before: before, payload_after: null,
+    station_id: stationId, actor_id: null,
+  }, () => {
+    db.prepare(
+      `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
+    ).run(now, now, existing.uuid);
+  });
+  return { ok: true };
+}
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStationConfigKv(ipcMain, db) {
@@ -168,6 +228,18 @@ function installStationConfigKv(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
+  ipcMain.handle('station_config_kv:upsert-by-key', (_, stationId, key, value) => {
+    try { return { ok: true, row: stationConfigKvUpsertByKey(db, stationId, key, value) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('station_config_kv:remove-by-key', (_, stationId, key) => {
+    try { return { ok: true, ...stationConfigKvRemoveByKey(db, stationId, key) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+
   console.log('[station_config_kv] handlers installed');
 }
 
@@ -179,4 +251,8 @@ module.exports = {
   stationConfigKvCreate,
   stationConfigKvUpdate,
   stationConfigKvDelete,
+
+  stationConfigKvUpsertByKey,
+  stationConfigKvRemoveByKey,
+
 };

@@ -140,6 +140,8 @@ function rtmpDestinationsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installRtmpDestinations(ipcMain, db) {
@@ -168,6 +170,7 @@ function installRtmpDestinations(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[rtmp_destinations] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   rtmpDestinationsCreate,
   rtmpDestinationsUpdate,
   rtmpDestinationsDelete,
+
 };

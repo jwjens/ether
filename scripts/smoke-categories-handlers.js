@@ -28,6 +28,7 @@ const {
   categoriesCreate,
   categoriesUpdate,
   categoriesDelete,
+
 } = require('../electron/sync/handlers/categories');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 

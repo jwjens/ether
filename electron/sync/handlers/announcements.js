@@ -140,6 +140,8 @@ function announcementsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installAnnouncements(ipcMain, db) {
@@ -168,6 +170,7 @@ function installAnnouncements(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[announcements] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   announcementsCreate,
   announcementsUpdate,
   announcementsDelete,
+
 };

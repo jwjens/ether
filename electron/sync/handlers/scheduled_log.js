@@ -140,6 +140,8 @@ function scheduledLogDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installScheduledLog(ipcMain, db) {
@@ -168,6 +170,7 @@ function installScheduledLog(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[scheduled_log] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   scheduledLogCreate,
   scheduledLogUpdate,
   scheduledLogDelete,
+
 };

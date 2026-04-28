@@ -28,6 +28,7 @@ const {
   announcementsCreate,
   announcementsUpdate,
   announcementsDelete,
+
 } = require('../electron/sync/handlers/announcements');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 

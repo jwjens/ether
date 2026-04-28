@@ -140,6 +140,8 @@ function showsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installShows(ipcMain, db) {
@@ -168,6 +170,7 @@ function installShows(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[shows] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   showsCreate,
   showsUpdate,
   showsDelete,
+
 };

@@ -140,6 +140,8 @@ function smartScheduleRulesDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSmartScheduleRules(ipcMain, db) {
@@ -168,6 +170,7 @@ function installSmartScheduleRules(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[smart_schedule_rules] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   smartScheduleRulesCreate,
   smartScheduleRulesUpdate,
   smartScheduleRulesDelete,
+
 };

@@ -140,6 +140,8 @@ function metadataDefinitionsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMetadataDefinitions(ipcMain, db) {
@@ -168,6 +170,7 @@ function installMetadataDefinitions(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[metadata_definitions] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   metadataDefinitionsCreate,
   metadataDefinitionsUpdate,
   metadataDefinitionsDelete,
+
 };

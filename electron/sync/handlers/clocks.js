@@ -140,6 +140,8 @@ function clocksDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installClocks(ipcMain, db) {
@@ -168,6 +170,7 @@ function installClocks(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[clocks] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   clocksCreate,
   clocksUpdate,
   clocksDelete,
+
 };

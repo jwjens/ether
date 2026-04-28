@@ -140,6 +140,8 @@ function metadataVocabularyDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMetadataVocabulary(ipcMain, db) {
@@ -168,6 +170,7 @@ function installMetadataVocabulary(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[metadata_vocabulary] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   metadataVocabularyCreate,
   metadataVocabularyUpdate,
   metadataVocabularyDelete,
+
 };

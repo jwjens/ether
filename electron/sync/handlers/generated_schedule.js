@@ -140,6 +140,8 @@ function generatedScheduleDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installGeneratedSchedule(ipcMain, db) {
@@ -168,6 +170,7 @@ function installGeneratedSchedule(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[generated_schedule] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   generatedScheduleCreate,
   generatedScheduleUpdate,
   generatedScheduleDelete,
+
 };

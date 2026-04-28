@@ -140,6 +140,8 @@ function formatClocksDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installFormatClocks(ipcMain, db) {
@@ -168,6 +170,7 @@ function installFormatClocks(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[format_clocks] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   formatClocksCreate,
   formatClocksUpdate,
   formatClocksDelete,
+
 };

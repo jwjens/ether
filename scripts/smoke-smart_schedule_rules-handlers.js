@@ -28,6 +28,7 @@ const {
   smartScheduleRulesCreate,
   smartScheduleRulesUpdate,
   smartScheduleRulesDelete,
+
 } = require('../electron/sync/handlers/smart_schedule_rules');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 

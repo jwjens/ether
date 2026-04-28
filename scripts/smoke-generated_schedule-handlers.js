@@ -28,6 +28,7 @@ const {
   generatedScheduleCreate,
   generatedScheduleUpdate,
   generatedScheduleDelete,
+
 } = require('../electron/sync/handlers/generated_schedule');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 

@@ -140,6 +140,8 @@ function stationsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStations(ipcMain, db) {
@@ -168,6 +170,7 @@ function installStations(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+
   console.log('[stations] handlers installed');
 }
 
@@ -179,4 +182,5 @@ module.exports = {
   stationsCreate,
   stationsUpdate,
   stationsDelete,
+
 };

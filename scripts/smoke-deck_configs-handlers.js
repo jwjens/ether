@@ -28,6 +28,7 @@ const {
   deckConfigsCreate,
   deckConfigsUpdate,
   deckConfigsDelete,
+
 } = require('../electron/sync/handlers/deck_configs');
 
 // ── Test harness ──────────────────────────────────────────────────────────────
@@ -360,6 +361,7 @@ if (!sampleRow) {
       fail('TEST 8 — getById should return null after soft-delete');
   });
 }
+
 
 // ── Post-test: zero residue ───────────────────────────────────────────────────
 
