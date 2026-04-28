@@ -150,11 +150,20 @@ if (!sampleRow) {
     const mutBefore = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
     const rowBefore = db.prepare('SELECT COUNT(*) AS c FROM {{TABLE_NAME}}').get().c;
 
-    // Clone existing row with a fresh uuid; strip auto-increment id and station_id
+    // Clone existing row with a fresh uuid; strip auto-increment id and station_id.
+    // Append a random suffix to every string column to avoid secondary UNIQUE constraint
+    // collisions (e.g. UNIQUE(name)) when inserting next to the original row.
     const fixture = { ...sampleRow };
     delete fixture.id;
     delete fixture.station_id;
     fixture.uuid = crypto.randomUUID();
+    const _smokeSuffix = '_smoke_' + crypto.randomBytes(3).toString('hex');
+    for (const _col of Object.keys(fixture)) {
+      if (_col === 'uuid' || _col === 'id' || _col === 'created_at' || _col === 'updated_at' || _col === 'deleted_at' || _col === 'station_id') continue;
+      // Skip enum-constrained columns (CHECK constraints use _type/_status suffixes or known names)
+      if (_col.endsWith('_type') || _col.endsWith('_status') || _col === 'scope' || _col === 'op' || _col === 'origin' || _col === 'gender' || _col === 'daypart') continue;
+      if (typeof fixture[_col] === 'string') fixture[_col] = fixture[_col] + _smokeSuffix;
+    }
 
     const newRow = {{CAMEL_NAME}}Create(db, fixture);
 

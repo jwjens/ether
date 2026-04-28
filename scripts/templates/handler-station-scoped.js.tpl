@@ -36,7 +36,7 @@ function {{CAMEL_NAME}}List(db, stationId, opts) {
     params.push(stationId);
   }
   const { limit = 500, offset = 0 } = opts || {};
-  sql += ' ORDER BY id LIMIT ? OFFSET ?';
+  sql += ' ORDER BY rowid LIMIT ? OFFSET ?';
   params.push(limit, offset);
   return db.prepare(sql).all(...params);
 }

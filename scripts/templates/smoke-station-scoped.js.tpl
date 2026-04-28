@@ -164,10 +164,19 @@ if (!sampleRow) {
     const mutBefore = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
     const rowBefore = db.prepare('SELECT COUNT(*) AS c FROM {{TABLE_NAME}}').get().c;
 
-    // Clone existing row with a fresh uuid; strip auto-increment id
+    // Clone existing row with a fresh uuid; strip auto-increment id.
+    // Append a random suffix to every string column to avoid secondary UNIQUE constraint
+    // collisions (e.g. UNIQUE(station_id, name)) when inserting next to the original row.
     const fixture = { ...sampleRow };
     delete fixture.id;
     fixture.uuid = crypto.randomUUID();
+    const _smokeSuffix = '_smoke_' + crypto.randomBytes(3).toString('hex');
+    for (const _col of Object.keys(fixture)) {
+      if (_col === 'uuid' || _col === 'id' || _col === 'created_at' || _col === 'updated_at' || _col === 'deleted_at' || _col === 'station_id') continue;
+      // Skip enum-constrained columns (CHECK constraints use _type/_status suffixes or known names)
+      if (_col.endsWith('_type') || _col.endsWith('_status') || _col === 'scope' || _col === 'op' || _col === 'origin' || _col === 'gender' || _col === 'daypart') continue;
+      if (typeof fixture[_col] === 'string') fixture[_col] = fixture[_col] + _smokeSuffix;
+    }
 
     const newRow = {{CAMEL_NAME}}Create(db, fixture);
 
@@ -213,18 +222,21 @@ if (!sampleRow) {
 }
 
 // ── TEST 5: create — missing station_id rejects ───────────────────────────────
+// Only meaningful for tables that physically have a station_id column.
 
-section('TEST 5 — create rejects missing station_id');
+if ({{HAS_STATION_ID_COL}}) {
+  section('TEST 5 — create rejects missing station_id');
 
-withSavepoint('smoke_{{TABLE_NAME}}_5', () => {
-  let err = null;
-  try { {{CAMEL_NAME}}Create(db, { uuid: crypto.randomUUID() }); }
-  catch (e) { err = e; }
-  if (err && /station_id/i.test(err.message))
-    pass('TEST 5 — create without station_id throws with station_id mention');
-  else
-    fail('TEST 5 — expected station_id error', err ? err.message : 'no error thrown');
-});
+  withSavepoint('smoke_{{TABLE_NAME}}_5', () => {
+    let err = null;
+    try { {{CAMEL_NAME}}Create(db, { uuid: crypto.randomUUID() }); }
+    catch (e) { err = e; }
+    if (err && /station_id/i.test(err.message))
+      pass('TEST 5 — create without station_id throws with station_id mention');
+    else
+      fail('TEST 5 — expected station_id error', err ? err.message : 'no error thrown');
+  });
+}
 
 // ── TEST 6: update ────────────────────────────────────────────────────────────
 

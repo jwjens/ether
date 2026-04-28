@@ -30,7 +30,7 @@ function validateScope() {
 function {{CAMEL_NAME}}List(db, opts) {
   const { limit = 500, offset = 0 } = opts || {};
   return db.prepare(
-    `SELECT * FROM ${TABLE} WHERE deleted_at IS NULL ORDER BY id LIMIT ? OFFSET ?`
+    `SELECT * FROM ${TABLE} WHERE deleted_at IS NULL ORDER BY rowid LIMIT ? OFFSET ?`
   ).all(limit, offset);
 }
 
