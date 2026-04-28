@@ -146,31 +146,50 @@ const EXP_MODES = [
 ] as const;
 
 function StationLogoUploader() {
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [status, setStatus]   = useState("");
+  const [logoUrl, setLogoUrl]                   = useState<string | null>(null);
+  const [status, setStatus]                     = useState("");
+  const [activeStationId, setActiveStationId]   = useState<number | null>(null);
+  const loadVersionRef = useRef(0);
 
   useEffect(() => {
-    (async () => {
+    async function doLoad() {
+      const v = ++loadVersionRef.current;
       try {
-        const res = await (window as any).ether.db.query("SELECT value FROM station_config_kv WHERE key='station_logo'", []);
-        if (res.data?.length) setLogoUrl(res.data[0].value);
+        const station = await (window as any).ether.invoke('stations:get-active');
+        if (v !== loadVersionRef.current) return;
+        const sid: number | null = station?.id ?? null;
+        setActiveStationId(sid);
+        if (sid == null) { setLogoUrl(null); return; }
+        const kvResult = await (window as any).ether.stationConfigKv.list(sid);
+        if (v !== loadVersionRef.current) return;
+        if (kvResult.ok) {
+          const rows: { key: string; value: string }[] = kvResult.rows;
+          setLogoUrl(rows.find(r => r.key === 'station_logo')?.value ?? null);
+        }
       } catch {}
-    })();
+    }
+    doLoad();
+    window.addEventListener('station-switched', doLoad);
+    return () => window.removeEventListener('station-switched', doLoad);
   }, []);
 
   const upload = async () => {
+    if (activeStationId == null) return;
     const result = await (window as any).ether.station.uploadLogo();
     if (result?.ok && result.dataUrl) {
       setLogoUrl(result.dataUrl);
-      await (window as any).ether.db.execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('station_logo',?)", [result.dataUrl]);
+      const r = await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'station_logo', result.dataUrl);
+      if (!r.ok) console.error('[StationLogoUploader] station_logo upsert:', r.error);
       setStatus("Saved");
       setTimeout(() => setStatus(""), 2000);
     }
   };
 
   const remove = async () => {
+    if (activeStationId == null) return;
     setLogoUrl(null);
-    await (window as any).ether.db.execute("DELETE FROM station_config_kv WHERE key='station_logo'", []);
+    const r = await (window as any).ether.stationConfigKv.removeByKey(activeStationId, 'station_logo');
+    if (!r.ok) console.error('[StationLogoUploader] station_logo remove:', r.error);
     setStatus("Removed");
     setTimeout(() => setStatus(""), 2000);
   };
@@ -768,6 +787,7 @@ function DiscogsCredentialForm() {
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
   const { stationId } = useActiveStation();
+  const loadKvVersionRef = useRef(0);
   // Active category — persisted via URL hash so deep links + reloads stay
   // on the same category. E.g. #settings/audio reopens Settings on Audio.
   const initialCategory = (() => {
@@ -875,6 +895,36 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     max_same_category:     { label: "Max songs in a row from same category", hint: "Prevents playing too many songs from one rotation category" },
   };
 
+  // Station-scoped KV reads; re-runs on station-switched
+  useEffect(() => {
+    async function doLoadStationKv() {
+      const v = ++loadKvVersionRef.current;
+      try {
+        const station = await (window as any).ether.invoke('stations:get-active');
+        if (v !== loadKvVersionRef.current) return;
+        const sid: number | null = station?.id ?? null;
+        if (sid == null) return;
+        const kvResult = await (window as any).ether.stationConfigKv.list(sid);
+        if (v !== loadKvVersionRef.current) return;
+        if (kvResult.ok) {
+          const rows: { key: string; value: string }[] = kvResult.rows;
+          const get = (key: string) => rows.find(r => r.key === key)?.value;
+          const igHandleVal     = get('ig_handle');
+          const igEnabledVal    = get('ig_enabled');
+          const stationNameVal  = get('station_name');
+          const anthropicKeyVal = get('anthropic_api_key');
+          if (igHandleVal    !== undefined) setIgHandle(igHandleVal);
+          if (igEnabledVal   !== undefined) setIgEnabled(igEnabledVal === "1");
+          if (stationNameVal !== undefined) setStationName(stationNameVal);
+          if (anthropicKeyVal !== undefined) { setAnthropicKey(anthropicKeyVal); (window as any).__ANTHROPIC_API_KEY__ = anthropicKeyVal; }
+        }
+      } catch {}
+    }
+    doLoadStationKv();
+    window.addEventListener('station-switched', doLoadStationKv);
+    return () => window.removeEventListener('station-switched', doLoadStationKv);
+  }, []);
+
   useEffect(() => {
     // Timezone
     getStationTimezone().then(setTimezone);
@@ -884,16 +934,6 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
 
     // Dashboard URL
     invoke<string>("get_local_ip").then(ip => setDashboardUrl("http://" + ip + ":4242")).catch(() => setDashboardUrl("http://localhost:4242"));
-
-    // Instagram settings
-    query<{ key: string; value: string }>("SELECT key, value FROM station_config_kv WHERE key IN ('ig_handle','ig_enabled','station_name','anthropic_api_key')").then(rows => {
-      for (const r of rows) {
-        if (r.key === "ig_handle") setIgHandle(r.value);
-        if (r.key === "ig_enabled") setIgEnabled(r.value === "1");
-        if (r.key === "station_name") setStationName(r.value);
-        if (r.key === "anthropic_api_key") { setAnthropicKey(r.value); (window as any).__ANTHROPIC_API_KEY__ = r.value; }
-      }
-    }).catch(() => {});
 
     // AI key status + provider
     invoke("ai:getKeyStatus").then((s: any) => setKeyStatus(s)).catch(() => {});
@@ -938,7 +978,10 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   };
 
   const saveStationName = async () => {
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_name', ?)", [stationName]).catch(() => {});
+    if (stationId != null) {
+      const r = await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'station_name', stationName).catch(() => ({ ok: false }));
+      if (!r.ok) console.error('[SettingsPanel] station_name upsert:', r.error);
+    }
     setStationNameSaved(true);
     setTimeout(() => setStationNameSaved(false), 2000);
   };
@@ -954,8 +997,10 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   };
 
   const saveIg = async () => {
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ig_handle', ?)", [igHandle]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ig_enabled', ?)", [igEnabled ? "1" : "0"]);
+    if (stationId != null) {
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'ig_handle', igHandle).catch(() => {});
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'ig_enabled', igEnabled ? "1" : "0").catch(() => {});
+    }
     setIgSaved(true); setTimeout(() => setIgSaved(false), 2000);
   };
 
@@ -1057,7 +1102,10 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const inputs = devices.filter(d => d.kind === "audioinput");
 
   const saveAnthropicKey = async () => {
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('anthropic_api_key', ?)", [anthropicKey]);
+    if (stationId != null) {
+      const r = await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'anthropic_api_key', anthropicKey).catch(() => ({ ok: false }));
+      if (!r.ok) console.error('[SettingsPanel] anthropic_api_key upsert:', r.error);
+    }
     (window as any).__ANTHROPIC_API_KEY__ = anthropicKey;
     setAnthropicKeySaved(true);
     setTimeout(() => setAnthropicKeySaved(false), 2000);

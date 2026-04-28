@@ -348,6 +348,7 @@ export function useSkin() {
   const [fontId, setFontIdState]       = useState("system");
   const [editorOpen, setEditorOpen]    = useState(false);
   const [stationId, setStationId]      = useState<number | null>(null);
+  const loadVersionRef = useRef(0);
 
   // Register setter so AppContextMenu can open the editor
   useEffect(() => {
@@ -355,19 +356,22 @@ export function useSkin() {
     return () => { _setThemeEditorOpen = null; };
   }, []);
 
-  // Load saved theme on mount — auto-reset if a light theme was saved.
+  // Load saved theme on mount and on station-switched — auto-reset if a light theme was saved.
   // For named presets, always apply the CURRENT vars from code (not the DB snapshot)
   // so that any color updates to presets take effect on the next app start without
   // requiring the user to re-select the theme.
   useEffect(() => {
-    (async () => {
+    async function doLoad() {
+      const v = ++loadVersionRef.current;
       const station = await (window as any).ether.invoke('stations:get-active');
+      if (v !== loadVersionRef.current) return;
       const sid: number | null = station?.id ?? null;
       setStationId(sid);
 
       if (sid == null) { applyTheme(DEFAULT_PRESET.vars); return; }
 
       const saved = await loadTheme(sid);
+      if (v !== loadVersionRef.current) return;
       if (saved) {
         // If saved theme has a light background, force back to dark-studio
         const bgPrimary = saved.vars["--bg-primary"] || "";
@@ -389,7 +393,10 @@ export function useSkin() {
       } else {
         applyTheme(DEFAULT_PRESET.vars);
       }
-    })();
+    }
+    doLoad();
+    window.addEventListener('station-switched', doLoad);
+    return () => window.removeEventListener('station-switched', doLoad);
   }, []);
 
   const setSkin = useCallback((id: string) => {
@@ -594,20 +601,31 @@ export function SkinPickerOverlay({
   // Station logo
   const [logoUrl, setLogoUrl]                   = useState<string | null>(null);
   const [activeStationId, setActiveStationId]   = useState<number | null>(null);
+  const loadVersionRef = useRef(0);
 
-  // Load operators and logo on mount
+  // Operators are not station-scoped; fetch once on mount
   useEffect(() => {
     (async () => {
       try {
+        const ops = await (window as any).ether.db.query("SELECT id, uuid, name FROM operators ORDER BY id", []);
+        if (ops.data) setOperators(ops.data);
+      } catch {}
+    })();
+  }, []);
+
+  // Station-scoped data: active station + KV (logo + font); re-runs on station-switched
+  useEffect(() => {
+    async function doLoad() {
+      const v = ++loadVersionRef.current;
+      try {
         const station = await (window as any).ether.invoke('stations:get-active');
+        if (v !== loadVersionRef.current) return;
         const sid: number | null = station?.id ?? null;
         setActiveStationId(sid);
 
-        const ops = await (window as any).ether.db.query("SELECT id, uuid, name FROM operators ORDER BY id", []);
-        if (ops.data) setOperators(ops.data);
-
         if (sid != null) {
           const kvResult = await (window as any).ether.stationConfigKv.list(sid);
+          if (v !== loadVersionRef.current) return;
           if (kvResult.ok) {
             const rows: { key: string; value: string }[] = kvResult.rows;
             const get = (key: string) => rows.find(r => r.key === key)?.value;
@@ -618,7 +636,10 @@ export function SkinPickerOverlay({
           }
         }
       } catch {}
-    })();
+    }
+    doLoad();
+    window.addEventListener('station-switched', doLoad);
+    return () => window.removeEventListener('station-switched', doLoad);
   }, []);
 
   // Live preview on every change

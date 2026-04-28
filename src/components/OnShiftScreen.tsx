@@ -47,6 +47,7 @@ function fmtSecs(s: number): string {
 
 export default function OnShiftScreen({ onStart }: Props) {
   const { stationId, isReady } = useActiveStation();
+  const loadVersionRef = useRef(0);
   const [operators, setOperators]       = useState<Operator[]>([]);
   const [operator, setOperator]         = useState<Operator | null>(null);
   const [note, setNote]                 = useState("");
@@ -74,10 +75,12 @@ export default function OnShiftScreen({ onStart }: Props) {
 
   useEffect(() => {
     if (!isReady) return;
-    (async () => {
+    async function doLoad() {
+      const v = ++loadVersionRef.current;
       try {
         // Operators
         const ops = await queryScoped<Operator>("SELECT id, name, initials FROM operators ORDER BY id", [], stationId);
+        if (v !== loadVersionRef.current) return;
         setOperators(ops);
 
         // Last selected operator
@@ -118,6 +121,7 @@ export default function OnShiftScreen({ onStart }: Props) {
 
         // Station logo
         const logo = await queryOne<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'station_logo'");
+        if (v !== loadVersionRef.current) return;
         setStationLogo(logo?.value ?? null);
 
         // Current show
@@ -148,8 +152,9 @@ export default function OnShiftScreen({ onStart }: Props) {
         } catch {}
 
       } catch (e) { console.error("[OnShift] Load error:", e); }
-    })();
-  }, [isReady]);
+    }
+    doLoad();
+  }, [isReady, stationId]);
 
   // ── Load operator note when operator changes ──────────────────
 
