@@ -2485,7 +2485,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
     // station_id scoping: Strategy B — single table
     queryScoped<any>("SELECT id, title, artist, file_path as filePath, duration_ms as durationMs FROM songs ORDER BY artist, title LIMIT 500", [], stationId)
       .then(setLibrary).catch(() => {});
-  }, []);
+  }, [stationId]);
 
   const filtered = search ? library.filter(s => `${s.title} ${s.artist}`.toLowerCase().includes(search.toLowerCase())) : library;
 
@@ -3317,7 +3317,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     } catch (e) { console.error(e); setStatus("Error: " + e); }
     setLoading(false);
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [stationId]);
 
   const toggleSelect = (id: number) => { setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };

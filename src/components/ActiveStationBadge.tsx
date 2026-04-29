@@ -57,7 +57,6 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     : "STATION";
 
   const handleSwitch = async (s: Station) => {
-    if (s.is_active) { setOpen(false); return; }
     setOpen(false);
     const ok = await onSwitch(s.id, s.name);
     if (ok) loadStations();
