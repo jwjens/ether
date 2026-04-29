@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { processAllSongs, getProcessingStats } from "../audio/processor";
+import { processLibrary, getProcessingStats } from "../audio/songAnalysis";
 import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -36,11 +36,11 @@ export default function ProcessingPanel() {
   const handleProcessAll = async () => {
     setProcessing(true);
     setProgress("Starting...");
-    const count = await processAllSongs((d, t, title) => {
+    const result = await processLibrary((d, t, title) => {
       setDone(d); setTotal(t);
       setProgress("Processing: " + title + " (" + d + "/" + t + ")");
     });
-    setProgress("Done! Processed " + count + " songs.");
+    setProgress("Done! Processed " + result.processed + " songs.");
     setProcessing(false);
     load();
   };
