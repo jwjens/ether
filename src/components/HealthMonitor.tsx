@@ -216,7 +216,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         playLogCount: playLog[0]?.count ?? 0,
         lastPlayedAt: playLog[0]?.last ?? null,
         queueLen,
-        diskSpaceGb: null, // would need Tauri fs API
+        diskSpaceGb: null, // TODO: wire via Node.js fs.statfsSync
         sessionStart,
         lastError: errorMsg,
       });
@@ -246,7 +246,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         }),
       ].join("\n");
 
-      // Write via Tauri
       const writeTextFile = (p: string, data: string) => (window as any).ether.fs.writeFile(p, data); const BaseDirectory = {};
       const filename = `ether_playlog_${new Date().toISOString().split("T")[0]}.csv`;
       await writeTextFile(filename, lines, { baseDir: BaseDirectory.Download });
@@ -254,7 +253,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       setTimeout(() => setExported(false), 3000);
     } catch (e) {
       // Fallback: download via browser
-      const blob = new Blob(["Play log export requires Tauri fs plugin"], { type: "text/plain" });
+      const blob = new Blob(["Play log export failed"], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = "playlog.csv"; a.click();

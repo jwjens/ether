@@ -13,12 +13,12 @@
  *   2. Add {panel === "phonedesk" && <PhoneDesk engine={engine} />} to the panel render block
  *   3. Add a Tools menu Item: <Item label="Phone Desk" onClick={() => set("phonedesk")} />
  *
- * Tauri commands used (already exist in engine-rodio / audio_engine.rs):
+ * IPC handlers used (already exist in native/ audio engine):
  *   - get_audio_devices  → lists WASAPI/ASIO input devices
  *   - audio_load         → loads a temp WAV file to a deck
  *   - audio_play         → plays a deck
  *
- * New Tauri command needed (add to audio_engine.rs):
+ * IPC handler needed (add to electron/main.js + native/):
  *   - save_wav_clip { pcm: Vec<f32>, sample_rate: u32, path: String } -> String (saved path)
  *     Encodes the raw float PCM to a WAV file at a temp path and returns the path.
  */
@@ -575,8 +575,7 @@ export default function PhoneDesk({ onClose }: Props) {
       const outSample = Math.floor(cueOutRef.current * SAMPLE_RATE);
       const sliced    = recPCM.slice(inSample, outSample);
 
-      // Encode to WAV and save via Tauri command
-      // Falls back to a Blob object URL for immediate Web Audio playback if command fails
+      // Encode to WAV and save via IPC; falls back to Blob URL if handler unavailable
       let filePath = "";
       try {
         filePath = await invoke<string>("save_wav_clip", {

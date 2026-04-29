@@ -1348,7 +1348,6 @@ export default function BroadcastEditor({
 
       await writeFile(outPath, wavBytes);
 
-      // Load into the target deck via Tauri command
       await invoke("audio_load", {
         deck,
         filePath: outPath,

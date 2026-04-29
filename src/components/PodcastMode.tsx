@@ -432,13 +432,13 @@ export function OneClickExport() {
       );
 
       setStatus("exporting");
-      // Simulate export progress (real impl would call Tauri command)
+      // Simulate export progress (real impl would call IPC export handler)
       for (let i = 0; i <= 100; i += 5) {
         await new Promise(r => setTimeout(r, 80));
         setProgress(i);
       }
 
-      // In production: invoke Tauri's ffmpeg command to mix tracks
+      // In production: invoke ffmpeg export handler to mix tracks
       // await invoke("export_session", { tracks, outputName: episodeName });
       setOutputPath(`~/Downloads/${episodeName.replace(/\s+/g, "_")}.mp3`);
       setStatus("done");

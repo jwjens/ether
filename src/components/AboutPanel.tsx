@@ -53,7 +53,7 @@ const CHANGELOG = [
 ];
 
 const OSS_CREDITS = [
-  { name: "Tauri",        license: "MIT / Apache 2.0",  url: "https://tauri.app",           desc: "Desktop app framework" },
+  { name: "Electron",     license: "MIT",               url: "https://www.electronjs.org",  desc: "Desktop app framework" },
   { name: "React",        license: "MIT",               url: "https://react.dev",           desc: "UI library" },
   { name: "Rodio",        license: "Apache 2.0",        url: "https://github.com/RustAudio/rodio", desc: "Audio playback" },
   { name: "CPAL",         license: "Apache 2.0",        url: "https://github.com/RustAudio/cpal",  desc: "Cross-platform audio" },
@@ -61,7 +61,7 @@ const OSS_CREDITS = [
   { name: "ebur128",      license: "MIT",               url: "https://crates.io/crates/ebur128", desc: "EBU R128 loudness" },
   { name: "RustFFT",      license: "MIT / Apache 2.0",  url: "https://github.com/ejmahler/RustFFT", desc: "FFT / DSP" },
   { name: "SQLite",       license: "Public Domain",     url: "https://sqlite.org",          desc: "Embedded database" },
-  { name: "tauri-plugin-sql", license: "MIT / Apache 2.0", url: "https://github.com/tauri-apps/plugins-workspace", desc: "SQL plugin" },
+  { name: "better-sqlite3", license: "MIT",               url: "https://github.com/WiseLibs/better-sqlite3",    desc: "SQLite driver" },
   { name: "Serde",        license: "MIT / Apache 2.0",  url: "https://serde.rs",            desc: "Serialization" },
   { name: "Vite",         license: "MIT",               url: "https://vitejs.dev",          desc: "Build tooling" },
   { name: "TypeScript",   license: "Apache 2.0",        url: "https://typescriptlang.org",  desc: "Type system" },

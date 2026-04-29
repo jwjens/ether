@@ -79,7 +79,7 @@ export default function TelemetryPillar({
     };
   }, [lastPulse]);
 
-  // ── Tauri event listener ─────────────────────────────────────
+  // ── Event listener ─────────────────────────────────────────────
 
   useEffect(() => {
     let active = true;

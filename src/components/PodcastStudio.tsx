@@ -554,7 +554,7 @@ export default function PodcastStudio() {
   const exportClip = async (clip: Clip) => {
     setClipExporting(clip.id);
     try {
-      // Export clip segment via Tauri
+      // Export clip segment via IPC
       await invoke("export_episode", {
         opts: {
           inputPath: `~/Downloads/recording.wav`,

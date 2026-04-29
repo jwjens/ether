@@ -10,10 +10,6 @@
  * And add to the tools menu Item:
  *   <Item label="Publish Episode..." onClick={() => { setShowPublish(true); close(); }} />
  *
- * Dependencies already in your project:
- *   - @tauri-apps/api/core (invoke)
- *   - @tauri-apps/plugin-dialog (open/save)
- *   - @tauri-apps/plugin-fs (readBinaryFile / writeBinaryFile / exists)
  *   - ./db/client (query, execute, queryOne)
  *
  * What it does:
@@ -292,7 +288,7 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
     const path = file as string;
     set("audioPath", path);
 
-    // Get duration via Tauri command
+    // Get duration via IPC
     try {
       const dur = await invoke<number>("get_file_duration", { filePath: path });
       setAudioDuration(dur);
@@ -352,7 +348,7 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
 
       log(`📋 Preparing episode: "${meta.title}"`);
 
-      // Copy via shell or Tauri FS
+      // Copy audio file to feed directory
       try {
         await invoke("backup_db", { srcPath: meta.audioPath, destPath: exportAudioPath });
         log(`✅ Audio copied → ${exportAudioName}`);
