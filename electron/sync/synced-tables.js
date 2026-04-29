@@ -22,10 +22,13 @@ const SYNCED_TABLES = [
   'deck_configs',
   'format_clocks',
   'generated_schedule',
+  'install_config_kv',
+  'install_secrets_kv',
   'liner_cards',
   'macros',
   'metadata_definitions',
   'metadata_vocabulary',
+  'monitor_routing',
   'mood_tags',
   'operator_notes',
   'operators',
@@ -241,6 +244,41 @@ const REGISTRY = {
     },
   },
 
+  install_config_kv: {
+    tableName: 'install_config_kv',
+    primaryKey: ['key'],
+    scope: 'install',
+    isKv: true,
+    kvKeyCol: 'key',
+    kvValueCol: 'value',
+    columns: {
+      key:        'scalar',
+      value:      'scalar',
+      uuid:       'scalar',
+      created_at: 'scalar',
+      updated_at: 'scalar',
+      deleted_at: 'scalar',
+    },
+  },
+
+  install_secrets_kv: {
+    tableName: 'install_secrets_kv',
+    primaryKey: ['key'],
+    scope: 'install',
+    isKv: true,
+    syncExcluded: true,   // never leave the device in any sync payload per [Q-13]
+    kvKeyCol: 'key',
+    kvValueCol: 'value',
+    columns: {
+      key:        'scalar',
+      value:      'scalar',
+      uuid:       'scalar',
+      created_at: 'scalar',
+      updated_at: 'scalar',
+      deleted_at: 'scalar',
+    },
+  },
+
   liner_cards: {
     tableName: 'liner_cards',
     primaryKey: ['id'],
@@ -317,6 +355,20 @@ const REGISTRY = {
       created_at:    'scalar',
       updated_at:    'scalar',
       deleted_at:    'scalar',
+    },
+  },
+
+  monitor_routing: {
+    tableName: 'monitor_routing',
+    primaryKey: ['output_device_id'],
+    scope: 'local-only',  // routing is per-physical-machine per AD-10 — each PC has different output devices
+    columns: {
+      output_device_id: 'scalar',
+      station_id:       'scalar',
+      uuid:             'scalar',
+      created_at:       'scalar',
+      updated_at:       'scalar',
+      deleted_at:       'scalar',
     },
   },
 
@@ -736,6 +788,10 @@ const REGISTRY = {
       icecast_password:    'local-only',  // sensitive credential — excluded from payloads per [Q-13]
       icecast_bitrate:     'scalar',
       icecast_format:      'scalar',
+      icecast_port:        'scalar',
+      audio_device_output: 'scalar',
+      mic_device:          'scalar',
+      mount_pending_provision: 'local-only',  // each PC verifies its own Icecast Admin API connection independently; confirmation is per-machine, not facility-wide
       uuid:                'scalar',
       updated_at:          'scalar',
       deleted_at:          'scalar',
