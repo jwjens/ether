@@ -25,3 +25,7 @@ fix-*.js
 .env
 
 .env.development
+
+# v8 migration artifacts
+scripts/pre-migration-snapshot-*.txt
+scripts/post-migration-snapshot-*.txt
