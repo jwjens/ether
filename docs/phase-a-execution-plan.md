@@ -19,7 +19,7 @@
 | AD-6 | **`station_config_kv` is the per-station engine config store.** Keys like `active_deck`, `stream_enabled`, `monitor_mix` are written per station. `stationScoped.ts` query helpers handle injection. |
 | AD-7 | **INSERT audit gate (`multistation_insert_audit_complete`) is lifted only after all 40+ callsites in main.js are verified.** The gate is intentional. Lifting it prematurely risks orphaned rows with wrong station_id. |
 | AD-8 | **Direction C library architecture is preserved.** songs/artists/albums remain install-scoped. `station_programming` remains the per-station attribute table. No new `station_id` columns are added to install-scoped tables. |
-| AD-9 | **Peer sync is station-scoped throughout.** All Phase A writes that need to sync go through `withMutation` with correct `station_id`. Engine-local transient state (deck position, VU levels, peak meters) is never written to the mutations log. |
+| AD-9 | **Peer sync is station-scoped throughout.** All **new** Phase A writes that need to sync go through `withMutation` with correct `station_id`. Engine-local transient state (deck position, VU levels, peak meters) is never written to the mutations log. Existing legacy `stations:*` handlers do not use `withMutation`; their migration to the typed pattern is deferred post-Phase-A (see Open Items Carried Forward). |
 | AD-10 | **v8 migration (songs.station_id removal) is deferred.** It is non-blocking for Phase A. Create after Direction C is validated in production. |
 
 ---
@@ -28,17 +28,19 @@
 
 Three blockers must be resolved before any Phase A implementation begins. Each ships as its own commit.
 
-### Step 0-A: Resolve duplicate `stations:*` handler registration
+### Step 0-A: Confirm INSERT audit gate is sound
 
-**Problem**: `electron/sync/handlers/stations.js` and the legacy block in `main.js` (lines 3445–3503) both register `stations:list`, `stations:create`, `stations:update`, `stations:delete`. The second registration throws at startup.
+**Finding** (Amendment 1 — see `phase-a-amendment-1.md`): The original "duplicate handler registration" finding was incorrect. `electron/sync/handlers/stations.js` exists on disk but is never installed — `installAll()` is never called from `main.js`. The legacy handlers at lines 3445–3504 are the only `stations:*` handlers active. There is no runtime collision. Typed migration is deferred post-Phase-A (see Open Items Carried Forward).
+
+**Scope**: Verify the legacy `stations:create` INSERT audit gate is correct and robust. No handler migration in this step.
 
 **Action**:
-1. Delete the six legacy `ipcMain.handle("stations:*", ...)` blocks from `main.js`
-2. Verify `installAll()` in `handlers/index.js` calls `installStations` (it does — confirmed in audit)
-3. Update `preload.js` to route `stations.*` calls through `window.ether` typed handler bindings rather than direct `ipcRenderer.invoke`
-4. The legacy `stations:get-active` channel has no typed equivalent — add `stations:get-active` to the typed handler as an alias, or update all renderer callsites to use `stations:get-by-id`
+1. Read the gate check in `stations:create` (main.js ~lines 3460–3474)
+2. Confirm the `station_config_kv` key name (`multistation_insert_audit_complete`) and query match what the renderer uses when lifting the gate
+3. Confirm the error message is clear and actionable for an operator
+4. No code changes required if gate is sound; fix only if a bug is found
 
-**Verification**: Boot app, open DevTools console, confirm no `ipcMain handler already exists` errors. Run `ether.stations.list()` from console — should return station rows.
+**Verification**: `stations:create` returns the audit gate error when a second station creation is attempted before the gate is lifted. The gate key name and query are correct.
 
 ### Step 0-B: Assign unique Icecast mounts to all stations
 
@@ -226,6 +228,20 @@ Full end-to-end test across both stations.
 
 ---
 
+## Success Criteria
+
+Phase A is complete when all of the following hold:
+
+1. Both stations in the DB have distinct `icecast_mount` values.
+2. Both stations stream simultaneously to their respective Icecast mounts without conflict.
+3. Station switch in the renderer UI does not interrupt audio or streaming for either station.
+4. Per-station engine state is isolated — deck play on one station does not affect the other's queue or playback.
+5. All station-scoped writes (`play_log`, `stream_sessions`, `mutations`) carry the correct `station_id`.
+6. INSERT audit gate (`multistation_insert_audit_complete`) passes or is intentionally lifted after callsite audit completes.
+7. No crash or regression in single-station mode; existing station-1-only workflow is unaffected.
+
+---
+
 ## Execution Order
 
 ```
@@ -263,3 +279,18 @@ Step 7 (integration test)      } final; depends on all above
 | `src/hooks/useActiveStation.tsx` | 3 | Minor: confirm no stop side-effects |
 | DB (stations rows) | 0-B | UPDATE icecast_mount to unique values |
 | DB (station_config_kv) | 0-C | Set multistation_insert_audit_complete after gate lifted |
+
+---
+
+## Open Items Carried Forward
+
+### Typed `stations:*` handler migration (deferred from Step 0-A)
+
+Discovery (Amendment 1) surfaced that completing the typed migration requires work that exceeds a prerequisite slot:
+- Integer-id-to-uuid migration across all renderer callsites for `stations.create`, `stations.update`, `stations.delete`
+- Response shape changes (`{ ok: true, id: N }` → `{ ok: true, row: {...} }`) at every callsite
+- Hard-delete-to-soft-delete behavior change for `stations.delete`; read-side audit needed for `deleted_at IS NULL` filter gaps
+- INSERT audit gate port from legacy `stations:create` into typed `stationsCreate()`
+- `stations:get-active` has no typed equivalent; typed handler or renderer-side workaround required
+
+**Next step**: After Phase A ships, create a dedicated discovery + plan document for "Phase B: Typed `stations:*` handler migration" covering callsite inventory, response shape migration, and soft-delete rollout.
