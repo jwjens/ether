@@ -55,7 +55,7 @@ Three prerequisites must be satisfied before any work in this plan begins.
 |---|---|---|
 | 1 | INSERT audit gate sound (`multistation_insert_audit_complete` key name and query verified) | **Closed on inspection** — confirmed correct in `phase-a-amendment-1.md` |
 | 2 | KV audit complete (all 32 keys classified by bucket) | **Complete** — this session |
-| 3 | Lightsail Icecast: confirm `/live-1` and `/live-3` mounts configured on the remote server | **Remains open** — coordinate with Lightsail operator before Step 0-B |
+| 3 | Lightsail Icecast: `/ov` and `/usph` mounts configured on `44.244.52.207:8000` | **Closed — one-time bootstrap complete** (2026-04-29). `/live`, `/ov`, `/usph` all verified. Future mounts provision via Admin API (AD-11). |
 
 **Prerequisite 2A (folded in)**: The original standalone prerequisite "audit renderer INSERT callsites
 for missing `crypto.randomUUID()`" is absorbed into Code Change C4 below rather than shipped as a
@@ -96,6 +96,22 @@ ALTER TABLE stations ADD COLUMN mic_device TEXT;
 
 CPAL device name for the mic/phone-line input assigned to this station. `NULL` = use system default.
 Paired with S2 — together they give each station its own I/O identity.
+
+### S3.5 — `stations.mount_pending_provision` *(added by Amendment 2)*
+
+```sql
+ALTER TABLE stations ADD COLUMN mount_pending_provision INTEGER NOT NULL DEFAULT 1;
+```
+
+Flag: `1` = Icecast mount not yet confirmed via Admin API; `0` = mount provisioned and confirmed.
+`DEFAULT 1` means all existing stations are treated as pending on first boot after this migration.
+The boot-time reconciliation task in Step 4.5 calls the Icecast Admin API for every row with
+`mount_pending_provision = 1`. For the current two stations (`/ov`, `/usph`), the mounts already
+exist on the Lightsail server — reconciliation will succeed immediately and clear the flag.
+
+Drives graceful degradation in AD-11: a station with `mount_pending_provision = 1` is fully usable
+in the UI but streaming is blocked until the mount is confirmed. See `phase-a-amendment-2.md` for
+full context.
 
 ### S4 — CREATE TABLE `monitor_routing`
 
@@ -267,12 +283,13 @@ WHERE key IN (
 );
 ```
 
-### M2 — Move 2 secrets keys from `station_config_kv` → `install_secrets_kv`
+### M2 — Move 2 secrets keys from `station_config_kv` → `install_secrets_kv` + seed 1 new key
 
-| Key | Secret content |
-|-----|---------------|
-| `license_key` | Subscription activation credential |
-| `cloud_backup_r2` | JSON blob containing R2 `accessKeyId` + `secretAccessKey` |
+| Key | Secret content | Source |
+|-----|---------------|--------|
+| `license_key` | Subscription activation credential | Moved from `station_config_kv` |
+| `cloud_backup_r2` | JSON blob containing R2 `accessKeyId` + `secretAccessKey` | Moved from `station_config_kv` |
+| `icecast_admin_credentials` | JSON: `{ "url": "http://44.244.52.207:8000", "username": "admin", "password": "<admin-pw>" }` | **New — seeded by Amendment 2** |
 
 ```sql
 INSERT OR IGNORE INTO install_secrets_kv (key, value)
@@ -283,6 +300,21 @@ AND station_id = 0;
 DELETE FROM station_config_kv
 WHERE key IN ('license_key', 'cloud_backup_r2');
 ```
+
+The `icecast_admin_credentials` key does not exist in `station_config_kv` — it is new. Seed it
+separately with the actual admin password for `44.244.52.207`. This value must be set before
+Step 4.5 reconciliation runs:
+
+```sql
+INSERT OR IGNORE INTO install_secrets_kv (key, value)
+VALUES ('icecast_admin_credentials',
+        '{"url":"http://44.244.52.207:8000","username":"admin","password":"<FILL-IN>"}');
+```
+
+Replace `<FILL-IN>` with the actual Icecast admin password (distinct from the source password
+`hackme` — see the `<authentication>` section of `/etc/icecast2/icecast.xml` on the Lightsail
+server). This seed is idempotent (`INSERT OR IGNORE`); once set it survives subsequent
+`migrateV8Data()` runs.
 
 ### M3 — Delete 3 duplicate orphan rows
 
@@ -352,17 +384,20 @@ WHERE updated_at IS NULL;
 
 ### M6 — Mount collision fix
 
+> **Amendment 2 update**: Mount names updated from placeholders `/live-1`/`/live-3` to actual
+> `/ov`/`/usph`. Prerequisite 3 is closed — mounts already exist on the Lightsail server.
+
 Both stations currently share `icecast_mount = '/live'`. Per AD-3, unique mounts are required before
 Phase A streaming work begins. This is Step 0-B from the execution plan — included here so it executes
 inside the same transaction.
 
 ```sql
-UPDATE stations SET icecast_mount = '/live-1' WHERE id = 1;
-UPDATE stations SET icecast_mount = '/live-3' WHERE id = 3;
+UPDATE stations SET icecast_mount = '/ov'   WHERE id = 1;
+UPDATE stations SET icecast_mount = '/usph' WHERE id = 3;
 ```
 
-**Prerequisite 3 dependency**: Confirm with Lightsail Icecast operator that both `/live-1` and
-`/live-3` mounts exist and are configured for the expected bitrate and format before running.
+**Prerequisite 3 status**: **Closed.** The `/ov` and `/usph` mounts were manually configured on
+`44.244.52.207:8000` on 2026-04-29 and verified responding. This M6 SQL is safe to run immediately.
 
 ### M7 — `eq_deck_*` integrity check
 
@@ -759,5 +794,13 @@ AND name IN ('install_config_kv','install_secrets_kv','monitor_routing');
 
 -- 8. New columns on stations
 PRAGMA table_info(stations);
--- Expected: icecast_port, audio_device_output, mic_device present
+-- Expected: icecast_port, audio_device_output, mic_device, mount_pending_provision present
+
+-- 9. Icecast admin credentials seeded and readable
+SELECT key, length(value) as value_len FROM install_secrets_kv WHERE key = 'icecast_admin_credentials';
+-- Expected: 1 row, value_len > 0 (credentials are present)
+-- Then verify the JSON parses and the URL is reachable:
+-- node -e "const r=require('better-sqlite3'); const db=r(process.env.DB_PATH);
+--   const row=db.prepare(\"SELECT value FROM install_secrets_kv WHERE key='icecast_admin_credentials'\").get();
+--   const creds=JSON.parse(row.value); console.log('URL:', creds.url, '| user:', creds.username);"
 ```

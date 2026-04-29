@@ -21,6 +21,7 @@
 | AD-8 | **Direction C library architecture is preserved.** songs/artists/albums remain install-scoped. `station_programming` remains the per-station attribute table. No new `station_id` columns are added to install-scoped tables. |
 | AD-9 | **Peer sync is station-scoped throughout.** All **new** Phase A writes that need to sync go through `withMutation` with correct `station_id`. Engine-local transient state (deck position, VU levels, peak meters) is never written to the mutations log. Existing legacy `stations:*` handlers do not use `withMutation`; their migration to the typed pattern is deferred post-Phase-A (see Open Items Carried Forward). |
 | AD-10 | **v8 migration (songs.station_id removal) is deferred.** It is non-blocking for Phase A. Create after Direction C is validated in production. |
+| AD-11 | **`stations:create/update/delete` manage Icecast mounts via the Icecast Admin API.** A new `electron/icecast-admin.js` module wraps the Admin API. Typed (and legacy) station handlers call into it on every station lifecycle event. `stations.mount_pending_provision = 1` signals that a mount still needs to be created; a boot-time reconciliation pass retries. The three mounts on the current Lightsail server (`/live`, `/ov`, `/usph`) were provisioned manually during Prerequisite 3 and are the last mounts ever configured by hand. |
 
 ---
 
@@ -44,18 +45,29 @@ Three blockers must be resolved before any Phase A implementation begins. Each s
 
 ### Step 0-B: Assign unique Icecast mounts to all stations
 
-**Problem**: Both stations have `icecast_mount="/live"`. Simultaneous streaming is impossible.
+> **Amendment 2**: Prerequisite 3 is closed. Manual bootstrap complete — see `phase-a-amendment-2.md`.  
+> Mount names updated from placeholder `/live-1`/`/live-3` to actual `/ov`/`/usph`.  
+> This step is now a **one-time bootstrap**, not an open prerequisite.
 
-**Action**: Run migration or one-time DB script:
+**Actual mount assignments** (confirmed 2026-04-29 via SSH to 44.244.52.207):
+
+| Station ID | Mount |
+|---|---|
+| 1 (OV) | `/ov` |
+| 3 (USPH) | `/usph` |
+
+**Action**: Run DB migration:
 ```sql
-UPDATE stations SET icecast_mount = '/live-1' WHERE id = 1;
-UPDATE stations SET icecast_mount = '/live-3' WHERE id = 3;
+UPDATE stations SET icecast_mount = '/ov'   WHERE id = 1;
+UPDATE stations SET icecast_mount = '/usph' WHERE id = 3;
 ```
 Wrap in `withMutation` with `station_id` per row so the change is logged and syncs to peers.
 
-Confirm with Lightsail Icecast operator that both `/live-1` and `/live-3` mounts exist and are configured for the expected bitrate/format.
+The Icecast server (`44.244.52.207:8000`) has `/live`, `/ov`, and `/usph` mounts configured.
+No further manual server configuration is required — future mounts are provisioned via Admin API
+(AD-11, Step 4.5).
 
-**Verification**: `SELECT id, name, icecast_mount FROM stations;` — mounts are distinct.
+**Verification**: `SELECT id, name, icecast_mount FROM stations;` — mounts are `/ov` and `/usph`.
 
 ### Step 0-C: Complete Phase 3 INSERT audit (lift gate)
 
@@ -169,6 +181,52 @@ engine.clearQueue();
 
 Add to `electron/sync/handlers/` as `engine.js` and extend `index.js` `installAll`. Expose via `preload-handlers.js` typed bindings. Do not add new legacy handlers.
 
+**Boot-time reconciliation** (added per Amendment 2 / AD-11): After `setupDb()` completes at
+startup, call `icecastAdmin.reconcileMounts(db)`. This processes all station rows with
+`mount_pending_provision = 1` and attempts to create their Icecast mounts via the Admin API.
+On success, sets `mount_pending_provision = 0`. On failure, logs and retries on next boot.
+See Step 4.5 for full design.
+
+---
+
+## Step 4.5 — Icecast Mount Lifecycle Handlers
+
+> **Added by Amendment 2** — see `phase-a-amendment-2.md` for discovery context.
+
+**Goal**: Station creation, update, and deletion automatically manage the corresponding Icecast
+mount via the Admin API. No SSH or manual server configuration required after initial bootstrap.
+
+**New module**: `electron/icecast-admin.js`
+
+```js
+// Reads install_secrets_kv key 'icecast_admin_credentials'
+// { url: "http://44.244.52.207:8000", username: "admin", password: "..." }
+async function createMount(mountName, maxListeners = 100)
+async function deleteMount(mountName)
+async function listMounts()           // GET /admin/listmounts
+async function reconcileMounts(db)    // retry all stations with mount_pending_provision = 1
+```
+
+**Handler amendments** (apply to both legacy stations:* handlers and any future typed handler):
+
+| Event | Action |
+|---|---|
+| `stations:create` | After DB INSERT: call `createMount(station.icecast_mount)`. On API failure: set `mount_pending_provision = 1`, log error, return success to caller (station was created). |
+| `stations:update` | If `icecast_mount` changed: `deleteMount(oldMount)` then `createMount(newMount)`. |
+| `stations:delete` | Call `deleteMount(station.icecast_mount)`. Failure is non-fatal — log and continue with delete. |
+
+**Graceful degradation**: `mount_pending_provision = 1` means "mount not yet confirmed on Icecast
+server." The station is fully usable in the UI; only streaming to that mount is blocked. The
+boot-time reconciliation task in Step 4 clears this flag once the Admin API confirms success.
+
+**Verification**:
+1. Create a test station via the UI
+2. `GET /admin/listmounts` on the Icecast server — new mount appears
+3. Delete the test station
+4. `GET /admin/listmounts` — mount is gone
+5. Simulate Admin API failure (set wrong credentials): station creates in DB with `mount_pending_provision = 1`
+6. Restore credentials, reboot app: reconciliation pass creates the mount, flag clears to 0
+
 ---
 
 ## Step 5 — Native Addon Assessment and Isolation
@@ -267,17 +325,20 @@ Step 7 (integration test)      } final; depends on all above
 
 | File | Steps | Nature of change |
 |---|---|---|
-| `electron/main.js` | 0-A, 1, 2, 0-C | Remove legacy handlers; add engine map; add stream state map; audit INSERT callsites |
+| `electron/main.js` | 0-A, 1, 2, 0-C, 4.5 | Remove legacy handlers; add engine map; add stream state map; audit INSERT callsites; call reconcileMounts at boot |
 | `electron/preload.js` | 0-A, 4 | Route stations.* through typed handler bindings |
 | `electron/preload-handlers.js` | 4 | Add engine.* handler bindings |
-| `electron/sync/handlers/stations.js` | 0-A | Add `stations:get-active` alias if needed |
+| `electron/sync/handlers/stations.js` | 0-A, 4.5 | Add `stations:get-active` alias if needed; add createMount/deleteMount calls on lifecycle events |
 | `electron/sync/handlers/engine.js` | 4 | New: engine IPC typed handlers |
 | `electron/sync/handlers/index.js` | 4 | Add installEngine call |
+| `electron/icecast-admin.js` | 4.5 | **New**: Icecast Admin API client (`createMount`, `deleteMount`, `listMounts`, `reconcileMounts`) |
 | `native/src/lib.rs` | 5 | Add per-device deck functions if physical isolation required |
 | `native/src/audio.rs` | 5 | Add device parameterization if required |
 | `src/App.tsx` | 3 | Remove stop() calls from handleStationSwitch |
 | `src/hooks/useActiveStation.tsx` | 3 | Minor: confirm no stop side-effects |
-| DB (stations rows) | 0-B | UPDATE icecast_mount to unique values |
+| DB (stations rows) | 0-B | UPDATE icecast_mount to `/ov` and `/usph` |
+| DB (stations schema) | Step 2 v8 | ADD COLUMN mount_pending_provision INTEGER NOT NULL DEFAULT 1 |
+| DB (install_secrets_kv) | Step 2 v8 | Seed `icecast_admin_credentials` key |
 | DB (station_config_kv) | 0-C | Set multistation_insert_audit_complete after gate lifted |
 
 ---
@@ -294,3 +355,43 @@ Discovery (Amendment 1) surfaced that completing the typed migration requires wo
 - `stations:get-active` has no typed equivalent; typed handler or renderer-side workaround required
 
 **Next step**: After Phase A ships, create a dedicated discovery + plan document for "Phase B: Typed `stations:*` handler migration" covering callsite inventory, response shape migration, and soft-delete rollout.
+
+---
+
+### Multi-Icecast-server support (deferred from Amendment 2 / AD-11)
+
+The current design assumes one Icecast server per install (`icecast_admin_credentials` is a single
+install-level secret). Multi-tenant or large deployments may need multiple servers (one per
+facility, region, or plan tier). The JSON-valued key is extensible to an array without a breaking
+change. See `phase-a-amendment-2.md` OI-A2-1 for full scope.
+
+**Next step**: Trigger: first customer deployment requiring more than one Icecast server.
+
+### Customer-onboarding Icecast configuration (deferred from Amendment 2 / AD-11)
+
+New installs have no UX for configuring Icecast admin credentials — the `icecast_admin_credentials`
+secret is currently set manually. Needs a first-run wizard step or Settings screen that accepts
+the Icecast URL, admin username, and password, tests the connection, and seeds the secret key.
+See `phase-a-amendment-2.md` OI-A2-2 for full scope.
+
+**Next step**: Add to first-run wizard scope in Part 2 of the 9-part feature prompt implementation.
+
+### Icecast server provisioning automation (deferred from Amendment 2 / AD-11)
+
+Customers without a self-hosted Icecast server must provision one manually (as was done for this
+deployment). Automating this via a Lightsail-launch flow or a managed relay service would reduce
+setup friction significantly. Requires Ether backend API with cloud provisioning. See
+`phase-a-amendment-2.md` OI-A2-3 for full scope.
+
+**Next step**: Post-Phase-A product decision. Out of scope for Phase A and Phase B.
+
+### DNS / public hostname for Icecast (deferred from Amendment 2 / AD-11)
+
+The current Icecast URL is `http://44.244.52.207:8000` (bare Lightsail IP). Stream metadata
+headers and any public listener URLs embed this IP. A DNS hostname must be assigned before
+public stream URLs are distributed. This is an ops task, not a code task, but it affects
+`icecast_admin_credentials` URL and any hardcoded IP references. See `phase-a-amendment-2.md`
+OI-A2-4 for full scope.
+
+**Next step**: Assign DNS hostname to the Lightsail static IP before any public listener URLs
+are shared. Update `icecast_admin_credentials` value accordingly.
