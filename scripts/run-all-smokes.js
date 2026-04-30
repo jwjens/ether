@@ -31,7 +31,7 @@ const results = [];
 let anyFailed = false;
 
 for (const file of smokeFiles) {
-  const table   = file.replace('scripts/smoke-', '').replace('-handlers.js', '');
+  const table   = path.basename(file, '-handlers.js').replace('smoke-', '');
   const tmpFile = path.join(tmpDir, `smoke-${table}-${Date.now()}.log`);
 
   process.stdout.write(`  ${table}... `);
