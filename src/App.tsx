@@ -942,7 +942,6 @@ export default function App() {
     }
     const r = await (window as any).ether.stations.switch(id);
     if (!r?.ok) return false;
-    await (window as any).ether.db.execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('active_station_id', ?)", [String(id)]);
     window.dispatchEvent(new CustomEvent("station-switched", { detail: { id, name } }));
     setStationName(name);
     setSwitchToast(`Switched to ${name}`);
