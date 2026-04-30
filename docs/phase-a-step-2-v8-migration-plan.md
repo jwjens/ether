@@ -684,9 +684,36 @@ criteria hold.
 
 ---
 
-## Open Items Carried Forward (8)
+## Open Items Carried Forward (9)
 
 These are not blockers for this migration but must not be lost. Captured here as a forward pointer.
+
+### 9 — M1/M2/M3/M4/M7 deferred to Commit 3
+
+**Decision (2026-04-30)**: Commit 2 ships only M5 (stations.uuid backfill for id=3) and M6
+(distinct icecast mounts). All other data migrations are deferred to Commit 3 where they ship
+alongside the code rewires (C1–C4) that read from the new tables.
+
+**Reason for deferral**: Shipping M1/M2 (moving keys to install_config_kv / install_secrets_kv)
+before Commit 3's code rewires would cause user-visible glitches — the app would read
+`station_config_kv` for keys that have already moved, making the license appear inactive,
+first-run wizard reappear, DMCA notice reappear, etc. Deferring keeps Commit 2 safe to ship in
+isolation.
+
+**M4 additionally deferred** past Commit 3 (2026-04-29, diag-pre-v8-data-check.js audit):
+The plan's M4 description conflated three distinct row categories:
+1. `station_id='system'` (TEXT literal) rows — **crimson-air theme preset data**, not defaults.
+   Deleting would break the crimson-air theme.
+2. `value='system'` rows for `theme_font_id` — **legitimate user font preferences**, not sentinels.
+3. Active station theme settings at real integer station_ids — not touched by M4.
+M4 will be addressed after Commit 3 verification once theme read/write paths are confirmed.
+
+**Deferred migrations and their target commit:**
+- M1: install-level keys → install_config_kv — Commit 3
+- M2: secrets → install_secrets_kv — Commit 3
+- M3: orphan row deletion at station_id=0 — Commit 3
+- M4: theme row cleanup — after Commit 3 verification
+- M7: eq_deck_*/eq_master integrity check — Commit 3
 
 ### 1 — `canvas_active_name` cold-start read
 
