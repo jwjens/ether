@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { execute } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 export type ExperienceMode = "solo" | "standard" | "live_radio";
 
@@ -142,6 +142,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
   const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
   const [saving, setSaving] = useState(false);
+  const { stationId } = useActiveStation();
 
   const selectedLabel = venueType ? VENUE_LABELS[venueType] : null;
 
@@ -149,11 +150,11 @@ export default function FirstRunWizard({ onComplete }: Props) {
     if (!venueType || !name.trim()) return;
     setSaving(true);
     try {
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_name', ?)", [name.trim()]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('station_tagline', ?)", [tagline.trim()]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('venue_type', ?)", [venueType]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('experience_mode', ?)", [experienceMode || "standard"]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('first_run_complete', '1')", []);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'station_name', name.trim());
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'station_tagline', tagline.trim());
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'venue_type', venueType);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'experience_mode', experienceMode || "standard");
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'first_run_complete', '1');
       onComplete({ venueType, name: name.trim(), tagline: tagline.trim() });
     } catch (e) {
       console.error("Wizard save failed:", e);

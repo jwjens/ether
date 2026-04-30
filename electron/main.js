@@ -932,7 +932,10 @@ function processInviteFile() {
 
   try {
     // Check if first run is already complete
-    const existing = db.prepare("SELECT value FROM station_config_kv WHERE key = 'first_run_complete'").get();
+    const inviteStationId = getActiveStationId();
+    const existing = db.prepare(
+      "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'first_run_complete' AND deleted_at IS NULL"
+    ).get(inviteStationId);
     if (existing && existing.value === "1") {
       console.log("[Invite] First run already complete — skipping invite processing");
       fs.renameSync(invitePath, invitePath + ".used");
@@ -949,17 +952,14 @@ function processInviteFile() {
       db.prepare("INSERT OR REPLACE INTO operator_notes (operator_id, note, updated_at) VALUES (?, ?, unixepoch())").run(op.id, invite.personal_note);
     }
 
-    // Set experience mode
+    // Set experience mode + mark first run complete + store invite metadata
+    const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
     const mode = invite.experience_mode || "standard";
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('experience_mode', ?)").run(mode);
-
-    // Mark first run complete
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('first_run_complete', '1')").run();
-
-    // Store invite metadata for Iris greeting
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('invite_used', '1')").run();
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('invited_by', ?)").run(invite.invited_by || "Deniro");
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('last_operator_id', ?)").run(op ? String(op.id) : "");
+    stationConfigKvUpsertByKey(db, inviteStationId, 'experience_mode', mode);
+    stationConfigKvUpsertByKey(db, inviteStationId, 'first_run_complete', '1');
+    stationConfigKvUpsertByKey(db, inviteStationId, 'invite_used', '1');
+    stationConfigKvUpsertByKey(db, inviteStationId, 'invited_by', invite.invited_by || "Deniro");
+    stationConfigKvUpsertByKey(db, inviteStationId, 'last_operator_id', op ? String(op.id) : "");
 
     _inviteUsed = true;
     _invitedBy = invite.invited_by || "Deniro";
