@@ -3,16 +3,16 @@ const handlers = require('./preload-handlers')(ipcRenderer);
 
 contextBridge.exposeInMainWorld("ether", {
   audio: {
-    load: (deck, fp, title, artist, gainDb) => ipcRenderer.invoke("audio:load", deck, fp, title, artist, gainDb),
-    play: (deck) => ipcRenderer.invoke("audio:play", deck),
-    pause: (deck) => ipcRenderer.invoke("audio:pause", deck),
-    stop: (deck) => ipcRenderer.invoke("audio:stop", deck),
-    setVolume: (deck, v) => ipcRenderer.invoke("audio:setVolume", deck, v),
-    getState: () => ipcRenderer.invoke("audio:getState"),
-    getLevels: () => ipcRenderer.invoke("audio:getLevels"),
+    load: (deck, fp, title, artist, gainDb, stationId) => ipcRenderer.invoke("audio:load", deck, fp, title, artist, gainDb, stationId),
+    play: (deck, stationId) => ipcRenderer.invoke("audio:play", deck, stationId),
+    pause: (deck, stationId) => ipcRenderer.invoke("audio:pause", deck, stationId),
+    stop: (deck, stationId) => ipcRenderer.invoke("audio:stop", deck, stationId),
+    setVolume: (deck, v, stationId) => ipcRenderer.invoke("audio:setVolume", deck, v, stationId),
+    getState: (stationId) => ipcRenderer.invoke("audio:getState", stationId),
+    getLevels: (stationId) => ipcRenderer.invoke("audio:getLevels", stationId),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
-    watchdogSet: (a, t) => ipcRenderer.invoke("audio:watchdogSet", a, t),
-    setEq: (deck, bands) => ipcRenderer.invoke("audio:setEq", deck, bands),
+    watchdogSet: (a, t, stationId) => ipcRenderer.invoke("audio:watchdogSet", a, t, stationId),
+    setEq: (deck, bands, stationId) => ipcRenderer.invoke("audio:setEq", deck, bands, stationId),
     // Push-based level subscription — 30fps from main process, no polling
     onLevels:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:levels", h); return h; },
     offLevels: (h)  => ipcRenderer.removeListener("audio:levels", h),

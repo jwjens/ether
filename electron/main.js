@@ -1138,20 +1138,20 @@ app.on("before-quit", () => {
 // These replace all Tauri invoke() calls
 
 // Audio
-ipcMain.handle("audio:load", (_, deck, filePath, title, artist, gainDb) =>
-  audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0));
+ipcMain.handle("audio:load", (_, deck, filePath, title, artist, gainDb, stationId) =>
+  audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId));
 
-ipcMain.handle("audio:play", (_, deck) => audio.audioPlay(deck));
-ipcMain.handle("audio:pause", (_, deck) => audio.audioPause(deck));
-ipcMain.handle("audio:stop", (_, deck) => audio.audioStop(deck));
-ipcMain.handle("audio:setVolume", (_, deck, volume) => audio.audioSetVolume(deck, volume));
-ipcMain.handle("audio:getState", () => JSON.parse(audio.audioGetState()));
-ipcMain.handle("audio:getLevels", () => JSON.parse(audio.audioGetLevels()));
+ipcMain.handle("audio:play", (_, deck, stationId) => audio.audioPlay(deck, stationId));
+ipcMain.handle("audio:pause", (_, deck, stationId) => audio.audioPause(deck, stationId));
+ipcMain.handle("audio:stop", (_, deck, stationId) => audio.audioStop(deck, stationId));
+ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => audio.audioSetVolume(deck, volume, stationId));
+ipcMain.handle("audio:getState", (_, stationId) => JSON.parse(audio.audioGetState(stationId)));
+ipcMain.handle("audio:getLevels", (_, stationId) => JSON.parse(audio.audioGetLevels(stationId)));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
-ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec) => audio.watchdogSet(active, thresholdSec));
+ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => audio.watchdogSet(active, thresholdSec, stationId));
 // EQ — sends band gains to native engine. audioSetEq(deck, bandsJson) to be implemented in native addon.
-ipcMain.handle("audio:setEq", (_, deck, bands) => {
-  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(deck, JSON.stringify(bands)); }
+ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
+  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(deck, JSON.stringify(bands), stationId); }
   catch(e) { console.warn("[EQ] audioSetEq not yet implemented in native addon:", e.message); }
   return true;
 });

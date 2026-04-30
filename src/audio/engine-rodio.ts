@@ -3,15 +3,15 @@ async function invoke(cmd: string, args?: any): Promise<any> {
   const e = (window as any).ether;
   if (!e) { console.error("[ENGINE] window.ether not available — preload not loaded?"); return null; }
   switch (cmd) {
-    case "audio_load":        return e.audio.load(args.deck, args.filePath, args.title, args.artist, args.gainDb);
-    case "audio_play":        return e.audio.play(args.deck);
-    case "audio_pause":       return e.audio.pause(args.deck);
-    case "audio_stop":        return e.audio.stop(args.deck);
-    case "audio_set_volume":  return e.audio.setVolume(args.deck, args.volume);
-    case "audio_get_state":   return e.audio.getState();
+    case "audio_load":        return e.audio.load(args.deck, args.filePath, args.title, args.artist, args.gainDb, args?.stationId);
+    case "audio_play":        return e.audio.play(args.deck, args?.stationId);
+    case "audio_pause":       return e.audio.pause(args.deck, args?.stationId);
+    case "audio_stop":        return e.audio.stop(args.deck, args?.stationId);
+    case "audio_set_volume":  return e.audio.setVolume(args.deck, args.volume, args?.stationId);
+    case "audio_get_state":   return e.audio.getState(args?.stationId);
     case "get_file_duration": return e.audio.getFileDuration(args.filePath);
-    case "get_levels":        return e.audio.getLevels();
-    case "watchdog_set":      return e.audio.watchdogSet(args.active, args.thresholdSec);
+    case "get_levels":        return e.audio.getLevels(args?.stationId);
+    case "watchdog_set":      return e.audio.watchdogSet(args.active, args.thresholdSec, args?.stationId);
     default:
       console.warn("[ENGINE] Unknown audio command:", cmd);
       return null;
