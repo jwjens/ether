@@ -29,3 +29,13 @@ fix-*.js
 # v8 migration artifacts
 scripts/pre-migration-snapshot-*.txt
 scripts/post-migration-snapshot-*.txt
+
+# Runtime logs
+electron-launch*.log
+
+# One-off diagnostic scripts (kept on disk for reference, not committed)
+scripts/diag-*.js
+
+# Generated diagnostic output
+scripts/table-audit.js
+scripts/dump-all-cols.js
