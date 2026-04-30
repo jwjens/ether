@@ -8,41 +8,61 @@ mod lufs;
 mod clock;
 
 use napi_derive::napi;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use audio::{AudioCmd, AudioState, SharedAudioState, DeckMeta, start_audio_thread};
 
-struct GlobalState {
-    audio: SharedAudioState,
+// Per-station audio engine map. Keyed by station_id (u32).
+// OnceLock holds the Map itself; individual engine Arcs are cloned out on access.
+static ENGINES: std::sync::OnceLock<Mutex<HashMap<u32, SharedAudioState>>> =
+    std::sync::OnceLock::new();
+
+// Returns the SharedAudioState for station_id, panicking if not yet initialized.
+// Used by all NAPI functions that assume the engine is already running.
+fn get_engine(station_id: u32) -> SharedAudioState {
+    let engines = ENGINES.get()
+        .expect("Audio engines not initialized. Call init_audio_engine() first.");
+    engines.lock()
+        .unwrap()
+        .get(&station_id)
+        .cloned()
+        .unwrap_or_else(|| panic!("Engine for station {} not initialized", station_id))
 }
 
-static STATE: std::sync::OnceLock<GlobalState> = std::sync::OnceLock::new();
-
-fn get_state() -> &'static GlobalState {
-    STATE.get().expect("Audio engine not initialized")
+// Creates an engine for station_id if one doesn't exist yet, then returns it.
+// Used by init_audio_engine and (in Piece 1.2) by per-station init NAPI calls.
+fn get_or_create_engine(station_id: u32) -> SharedAudioState {
+    let engines = ENGINES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = engines.lock().unwrap();
+    if !map.contains_key(&station_id) {
+        let (sender, is_playing, levels, finished) = start_audio_thread();
+        let state: SharedAudioState = Arc::new(Mutex::new(AudioState {
+            deck_a: DeckMeta::new(),
+            deck_b: DeckMeta::new(),
+            deck_c: DeckMeta::new(),
+            sender,
+            is_playing,
+            levels,
+            finished,
+            watchdog_active: false,
+            watchdog_threshold_sec: 10.0,
+            watchdog_triggered_count: 0,
+        }));
+        map.insert(station_id, state);
+    }
+    map.get(&station_id).cloned().unwrap()
 }
 
 #[napi]
 pub fn init_audio_engine() -> bool {
-    if STATE.get().is_some() { return true; }
-    let (sender, is_playing, levels, finished) = start_audio_thread();
-    let audio_state: SharedAudioState = Arc::new(Mutex::new(AudioState {
-        deck_a: DeckMeta::new(),
-        deck_b: DeckMeta::new(),
-        deck_c: DeckMeta::new(),
-        sender,
-        is_playing,
-        levels,
-        finished,
-        watchdog_active: false,
-        watchdog_threshold_sec: 10.0,
-        watchdog_triggered_count: 0,
-    }));
-    STATE.set(GlobalState { audio: audio_state }).is_ok()
+    get_or_create_engine(1);
+    true
 }
 
 #[napi]
 pub fn audio_load(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>) -> bool {
-    let Ok(mut audio) = get_state().audio.lock() else { return false };
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else { return false };
     let g = gain_db.unwrap_or(0.0) as f32;
     {
         let meta = deck_meta_mut(&mut audio, &deck);
@@ -57,7 +77,8 @@ pub fn audio_load(deck: String, file_path: String, title: String, artist: String
 
 #[napi]
 pub fn audio_play(deck: String) -> bool {
-    let Ok(mut audio) = get_state().audio.lock() else { return false };
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else { return false };
     audio.finished.clear(&deck);
     deck_meta_mut(&mut audio, &deck).status = "playing".to_string();
     audio.sender.send(AudioCmd::Play(deck)).is_ok()
@@ -65,14 +86,16 @@ pub fn audio_play(deck: String) -> bool {
 
 #[napi]
 pub fn audio_pause(deck: String) -> bool {
-    let Ok(mut audio) = get_state().audio.lock() else { return false };
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else { return false };
     deck_meta_mut(&mut audio, &deck).status = "paused".to_string();
     audio.sender.send(AudioCmd::Pause(deck)).is_ok()
 }
 
 #[napi]
 pub fn audio_stop(deck: String) -> bool {
-    let Ok(mut audio) = get_state().audio.lock() else { return false };
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else { return false };
     audio.finished.clear(&deck);
     deck_meta_mut(&mut audio, &deck).status = "idle".to_string();
     audio.sender.send(AudioCmd::Stop(deck)).is_ok()
@@ -80,14 +103,16 @@ pub fn audio_stop(deck: String) -> bool {
 
 #[napi]
 pub fn audio_set_volume(deck: String, volume: f64) -> bool {
-    let Ok(mut audio) = get_state().audio.lock() else { return false };
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else { return false };
     deck_meta_mut(&mut audio, &deck).volume = volume as f32;
     audio.sender.send(AudioCmd::SetVolume { deck, volume: volume as f32 }).is_ok()
 }
 
 #[napi]
 pub fn audio_get_state() -> String {
-    let Ok(mut audio) = get_state().audio.lock() else {
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else {
         return r#"{"deckA":{},"deckB":{},"deckC":{}}"#.to_string();
     };
     let fin_a = audio.finished.take("A");
@@ -106,7 +131,8 @@ pub fn audio_get_state() -> String {
 #[napi]
 pub fn audio_get_levels() -> String {
     let levels_arc = {
-        let Ok(audio) = get_state().audio.lock() else {
+        let engine = get_engine(1);
+        let Ok(audio) = engine.lock() else {
             return r#"{"a":0,"b":0,"c":0}"#.to_string();
         };
         let _ = audio.sender.send(AudioCmd::GetLevel);
@@ -121,7 +147,8 @@ pub fn audio_get_levels() -> String {
 
 #[napi]
 pub fn watchdog_set(active: bool, threshold_sec: f64) -> bool {
-    let Ok(mut audio) = get_state().audio.lock() else { return false };
+    let engine = get_engine(1);
+    let Ok(mut audio) = engine.lock() else { return false };
     audio.watchdog_active = active;
     audio.watchdog_threshold_sec = threshold_sec;
     true
