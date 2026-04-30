@@ -3,7 +3,7 @@
 // Shows a spotlight + callout on each UI element, advances on action or click
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { execute, query } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 const TOUR_VERSION = "1.5.2"; // bump this to re-show tour after major updates
 
@@ -165,6 +165,7 @@ export default function OnboardingTour({ onDone }: Props) {
   const [waitingForAction, setWaitingForAction] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
+  const { stationId } = useActiveStation();
 
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
@@ -219,12 +220,13 @@ export default function OnboardingTour({ onDone }: Props) {
   const finish = async () => {
     setExiting(true);
     setTimeout(async () => {
-      try {
-        await execute(
-          "INSERT OR REPLACE INTO station_config_kv (key, value) VALUES (?, ?)",
-          ["tour_done_version", TOUR_VERSION]
-        );
-      } catch {}
+      if (stationId != null) {
+        try {
+          await (window as any).ether.stationConfigKv.upsertByKey(
+            stationId, 'tour_done_version', TOUR_VERSION
+          );
+        } catch {}
+      }
       onDone();
     }, 350);
   };
@@ -399,30 +401,32 @@ export default function OnboardingTour({ onDone }: Props) {
 export function useTour() {
   const [showTour, setShowTour] = useState(false);
   const [checked, setChecked] = useState(false);
+  const { stationId, isReady } = useActiveStation();
 
   useEffect(() => {
+    if (!isReady || stationId == null) return;
     (async () => {
       try {
-        const rows = await query<{ value: string }>(
-          "SELECT value FROM station_config_kv WHERE key = 'tour_done_version'"
-        );
-        const donVersion = rows[0]?.value;
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows = result.ok ? result.rows : [];
+        const donVersion = rows.find((r: { key: string }) => r.key === 'tour_done_version')?.value;
         if (donVersion !== TOUR_VERSION) setShowTour(true);
       } catch {
         setShowTour(true);
       }
       setChecked(true);
     })();
-  }, []);
+  }, [stationId, isReady]);
 
   const dismissTour = async () => {
     setShowTour(false);
-    try {
-      await execute(
-        "INSERT OR REPLACE INTO station_config_kv (key, value) VALUES (?, ?)",
-        ["tour_done_version", TOUR_VERSION]
-      );
-    } catch {}
+    if (stationId != null) {
+      try {
+        await (window as any).ether.stationConfigKv.upsertByKey(
+          stationId, 'tour_done_version', TOUR_VERSION
+        );
+      } catch {}
+    }
   };
 
   return { showTour, checked, dismissTour };
