@@ -23,7 +23,7 @@ fn get_or_create_engine(station_id: u32) -> SharedAudioState {
     let engines = ENGINES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = engines.lock().unwrap();
     if !map.contains_key(&station_id) {
-        let (sender, is_playing, levels, finished) = start_audio_thread();
+        let (sender, is_playing, levels, finished) = start_audio_thread(station_id);
         let state: SharedAudioState = Arc::new(Mutex::new(AudioState {
             deck_a: DeckMeta::new(),
             deck_b: DeckMeta::new(),
