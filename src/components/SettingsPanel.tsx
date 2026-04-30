@@ -443,25 +443,35 @@ function MusixmatchKeyForm() {
 const DEFAULT_PLAYOUT_SERVER = '44.244.52.207';
 
 function CloudPlayoutSection() {
-  const [icecastUp,     setIcecastUp]     = useState<boolean | null>(null);
-  const [checking,      setChecking]      = useState(false);
-  const [syncMsg,       setSyncMsg]       = useState<string>("");
-  const [playoutServer, setPlayoutServer] = useState(DEFAULT_PLAYOUT_SERVER);
-  const [editingServer, setEditingServer] = useState(false);
-  const [serverDraft,   setServerDraft]   = useState('');
-  const [live,          setLive]          = useState(false);
-
-  const streamUrl = `http://${playoutServer}:8000/live`;
+  const [icecastUp,      setIcecastUp]      = useState<boolean | null>(null);
+  const [checking,       setChecking]       = useState(false);
+  const [syncMsg,        setSyncMsg]        = useState<string>("");
+  const [playoutServer,  setPlayoutServer]  = useState(DEFAULT_PLAYOUT_SERVER);
+  const [editingServer,  setEditingServer]  = useState(false);
+  const [serverDraft,    setServerDraft]    = useState('');
+  const [stations,       setStations]       = useState<Array<{ id: number; name: string; icecast_mount: string; icecast_server_url?: string; }>>([]);
+  const [stationStreams,  setStationStreams]  = useState<Record<number, { live: boolean }>>({});
 
   useEffect(() => {
     const ether = (window as any).ether;
     ether.invoke('playout:get-server').then((ip: string) => {
       if (ip) setPlayoutServer(ip);
     }).catch(() => {});
-    ether.invoke('stream:get-status').then((s: any) => {
-      if (s?.live) setLive(true);
-    }).catch(() => {});
-    const h = ether.on('stream:status', (s: any) => setLive(!!s?.live));
+    (async () => {
+      const list = await ether.stations.list();
+      setStations(list || []);
+      const status = await ether.invoke('stream:get-status');
+      if (status?.stations) {
+        const map: Record<number, { live: boolean }> = {};
+        for (const s of status.stations) map[s.stationId] = { live: !!s.live };
+        setStationStreams(map);
+      }
+    })();
+    const h = ether.on('stream:status', (s: any) => {
+      if (s?.stationId != null) {
+        setStationStreams(prev => ({ ...prev, [s.stationId]: { live: !!s.live } }));
+      }
+    });
     return () => ether.off('stream:status', h);
   }, []);
 
@@ -479,16 +489,18 @@ function CloudPlayoutSection() {
 
   useEffect(() => { checkStatus(); }, [playoutServer]);
 
-  const goLive = async () => {
+  const goLive = async (stationId: number) => {
     setSyncMsg('');
-    const res = await (window as any).ether.invoke('stream:go-live');
-    if (res?.ok) { setLive(true); setSyncMsg(`✓ Streaming → ${res.server}:8000/live`); }
-    else setSyncMsg('✗ ' + (res?.error || 'Failed to start stream'));
+    const res = await (window as any).ether.invoke('stream:go-live', { stationId });
+    if (res?.ok) {
+      setSyncMsg(`✓ Streaming → ${res.server}:8000${res.mount}`);
+    } else {
+      setSyncMsg('✗ ' + (res?.error || 'Failed to start stream'));
+    }
   };
 
-  const stopLive = async () => {
-    await (window as any).ether.invoke('stream:stop-live');
-    setLive(false);
+  const stopLive = async (stationId: number) => {
+    await (window as any).ether.invoke('stream:stop-live', { stationId });
     setSyncMsg('');
   };
 
@@ -510,7 +522,7 @@ function CloudPlayoutSection() {
       title="Broadcast"
       description="Stream Ether's output to Icecast so listeners can tune in"
     >
-      {/* Server row */}
+      {/* Server row — one Icecast server hosts all mounts */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, padding: "8px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
         <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, boxShadow: icecastUp ? `0 0 7px ${statusColor}` : "none", flexShrink: 0 }} />
         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
@@ -540,35 +552,53 @@ function CloudPlayoutSection() {
         </button>
       </div>
 
-      {/* Stream URL */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Listener URL</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <code style={{ flex: 1, fontSize: 12, padding: "6px 10px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", userSelect: "all" }}>
-            {streamUrl}
-          </code>
-          <button onClick={() => navigator.clipboard.writeText(streamUrl)} style={{ padding: "5px 10px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>
-            Copy
-          </button>
-        </div>
-      </div>
+      {/* Per-station rows */}
+      {stations.map(station => {
+        const isLive = !!stationStreams[station.id]?.live;
+        const serverUrl = station.icecast_server_url?.trim() || playoutServer;
+        const listenerUrl = `http://${serverUrl}:8000${station.icecast_mount}`;
+        return (
+          <div key={station.id} style={{ marginBottom: 10, padding: "12px 14px", background: "var(--bg-secondary)", border: `1px solid ${isLive ? "rgba(34,197,94,0.3)" : "var(--border-primary)"}` }}>
+            {/* Station header */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: isLive ? "#22c55e" : "#6b7280", boxShadow: isLive ? "0 0 6px #22c55e" : "none", flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{station.name}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", letterSpacing: "0.08em", background: isLive ? "rgba(34,197,94,0.12)" : "rgba(107,114,128,0.12)", color: isLive ? "#22c55e" : "#6b7280" }}>
+                {isLive ? "ONLINE" : "OFFLINE"}
+              </span>
+            </div>
 
-      {/* Go Live */}
-      <button
-        onClick={live ? stopLive : goLive}
-        style={{
-          width: "100%", padding: "10px 0", fontSize: 13, fontWeight: 800,
-          letterSpacing: "0.06em", cursor: "pointer", border: "none",
-          background: live ? "rgba(239,68,68,0.15)" : "rgba(34,197,94,0.15)",
-          color: live ? "#f87171" : "#4ade80",
-          outline: live ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(34,197,94,0.4)",
-          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          marginBottom: 8,
-        }}
-      >
-        {live && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171", display: "inline-block", boxShadow: "0 0 6px #f87171", animation: "pulse 1.2s infinite" }} />}
-        {live ? "■  STOP STREAM" : "▶  GO LIVE — Stream to Icecast"}
-      </button>
+            {/* Listener URL */}
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Listener URL</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <code style={{ flex: 1, fontSize: 12, padding: "6px 10px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", userSelect: "all" }}>
+                  {listenerUrl}
+                </code>
+                <button onClick={() => navigator.clipboard.writeText(listenerUrl)} style={{ padding: "5px 10px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>
+                  Copy
+                </button>
+              </div>
+            </div>
+
+            {/* GO LIVE / STOP STREAM */}
+            <button
+              onClick={() => isLive ? stopLive(station.id) : goLive(station.id)}
+              style={{
+                width: "100%", padding: "10px 0", fontSize: 13, fontWeight: 800,
+                letterSpacing: "0.06em", cursor: "pointer", border: "none",
+                background: isLive ? "rgba(239,68,68,0.15)" : "rgba(34,197,94,0.15)",
+                color: isLive ? "#f87171" : "#4ade80",
+                outline: isLive ? "1px solid rgba(239,68,68,0.4)" : "1px solid rgba(34,197,94,0.4)",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}
+            >
+              {isLive && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171", display: "inline-block", boxShadow: "0 0 6px #f87171", animation: "pulse 1.2s infinite" }} />}
+              {isLive ? "■  STOP STREAM" : "▶  GO LIVE — Stream to Icecast"}
+            </button>
+          </div>
+        );
+      })}
 
       {syncMsg && (
         <div style={{
