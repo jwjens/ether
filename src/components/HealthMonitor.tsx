@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, Component, ReactNode } from "react";
-import { query, execute, dbHealthCheck } from "../db/client";
+import { query, dbHealthCheck } from "../db/client";
 import { engine } from "../audio/engine-rodio";
+import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 
 // ═══════════════════════════════════════════════════════════════
 // 1. ERROR BOUNDARY
@@ -20,11 +21,13 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
   }
 
   componentDidCatch(error: Error, info: any) {
-    // Log to local DB
+    // Log to local DB — class component can't use hooks, use sync cache read
+    const stationId = getActiveStationIdSync();
     try {
-      execute(
-        "INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('last_error', ?)",
-        [JSON.stringify({ message: error.message, stack: error.stack, time: Date.now(), component: info?.componentStack?.split("\n")[1]?.trim() })]
+      (window as any).ether.stationConfigKv.upsertByKey(
+        stationId,
+        'last_error',
+        JSON.stringify({ message: error.message, stack: error.stack, time: Date.now(), component: info?.componentStack?.split("\n")[1]?.trim() })
       );
     } catch {}
   }
@@ -185,13 +188,15 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState(false);
   const [sessionStart] = useState(Date.now());
+  const { stationId, isReady } = useActiveStation();
 
   const load = useCallback(async () => {
+    if (!isReady) return;
     try {
-      const [dbCheck, playLog, lastError] = await Promise.all([
+      const [dbCheck, playLog, lastErrorResult] = await Promise.all([
         dbHealthCheck(),
         query<{ count: number; last: number | null }>("SELECT COUNT(*) as count, MAX(played_at) as last FROM play_log").catch(() => [{ count: 0, last: null }]),
-        query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'last_error'").catch(() => []),
+        (window as any).ether.stationConfigKv.list(stationId).catch(() => ({ ok: false, rows: [] as any[] })),
       ]);
 
       const deckA = engine.getDeck("A");
@@ -200,10 +205,13 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       const dbTest = dbCheck.ok ? { n: dbCheck.songCount } : null;
       setDbSchemaVersion(dbCheck.version);
 
+      const lastErrorRow = (lastErrorResult.ok ? lastErrorResult.rows as { key: string; value: string }[] : [])
+        .find((r: { key: string }) => r.key === 'last_error');
+
       let errorMsg: string | null = null;
-      if (lastError.length > 0) {
+      if (lastErrorRow) {
         try {
-          const parsed = JSON.parse(lastError[0].value);
+          const parsed = JSON.parse(lastErrorRow.value);
           const minsAgo = Math.round((Date.now() - parsed.time) / 60000);
           errorMsg = `${parsed.message} (${minsAgo}m ago)`;
         } catch {}
@@ -221,7 +229,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         lastError: errorMsg,
       });
     } catch {}
-  }, [sessionStart]);
+  }, [sessionStart, stationId, isReady]);
 
   useEffect(() => {
     load();
@@ -310,7 +318,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--accent-red)", marginBottom: 4, textTransform: "uppercase" as const }}>Last Error</div>
             <div style={{ fontSize: 10, color: "rgba(248,113,113,0.8)", fontFamily: "'DM Mono', monospace" }}>{health.lastError}</div>
             <button
-              onClick={() => execute("DELETE FROM station_config_kv WHERE key = 'last_error'", []).then(load)}
+              onClick={() => (window as any).ether.stationConfigKv.removeByKey(stationId, 'last_error').then(load)}
               style={{ marginTop: 6, fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
             >Dismiss</button>
           </div>
