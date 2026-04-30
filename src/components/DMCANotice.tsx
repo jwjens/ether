@@ -1,22 +1,27 @@
 import { useState, useEffect } from "react";
-import { queryOne, execute } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 export default function DMCANotice() {
   const [show, setShow] = useState(false);
+  const { stationId, isReady } = useActiveStation();
 
   useEffect(() => {
+    if (!isReady) return;
     (async () => {
       try {
-        const row = await queryOne<{value: string}>(
-          "SELECT value FROM station_config_kv WHERE key='dmca_acknowledged'"
-        );
-        if (!row) setShow(true);
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        if (!result.ok) { setShow(true); return; }
+        const rows: { key: string; value: string }[] = result.rows;
+        const found = rows.find((r: { key: string }) => r.key === 'dmca_acknowledged');
+        if (!found) setShow(true);
       } catch { setShow(true); }
     })();
-  }, []);
+  }, [stationId, isReady]);
 
   const acknowledge = async () => {
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('dmca_acknowledged', '1')", []);
+    await (window as any).ether.stationConfigKv.upsertByKey(
+      stationId, 'dmca_acknowledged', '1'
+    );
     setShow(false);
   };
 
