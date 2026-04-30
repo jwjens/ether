@@ -3165,19 +3165,21 @@ ipcMain.handle('playout:set-server', (_, ip) => {
 let _playoutLastPing = 0;  // epoch ms of last successful play POST
 
 ipcMain.on('playout:track-started', (_, { filePath, file_key, title }) => {
+  const stationId = getActiveStationId();
+  const state = _getStreamState(stationId);
   const streamPath = filePath || '';
   if (streamPath) {
-    _currentFilePath = streamPath;
-    _streamFile(streamPath);
+    state.currentFilePath = streamPath;
+    _streamFile(stationId, streamPath);
   } else if (file_key) {
     const cachePath = require('path').join(app.getPath('userData'), 'r2-cache',
       file_key.replace(/[^a-zA-Z0-9._-]/g, '_'));
     if (require('fs').existsSync(cachePath)) {
-      _currentFilePath = cachePath;
-      _streamFile(cachePath);
+      state.currentFilePath = cachePath;
+      _streamFile(stationId, cachePath);
     }
   }
-  console.log(`[stream] track-started: ${title}`);
+  console.log(`[stream/${stationId}] track-started: ${title}`);
 });
 
 // ── Schedule Generator ────────────────────────────────────────────────────────
@@ -3347,99 +3349,128 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
 // Icecast at full volume — completely independent of local speaker volume.
 // Monitor fader → audioSetVolume on decks → controls speakers only, never the stream.
 
-let _liveStreamArmed = false;   // true = Go Live was clicked, stream next track
-let _liveStreamProc  = null;    // current ffmpeg process
-let _liveIcecastUrl  = '';
-let _currentFilePath = '';      // last file loaded on any deck — used to stream immediately on Go Live
+// Map<stationId, { armed: bool, proc: ChildProcess|null, url: string, currentFilePath: string }>
+const _stationStreams = new Map();
 
-function _streamKillCurrent() {
-  if (_liveStreamProc) {
-    try { _liveStreamProc.kill('SIGTERM'); } catch {}
-    _liveStreamProc = null;
+function _getStreamState(stationId) {
+  if (!_stationStreams.has(stationId)) {
+    _stationStreams.set(stationId, {
+      armed: false,
+      proc: null,
+      url: '',
+      currentFilePath: '',
+    });
+  }
+  return _stationStreams.get(stationId);
+}
+
+function _streamKillCurrent(stationId) {
+  const state = _getStreamState(stationId);
+  if (state.proc) {
+    try { state.proc.kill('SIGTERM'); } catch {}
+    state.proc = null;
   }
 }
 
-function _spawnStream(args, label) {
-  _streamKillCurrent();
+function _spawnStream(stationId, args, label) {
+  _streamKillCurrent(stationId);
+  const state = _getStreamState(stationId);
   const { spawn } = require('child_process');
   const bin = ffmpegBin || 'ffmpeg';
-  console.log(`[stream] spawning ffmpeg: ${bin}`);
-  console.log(`[stream] args: ${args.join(' ')}`);
-  _liveStreamProc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-  _liveStreamProc.stderr.on('data', d => {
-    console.log(`[stream/ffmpeg] ${d.toString().trim()}`);
+  console.log(`[stream/${stationId}] spawning ffmpeg: ${bin}`);
+  console.log(`[stream/${stationId}] args: ${args.join(' ')}`);
+  state.proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  state.proc.stderr.on('data', d => {
+    console.log(`[stream/${stationId}/ffmpeg] ${d.toString().trim()}`);
   });
-  _liveStreamProc.on('error', e => {
-    console.error(`[stream] spawn error: ${e.message}`);
-    _liveStreamProc = null;
+  state.proc.on('error', e => {
+    console.error(`[stream/${stationId}] spawn error: ${e.message}`);
+    state.proc = null;
     if (mainWindow && !mainWindow.isDestroyed())
-      mainWindow.webContents.send('stream:status', { live: false, error: e.message });
+      mainWindow.webContents.send('stream:status', { stationId, live: false, error: e.message });
   });
-  _liveStreamProc.on('close', code => {
-    console.log(`[stream] ffmpeg closed (code ${code}) — ${label}`);
-    _liveStreamProc = null;
+  state.proc.on('close', code => {
+    console.log(`[stream/${stationId}] ffmpeg closed (code ${code}) — ${label}`);
+    state.proc = null;
   });
-  console.log(`[stream] → ${label}`);
+  console.log(`[stream/${stationId}] → ${label}`);
 }
 
-function _streamSilence() {
-  if (!_liveStreamArmed) return;
-  _spawnStream([
+function _streamSilence(stationId) {
+  const state = _getStreamState(stationId);
+  if (!state.armed) return;
+  _spawnStream(stationId, [
     '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
     '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3',
     '-content_type', 'audio/mpeg',
-    _liveIcecastUrl,
+    state.url,
   ], 'silence/hold');
 }
 
-function _streamFile(filePath) {
-  if (!_liveStreamArmed || !filePath) return;
-  _spawnStream([
+function _streamFile(stationId, filePath) {
+  const state = _getStreamState(stationId);
+  if (!state.armed || !filePath) return;
+  _spawnStream(stationId, [
     '-re', '-i', filePath, '-vn',
     '-c:a', 'libmp3lame', '-b:a', '128k',
     '-ar', '44100', '-ac', '2', '-f', 'mp3',
     '-content_type', 'audio/mpeg',
-    _liveIcecastUrl,
+    state.url,
   ], require('path').basename(filePath));
 }
 
-ipcMain.handle('stream:go-live', async () => {
+ipcMain.handle('stream:go-live', async (_, args = {}) => {
   try {
-    const stationId = getActiveStationId();
+    const stationId = args.stationId ?? getActiveStationId();
     const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
-    const server    = station?.icecast_server_url?.trim() || '44.244.52.207';
-    const pw        = station?.icecast_password?.trim()   || 'hackme';
-    const mount     = station?.icecast_mount?.trim()      || '/live';
-    _liveIcecastUrl  = `icecast://source:${pw}@${server}:8000${mount}`;
-    _liveStreamArmed = true;
-    console.log(`[stream] Armed → ${_liveIcecastUrl}`);
+    if (!station) return { ok: false, error: `station ${stationId} not found` };
+    const server    = station.icecast_server_url?.trim() || '44.244.52.207';
+    const pw        = station.icecast_password?.trim()   || 'hackme';
+    const mount     = station.icecast_mount?.trim()      || '/live';
+    const state     = _getStreamState(stationId);
+    state.url   = `icecast://source:${pw}@${server}:8000${mount}`;
+    state.armed = true;
+    console.log(`[stream/${stationId}] Armed → ${state.url}`);
     // If a track is already playing, start streaming it immediately
-    if (_currentFilePath && require('fs').existsSync(_currentFilePath)) {
-      console.log(`[stream] Resuming current track → ${require('path').basename(_currentFilePath)}`);
-      _streamFile(_currentFilePath);
+    if (state.currentFilePath && require('fs').existsSync(state.currentFilePath)) {
+      console.log(`[stream/${stationId}] Resuming current track → ${require('path').basename(state.currentFilePath)}`);
+      _streamFile(stationId, state.currentFilePath);
     } else {
       // Nothing playing — spawn a silent test tone so Icecast mount is live
-      _streamSilence();
+      _streamSilence(stationId);
     }
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('stream:status', { live: true, server });
+      mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });
     }
-    return { ok: true, server };
+    return { ok: true, server, mount, stationId };
   } catch (e) {
     return { ok: false, error: e.message };
   }
 });
 
-ipcMain.handle('stream:stop-live', () => {
-  _liveStreamArmed = false;
-  _streamKillCurrent();
+ipcMain.handle('stream:stop-live', (_, args = {}) => {
+  const stationId = args.stationId ?? getActiveStationId();
+  const state     = _getStreamState(stationId);
+  state.armed = false;
+  _streamKillCurrent(stationId);
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('stream:status', { live: false });
+    mainWindow.webContents.send('stream:status', { stationId, live: false });
   }
-  return { ok: true };
+  return { ok: true, stationId };
 });
 
-ipcMain.handle('stream:get-status', () => ({ live: _liveStreamArmed }));
+ipcMain.handle('stream:get-status', (_, args = {}) => {
+  if (args?.stationId != null) {
+    const state = _getStreamState(args.stationId);
+    return { stationId: args.stationId, live: state.armed };
+  }
+  // No stationId — return all stations' status
+  const all = [];
+  for (const [stationId, state] of _stationStreams.entries()) {
+    all.push({ stationId, live: state.armed });
+  }
+  return { stations: all };
+});
 
 // ── Stations CRUD ─────────────────────────────────────────────
 ipcMain.handle('stations:list', () =>
