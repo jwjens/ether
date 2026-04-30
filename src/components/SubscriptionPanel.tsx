@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { execute, query } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Stripe config ──
 const STRIPE_PK = "pk_live_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
@@ -55,18 +55,21 @@ export default function SubscriptionPanel() {
   const [licenseError, setLicenseError]     = useState("");
   const [licenseSuccess, setLicenseSuccess] = useState(false);
   const [loading, setLoading]               = useState(false);
+  const { stationId, isReady } = useActiveStation();
 
   useEffect(() => {
+    if (!isReady) return;
     (async () => {
       try {
-        await execute(`CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT)`, []);
-        const rows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'plan_tier'");
-        if (rows.length > 0) setCurrentPlan(rows[0].value as PlanTier);
-        const emailRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'license_email'");
-        if (emailRows.length > 0) setLicenseEmail(emailRows[0].value);
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+        const plan = rows.find((r: { key: string }) => r.key === 'plan_tier')?.value;
+        if (plan) setCurrentPlan(plan as PlanTier);
+        const email = rows.find((r: { key: string }) => r.key === 'license_email')?.value;
+        if (email) setLicenseEmail(email);
       } catch {}
     })();
-  }, []);
+  }, [stationId, isReady]);
 
   const openCheckout = async (plan: PlanTier) => {
     setPendingPlan(plan);
@@ -104,9 +107,9 @@ export default function SubscriptionPanel() {
         setLoading(false);
         return;
       }
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('plan_tier', ?)", [data.plan]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('license_key', ?)", [licenseKey.trim()]);
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('license_email', ?)", [licenseEmail.trim()]);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', data.plan);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', licenseKey.trim());
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
       setCurrentPlan(data.plan as PlanTier);
       setLicenseSuccess(true);
       setShowLicenseEntry(false);
@@ -119,8 +122,8 @@ export default function SubscriptionPanel() {
 
   const cancelPlan = async () => {
     if (!confirm("Downgrade to Free? You'll keep access until the end of your billing period.")) return;
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('plan_tier', 'free')", []);
-    await execute("DELETE FROM station_config_kv WHERE key = 'license_key'", []);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', 'free');
+    await (window as any).ether.stationConfigKv.removeByKey(stationId, 'license_key');
     setCurrentPlan("free");
   };
 

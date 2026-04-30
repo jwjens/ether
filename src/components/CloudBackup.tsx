@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { query, execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 const API_URL = "https://ether-backend-production.up.railway.app";
 
@@ -99,6 +100,7 @@ async function gunzipBytes(bytes: Uint8Array): Promise<string> {
 
 export default function CloudBackup() {
   const { isPro, isStation, plan } = usePlan();
+  const { stationId: activeStationId, isReady } = useActiveStation();
 
   const [licenseKey, setLicenseKey]       = useState("");
   const [stationId, setStationId]         = useState("");
@@ -128,20 +130,19 @@ export default function CloudBackup() {
 
   // Load saved credentials
   useEffect(() => {
+    if (!isReady) return;
     (async () => {
       try {
-        const rows = await query<{ key: string; value: string }>(
-          "SELECT key, value FROM station_config_kv WHERE key IN ('license_key','license_email','station_name','cloud_auto_backup','cloud_last_backup')"
-        );
-        const kv: Record<string, string> = {};
-        rows.forEach(r => { kv[r.key] = r.value; });
-        if (kv.license_key) setLicenseKey(kv.license_key);
-        if (kv.license_email) setStationId(kv.license_email);
-        if (kv.cloud_auto_backup === "1") setAutoBackup(true);
-        if (kv.cloud_last_backup) setLastBackupAt(kv.cloud_last_backup);
+        const result = await (window as any).ether.stationConfigKv.list(activeStationId);
+        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+        const get = (k: string) => rows.find((r: { key: string }) => r.key === k)?.value;
+        if (get('license_key'))    setLicenseKey(get('license_key')!);
+        if (get('license_email'))  setStationId(get('license_email')!);
+        if (get('cloud_auto_backup') === "1") setAutoBackup(true);
+        if (get('cloud_last_backup'))         setLastBackupAt(get('cloud_last_backup')!);
       } catch {}
     })();
-  }, []);
+  }, [activeStationId, isReady]);
 
   // Load R2 config from main process
   useEffect(() => {
@@ -269,7 +270,7 @@ export default function CloudBackup() {
       }
 
       const now = new Date().toISOString();
-      await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('cloud_last_backup',?)", [now]);
+      await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'cloud_last_backup', now);
       setLastBackupAt(now);
       setDescription("");
       setStatus({ msg: `✓ Backup uploaded (${fmtBytes(compressed.length)})`, type: "ok" });
@@ -360,7 +361,7 @@ export default function CloudBackup() {
   const toggleAutoBackup = async () => {
     const next = !autoBackup;
     setAutoBackup(next);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('cloud_auto_backup',?)", [next ? "1" : "0"]);
+    await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'cloud_auto_backup', next ? "1" : "0");
   };
 
   const statusColor = status?.type === "ok" ? "#34d399" : status?.type === "err" ? "#ef4444" : "var(--accent-cyan)";

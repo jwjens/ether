@@ -13,8 +13,8 @@
  *   PlanGate                       — wrapper component that shows children or upgrade prompt
  */
 
-import { useState, useEffect, useCallback } from "react";
-import { query, execute } from "../db/client";
+import { useState, useEffect } from "react";
+import { useActiveStation } from "./useActiveStation";
 
 export type PlanTier = "free" | "pro" | "station" | "operator";
 
@@ -42,6 +42,7 @@ export function setPlanGlobally(plan: PlanTier) {
 
 export function usePlan() {
   const [plan, setPlan] = useState<PlanTier>(_cached ?? "free");
+  const { stationId, isReady } = useActiveStation();
 
   useEffect(() => {
     // Register listener for live updates (e.g. after license activation)
@@ -56,21 +57,20 @@ export function usePlan() {
       notifyAll("operator");
       return;
     }
+    if (!isReady) return;
     if (_cached) { setPlan(_cached); return; }
     // Load from DB
     (async () => {
       try {
-        await execute("CREATE TABLE IF NOT EXISTS station_config_kv (key TEXT PRIMARY KEY, value TEXT)", []);
-        const rows = await query<{ value: string }>(
-          "SELECT value FROM station_config_kv WHERE key = 'plan_tier'"
-        );
-        const p = (rows[0]?.value ?? "free") as PlanTier;
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+        const p = (rows.find((r: { key: string }) => r.key === 'plan_tier')?.value ?? "free") as PlanTier;
         notifyAll(p);
       } catch {
         notifyAll("free");
       }
     })();
-  }, []);
+  }, [stationId, isReady]);
 
   return {
     plan,

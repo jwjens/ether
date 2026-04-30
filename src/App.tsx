@@ -376,7 +376,7 @@ function useViewport() {
 }
 
 export default function App() {
-  const { stationId } = useActiveStation();
+  const { stationId, isReady: stationReady } = useActiveStation();
   const viewport = useViewport();
   // Macro automation: listen for hotkey-triggered macros + start clock watcher
   useMacroHotkeys();
@@ -502,25 +502,24 @@ export default function App() {
 
   // Check if first run is complete
   useEffect(() => {
+    if (!stationReady) return;
     (async () => {
       try {
-        const rows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'first_run_complete'");
-        if (rows.length > 0 && rows[0].value === "1") setWizardDone(true);
-        const nameRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'station_name'");
-        if (nameRows.length > 0 && nameRows[0].value) setStationName(nameRows[0].value);
-        const planRows = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'plan_tier'");
-        if (planRows.length > 0) {
-          const p = planRows[0].value as PlanTier;
-          setCurrentPlan(p);
-          setPlanGlobally(p);
-        }
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+        const get = (k: string) => rows.find((r: { key: string }) => r.key === k)?.value;
+        if (get('first_run_complete') === "1") setWizardDone(true);
+        const name = get('station_name');
+        if (name) setStationName(name);
+        const p = get('plan_tier') as PlanTier | undefined;
+        if (p) { setCurrentPlan(p); setPlanGlobally(p); }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
       } catch {}
       setFirstRunChecked(true);
       consoleLog("system", "ether started — engine ready");
     })();
-  }, []);
+  }, [stationId, stationReady]);
 
   // Native menu IPC handler
   useEffect(() => {
