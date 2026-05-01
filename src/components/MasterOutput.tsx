@@ -6,7 +6,8 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { query, execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
+import MasterEQRack from "./MasterEQRack";
+import { EQ_DEFAULT } from "./GraphicEQ";
 import { engine } from "../audio/engine-rodio";
 
 // ── Constants ────────────────────────────────────────────────
@@ -670,16 +671,13 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
         >{eqOpen ? "CLOSE" : "OPEN"}</button>
       </div>
 
-      {/* Master EQ panel */}
-      <div style={{
-        maxHeight: eqOpen ? 130 : 0,
-        overflow: "hidden",
-        transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
-        flexShrink: 0,
-        borderBottom: eqOpen ? "1px solid var(--border-primary)" : "none",
-      }}>
-        <GraphicEQ bands={eqBands} onChange={handleMasterEqChange} label="MASTER EQ" />
-      </div>
+      {eqOpen && (
+        <MasterEQRack
+          bands={eqBands}
+          onChange={handleMasterEqChange}
+          onClose={() => setEqOpen(false)}
+        />
+      )}
 
       {/* Station status */}
       <div style={{ padding: "6px 0", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
