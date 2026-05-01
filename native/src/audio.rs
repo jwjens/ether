@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 // ── Existing public types ─────────────────────────────────────────────────────
@@ -58,7 +58,6 @@ pub struct AudioLevels {
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
 
-// One AtomicBool per deck — set by audio thread when sink empties, cleared by command handler after reading
 #[derive(Clone)]
 pub struct FinishedFlags {
     pub a: Arc<AtomicBool>,
@@ -130,28 +129,80 @@ fn rand_level() -> f32 {
     (t % 1000) as f32 / 1000.0
 }
 
-// ── Named pipe output (Piece 2) ───────────────────────────────────────────────
+// ── TCP stream output ─────────────────────────────────────────────────────────
+// One StationStream per deck per station. Port taken explicitly by caller.
+// Port allocation: 9000 + station_id*100 + deck_offset (1-3).
+//   Station 1: 9101 (deck A), 9102 (deck B), 9103 (deck C)
+//   Station 3: 9301 (deck A), 9302 (deck B), 9303 (deck C)
+// Rust listens; ffmpeg connects with: -f f32le -ar 44100 -ac 2 -i tcp://127.0.0.1:{port}
 
-// Shared ring-buffer types
-type DecBuf = Arc<Mutex<VecDeque<f32>>>;
-type DecCh  = Arc<AtomicU32>;
+use std::net::{TcpListener, TcpStream};
+use std::io::Write;
 
-// 4 seconds of f32 stereo at 44100 Hz = 352 800 samples per deck
-const RING_CAP: usize = 352_800;
+struct StationStream {
+    client: Arc<Mutex<Option<TcpStream>>>,
+    port:   u16,
+}
 
-// Wraps a decoded f32 Source; copies each sample into a ring buffer as it passes through.
-// rodio sees an ordinary Source — behaviour and timing are unaffected.
-struct TeeSource<S> {
-    inner: S,
-    buf:   DecBuf,
-    cap:   usize,
+impl StationStream {
+    fn create(port: u16) -> Self {
+        let addr = format!("127.0.0.1:{}", port);
+        let client: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
+        let client_clone = client.clone();
+
+        std::thread::spawn(move || {
+            let listener = match TcpListener::bind(&addr) {
+                Ok(l)  => { eprintln!("[RUST] Stream listener ready: {}", addr); l }
+                Err(e) => { eprintln!("[RUST] Listener bind failed on {}: {}", addr, e); return; }
+            };
+            for incoming in listener.incoming() {
+                match incoming {
+                    Ok(stream) => {
+                        eprintln!("[RUST] Stream client connected on port {}", port);
+                        stream.set_nonblocking(false).ok();
+                        stream.set_write_timeout(Some(std::time::Duration::from_millis(50))).ok();
+                        if let Ok(mut guard) = client_clone.lock() {
+                            *guard = Some(stream);
+                        }
+                    }
+                    Err(e) => eprintln!("[RUST] Accept error on port {}: {}", port, e),
+                }
+            }
+        });
+
+        StationStream { client, port }
+    }
+
+    fn write_nonblocking(&self, samples: &[f32]) {
+        if samples.is_empty() { return; }
+        let bytes = unsafe {
+            std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 4)
+        };
+        let Ok(mut guard) = self.client.try_lock() else { return };
+        if let Some(stream) = guard.as_mut() {
+            if stream.write_all(bytes).is_err() {
+                *guard = None;
+                eprintln!("[RUST] Stream client disconnected on port {}", self.port);
+            }
+        }
+    }
+}
+
+// ── TeeSource ─────────────────────────────────────────────────────────────────
+// Wraps a normalized f32 stereo 44100 Hz source (via UniformSourceIterator).
+// Accumulates samples and flushes to the deck's TCP socket every flush_at samples —
+// in the same audio thread as soundcard playback. No ring buffer, no clock drift.
+
+struct TeeSource<S: rodio::Source<Item = f32>> {
+    inner:    S,
+    pipe:     Arc<StationStream>,
+    buf:      Vec<f32>,
+    flush_at: usize,
 }
 
 impl<S: rodio::Source<Item = f32>> TeeSource<S> {
-    fn new(inner: S, buf: DecBuf, ch: &DecCh, cap: usize) -> Self {
-        // Store channel count so the pipe writer knows the layout
-        ch.store(inner.channels() as u32, Ordering::Relaxed);
-        TeeSource { inner, buf, cap }
+    fn new(inner: S, pipe: Arc<StationStream>, flush_at: usize) -> Self {
+        TeeSource { inner, pipe, buf: Vec::with_capacity(flush_at), flush_at }
     }
 }
 
@@ -159,16 +210,22 @@ impl<S: rodio::Source<Item = f32>> Iterator for TeeSource<S> {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
         let s = self.inner.next()?;
-        if let Ok(mut q) = self.buf.try_lock() {
-            if q.len() >= self.cap {
-                // Keep most-recent audio: evict oldest frames to make room
-                let keep = self.cap.saturating_sub(1);
-                let drop_n = q.len() - keep;
-                q.drain(..drop_n);
-            }
-            q.push_back(s);
+        self.buf.push(s);
+        if self.buf.len() >= self.flush_at {
+            self.pipe.write_nonblocking(&self.buf);
+            self.buf.clear();
         }
         Some(s)
+    }
+}
+
+impl<S: rodio::Source<Item = f32>> Drop for TeeSource<S> {
+    fn drop(&mut self) {
+        // Flush partial buffer when track ends mid-frame
+        if !self.buf.is_empty() {
+            self.pipe.write_nonblocking(&self.buf);
+            self.buf.clear();
+        }
     }
 }
 
@@ -179,194 +236,31 @@ impl<S: rodio::Source<Item = f32>> rodio::Source for TeeSource<S> {
     fn total_duration(&self) -> Option<std::time::Duration> { self.inner.total_duration() }
 }
 
-// Drain one deck's ring buffer into `out` (stereo f32le, BATCH samples).
-// Sums into out (caller zeroed it); handles mono→stereo duplication.
-fn mix_deck_into(buf: &DecBuf, ch: u16, out: &mut [f32]) {
-    let Ok(mut q) = buf.try_lock() else { return };
-    if q.is_empty() { return; }
-    let n = out.len();
-    let mut i = 0usize;
-    if ch == 1 {
-        while i + 1 < n {
-            let Some(s) = q.pop_front() else { break };
-            out[i]   += s;
-            out[i+1] += s;
-            i += 2;
-        }
-    } else {
-        while i + 1 < n {
-            let (Some(l), Some(r)) = (q.pop_front(), q.pop_front()) else { break };
-            out[i]   += l;
-            out[i+1] += r;
-            i += 2;
-        }
-    }
-}
-
-// ── Named pipe: Windows implementation ───────────────────────────────────────
-// Raw extern declarations against kernel32 — avoids windows-sys version issues.
-
-#[cfg(windows)]
-mod win32 {
-    pub const INVALID_HANDLE_VALUE: isize  = -1isize;
-    pub const PIPE_ACCESS_OUTBOUND: u32    = 0x0000_0002;
-    pub const PIPE_TYPE_BYTE:       u32    = 0x0000_0000;
-    pub const PIPE_NOWAIT:          u32    = 0x0000_0001;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        pub fn CreateNamedPipeW(
-            lpname:                  *const u16,
-            dwopenmode:              u32,
-            dwpipemode:              u32,
-            nmaxinstances:           u32,
-            noutbuffersize:          u32,
-            ninbuffersize:           u32,
-            ndefaulttimeout:         u32,
-            lpsecurityattributes:    *const u8,
-        ) -> isize;
-
-        pub fn WriteFile(
-            hfile:                   isize,
-            lpbuffer:                *const u8,
-            nnumberofbytestowrite:   u32,
-            lpnumberofbyteswritten:  *mut u32,
-            lpoverlapped:            *const u8,
-        ) -> i32;
-
-        pub fn CloseHandle(hobject: isize) -> i32;
-    }
-}
-
-struct StationPipe {
-    #[cfg(windows)]
-    handle: isize,
-    #[cfg(not(windows))]
-    _station_id: u32,
-}
-
-// HANDLE is an integer; safe to move across threads for non-overlapped single-writer use.
-unsafe impl Send for StationPipe {}
-
-impl StationPipe {
-    fn create(station_id: u32) -> Self {
-        #[cfg(windows)]
-        {
-            use win32::*;
-            let name: Vec<u16> = format!("\\\\.\\pipe\\ether-program-{}", station_id)
-                .encode_utf16()
-                .chain(std::iter::once(0u16))
-                .collect();
-            let h = unsafe {
-                CreateNamedPipeW(
-                    name.as_ptr(),
-                    PIPE_ACCESS_OUTBOUND,
-                    PIPE_TYPE_BYTE | PIPE_NOWAIT,
-                    1,      // max instances
-                    65536,  // outbound buffer bytes
-                    0,      // inbound buffer (unused — outbound only)
-                    0,      // default timeout
-                    std::ptr::null(),
-                )
-            };
-            if h == INVALID_HANDLE_VALUE {
-                eprintln!("[RUST] Named pipe create failed for station {}", station_id);
-            } else {
-                eprintln!("[RUST] Named pipe ready: \\\\.\\pipe\\ether-program-{}", station_id);
-            }
-            StationPipe { handle: h }
-        }
-        #[cfg(not(windows))]
-        {
-            eprintln!("[RUST] Named pipe not implemented on this platform (station {})", station_id);
-            StationPipe { _station_id: station_id }
-        }
-    }
-
-    // Non-blocking write — PIPE_NOWAIT returns immediately when no reader is connected.
-    fn write_nonblocking(&self, samples: &[f32]) {
-        if samples.is_empty() { return; }
-        #[cfg(windows)]
-        {
-            use win32::*;
-            if self.handle == INVALID_HANDLE_VALUE { return; }
-            let mut written: u32 = 0;
-            unsafe {
-                WriteFile(
-                    self.handle,
-                    samples.as_ptr() as *const u8,
-                    (samples.len() * 4) as u32,
-                    &mut written,
-                    std::ptr::null(),
-                );
-                // Return value intentionally ignored — error means no reader connected
-            }
-        }
-    }
-}
-
-impl Drop for StationPipe {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        {
-            use win32::*;
-            if self.handle != INVALID_HANDLE_VALUE {
-                unsafe { CloseHandle(self.handle); }
-            }
-        }
-    }
-}
-
 // ── Audio thread ──────────────────────────────────────────────────────────────
 
-pub fn start_audio_thread(station_id: u32) -> (
+pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
     std::sync::mpsc::Sender<AudioCmd>,
     Arc<Mutex<bool>>,
     SharedLevels,
     FinishedFlags,
 ) {
     let (tx, rx) = std::sync::mpsc::channel::<AudioCmd>();
-    let is_playing  = Arc::new(Mutex::new(false));
+    let is_playing       = Arc::new(Mutex::new(false));
     let is_playing_clone = is_playing.clone();
     let levels: SharedLevels = Arc::new(Mutex::new(AudioLevels::default()));
-    let levels_clone = levels.clone();
-    let finished = FinishedFlags::new();
-    let finished_clone = finished.clone();
+    let levels_clone     = levels.clone();
+    let finished         = FinishedFlags::new();
+    let finished_clone   = finished.clone();
 
-    // Per-deck ring buffers and channel-count atomics for the pipe output path
-    let buf_a: DecBuf = Arc::new(Mutex::new(VecDeque::with_capacity(RING_CAP)));
-    let buf_b: DecBuf = Arc::new(Mutex::new(VecDeque::with_capacity(RING_CAP)));
-    let buf_c: DecBuf = Arc::new(Mutex::new(VecDeque::with_capacity(RING_CAP)));
-    let ch_a:  DecCh  = Arc::new(AtomicU32::new(2));
-    let ch_b:  DecCh  = Arc::new(AtomicU32::new(2));
-    let ch_c:  DecCh  = Arc::new(AtomicU32::new(2));
-
-    // ── Pipe writer thread ────────────────────────────────────────────────────
-    // Opens the named pipe at startup and keeps it live indefinitely.
-    // Drains all three deck ring buffers every 10 ms, software-mixes, writes.
-    // PIPE_NOWAIT: writes discard silently when no ffmpeg reader is connected.
-    {
-        let (pa, pb, pc) = (buf_a.clone(), buf_b.clone(), buf_c.clone());
-        let (ca, cb, cc) = (ch_a.clone(), ch_b.clone(), ch_c.clone());
-        std::thread::spawn(move || {
-            let pipe = StationPipe::create(station_id);
-            // 44 100 Hz × 2 ch × 10 ms = 882 samples per batch
-            const BATCH: usize = 882;
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                let mut out = [0.0f32; BATCH];
-                mix_deck_into(&pa, ca.load(Ordering::Relaxed) as u16, &mut out);
-                mix_deck_into(&pb, cb.load(Ordering::Relaxed) as u16, &mut out);
-                mix_deck_into(&pc, cc.load(Ordering::Relaxed) as u16, &mut out);
-                for s in &mut out { *s = s.clamp(-1.0, 1.0); }
-                pipe.write_nonblocking(&out);
-            }
-        });
-    }
+    // One TCP listener per deck. Port = 9000 + station_id*100 + deck_offset(1-3).
+    let stream_a = Arc::new(StationStream::create((9000 + station_id * 100 + 1) as u16));
+    let stream_b = Arc::new(StationStream::create((9000 + station_id * 100 + 2) as u16));
+    let stream_c = Arc::new(StationStream::create((9000 + station_id * 100 + 3) as u16));
 
     // ── Audio dispatch thread ─────────────────────────────────────────────────
     std::thread::spawn(move || {
         use rodio::{Decoder, OutputStream, Sink, Source};
+        use rodio::source::UniformSourceIterator;
         use std::fs::File;
         use std::io::BufReader;
 
@@ -374,36 +268,70 @@ pub fn start_audio_thread(station_id: u32) -> (
         let mut was_non_empty: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut loaded_files: HashMap<String, (String, String, String)> = HashMap::new();
 
-        // Returns (buf_clone, ch_clone) for a given deck letter
-        let pick = |deck: &str| -> (DecBuf, DecCh) {
+        // 882 stereo f32 samples = 10 ms at 44100 Hz stereo (per-deck TCP flush granularity)
+        const FLUSH_AT: usize = 882;
+
+        let pick_stream = |deck: &str| -> Arc<StationStream> {
             match deck {
-                "A" => (buf_a.clone(), ch_a.clone()),
-                "C" => (buf_c.clone(), ch_c.clone()),
-                _   => (buf_b.clone(), ch_b.clone()),
+                "A" => stream_a.clone(),
+                "C" => stream_c.clone(),
+                _   => stream_b.clone(),
             }
         };
 
         'outer: loop {
-            let stream_result = OutputStream::try_default();
+            let (stream_result, opened_name) = {
+                use cpal::traits::{DeviceTrait, HostTrait};
+                let default_name = || cpal::default_host()
+                    .default_output_device()
+                    .and_then(|d| d.name().ok())
+                    .unwrap_or_else(|| "default".to_string());
+                if let Some(ref name) = device_name {
+                    let found = cpal::available_hosts().into_iter().find_map(|host_id| {
+                        let host = cpal::host_from_id(host_id).ok()?;
+                        host.output_devices().ok()?.find(|d| {
+                            d.name().ok().as_deref() == Some(name.as_str())
+                        })
+                    });
+                    match found {
+                        Some(device) => match OutputStream::try_from_device(&device) {
+                            Ok(s)  => (Ok(s), name.clone()),
+                            Err(e) => {
+                                eprintln!("[RUST] Station {} failed to open '{}': {} — using default", station_id, name, e);
+                                (OutputStream::try_default(), default_name())
+                            }
+                        },
+                        None => {
+                            eprintln!("[RUST] Station {} device '{}' not found — using default", station_id, name);
+                            (OutputStream::try_default(), default_name())
+                        }
+                    }
+                } else {
+                    (OutputStream::try_default(), default_name())
+                }
+            };
             let (_stream, stream_handle) = match stream_result {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("Audio output failed: {} - retrying in 2s", e);
+                    eprintln!("[RUST] Audio output failed: {} - retrying in 2s", e);
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     continue 'outer;
                 }
             };
 
             let mut sinks: HashMap<String, Sink> = HashMap::new();
-            eprintln!("Audio output device ready");
+            eprintln!("[RUST] Station {} audio output: {}", station_id, opened_name);
 
             // Restore previously playing tracks after device failover
             for (deck, (path, _title, _artist)) in &loaded_files {
-                let (buf, ch) = pick(deck);
+                let stream = pick_stream(deck);
                 if let Ok(file) = File::open(path) {
                     let reader = BufReader::new(file);
                     if let Ok(decoder) = Decoder::new(reader) {
-                        let source = TeeSource::new(decoder.convert_samples::<f32>(), buf, &ch, RING_CAP);
+                        let norm = UniformSourceIterator::<_, f32>::new(
+                            decoder.convert_samples::<f32>(), 2, 44100,
+                        );
+                        let source = TeeSource::new(norm, stream, FLUSH_AT);
                         if let Ok(sink) = Sink::try_new(&stream_handle) {
                             if playing_decks.contains(deck) { sink.play(); } else { sink.pause(); }
                             sink.append(source);
@@ -423,13 +351,14 @@ pub fn start_audio_thread(station_id: u32) -> (
                                 playing_decks.remove(&deck);
                                 was_non_empty.remove(&deck);
                                 finished_clone.clear(&deck);
-                                let (buf, ch) = pick(&deck);
-                                // Discard stale samples so new track starts clean on the pipe
-                                if let Ok(mut q) = buf.try_lock() { q.clear(); }
+                                let stream = pick_stream(&deck);
                                 if let Ok(file) = File::open(&file_path) {
                                     let reader = BufReader::new(file);
                                     if let Ok(decoder) = Decoder::new(reader) {
-                                        let source = TeeSource::new(decoder.convert_samples::<f32>(), buf, &ch, RING_CAP);
+                                        let norm = UniformSourceIterator::<_, f32>::new(
+                                            decoder.convert_samples::<f32>(), 2, 44100,
+                                        );
+                                        let source = TeeSource::new(norm, stream, FLUSH_AT);
                                         if let Ok(sink) = Sink::try_new(&stream_handle) {
                                             sink.pause();
                                             if gain_db != 0.0 {
@@ -465,8 +394,6 @@ pub fn start_audio_thread(station_id: u32) -> (
                                 was_non_empty.remove(&deck);
                                 loaded_files.remove(&deck);
                                 finished_clone.clear(&deck);
-                                let (buf, _ch) = pick(&deck);
-                                if let Ok(mut q) = buf.try_lock() { q.clear(); }
                                 if let Some(sink) = sinks.remove(&deck) { sink.stop(); }
                                 let any = sinks.values().any(|s| !s.is_paused() && !s.empty());
                                 if let Ok(mut p) = is_playing_clone.lock() { *p = any; }
