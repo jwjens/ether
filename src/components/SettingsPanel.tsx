@@ -450,7 +450,7 @@ function CloudPlayoutSection() {
   const [editingServer,  setEditingServer]  = useState(false);
   const [serverDraft,    setServerDraft]    = useState('');
   const [stations,       setStations]       = useState<Array<{ id: number; name: string; icecast_mount: string; icecast_server_url?: string; }>>([]);
-  const [stationStreams,  setStationStreams]  = useState<Record<number, { live: boolean }>>({});
+  const [stationStreams,  setStationStreams]  = useState<Record<number, { live: boolean; error?: string | null }>>({});
 
   useEffect(() => {
     const ether = (window as any).ether;
@@ -469,7 +469,10 @@ function CloudPlayoutSection() {
     })();
     const h = ether.on('stream:status', (s: any) => {
       if (s?.stationId != null) {
-        setStationStreams(prev => ({ ...prev, [s.stationId]: { live: !!s.live } }));
+        setStationStreams(prev => ({
+          ...prev,
+          [s.stationId]: { live: !!s.live, error: s.error || null },
+        }));
       }
     });
     return () => ether.off('stream:status', h);
@@ -491,6 +494,7 @@ function CloudPlayoutSection() {
 
   const goLive = async (stationId: number) => {
     setSyncMsg('');
+    setStationStreams(prev => ({ ...prev, [stationId]: { ...prev[stationId], live: false, error: null } }));
     const res = await (window as any).ether.invoke('stream:go-live', { stationId });
     if (res?.ok) {
       setSyncMsg(`✓ Streaming → ${res.server}:8000${res.mount}`);
@@ -596,6 +600,17 @@ function CloudPlayoutSection() {
               {isLive && <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#f87171", display: "inline-block", boxShadow: "0 0 6px #f87171", animation: "pulse 1.2s infinite" }} />}
               {isLive ? "■  STOP STREAM" : "▶  GO LIVE — Stream to Icecast"}
             </button>
+            {stationStreams[station.id]?.error && !isLive && (
+              <div style={{
+                marginTop: 8, fontSize: 11, color: "#f87171",
+                padding: "6px 8px",
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.2)",
+                lineHeight: 1.4,
+              }}>
+                {stationStreams[station.id]!.error}
+              </div>
+            )}
           </div>
         );
       })}

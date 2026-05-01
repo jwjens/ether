@@ -1156,6 +1156,19 @@ ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
   return true;
 });
 
+ipcMain.handle("audio:listOutputDevices", () => {
+  try {
+    if (typeof audio.audioListOutputDevices !== "function") return [];
+    return JSON.parse(audio.audioListOutputDevices());
+  } catch { return []; }
+});
+ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
+  try {
+    if (typeof audio.audioSetOutputDevice !== "function") return false;
+    return audio.audioSetOutputDevice(stationId, deviceName);
+  } catch { return false; }
+});
+
 // Database
 ipcMain.handle("db:query", (_, sql, params) => {
   try {
@@ -3164,24 +3177,6 @@ ipcMain.handle('playout:set-server', (_, ip) => {
 
 let _playoutLastPing = 0;  // epoch ms of last successful play POST
 
-ipcMain.on('playout:track-started', (_, { filePath, file_key, title }) => {
-  const stationId = getActiveStationId();
-  const state = _getStreamState(stationId);
-  const streamPath = filePath || '';
-  if (streamPath) {
-    state.currentFilePath = streamPath;
-    _streamFile(stationId, streamPath);
-  } else if (file_key) {
-    const cachePath = require('path').join(app.getPath('userData'), 'r2-cache',
-      file_key.replace(/[^a-zA-Z0-9._-]/g, '_'));
-    if (require('fs').existsSync(cachePath)) {
-      state.currentFilePath = cachePath;
-      _streamFile(stationId, cachePath);
-    }
-  }
-  console.log(`[stream/${stationId}] track-started: ${title}`);
-});
-
 // ── Schedule Generator ────────────────────────────────────────────────────────
 // Reads shows → clocks → clock_slots, picks songs per rotation rules, and
 // writes a full week of timestamped entries to generated_schedule.
@@ -3345,11 +3340,11 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
 // Cancel by calling library:sync-r2:cancel before the job finishes.
 
 // ── Live stream to Icecast ────────────────────────────────────────────────────
-// ffmpeg reads audio files DIRECTLY (same files the decks play) and pushes to
-// Icecast at full volume — completely independent of local speaker volume.
-// Monitor fader → audioSetVolume on decks → controls speakers only, never the stream.
+// One long-lived ffmpeg per station captures from the station's assigned audio
+// output device (set via Audio Routing UI, persisted in station_config_kv) and
+// encodes to MP3 for Icecast. Uses Windows DirectShow (-f dshow) on this platform.
 
-// Map<stationId, { armed: bool, proc: ChildProcess|null, url: string, currentFilePath: string }>
+// Map<stationId, { armed: bool, proc: ChildProcess|null, url: string }>
 const _stationStreams = new Map();
 
 function _getStreamState(stationId) {
@@ -3358,7 +3353,8 @@ function _getStreamState(stationId) {
       armed: false,
       proc: null,
       url: '',
-      currentFilePath: '',
+      failureCount: 0,
+      firstFailureTime: 0,
     });
   }
   return _stationStreams.get(stationId);
@@ -3392,31 +3388,35 @@ function _spawnStream(stationId, args, label) {
   state.proc.on('close', code => {
     console.log(`[stream/${stationId}] ffmpeg closed (code ${code}) — ${label}`);
     state.proc = null;
+    if (!state.armed) return;
+
+    const now = Date.now();
+    if (now - state.firstFailureTime > 10000) {
+      state.failureCount = 0;
+      state.firstFailureTime = now;
+    }
+    if (state.failureCount === 0) state.firstFailureTime = now;
+    state.failureCount++;
+
+    if (state.failureCount >= 3) {
+      console.error(`[stream/${stationId}] ffmpeg failed ${state.failureCount}x in 10s — giving up`);
+      state.armed = false;
+      state.failureCount = 0;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('stream:status', {
+          stationId, live: false,
+          error: 'Streaming failed: ffmpeg cannot capture from this device. Customer broadcast infrastructure (multi-output card, AoIP, or virtual audio cable) is required.',
+        });
+      }
+      return;
+    }
+
+    console.log(`[stream/${stationId}] ffmpeg exited, respawning in 500ms (attempt ${state.failureCount}/3)`);
+    setTimeout(() => {
+      if (state.armed) _spawnStream(stationId, args, label);
+    }, 500);
   });
   console.log(`[stream/${stationId}] → ${label}`);
-}
-
-function _streamSilence(stationId) {
-  const state = _getStreamState(stationId);
-  if (!state.armed) return;
-  _spawnStream(stationId, [
-    '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-    '-c:a', 'libmp3lame', '-b:a', '128k', '-f', 'mp3',
-    '-content_type', 'audio/mpeg',
-    state.url,
-  ], 'silence/hold');
-}
-
-function _streamFile(stationId, filePath) {
-  const state = _getStreamState(stationId);
-  if (!state.armed || !filePath) return;
-  _spawnStream(stationId, [
-    '-re', '-i', filePath, '-vn',
-    '-c:a', 'libmp3lame', '-b:a', '128k',
-    '-ar', '44100', '-ac', '2', '-f', 'mp3',
-    '-content_type', 'audio/mpeg',
-    state.url,
-  ], require('path').basename(filePath));
 }
 
 ipcMain.handle('stream:go-live', async (_, args = {}) => {
@@ -3424,21 +3424,31 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
     const stationId = args.stationId ?? getActiveStationId();
     const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
     if (!station) return { ok: false, error: `station ${stationId} not found` };
+
+    const devRow    = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='audio_output_device'").get(stationId);
+    const deviceName = devRow?.value?.trim();
+    if (!deviceName) {
+      return { ok: false, error: 'Station has no audio output device configured. Set one in Audio Routing first.' };
+    }
+
     const server    = station.icecast_server_url?.trim() || '44.244.52.207';
     const pw        = station.icecast_password?.trim()   || 'hackme';
     const mount     = station.icecast_mount?.trim()      || '/live';
     const state     = _getStreamState(stationId);
-    state.url   = `icecast://source:${pw}@${server}:8000${mount}`;
-    state.armed = true;
-    console.log(`[stream/${stationId}] Armed → ${state.url}`);
-    // If a track is already playing, start streaming it immediately
-    if (state.currentFilePath && require('fs').existsSync(state.currentFilePath)) {
-      console.log(`[stream/${stationId}] Resuming current track → ${require('path').basename(state.currentFilePath)}`);
-      _streamFile(stationId, state.currentFilePath);
-    } else {
-      // Nothing playing — spawn a silent test tone so Icecast mount is live
-      _streamSilence(stationId);
-    }
+    state.url       = `icecast://source:${pw}@${server}:8000${mount}`;
+    state.armed     = true;
+
+    _spawnStream(stationId, [
+      '-f', 'dshow',
+      '-i', `audio=${deviceName}`,
+      '-c:a', 'libmp3lame', '-b:a', '128k',
+      '-f', 'mp3',
+      '-content_type', 'audio/mpeg',
+      state.url,
+    ], `device:${deviceName}→${mount}`);
+
+    console.log(`[stream/${stationId}] ffmpeg started (device:${deviceName}) → ${state.url}`);
+
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });
     }
@@ -3452,6 +3462,7 @@ ipcMain.handle('stream:stop-live', (_, args = {}) => {
   const stationId = args.stationId ?? getActiveStationId();
   const state     = _getStreamState(stationId);
   state.armed = false;
+  state.failureCount = 0;
   _streamKillCurrent(stationId);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('stream:status', { stationId, live: false });

@@ -130,113 +130,6 @@ fn rand_level() -> f32 {
     (t % 1000) as f32 / 1000.0
 }
 
-// ── TCP stream output ─────────────────────────────────────────────────────────
-// One StationStream per deck per station. Port taken explicitly by caller.
-// Port allocation: 9000 + station_id*100 + deck_offset (1-3).
-//   Station 1: 9101 (deck A), 9102 (deck B), 9103 (deck C)
-//   Station 3: 9301 (deck A), 9302 (deck B), 9303 (deck C)
-// Rust listens; ffmpeg connects with: -f f32le -ar 44100 -ac 2 -i tcp://127.0.0.1:{port}
-
-use std::net::{TcpListener, TcpStream};
-use std::io::Write;
-
-struct StationStream {
-    client: Arc<Mutex<Option<TcpStream>>>,
-    port:   u16,
-}
-
-impl StationStream {
-    fn create(port: u16) -> Self {
-        let addr = format!("127.0.0.1:{}", port);
-        let client: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
-        let client_clone = client.clone();
-
-        std::thread::spawn(move || {
-            let listener = match TcpListener::bind(&addr) {
-                Ok(l)  => { eprintln!("[RUST] Stream listener ready: {}", addr); l }
-                Err(e) => { eprintln!("[RUST] Listener bind failed on {}: {}", addr, e); return; }
-            };
-            for incoming in listener.incoming() {
-                match incoming {
-                    Ok(stream) => {
-                        eprintln!("[RUST] Stream client connected on port {}", port);
-                        stream.set_nonblocking(false).ok();
-                        stream.set_write_timeout(Some(std::time::Duration::from_millis(50))).ok();
-                        if let Ok(mut guard) = client_clone.lock() {
-                            *guard = Some(stream);
-                        }
-                    }
-                    Err(e) => eprintln!("[RUST] Accept error on port {}: {}", port, e),
-                }
-            }
-        });
-
-        StationStream { client, port }
-    }
-
-    fn write_nonblocking(&self, samples: &[f32]) {
-        if samples.is_empty() { return; }
-        let bytes = unsafe {
-            std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * 4)
-        };
-        let Ok(mut guard) = self.client.try_lock() else { return };
-        if let Some(stream) = guard.as_mut() {
-            if stream.write_all(bytes).is_err() {
-                *guard = None;
-                eprintln!("[RUST] Stream client disconnected on port {}", self.port);
-            }
-        }
-    }
-}
-
-// ── TeeSource ─────────────────────────────────────────────────────────────────
-// Wraps a normalized f32 stereo 44100 Hz source (via UniformSourceIterator).
-// Accumulates samples and flushes to the deck's TCP socket every flush_at samples —
-// in the same audio thread as soundcard playback. No ring buffer, no clock drift.
-
-struct TeeSource<S: rodio::Source<Item = f32>> {
-    inner:    S,
-    pipe:     Arc<StationStream>,
-    buf:      Vec<f32>,
-    flush_at: usize,
-}
-
-impl<S: rodio::Source<Item = f32>> TeeSource<S> {
-    fn new(inner: S, pipe: Arc<StationStream>, flush_at: usize) -> Self {
-        TeeSource { inner, pipe, buf: Vec::with_capacity(flush_at), flush_at }
-    }
-}
-
-impl<S: rodio::Source<Item = f32>> Iterator for TeeSource<S> {
-    type Item = f32;
-    fn next(&mut self) -> Option<f32> {
-        let s = self.inner.next()?;
-        self.buf.push(s);
-        if self.buf.len() >= self.flush_at {
-            self.pipe.write_nonblocking(&self.buf);
-            self.buf.clear();
-        }
-        Some(s)
-    }
-}
-
-impl<S: rodio::Source<Item = f32>> Drop for TeeSource<S> {
-    fn drop(&mut self) {
-        // Flush partial buffer when track ends mid-frame
-        if !self.buf.is_empty() {
-            self.pipe.write_nonblocking(&self.buf);
-            self.buf.clear();
-        }
-    }
-}
-
-impl<S: rodio::Source<Item = f32>> rodio::Source for TeeSource<S> {
-    fn current_frame_len(&self) -> Option<usize> { self.inner.current_frame_len() }
-    fn channels(&self)     -> u16                { self.inner.channels() }
-    fn sample_rate(&self)  -> u32                { self.inner.sample_rate() }
-    fn total_duration(&self) -> Option<std::time::Duration> { self.inner.total_duration() }
-}
-
 // ── Audio thread ──────────────────────────────────────────────────────────────
 
 pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
@@ -253,11 +146,6 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
     let finished         = FinishedFlags::new();
     let finished_clone   = finished.clone();
 
-    // One TCP listener per deck. Port = 9000 + station_id*100 + deck_offset(1-3).
-    let stream_a = Arc::new(StationStream::create((9000 + station_id * 100 + 1) as u16));
-    let stream_b = Arc::new(StationStream::create((9000 + station_id * 100 + 2) as u16));
-    let stream_c = Arc::new(StationStream::create((9000 + station_id * 100 + 3) as u16));
-
     // ── Audio dispatch thread ─────────────────────────────────────────────────
     std::thread::spawn(move || {
         use rodio::{Decoder, OutputStream, Sink, Source};
@@ -269,17 +157,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
         let mut was_non_empty: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut loaded_files: HashMap<String, (String, String, String)> = HashMap::new();
 
-        // 882 stereo f32 samples = 10 ms at 44100 Hz stereo (per-deck TCP flush granularity)
-        const FLUSH_AT: usize = 882;
         let mut current_device_name = device_name;
-
-        let pick_stream = |deck: &str| -> Arc<StationStream> {
-            match deck {
-                "A" => stream_a.clone(),
-                "C" => stream_c.clone(),
-                _   => stream_b.clone(),
-            }
-        };
 
         'outer: loop {
             let (stream_result, opened_name) = {
@@ -326,17 +204,15 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
 
             // Restore previously playing tracks after device failover
             for (deck, (path, _title, _artist)) in &loaded_files {
-                let stream = pick_stream(deck);
                 if let Ok(file) = File::open(path) {
                     let reader = BufReader::new(file);
                     if let Ok(decoder) = Decoder::new(reader) {
                         let norm = UniformSourceIterator::<_, f32>::new(
                             decoder.convert_samples::<f32>(), 2, 44100,
                         );
-                        let source = TeeSource::new(norm, stream, FLUSH_AT);
                         if let Ok(sink) = Sink::try_new(&stream_handle) {
                             if playing_decks.contains(deck) { sink.play(); } else { sink.pause(); }
-                            sink.append(source);
+                            sink.append(norm);
                             sinks.insert(deck.clone(), sink);
                         }
                     }
@@ -353,21 +229,19 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                                 playing_decks.remove(&deck);
                                 was_non_empty.remove(&deck);
                                 finished_clone.clear(&deck);
-                                let stream = pick_stream(&deck);
                                 if let Ok(file) = File::open(&file_path) {
                                     let reader = BufReader::new(file);
                                     if let Ok(decoder) = Decoder::new(reader) {
                                         let norm = UniformSourceIterator::<_, f32>::new(
                                             decoder.convert_samples::<f32>(), 2, 44100,
                                         );
-                                        let source = TeeSource::new(norm, stream, FLUSH_AT);
                                         if let Ok(sink) = Sink::try_new(&stream_handle) {
                                             sink.pause();
                                             if gain_db != 0.0 {
                                                 let linear = 10f32.powf(gain_db / 20.0);
                                                 sink.set_volume(linear.clamp(0.1, 4.0));
                                             }
-                                            sink.append(source);
+                                            sink.append(norm);
                                             sinks.insert(deck, sink);
                                         } else {
                                             eprintln!("Audio device disconnected - failing over");
