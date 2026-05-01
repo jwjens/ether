@@ -8,6 +8,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import MasterEQRack from "./MasterEQRack";
 import { EQ_DEFAULT } from "./GraphicEQ";
+import { AudioRoutingPicker, CurrentRoutingSummary } from "./AudioRoutingPanel";
 import { engine } from "../audio/engine-rodio";
 
 // ── Constants ────────────────────────────────────────────────
@@ -401,6 +402,19 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
   const [monitorVol, setMonitorVol] = useState(() => {
     try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
   });
+  const [stationInfoOpen, setStationInfoOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_station_info_collapsed") !== "1"; } catch { return true; }
+  });
+  const [routingRefreshKey, setRoutingRefreshKey] = useState(0);
+  const [nowPlayingOpen, setNowPlayingOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_now_playing_collapsed") !== "1"; } catch { return true; }
+  });
+  const [nextUpRightOpen, setNextUpRightOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_next_up_right_collapsed") !== "1"; } catch { return true; }
+  });
+  const [showProgressOpen, setShowProgressOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_show_progress_collapsed") !== "1"; } catch { return true; }
+  });
   const [nextBreak,  setNextBreak]  = useState("—");
   const [onAir,      setOnAir]      = useState(false);
   const [uptime,     setUptime]     = useState("0:00");
@@ -502,6 +516,18 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
   useEffect(() => {
     try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
   }, [monitorVol]);
+  useEffect(() => {
+    try { localStorage.setItem("ether_station_info_collapsed", stationInfoOpen ? "0" : "1"); } catch {}
+  }, [stationInfoOpen]);
+  useEffect(() => {
+    try { localStorage.setItem("ether_now_playing_collapsed", nowPlayingOpen ? "0" : "1"); } catch {}
+  }, [nowPlayingOpen]);
+  useEffect(() => {
+    try { localStorage.setItem("ether_next_up_right_collapsed", nextUpRightOpen ? "0" : "1"); } catch {}
+  }, [nextUpRightOpen]);
+  useEffect(() => {
+    try { localStorage.setItem("ether_show_progress_collapsed", showProgressOpen ? "0" : "1"); } catch {}
+  }, [showProgressOpen]);
 
   // Query next show boundary
   useEffect(() => {
@@ -679,83 +705,135 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
         />
       )}
 
-      {/* Station status */}
-      <div style={{ padding: "6px 0", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        <div style={{ padding: "2px 14px 5px", fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Station</div>
-        <StatusRow
-          dot={onAir ? "#22c55e" : "#3a3a4a"}
-          label="On Air"
-          value={onAir ? "LIVE" : "STBY"}
-        />
-        <StatusRow dot="#3a3a4a" label="Stream" value="—" />
-        <StatusRow label="Uptime" value={uptime} />
-        <StatusRow label="Next Break" value={nextBreak} />
+      {/* Station status — collapsible */}
+      <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+        <div
+          onClick={() => setStationInfoOpen(o => !o)}
+          style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+            style={{ color: "var(--text-secondary)", transform: stationInfoOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+          <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Station</span>
+        </div>
+        {stationInfoOpen && (
+          <>
+            <StatusRow dot={onAir ? "#22c55e" : "#3a3a4a"} label="On Air" value={onAir ? "LIVE" : "STBY"} />
+            <StatusRow dot="#3a3a4a" label="Stream" value="—" />
+            <StatusRow label="Uptime" value={uptime} />
+            <StatusRow label="Next Break" value={nextBreak} />
+          </>
+        )}
       </div>
+
+      {/* Audio routing */}
+      <AudioRoutingPicker onApplied={() => setRoutingRefreshKey(k => k + 1)} />
+      <CurrentRoutingSummary refreshKey={routingRefreshKey} />
 
       {/* ── Expanded sections — only when cart wall is hidden ── */}
       {expanded && (
         <>
           {/* NOW PLAYING */}
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-            <div style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, marginBottom: 7 }}>Now playing</div>
-            {activeDeck ? (
-              <>
-                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, letterSpacing: "-0.01em", marginBottom: 2 }}>
-                  {activeDeck.title}
-                </div>
-                <div style={{ fontSize: 9, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 7 }}>
-                  {activeDeck.artist || "—"}
-                </div>
-                {/* Progress bar */}
-                <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
-                  <div style={{ height: "100%", width: `${playPct * 100}%`, background: TEAL, transition: "width 1s linear" }} />
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>{fmtSec(activeDeck.positionSec)}</span>
-                  <span style={{ fontSize: 8, color: timeRemaining !== null && timeRemaining < 30 ? AMB : "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
-                    -{fmtSec(timeRemaining ?? 0)}
-                  </span>
-                </div>
-              </>
-            ) : (
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No track playing</div>
+          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+            <div
+              onClick={() => setNowPlayingOpen(o => !o)}
+              style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+            >
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                style={{ color: "var(--text-secondary)", transform: nowPlayingOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Now playing</span>
+            </div>
+            {nowPlayingOpen && (
+              <div style={{ padding: "8px 14px" }}>
+                {activeDeck ? (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, letterSpacing: "-0.01em", marginBottom: 2 }}>
+                      {activeDeck.title}
+                    </div>
+                    <div style={{ fontSize: 9, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 7 }}>
+                      {activeDeck.artist || "—"}
+                    </div>
+                    {/* Progress bar */}
+                    <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
+                      <div style={{ height: "100%", width: `${playPct * 100}%`, background: TEAL, transition: "width 1s linear" }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>{fmtSec(activeDeck.positionSec)}</span>
+                      <span style={{ fontSize: 8, color: timeRemaining !== null && timeRemaining < 30 ? AMB : "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
+                        -{fmtSec(timeRemaining ?? 0)}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No track playing</div>
+                )}
+              </div>
             )}
           </div>
 
           {/* NEXT UP */}
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-            <div style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, marginBottom: 6 }}>Next up</div>
-            {queueItems.length > 0 ? queueItems.map((item, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "3px 0", borderBottom: i < queueItems.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
-                <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", flexShrink: 0, minWidth: 10 }}>{i + 1}</span>
-                <span style={{ fontSize: 9, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontWeight: 500 }}>{item.title}</span>
-                <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>{item.durationSec ? fmtSec(item.durationSec) : "—"}</span>
+          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+            <div
+              onClick={() => setNextUpRightOpen(o => !o)}
+              style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+            >
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                style={{ color: "var(--text-secondary)", transform: nextUpRightOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Next up</span>
+            </div>
+            {nextUpRightOpen && (
+              <div style={{ padding: "8px 14px" }}>
+                {queueItems.length > 0 ? queueItems.map((item, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "3px 0", borderBottom: i < queueItems.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
+                    <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", flexShrink: 0, minWidth: 10 }}>{i + 1}</span>
+                    <span style={{ fontSize: 9, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontWeight: 500 }}>{item.title}</span>
+                    <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>{item.durationSec ? fmtSec(item.durationSec) : "—"}</span>
+                  </div>
+                )) : (
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>Queue empty</div>
+                )}
               </div>
-            )) : (
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>Queue empty</div>
             )}
           </div>
 
           {/* SHOW ARC */}
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-            <div style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, marginBottom: 7 }}>Show progress</div>
-            {currentShow ? (
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <ArcProgress pct={showPct} size={50} stroke={4} color={TEAL} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 2 }}>
-                    {currentShow.name}
+          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+            <div
+              onClick={() => setShowProgressOpen(o => !o)}
+              style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+            >
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                style={{ color: "var(--text-secondary)", transform: showProgressOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Show progress</span>
+            </div>
+            {showProgressOpen && (
+              <div style={{ padding: "8px 14px" }}>
+                {currentShow ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <ArcProgress pct={showPct} size={50} stroke={4} color={TEAL} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 2 }}>
+                        {currentShow.name}
+                      </div>
+                      <div style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
+                        {Math.round(showPct * 100)}% elapsed
+                      </div>
+                      <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>
+                        Ends {currentShow.endH === 0 ? "12 AM" : currentShow.endH < 12 ? `${currentShow.endH} AM` : currentShow.endH === 12 ? "12 PM" : `${currentShow.endH - 12} PM`}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
-                    {Math.round(showPct * 100)}% elapsed
-                  </div>
-                  <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>
-                    Ends {currentShow.endH === 0 ? "12 AM" : currentShow.endH < 12 ? `${currentShow.endH} AM` : currentShow.endH === 12 ? "12 PM" : `${currentShow.endH - 12} PM`}
-                  </div>
-                </div>
+                ) : (
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No active show</div>
+                )}
               </div>
-            ) : (
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No active show</div>
             )}
           </div>
         </>

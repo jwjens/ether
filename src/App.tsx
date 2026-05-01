@@ -2700,6 +2700,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   useEffect(() => {
     try { localStorage.setItem("ether_queue_collapsed", queueCollapsed ? "1" : "0"); } catch {}
   }, [queueCollapsed]);
+
   const COLLAPSED_W = 26;
 
   const startResizeQueue = (e: React.MouseEvent) => {
@@ -2924,7 +2925,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             onMouseEnter={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "var(--accent-blue)"; }}
             onMouseLeave={e => { e.currentTarget.style.opacity = "0.55"; e.currentTarget.style.color = "var(--text-secondary)"; }}
           >{collapseChevron}</button>
-          <UpNext queueLen={queueLen} onQueueChange={() => {}} />
+          {/* ── Queue ── */}
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
+            <UpNext queueLen={queueLen} onQueueChange={() => {}} />
+          </div>
         </>
       )}
     </div>
