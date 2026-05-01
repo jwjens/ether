@@ -4,13 +4,14 @@
 mod audio;
 mod audio_engine;
 mod audio_routing;
+pub mod eq;
 mod lufs;
 mod clock;
 
 use napi_derive::napi;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use audio::{AudioCmd, AudioState, SharedAudioState, DeckMeta, start_audio_thread};
+use audio::{AudioCmd, AudioState, SharedAudioState, DeckMeta, start_station_mixer};
 
 // Per-station audio engine map. Keyed by station_id (u32).
 // OnceLock holds the Map itself; individual engine Arcs are cloned out on access.
@@ -23,11 +24,15 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
     let engines = ENGINES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = engines.lock().unwrap();
     if !map.contains_key(&station_id) {
-        let (sender, is_playing, levels, finished) = start_audio_thread(station_id, device_name);
+        let (sender, is_playing, levels, finished, program_bus_port) =
+            start_station_mixer(station_id, device_name);
         let state: SharedAudioState = Arc::new(Mutex::new(AudioState {
             deck_a: DeckMeta::new(),
             deck_b: DeckMeta::new(),
             deck_c: DeckMeta::new(),
+            deck_d: DeckMeta::new(),
+            deck_e: DeckMeta::new(),
+            deck_f: DeckMeta::new(),
             sender,
             is_playing,
             levels,
@@ -35,6 +40,7 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
             watchdog_active: false,
             watchdog_threshold_sec: 10.0,
             watchdog_triggered_count: 0,
+            program_bus_port,
         }));
         map.insert(station_id, state);
     }
@@ -106,13 +112,22 @@ pub fn audio_get_state(station_id: Option<u32>) -> String {
     let fin_a = audio.finished.take("A");
     let fin_b = audio.finished.take("B");
     let fin_c = audio.finished.take("C");
+    let fin_d = audio.finished.take("D");
+    let fin_e = audio.finished.take("E");
+    let fin_f = audio.finished.take("F");
     if fin_a { audio.deck_a.status = "ended".to_string(); }
     if fin_b { audio.deck_b.status = "ended".to_string(); }
     if fin_c { audio.deck_c.status = "ended".to_string(); }
+    if fin_d { audio.deck_d.status = "ended".to_string(); }
+    if fin_e { audio.deck_e.status = "ended".to_string(); }
+    if fin_f { audio.deck_f.status = "ended".to_string(); }
     serde_json::json!({
         "deckA": audio.deck_a.info("A", fin_a),
         "deckB": audio.deck_b.info("B", fin_b),
         "deckC": audio.deck_c.info("C", fin_c),
+        "deckD": audio.deck_d.info("D", fin_d),
+        "deckE": audio.deck_e.info("E", fin_e),
+        "deckF": audio.deck_f.info("F", fin_f),
     }).to_string()
 }
 
@@ -297,10 +312,32 @@ pub fn open_sound_settings() -> bool {
         .is_ok();
 }
 
+#[napi]
+pub fn audio_get_program_bus_port(station_id: u32) -> u32 {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return 0 };
+    audio.program_bus_port as u32
+}
+
+#[napi]
+pub fn audio_set_eq(station_id: u32, bands_json: String) -> bool {
+    let gains: Vec<f32> = match serde_json::from_str(&bands_json) {
+        Ok(b)  => b,
+        Err(e) => { eprintln!("[RUST] audio_set_eq parse error: {}", e); return false; }
+    };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    let _ = audio.sender.send(AudioCmd::SetEq(gains));
+    true
+}
+
 fn deck_meta_mut<'a>(audio: &'a mut AudioState, deck: &str) -> &'a mut DeckMeta {
     match deck {
         "A" => &mut audio.deck_a,
         "C" => &mut audio.deck_c,
+        "D" => &mut audio.deck_d,
+        "E" => &mut audio.deck_e,
+        "F" => &mut audio.deck_f,
         _   => &mut audio.deck_b,
     }
 }

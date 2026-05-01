@@ -52,20 +52,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d92bec98840b8f03a5ff5413de5293bfcd8bf96467cf5452609f939ec6f5de16"
 
 [[package]]
-name = "asio-sys"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "826194e1612938c9be09b78b58323fbb2e326de3d491b4230186cf6e832d8ded"
-dependencies = [
- "bindgen",
- "cc",
- "num-derive",
- "num-traits",
- "parse_cfg",
- "walkdir",
-]
-
-[[package]]
 name = "autocfg"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -87,8 +73,6 @@ dependencies = [
  "cexpr",
  "clang-sys",
  "itertools",
- "log",
- "prettyplease",
  "proc-macro2",
  "quote",
  "regex",
@@ -241,7 +225,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "873dab07c8f743075e57f524c583985fbaf745602acbe916a01539364369a779"
 dependencies = [
  "alsa",
- "asio-sys",
  "core-foundation-sys",
  "coreaudio-rs",
  "dasp_sample",
@@ -251,7 +234,6 @@ dependencies = [
  "mach2",
  "ndk",
  "ndk-context",
- "num-traits",
  "oboe",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -267,6 +249,12 @@ checksum = "9481c1c90cbf2ac953f07c8d4a58aa3945c425b7185c9154d67a65e4230da511"
 dependencies = [
  "cfg-if",
 ]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
 name = "ctor"
@@ -357,6 +345,7 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "realfft",
+ "ringbuf",
  "rodio",
  "rustfft",
  "serde",
@@ -977,15 +966,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "parse_cfg"
-version = "4.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "905787a434a2c721408e7c9a252e85f3d93ca0f118a5283022636c0e05a7ea49"
-dependencies = [
- "nom",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1004,22 +984,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "portable-atomic"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+
+[[package]]
+name = "portable-atomic-util"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2a106d1259c23fac8e543272398ae0e3c0b8d33c88ed73d0cc71b0f1d902618"
+dependencies = [
+ "portable-atomic",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b73949432f5e2a09657003c25bca5e19a0e9c84f8058ca374f49e0ebe605af77"
 dependencies = [
  "zerovec",
-]
-
-[[package]]
-name = "prettyplease"
-version = "0.2.37"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "479ca8adacdd7ce8f1fb39ce9ecccbfe93a3f1344b3d0d97f20bc0196208f62b"
-dependencies = [
- "proc-macro2",
- "syn",
 ]
 
 [[package]]
@@ -1123,6 +1108,17 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ringbuf"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe47b720588c8702e34b5979cb3271a8b1842c7cb6f57408efa70c779363488c"
+dependencies = [
+ "crossbeam-utils",
+ "portable-atomic",
+ "portable-atomic-util",
 ]
 
 [[package]]

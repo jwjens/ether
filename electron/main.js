@@ -1149,10 +1149,10 @@ ipcMain.handle("audio:getState", (_, stationId) => JSON.parse(audio.audioGetStat
 ipcMain.handle("audio:getLevels", (_, stationId) => JSON.parse(audio.audioGetLevels(stationId)));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
 ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => audio.watchdogSet(active, thresholdSec, stationId));
-// EQ — sends band gains to native engine. audioSetEq(deck, bandsJson) to be implemented in native addon.
+// EQ — sends 10 band gains (f32[]) to the station's EQ chain in the BusMixer.
 ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
-  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(deck, JSON.stringify(bands), stationId); }
-  catch(e) { console.warn("[EQ] audioSetEq not yet implemented in native addon:", e.message); }
+  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(stationId ?? 1, JSON.stringify(bands)); }
+  catch(e) { console.warn("[EQ] audioSetEq error:", e.message); }
   return true;
 });
 
@@ -3340,9 +3340,9 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
 // Cancel by calling library:sync-r2:cancel before the job finishes.
 
 // ── Live stream to Icecast ────────────────────────────────────────────────────
-// One long-lived ffmpeg per station captures from the station's assigned audio
-// output device (set via Audio Routing UI, persisted in station_config_kv) and
-// encodes to MP3 for Icecast. Uses Windows DirectShow (-f dshow) on this platform.
+// ffmpeg reads raw f32le stereo PCM from the Program Bus TCP socket exposed by
+// the native BusMixer, encodes to MP3, and pushes to Icecast.
+// No hardware capture device required — the mix is tapped inside the engine.
 
 // Map<stationId, { armed: bool, proc: ChildProcess|null, url: string }>
 const _stationStreams = new Map();
@@ -3405,7 +3405,7 @@ function _spawnStream(stationId, args, label) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('stream:status', {
           stationId, live: false,
-          error: 'Streaming failed: ffmpeg cannot capture from this device. Customer broadcast infrastructure (multi-output card, AoIP, or virtual audio cable) is required.',
+          error: 'Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.',
         });
       }
       return;
@@ -3425,29 +3425,30 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
     const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
     if (!station) return { ok: false, error: `station ${stationId} not found` };
 
-    const devRow    = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='audio_output_device'").get(stationId);
-    const deviceName = devRow?.value?.trim();
-    if (!deviceName) {
-      return { ok: false, error: 'Station has no audio output device configured. Set one in Audio Routing first.' };
-    }
+    const port   = audio.audioGetProgramBusPort(stationId);
+    if (!port) return { ok: false, error: 'Audio engine not ready — no Program Bus port available.' };
 
-    const server    = station.icecast_server_url?.trim() || '44.244.52.207';
-    const pw        = station.icecast_password?.trim()   || 'hackme';
-    const mount     = station.icecast_mount?.trim()      || '/live';
-    const state     = _getStreamState(stationId);
-    state.url       = `icecast://source:${pw}@${server}:8000${mount}`;
-    state.armed     = true;
+    const server = station.icecast_server_url?.trim() || '44.244.52.207';
+    const pw     = station.icecast_password?.trim()   || 'hackme';
+    const mount  = station.icecast_mount?.trim()      || '/live';
+    const state  = _getStreamState(stationId);
+    state.url    = `icecast://source:${pw}@${server}:8000${mount}`;
+    state.armed  = true;
+
+    // Sample rate is negotiated by the native engine with the output device.
+    // Default 44100 is safe; the engine always resamples to match before writing.
+    const sampleRate = 44100;
 
     _spawnStream(stationId, [
-      '-f', 'dshow',
-      '-i', `audio=${deviceName}`,
+      '-f', 'f32le', '-ar', String(sampleRate), '-ac', '2',
+      '-i', `tcp://127.0.0.1:${port}`,
       '-c:a', 'libmp3lame', '-b:a', '128k',
       '-f', 'mp3',
       '-content_type', 'audio/mpeg',
       state.url,
-    ], `device:${deviceName}→${mount}`);
+    ], `programbus:${port}→${mount}`);
 
-    console.log(`[stream/${stationId}] ffmpeg started (device:${deviceName}) → ${state.url}`);
+    console.log(`[stream/${stationId}] ffmpeg started (programbus:${port}) → ${state.url}`);
 
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });

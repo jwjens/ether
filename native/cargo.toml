@@ -12,23 +12,15 @@ crate-type = ["cdylib"]
 napi        = { version = "2", features = ["napi4", "tokio_rt"] }
 napi-derive = "2"
 
-# Audio playback — same as Tauri version, unchanged
+# Audio playback
 rodio     = { version = "0.19", features = ["mp3", "flac", "wav", "vorbis"] }
 symphonia = { version = "0.5",  features = ["mp3", "flac", "ogg", "wav", "aac", "isomp4"] }
 ebur128   = "0.1"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# cpal — ASIO enabled on Windows only (ASIO is Windows-specific and breaks Mac/Linux builds)
-[target.'cfg(windows)'.dependencies]
-cpal = { version = "0.15", features = ["asio"] }
-
-[target.'cfg(not(windows))'.dependencies]
-cpal = { version = "0.15" }
 
 # DSP
 rustfft  = "6"
 realfft  = "3"
+ringbuf  = "0.4"
 
 # Serialization
 serde      = { version = "1.0", features = ["derive"] }
@@ -40,6 +32,14 @@ ureq      = "2.10"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+
+# cpal — ASIO enabled on Windows only (requires Steinberg ASIO SDK at build time)
+# ASIO removed for dev builds until SDK is available; WASAPI covers B1 requirements.
+[target.'cfg(windows)'.dependencies]
+cpal = { version = "0.15" }
+
+[target.'cfg(not(windows))'.dependencies]
+cpal = { version = "0.15" }
 
 [build-dependencies]
 napi-build = "2"
