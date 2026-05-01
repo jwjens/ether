@@ -179,7 +179,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
 
           {/* Apply row */}
           <div style={{ fontSize: 8, color: "var(--text-secondary)", opacity: 0.6, fontStyle: "italic" }}>
-            Note: changing device briefly interrupts playback.
+            Note: changing device may restart the current track.
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button

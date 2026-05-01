@@ -160,9 +160,15 @@ pub fn audio_list_output_devices() -> String {
 #[napi]
 pub fn audio_set_output_device(station_id: u32, device_name: String) -> bool {
     let engines = ENGINES.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut map = engines.lock().unwrap();
-    map.remove(&station_id);
-    drop(map);
+    let engine_opt = {
+        let map = engines.lock().unwrap();
+        map.get(&station_id).cloned()
+    };
+    if let Some(state) = engine_opt {
+        if let Ok(audio) = state.lock() {
+            return audio.sender.send(AudioCmd::SwitchDevice(device_name)).is_ok();
+        }
+    }
     get_or_create_engine(station_id, Some(device_name));
     true
 }

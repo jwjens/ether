@@ -106,6 +106,7 @@ pub enum AudioCmd {
     StartStream { server: String, port: u16, mount: String, password: String, station_name: String },
     StopStream,
     UpdateMetadata { title: String, artist: String },
+    SwitchDevice(String),
 }
 
 pub struct AudioState {
@@ -270,6 +271,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
 
         // 882 stereo f32 samples = 10 ms at 44100 Hz stereo (per-deck TCP flush granularity)
         const FLUSH_AT: usize = 882;
+        let mut current_device_name = device_name;
 
         let pick_stream = |deck: &str| -> Arc<StationStream> {
             match deck {
@@ -286,7 +288,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                     .default_output_device()
                     .and_then(|d| d.name().ok())
                     .unwrap_or_else(|| "default".to_string());
-                if let Some(ref name) = device_name {
+                if let Some(ref name) = current_device_name {
                     let found = cpal::available_hosts().into_iter().find_map(|host_id| {
                         let host = cpal::host_from_id(host_id).ok()?;
                         host.output_devices().ok()?.find(|d| {
@@ -415,6 +417,11 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::StopStream => { eprintln!("Stream stopped"); }
                             AudioCmd::UpdateMetadata { title, artist } => {
                                 eprintln!("Now playing: {} - {}", artist, title);
+                            }
+                            AudioCmd::SwitchDevice(name) => {
+                                eprintln!("[RUST] Station {} switching device to: {}", station_id, name);
+                                current_device_name = Some(name);
+                                break;
                             }
                         }
                     }
