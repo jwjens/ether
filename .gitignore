@@ -39,3 +39,9 @@ scripts/diag-*.js
 # Generated diagnostic output
 scripts/table-audit.js
 scripts/dump-all-cols.js
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Rust audio debug artifacts
+debug-stream.f32le
