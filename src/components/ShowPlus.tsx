@@ -2052,7 +2052,225 @@ function EmbeddedStudio({
 // Studio — main export
 // ─────────────────────────────────────────────────────────────
 
-type RightTab = "engine" | "guests" | "tele" | "lower" | "rtmp" | "quality" | "sources" | "brand" | "audio";
+type RightTab = "engine" | "showplus" | "sources" | "quality";
+
+// ─────────────────────────────────────────────────────────────
+// GuestGridTile — compact 2-col grid tile for accepted guests
+// ─────────────────────────────────────────────────────────────
+
+function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove }: {
+  guest: GuestPeer; onScene: boolean;
+  onToggleScene: () => void; onMute: () => void; onRemove: () => void;
+}) {
+  const vidRef = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    if (vidRef.current && guest.stream) {
+      vidRef.current.srcObject = guest.stream;
+      vidRef.current.play().catch(() => {});
+    }
+  }, [guest.stream]);
+
+  return (
+    <div style={{ position: "relative", background: BG0, border: `1px solid ${onScene ? "#a855f7" : BOR}` }}>
+      <div style={{ position: "relative", paddingTop: "56.25%" }}>
+        {guest.stream ? (
+          <video ref={vidRef} autoPlay playsInline muted
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+        ) : (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: BG3, display: "flex", alignItems: "center", justifyContent: "center", color: TXT2, fontSize: 14, fontWeight: 700 }}>
+              {(guest.name[0] || "?").toUpperCase()}
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ padding: "4px 5px", display: "flex", alignItems: "center", gap: 2 }}>
+        <span style={{ flex: 1, fontSize: 10, fontWeight: 600, color: TXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {guest.name}
+        </span>
+        <button onClick={onToggleScene} title={onScene ? "Remove from scene" : "Add to scene"}
+          style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: onScene ? "#6b21a8" : "#14b8a6", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}
+        >{onScene ? "−" : "+"}</button>
+        <button onClick={onMute} title={guest.muted ? "Unmute" : "Mute"}
+          style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: guest.muted ? RED : TXT2, cursor: "pointer", fontSize: 11, padding: 0, flexShrink: 0 }}
+        >{guest.muted ? "🔇" : "🔊"}</button>
+        <button onClick={onRemove} title="Remove guest"
+          style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: RED, cursor: "pointer", fontSize: 12, padding: 0, flexShrink: 0 }}
+        >×</button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// ShowPlusPanel — collapsible sections for the SHOW+ right tab
+// ─────────────────────────────────────────────────────────────
+
+function ShowPlusPanel({
+  guests, onMute, onRemove, onAccept, onDeny,
+  guestsEnabled, onToggleGuests, sessionToken, roomCode,
+  script, setScript, mode, setMode, speed, setSpeed,
+  opacity, setOpacity, fontSize, setFontSize, scrolling, setScrolling, scrollRef,
+  lowerThirds, setLowerThirds,
+  micDeviceId, setMicDeviceId, outputDeviceId, setOutputDeviceId,
+  selfMonitor, setSelfMonitor, micVolume, setMicVolume, monitorVolume, setMonitorVolume,
+  hostStream, brandKit, setBrandKit,
+}: {
+  guests: GuestPeer[]; onMute: (id: string) => void; onRemove: (id: string) => void;
+  onAccept: (id: string) => void; onDeny: (id: string) => void;
+  guestsEnabled: boolean; onToggleGuests: () => void;
+  sessionToken: string; roomCode: string;
+  script: string; setScript: (v: string) => void;
+  mode: TeleMode; setMode: (v: TeleMode) => void;
+  speed: TeleSpeed; setSpeed: (v: TeleSpeed) => void;
+  opacity: number; setOpacity: (v: number) => void;
+  fontSize: number; setFontSize: (v: number) => void;
+  scrolling: boolean; setScrolling: (v: boolean) => void;
+  scrollRef: React.RefObject<HTMLDivElement>;
+  lowerThirds: LowerThird[]; setLowerThirds: (v: LowerThird[]) => void;
+  micDeviceId: string; setMicDeviceId: (v: string) => void;
+  outputDeviceId: string; setOutputDeviceId: (v: string) => void;
+  selfMonitor: boolean; setSelfMonitor: (v: boolean) => void;
+  micVolume: number; setMicVolume: (v: number) => void;
+  monitorVolume: number; setMonitorVolume: (v: number) => void;
+  hostStream: MediaStream | null;
+  brandKit: BrandKit; setBrandKit: (k: BrandKit) => void;
+}) {
+  const { sources, layers, addLayerFromSource, removeLayer } = useVideoEngine();
+  const [open, setOpen] = useState<Record<string, boolean>>({ guests: true, script: false, lower: false, audio: false, brand: false });
+  const toggle = (k: string) => setOpen(prev => ({ ...prev, [k]: !prev[k] }));
+
+  const [inviteCopied, setInviteCopied] = useState(false);
+  const inviteLink = `https://guests.ether-technologies.com/join?s=${sessionToken}`;
+  const copyInvite = () => {
+    navigator.clipboard.writeText(inviteLink).then(() => {
+      setInviteCopied(true);
+      setTimeout(() => setInviteCopied(false), 2000);
+    });
+  };
+
+  const acceptedGuests = guests.filter(g => g.status === "accepted");
+  const pendingGuests  = guests.filter(g => g.status === "pending");
+
+  const SH = ({ k, title }: { k: string; title: string }) => (
+    <button onClick={() => toggle(k)} style={{
+      width: "100%", display: "flex", alignItems: "center", padding: "7px 10px",
+      background: BG2, border: "none", borderBottom: `1px solid ${BOR}`,
+      color: TXT2, fontSize: 10, fontWeight: 700, letterSpacing: "0.12em",
+      cursor: "pointer", textAlign: "left" as const, gap: 6,
+    }}>
+      <span style={{ fontSize: 8, display: "inline-block", transition: "transform 0.15s", transform: open[k] ? "rotate(90deg)" : "none" }}>▶</span>
+      {title}
+    </button>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+
+      {/* GUESTS */}
+      <SH k="guests" title="GUESTS" />
+      {open.guests && (
+        <div style={{ borderBottom: `1px solid ${BOR}` }}>
+          <div style={{ padding: "8px 10px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ ...label, marginBottom: 0, flex: 1 }}>Guest access</span>
+              <button onClick={onToggleGuests} style={btn(guestsEnabled, GRN)}>{guestsEnabled ? "On" : "Enable"}</button>
+            </div>
+            {guestsEnabled && (
+              <>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input readOnly value={inviteLink} style={{ ...inp, fontSize: 11, color: "#7090e8", flex: 1 }} />
+                  <button onClick={copyInvite} style={{ ...btn(inviteCopied, GRN), whiteSpace: "nowrap" as const }}>{inviteCopied ? "✓" : "Copy"}</button>
+                </div>
+                <div style={{ marginTop: 8, display: "flex", gap: 4, alignItems: "center" }}>
+                  <div style={{ flex: 1, padding: "4px 8px", background: BG0, border: `1px solid ${BOR}`, fontSize: 18, fontWeight: 700, letterSpacing: "0.4em", textAlign: "center" as const, fontFamily: "monospace", color: "#a78bfa" }}>
+                    {roomCode}
+                  </div>
+                  <button onClick={() => navigator.clipboard.writeText(roomCode)} style={{ ...btn(false, GRN), padding: "4px 8px", whiteSpace: "nowrap" as const }}>Copy</button>
+                </div>
+                <EmailInviteForm inviteLink={inviteLink} stationId="" roomCode={roomCode} />
+              </>
+            )}
+          </div>
+          {pendingGuests.length > 0 && (
+            <div style={{ padding: "0 8px 8px" }}>
+              {pendingGuests.map(g => (
+                <div key={g.id} style={{ padding: "8px 10px", marginBottom: 4, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa", marginBottom: 5 }}>"{g.name}" wants to join</div>
+                  <div style={{ display: "flex", gap: 5 }}>
+                    <button onClick={() => onAccept(g.id)} style={{ flex: 1, padding: "5px 8px", background: GRN, color: "#000", border: "none", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Accept</button>
+                    <button onClick={() => onDeny(g.id)} style={{ flex: 1, padding: "5px 8px", background: "transparent", color: TXT2, border: `1px solid ${BOR}`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Deny</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {acceptedGuests.length === 0 ? (
+            <div style={{ color: TXT2, fontSize: 11, textAlign: "center" as const, padding: "16px 10px" }}>
+              {guestsEnabled ? "Waiting for guests…" : "Enable guest access to invite"}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4, padding: "0 6px 8px" }}>
+              {acceptedGuests.map(g => {
+                const src = sources.find(s => s.externalId === `guest:${g.id}`);
+                const srcLayerIdx = src ? layers.findIndex(l => l.source_id === src.id) : -1;
+                const onScene = srcLayerIdx !== -1;
+                return (
+                  <GuestGridTile key={g.id} guest={g} onScene={onScene}
+                    onToggleScene={() => { if (!src) return; onScene ? removeLayer(srcLayerIdx) : addLayerFromSource(src.id); }}
+                    onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)} />
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SCRIPT */}
+      <SH k="script" title="SCRIPT" />
+      {open.script && (
+        <div style={{ borderBottom: `1px solid ${BOR}` }}>
+          <TeleprompterPanel
+            script={script} setScript={setScript} mode={mode} setMode={setMode}
+            speed={speed} setSpeed={setSpeed} opacity={opacity} setOpacity={setOpacity}
+            fontSize={fontSize} setFontSize={setFontSize} scrolling={scrolling} setScrolling={setScrolling}
+            scrollRef={scrollRef} />
+        </div>
+      )}
+
+      {/* LOWER THIRDS */}
+      <SH k="lower" title="LOWER THIRDS" />
+      {open.lower && (
+        <div style={{ borderBottom: `1px solid ${BOR}` }}>
+          <LowerThirdsPanel items={lowerThirds} onChange={setLowerThirds} />
+        </div>
+      )}
+
+      {/* AUDIO */}
+      <SH k="audio" title="AUDIO" />
+      {open.audio && (
+        <div style={{ borderBottom: `1px solid ${BOR}` }}>
+          <AudioPanel
+            micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
+            outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
+            selfMonitor={selfMonitor} setSelfMonitor={setSelfMonitor}
+            micVolume={micVolume} setMicVolume={setMicVolume}
+            monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
+            hostStream={hostStream} />
+        </div>
+      )}
+
+      {/* BRAND */}
+      <SH k="brand" title="BRAND" />
+      {open.brand && (
+        <div style={{ borderBottom: `1px solid ${BOR}` }}>
+          <BrandKitPanel kit={brandKit} onChange={setBrandKit} />
+        </div>
+      )}
+
+    </div>
+  );
+}
 
 // Sync host stream and accepted WebRTC guests into VideoEngineContext so they
 // appear as sources in the Engine panel's source list. Must render inside
@@ -2288,25 +2506,36 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
 
         {/* Right sidebar */}
         <div style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: `1px solid ${BOR}`, background: BG2, overflow: "hidden" }}>
-          <div style={{ display: "flex", flexDirection: "column", borderBottom: `1px solid ${BOR}`, flexShrink: 0, background: BG2 }}>
-            <div style={{ display: "flex", borderBottom: `1px solid ${BOR}` }}>
-              {tab("engine",  "Engine")}
-              {tab("guests",  "Guests")}
-              {tab("sources", "Sources")}
-              {tab("tele",    "Script")}
-            </div>
+          <div style={{ borderBottom: `1px solid ${BOR}`, flexShrink: 0, background: BG2 }}>
             <div style={{ display: "flex" }}>
-              {tab("lower",   "L3rds")}
-              {tab("rtmp",    "RTMP")}
-              {tab("audio",   "Audio")}
-              {tab("brand",   "Brand")}
-              {tab("quality", "Quality")}
+              {tab("engine",  "ENGINE")}
+              {tab("showplus","SHOW+")}
+              {tab("sources", "SOURCES")}
+              {tab("quality", "QUALITY")}
             </div>
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0, width: "100%" }}>
-            {rightTab === "guests" && (
-              <GuestSidebar guests={guests} enabled={guestsEnabled} onToggle={() => setGuestsEnabled(v => !v)} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest} sessionToken={sessionToken} stationId="" roomCode={roomCode} />
+            {rightTab === "showplus" && (
+              <ShowPlusPanel
+                guests={guests} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest}
+                guestsEnabled={guestsEnabled} onToggleGuests={() => setGuestsEnabled(v => !v)}
+                sessionToken={sessionToken} roomCode={roomCode}
+                script={teleScript} setScript={setTeleScript}
+                mode={teleMode} setMode={setTeleMode}
+                speed={teleSpeed} setSpeed={setTeleSpeed}
+                opacity={teleOpacity} setOpacity={setTeleOpacity}
+                fontSize={teleFontSize} setFontSize={setTeleFontSize}
+                scrolling={teleScrolling} setScrolling={setTeleScrolling}
+                scrollRef={teleScrollRef}
+                lowerThirds={lowerThirds} setLowerThirds={setLowerThirds}
+                micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
+                outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
+                selfMonitor={selfMonitor} setSelfMonitor={setSelfMonitor}
+                micVolume={micVolume} setMicVolume={setMicVolume}
+                monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
+                hostStream={hostStream} brandKit={brandKit} setBrandKit={setBrandKit}
+              />
             )}
             {rightTab === "sources" && (
               <SourcesPanelWithEngine
@@ -2320,41 +2549,12 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
                 guests={guests}
               />
             )}
-            {rightTab === "tele" && (
-              <TeleprompterPanel
-                script={teleScript} setScript={setTeleScript}
-                mode={teleMode} setMode={setTeleMode}
-                speed={teleSpeed} setSpeed={setTeleSpeed}
-                opacity={teleOpacity} setOpacity={setTeleOpacity}
-                fontSize={teleFontSize} setFontSize={setTeleFontSize}
-                scrolling={teleScrolling} setScrolling={setTeleScrolling}
-                scrollRef={teleScrollRef}
-              />
-            )}
-            {rightTab === "lower" && (
-              <LowerThirdsPanel items={lowerThirds} onChange={setLowerThirds} />
-            )}
-            {rightTab === "rtmp" && (
-              <MultiRTMPPanel stream={hostStream} bitrateKbps={bitrateKbps} />
-            )}
-            {rightTab === "audio" && (
-              <AudioPanel
-                micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
-                outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
-                selfMonitor={selfMonitor} setSelfMonitor={setSelfMonitor}
-                micVolume={micVolume} setMicVolume={setMicVolume}
-                monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
-                hostStream={hostStream}
-              />
-            )}
-            {rightTab === "brand" && (
-              <BrandKitPanel kit={brandKit} onChange={setBrandKit} />
-            )}
             {rightTab === "quality" && (
               <QualityPanel resolution={resolution} setResolution={setResolution} bitrate={bitrate} setBitrate={setBitrate} stream={hostStream} />
             )}
             <div style={{ display: rightTab === "engine" ? "block" : "none" }}>
               <VideoEnginePanel />
+              <MultiRTMPPanel stream={hostStream} bitrateKbps={bitrateKbps} />
             </div>
           </div>
         </div>

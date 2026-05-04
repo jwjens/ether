@@ -178,7 +178,7 @@ export default function VideoEnginePanel() {
             No sources yet. Add one to start composing.
           </div>
         )}
-        {sources.map(s => {
+        {sources.filter(s => s.kind !== "guest").map(s => {
           const GUEST_PUR = "#a855f7";
           const accent = s.kind === "screen" ? GRN
                        : s.kind === "camera" ? PUR
