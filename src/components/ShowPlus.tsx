@@ -2092,8 +2092,25 @@ function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove }: {
           style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: onScene ? "#6b21a8" : "#14b8a6", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", lineHeight: 1, flexShrink: 0 }}
         >{onScene ? "−" : "+"}</button>
         <button onClick={onMute} title={guest.muted ? "Unmute" : "Mute"}
-          style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: guest.muted ? RED : TXT2, cursor: "pointer", fontSize: 11, padding: 0, flexShrink: 0 }}
-        >{guest.muted ? "🔇" : "🔊"}</button>
+          style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: guest.muted ? RED : TXT2, cursor: "pointer", padding: 0, flexShrink: 0 }}
+        >
+          {guest.muted ? (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="1" y1="1" x2="23" y2="23" />
+              <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+              <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          )}
+        </button>
         <button onClick={onRemove} title="Remove guest"
           style={{ width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", color: RED, cursor: "pointer", fontSize: 12, padding: 0, flexShrink: 0 }}
         >×</button>
@@ -2189,6 +2206,11 @@ function ShowPlusPanel({
                   <button onClick={() => navigator.clipboard.writeText(roomCode)} style={{ ...btn(false, GRN), padding: "4px 8px", whiteSpace: "nowrap" as const }}>Copy</button>
                 </div>
                 <EmailInviteForm inviteLink={inviteLink} stationId="" roomCode={roomCode} />
+                <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+                  <div style={{ padding: 8, background: "#fff", border: `1px solid ${BOR}`, lineHeight: 0 }}>
+                    <QRCodeSVG value={inviteLink} size={130} level="M" bgColor="#ffffff" fgColor="#1a1228" />
+                  </div>
+                </div>
               </>
             )}
           </div>
@@ -2226,8 +2248,8 @@ function ShowPlusPanel({
         </div>
       )}
 
-      {/* SCRIPT */}
-      <SH k="script" title="SCRIPT" />
+      {/* TELEPROMPTER */}
+      <SH k="script" title="TELEPROMPTER" />
       {open.script && (
         <div style={{ borderBottom: `1px solid ${BOR}` }}>
           <TeleprompterPanel
