@@ -465,17 +465,37 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
         iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }],
       });
       peersRef.current.set(id, pc);
+      console.log("[WEBRTC] PC created for guest", id);
 
       // Add host's local tracks so guest can hear/see the host
       if (hostStreamRef.current) {
         hostStreamRef.current.getTracks().forEach(track => {
+          console.log("[WEBRTC] Adding host track to PC for guest", id, {
+            trackKind: track.kind,
+            trackId: track.id,
+            trackEnabled: track.enabled,
+            trackReadyState: track.readyState,
+          });
           try { pc.addTrack(track, hostStreamRef.current!); } catch (e) {
             console.error("[acceptGuest] addTrack failed:", e);
           }
         });
+      } else {
+        console.warn("[WEBRTC] No host stream available when creating PC for guest", id);
       }
 
       pc.ontrack = (e) => {
+        console.log("[WEBRTC] ontrack for guest", id, {
+          trackKind: e.track.kind,
+          trackId: e.track.id,
+          trackEnabled: e.track.enabled,
+          trackMuted: e.track.muted,
+          trackReadyState: e.track.readyState,
+          streamCount: e.streams.length,
+          streamTrackCounts: e.streams.map(s => ({
+            id: s.id, audio: s.getAudioTracks().length, video: s.getVideoTracks().length,
+          })),
+        });
         setGuests(p => p.map(g => {
           if (g.id !== id) return g;
           if (!g.stream) {
@@ -492,7 +512,11 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
         if (e.candidate && ws.readyState === WebSocket.OPEN)
           ws.send(JSON.stringify({ to: id, type: "ice", payload: e.candidate }));
       };
+      pc.oniceconnectionstatechange = () => {
+        console.log("[WEBRTC] ICE state for guest", id, pc.iceConnectionState);
+      };
       pc.onconnectionstatechange = () => {
+        console.log("[WEBRTC] Connection state for guest", id, pc.connectionState);
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           peersRef.current.delete(id);
           setGuests(p => p.filter(g => g.id !== id));
@@ -2124,6 +2148,24 @@ function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove }: {
 }
 
 // ─────────────────────────────────────────────────────────────
+// SectionHeader — stable top-level component for collapsible rows
+// ─────────────────────────────────────────────────────────────
+
+function SectionHeader({ open, title, onClick }: { open: boolean; title: string; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      width: "100%", display: "flex", alignItems: "center", padding: "7px 10px",
+      background: BG2, border: "none", borderBottom: `1px solid ${BOR}`,
+      color: TXT2, fontSize: 10, fontWeight: 700, letterSpacing: "0.12em",
+      cursor: "pointer", textAlign: "left" as const, gap: 6,
+    }}>
+      <span style={{ fontSize: 8, display: "inline-block", transition: "transform 0.15s", transform: open ? "rotate(90deg)" : "none" }}>▶</span>
+      {title}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // ShowPlusPanel — collapsible sections for the SHOW+ right tab
 // ─────────────────────────────────────────────────────────────
 
@@ -2173,23 +2215,11 @@ function ShowPlusPanel({
   const acceptedGuests = guests.filter(g => g.status === "accepted");
   const pendingGuests  = guests.filter(g => g.status === "pending");
 
-  const SH = ({ k, title }: { k: string; title: string }) => (
-    <button onClick={() => toggle(k)} style={{
-      width: "100%", display: "flex", alignItems: "center", padding: "7px 10px",
-      background: BG2, border: "none", borderBottom: `1px solid ${BOR}`,
-      color: TXT2, fontSize: 10, fontWeight: 700, letterSpacing: "0.12em",
-      cursor: "pointer", textAlign: "left" as const, gap: 6,
-    }}>
-      <span style={{ fontSize: 8, display: "inline-block", transition: "transform 0.15s", transform: open[k] ? "rotate(90deg)" : "none" }}>▶</span>
-      {title}
-    </button>
-  );
-
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
 
       {/* GUESTS */}
-      <SH k="guests" title="GUESTS" />
+      <SectionHeader open={open.guests} title="GUESTS" onClick={() => toggle("guests")} />
       {open.guests && (
         <div style={{ borderBottom: `1px solid ${BOR}` }}>
           <div style={{ padding: "8px 10px" }}>
@@ -2253,7 +2283,7 @@ function ShowPlusPanel({
       )}
 
       {/* TELEPROMPTER */}
-      <SH k="script" title="TELEPROMPTER" />
+      <SectionHeader open={open.script} title="TELEPROMPTER" onClick={() => toggle("script")} />
       {open.script && (
         <div style={{ borderBottom: `1px solid ${BOR}` }}>
           <TeleprompterPanel
@@ -2265,7 +2295,7 @@ function ShowPlusPanel({
       )}
 
       {/* LOWER THIRDS */}
-      <SH k="lower" title="LOWER THIRDS" />
+      <SectionHeader open={open.lower} title="LOWER THIRDS" onClick={() => toggle("lower")} />
       {open.lower && (
         <div style={{ borderBottom: `1px solid ${BOR}` }}>
           <LowerThirdsPanel items={lowerThirds} onChange={setLowerThirds} />
@@ -2273,7 +2303,7 @@ function ShowPlusPanel({
       )}
 
       {/* AUDIO */}
-      <SH k="audio" title="AUDIO" />
+      <SectionHeader open={open.audio} title="AUDIO" onClick={() => toggle("audio")} />
       {open.audio && (
         <div style={{ borderBottom: `1px solid ${BOR}` }}>
           <AudioPanel
@@ -2287,7 +2317,7 @@ function ShowPlusPanel({
       )}
 
       {/* BRAND */}
-      <SH k="brand" title="BRAND" />
+      <SectionHeader open={open.brand} title="BRAND" onClick={() => toggle("brand")} />
       {open.brand && (
         <div style={{ borderBottom: `1px solid ${BOR}` }}>
           <BrandKitPanel kit={brandKit} onChange={setBrandKit} />

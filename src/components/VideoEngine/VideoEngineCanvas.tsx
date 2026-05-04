@@ -69,6 +69,12 @@ export default function VideoEngineCanvas() {
       if (s.kind === "image") continue;
       if (!s.stream) continue;
       if (!els.has(s.id)) {
+        console.log("[CANVAS] Creating hidden video for source", s.id, s.label, {
+          kind: s.kind,
+          streamId: s.stream?.id,
+          audioTracks: s.stream?.getAudioTracks().length,
+          videoTracks: s.stream?.getVideoTracks().length,
+        });
         const v = document.createElement("video");
         v.autoplay = true;
         v.muted = true;
@@ -113,6 +119,7 @@ export default function VideoEngineCanvas() {
     if (!ctx) return;
 
     let alive = true;
+    const lastLog = new Map<string, number>();
     const draw = () => {
       if (!alive) return;
       ctx.fillStyle = "#000";
@@ -141,7 +148,13 @@ export default function VideoEngineCanvas() {
           srcW = src.imageBitmap.width; srcH = src.imageBitmap.height;
         } else {
           const v = videoElsRef.current.get(src.id);
-          if (!v || v.readyState < 2) continue;
+          if (!v || v.readyState < 2) {
+            if (v && v.readyState < 2 && Date.now() - (lastLog.get(src.id) ?? 0) > 2000) {
+              console.log("[CANVAS] Video not ready for source", src.id, src.label, "readyState=", v.readyState);
+              lastLog.set(src.id, Date.now());
+            }
+            continue;
+          }
           pixelSource = v;
           srcW = v.videoWidth || 1; srcH = v.videoHeight || 1;
         }
