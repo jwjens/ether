@@ -1916,180 +1916,8 @@ ipcMain.handle("ai:ask", async (_, messages) => {
   }
 });
 
-// ── Studio — WebSocket signaling server ──────────────────────
-// Serves guest-join.html on GET /join and relays WebRTC signals
-// between the host (main window) and browser guests.
-// Falls back silently if the `ws` package is not installed.
-
-let _signalingServer  = null;
-let _signalingClients = new Map(); // id -> { ws, role, name }
 let _rtmpProcess      = null;
 let _recordStream     = null;
-
-function startSignalingServer() {
-  let WsServer;
-  try { WsServer = require("ws").Server; } catch {
-    console.log("[STUDIO] ws package not found — signaling server disabled");
-    return;
-  }
-  if (_signalingServer) return;
-
-  const httpMod  = require("http");
-  const crypto   = require("crypto");
-
-  const server = httpMod.createServer((req, res) => {
-    if (req.url && req.url.startsWith("/join")) {
-      try {
-        const html = fs.readFileSync(path.join(__dirname, "guest-join.html"), "utf8");
-        res.writeHead(200, { "Content-Type": "text/html" });
-        res.end(html);
-      } catch {
-        res.writeHead(404); res.end("Not found");
-      }
-    } else {
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end("Ether Studio");
-    }
-  });
-
-  const wss = new WsServer({ server });
-
-  wss.on("connection", (ws, req) => {
-    const url  = new URL(req.url, "http://localhost");
-    const role = url.searchParams.get("role") || "guest";
-    const id   = crypto.randomUUID();
-
-    ws.studioId = id;
-    _signalingClients.set(id, { ws, role, name: "" });
-
-    ws.send(JSON.stringify({ type: "welcome", id }));
-
-    // Notify main window of new guest
-    if (role === "guest") {
-      mainWindow?.webContents.send("studio:guest-joined", { id });
-      // Also notify any other guests so they can peer-connect
-      for (const [cid, c] of _signalingClients) {
-        if (cid !== id && c.role === "guest") {
-          c.ws.send(JSON.stringify({ type: "guest-joined", from: id }));
-        }
-      }
-    }
-
-    ws.on("message", (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-
-        if (msg.type === "hello") {
-          const entry = _signalingClients.get(id);
-          if (entry) entry.name = msg.name || "";
-          return;
-        }
-
-        if (msg.type === "leave") {
-          cleanup(id);
-          return;
-        }
-
-        // Route the message: if toHost is true, route to main window via IPC
-        if (msg.toHost) {
-          mainWindow?.webContents.send("studio:signal", { ...msg, from: id });
-          return;
-        }
-
-        // Route to a specific peer id
-        if (msg.to) {
-          const dest = _signalingClients.get(msg.to);
-          if (dest) dest.ws.send(JSON.stringify({ ...msg, from: id }));
-          return;
-        }
-
-        // Broadcast to host if no target
-        mainWindow?.webContents.send("studio:signal", { ...msg, from: id });
-      } catch {}
-    });
-
-    ws.on("close", () => cleanup(id));
-    ws.on("error", () => cleanup(id));
-  });
-
-  function cleanup(id) {
-    const entry = _signalingClients.get(id);
-    if (!entry) return;
-    _signalingClients.delete(id);
-    mainWindow?.webContents.send("studio:guest-left", { id });
-    // Notify remaining guests
-    for (const [, c] of _signalingClients) {
-      if (c.role === "guest") {
-        try { c.ws.send(JSON.stringify({ type: "leave", from: id })); } catch {}
-      }
-    }
-  }
-
-  server.on("error", (e) => {
-    if (e.code === "EADDRINUSE") {
-      console.warn("[STUDIO] Port 9091 already in use — signaling server skipped (another instance running?)");
-    } else {
-      console.error("[STUDIO] Signaling server error:", e.message);
-    }
-  });
-
-  server.listen(9091, "0.0.0.0", () => {
-    console.log("[STUDIO] Signaling server listening on :9091");
-  });
-
-  _signalingServer = server;
-}
-
-// Start signaling server when app is ready (called from app.whenReady)
-app.whenReady().then(() => {
-  startSignalingServer();
-}).catch(() => {});
-
-// Host → guest: relay a signal message from the renderer to a guest WS client
-ipcMain.handle("studio:signal-to-guest", (_, { to, type, payload }) => {
-  const dest = _signalingClients.get(to);
-  if (dest) dest.ws.send(JSON.stringify({ type, payload, from: "host" }));
-  return true;
-});
-
-// ── localtunnel — public guest URL ───────────────────────────
-let _tunnel = null;
-
-ipcMain.handle("studio:startTunnel", async () => {
-  try {
-    if (_tunnel) { try { _tunnel.close(); } catch {} _tunnel = null; }
-    const localtunnel = require("localtunnel");
-    _tunnel = await localtunnel({ port: 9091 });
-    _tunnel.on("error", () => { _tunnel = null; });
-    return { url: _tunnel.url, error: null };
-  } catch (e) {
-    return { url: null, error: e.message };
-  }
-});
-
-ipcMain.handle("studio:stopTunnel", () => {
-  if (_tunnel) { try { _tunnel.close(); } catch {} _tunnel = null; }
-  return true;
-});
-
-ipcMain.handle("studio:getLocalIp", () => {
-  try {
-    const { networkInterfaces } = require("os");
-    const nets = networkInterfaces();
-    for (const name of Object.keys(nets)) {
-      for (const net of nets[name] || []) {
-        if (net.family === "IPv4" && !net.internal) return net.address;
-      }
-    }
-  } catch {}
-  return "127.0.0.1";
-});
-
-ipcMain.handle("studio:getGuestCount", () => {
-  let n = 0;
-  for (const [, c] of _signalingClients) { if (c.role === "guest") n++; }
-  return n;
-});
 
 // ── RTMP destinations ─────────────────────────────────────────
 ipcMain.handle("studio:rtmp:list", () => {
@@ -2320,9 +2148,22 @@ ipcMain.handle("voxpro:getTempDir", () => {
 // ── RTMP stream via ffmpeg ────────────────────────────────────
 ipcMain.handle("studio:rtmp:start", (_, { url, key }) => {
   if (_rtmpProcess) return { ok: false, error: "Already streaming" };
-  const target = (key && key.trim()) ? `${url}/${key.trim()}` : url;
+  if (!key || !key.trim()) {
+    return { ok: false, error: "Stream key required. Get it from your platform's live streaming settings (e.g. youtube.com/livestreaming)." };
+  }
+  const target = `${url}/${key.trim()}`;
   try {
     const { spawn } = require("child_process");
+    _rtmpStreamStatus.statusState   = 'connecting';
+    _rtmpStreamStatus.errorMsg      = null;
+    _rtmpStreamStatus.speed         = null;
+    _rtmpStreamStatus.bitrate       = null;
+    _rtmpStreamStatus.startTime     = null;
+    _rtmpStreamStatus.speedHistory  = [];
+    _rtmpStreamStatus.destLabel     = _labelFromRtmpUrl(url);
+    _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+    _emitGlobal();
+
     _rtmpProcess = spawn("ffmpeg", [
       "-re", "-f", "webm", "-i", "pipe:0",
       "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
@@ -2331,20 +2172,55 @@ ipcMain.handle("studio:rtmp:start", (_, { url, key }) => {
     ], { stdio: ["pipe", "ignore", "pipe"] });
 
     _rtmpProcess.stderr.on("data", (d) => {
-      console.log("[STUDIO/ffmpeg]", d.toString().slice(0, 120));
+      const text = d.toString();
+      for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        console.log("[STUDIO/ffmpeg]", trimmed.slice(0, 120));
+        const parsed = _parseStreamLine(trimmed);
+        if (parsed.errorMsg) {
+          _rtmpStreamStatus.errorMsg = parsed.errorMsg;
+          if (_rtmpStreamStatus.statusState === 'connecting') {
+            _rtmpStreamStatus.statusState = 'error';
+            _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+            _emitGlobal();
+          }
+        } else if (parsed.isLive && _rtmpStreamStatus.statusState === 'connecting') {
+          _rtmpStreamStatus.statusState = 'live';
+          _rtmpStreamStatus.startTime   = Date.now();
+          _rtmpStreamStatus.errorMsg    = null;
+          _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+          _emitGlobal();
+        } else if (parsed.isProgress && _rtmpStreamStatus.statusState === 'live') {
+          if (parsed.speed   !== null) { _rtmpStreamStatus.speed = parsed.speed; _rtmpStreamStatus.speedHistory = [..._rtmpStreamStatus.speedHistory.slice(-119), parsed.speed]; }
+          if (parsed.bitrate !== null) _rtmpStreamStatus.bitrate = parsed.bitrate;
+          _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+        }
+      }
     });
     _rtmpProcess.on("error", (e) => {
       console.error("[STUDIO] ffmpeg error:", e.message);
-      _rtmpProcess = null;
+      _rtmpProcess                  = null;
+      _rtmpStreamStatus.statusState = 'error';
+      _rtmpStreamStatus.errorMsg    = e.message;
+      _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+      _emitGlobal();
       mainWindow?.webContents.send("studio:rtmp:stopped", { error: e.message });
     });
     _rtmpProcess.on("exit", (code) => {
       console.log("[STUDIO] ffmpeg exit:", code);
-      _rtmpProcess = null;
+      _rtmpProcess                  = null;
+      _rtmpStreamStatus.statusState = 'idle';
+      _rtmpStreamStatus.speed       = null;
+      _rtmpStreamStatus.bitrate     = null;
+      _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+      _emitGlobal();
       mainWindow?.webContents.send("studio:rtmp:stopped", { code });
     });
     return { ok: true };
   } catch (e) {
+    _rtmpStreamStatus.statusState = 'idle';
+    _emitDestStatus('rtmp:video', _rtmpStreamStatus);
     return { ok: false, error: e.message };
   }
 });
@@ -2359,6 +2235,11 @@ ipcMain.handle("studio:rtmp:stop", () => {
     try { _rtmpProcess.stdin.end(); } catch {}
     _rtmpProcess = null;
   }
+  _rtmpStreamStatus.statusState = 'idle';
+  _rtmpStreamStatus.speed       = null;
+  _rtmpStreamStatus.bitrate     = null;
+  _emitDestStatus('rtmp:video', _rtmpStreamStatus);
+  _emitGlobal();
   return { ok: true };
 });
 
@@ -3198,7 +3079,14 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
     // Prepared statements (compiled once, reused in the loop)
     const stmtShows = db.prepare(
       `SELECT id, start_hour, end_hour, clock_id
-       FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 ORDER BY start_hour`
+       FROM shows
+       WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ?
+       ORDER BY CASE
+         WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
+         WHEN end_hour = 0 OR end_hour = start_hour THEN 24
+         WHEN end_hour > start_hour              THEN end_hour - start_hour
+         ELSE 24 - start_hour + end_hour
+       END ASC`
     );
     const stmtSlots = db.prepare(
       `SELECT cs.position, cs.slot_type, cs.category_id, cs.duration_min
@@ -3237,7 +3125,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
         const hourStartTs = Math.floor(slotDate.getTime() / 1000);
 
         // Find the show active at this hour on this weekday
-        const shows = stmtShows.all(String(jsDay));
+        const shows = stmtShows.all(String(jsDay), activeStationId);
         const show  = shows.find(s => {
           if (s.end_hour === 0 || s.end_hour === s.start_hour) return h >= s.start_hour;
           if (s.end_hour > s.start_hour) return h >= s.start_hour && h < s.end_hour;
@@ -3344,8 +3232,67 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
 // the native BusMixer, encodes to MP3, and pushes to Icecast.
 // No hardware capture device required — the mix is tapped inside the engine.
 
-// Map<stationId, { armed: bool, proc: ChildProcess|null, url: string }>
+// Map<stationId, { armed, proc, url, failureCount, firstFailureTime, statusState, speed, bitrate, startTime, speedHistory, errorMsg, destLabel, ticker }>
 const _stationStreams = new Map();
+
+// ── Stream status helpers ─────────────────────────────────────────────────────
+
+function _parseStreamLine(line) {
+  const speedM   = line.match(/speed=\s*([\d.]+)x/);
+  const bitrateM = line.match(/bitrate=\s*([\d.]+)kbits\/s/);
+  return {
+    speed:      speedM   ? parseFloat(speedM[1])   : null,
+    bitrate:    bitrateM ? parseFloat(bitrateM[1]) : null,
+    isProgress: !!(speedM || bitrateM),
+    isLive:     /frame=\s*[1-9]\d*\s/.test(line) || /size=\s*[1-9]\d*kB/i.test(line),
+    errorMsg:   /Connection refused/i.test(line)    ? 'Connection refused'
+              : /401|Unauthorized/i.test(line)       ? 'Auth failed (401)'
+              : /403|Forbidden/i.test(line)           ? 'Forbidden (403)'
+              : /Connection timed out/i.test(line)    ? 'Connection timed out'
+              : /Failed to connect/i.test(line)       ? 'Failed to connect'
+              : null,
+  };
+}
+
+function _labelFromRtmpUrl(url) {
+  if (!url) return 'RTMP';
+  if (/a\.rtmp\.youtube\.com/i.test(url))      return 'YouTube';
+  if (/live\.twitch\.tv/i.test(url))            return 'Twitch';
+  if (/live-api.*\.facebook\.com/i.test(url))   return 'Facebook';
+  try { return new URL(url.replace(/^rtmp:\/\//i, 'https://')).hostname; } catch { return 'RTMP'; }
+}
+
+function _emitDestStatus(destId, statusObj) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const uptimeSec = statusObj.startTime ? Math.floor((Date.now() - statusObj.startTime) / 1000) : null;
+  mainWindow.webContents.send('stream:status:dest', {
+    destId,
+    label:        statusObj.destLabel || destId,
+    state:        statusObj.statusState,
+    speed:        statusObj.speed,
+    bitrate:      statusObj.bitrate,
+    uptimeSec,
+    errorMsg:     statusObj.errorMsg,
+    speedHistory: [...statusObj.speedHistory],
+  });
+}
+
+function _emitGlobal() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  let liveCount = 0;
+  for (const [, st] of _stationStreams.entries()) {
+    if (st.statusState === 'live') liveCount++;
+  }
+  if (_rtmpStreamStatus.statusState === 'live') liveCount++;
+  mainWindow.webContents.send('stream:status:global', { anyLive: liveCount > 0, liveCount });
+}
+
+// Per-process RTMP status (video studio pipeline; lives alongside _rtmpProcess)
+const _rtmpStreamStatus = {
+  statusState: 'idle', speed: null, bitrate: null,
+  startTime: null, speedHistory: [], errorMsg: null,
+  destLabel: 'RTMP', ticker: null,
+};
 
 function _getStreamState(stationId) {
   if (!_stationStreams.has(stationId)) {
@@ -3355,6 +3302,14 @@ function _getStreamState(stationId) {
       url: '',
       failureCount: 0,
       firstFailureTime: 0,
+      statusState: 'idle',
+      speed: null,
+      bitrate: null,
+      startTime: null,
+      speedHistory: [],
+      errorMsg: null,
+      destLabel: '',
+      ticker: null,
     });
   }
   return _stationStreams.get(stationId);
@@ -3375,24 +3330,70 @@ function _spawnStream(stationId, args, label) {
   const bin = ffmpegBin || 'ffmpeg';
   console.log(`[stream/${stationId}] spawning ffmpeg: ${bin}`);
   console.log(`[stream/${stationId}] args: ${args.join(' ')}`);
+
+  state.statusState = 'connecting';
+  state.errorMsg    = null;
+  state.speed       = null;
+  state.bitrate     = null;
+  _emitDestStatus(`icecast:${stationId}`, state);
+  _emitGlobal();
+
   state.proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   state.proc.stderr.on('data', d => {
-    console.log(`[stream/${stationId}/ffmpeg] ${d.toString().trim()}`);
+    const text = d.toString();
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      console.log(`[stream/${stationId}/ffmpeg] ${trimmed.slice(0, 120)}`);
+      const parsed = _parseStreamLine(trimmed);
+      if (parsed.errorMsg) {
+        state.errorMsg = parsed.errorMsg;
+        if (state.statusState === 'connecting') {
+          // Error during connect phase is likely fatal — we haven't published yet.
+          state.statusState = 'error';
+          _emitDestStatus(`icecast:${stationId}`, state);
+          _emitGlobal();
+        }
+        // While live, stash the message but don't change state.
+        // The close handler is authoritative; sub-request errors leave the stream flowing.
+      } else if (parsed.isLive && state.statusState === 'connecting') {
+        state.statusState = 'live';
+        state.startTime   = Date.now();
+        state.errorMsg    = null;
+        _emitDestStatus(`icecast:${stationId}`, state);
+        _emitGlobal();
+      } else if (parsed.isProgress && state.statusState === 'live') {
+        if (parsed.speed   !== null) { state.speed = parsed.speed; state.speedHistory = [...state.speedHistory.slice(-119), parsed.speed]; }
+        if (parsed.bitrate !== null) state.bitrate = parsed.bitrate;
+        _emitDestStatus(`icecast:${stationId}`, state);
+      }
+    }
   });
   state.proc.on('error', e => {
     console.error(`[stream/${stationId}] spawn error: ${e.message}`);
-    state.proc = null;
+    state.proc        = null;
+    state.statusState = 'error';
+    state.errorMsg    = e.message;
+    _emitDestStatus(`icecast:${stationId}`, state);
+    _emitGlobal();
     if (mainWindow && !mainWindow.isDestroyed())
       mainWindow.webContents.send('stream:status', { stationId, live: false, error: e.message });
   });
   state.proc.on('close', code => {
     console.log(`[stream/${stationId}] ffmpeg closed (code ${code}) — ${label}`);
     state.proc = null;
-    if (!state.armed) return;
+    if (!state.armed) {
+      state.statusState = 'idle';
+      state.speed       = null;
+      state.bitrate     = null;
+      _emitDestStatus(`icecast:${stationId}`, state);
+      _emitGlobal();
+      return;
+    }
 
     const now = Date.now();
     if (now - state.firstFailureTime > 10000) {
-      state.failureCount = 0;
+      state.failureCount    = 0;
       state.firstFailureTime = now;
     }
     if (state.failureCount === 0) state.firstFailureTime = now;
@@ -3400,17 +3401,20 @@ function _spawnStream(stationId, args, label) {
 
     if (state.failureCount >= 3) {
       console.error(`[stream/${stationId}] ffmpeg failed ${state.failureCount}x in 10s — giving up`);
-      state.armed = false;
+      state.armed        = false;
       state.failureCount = 0;
+      state.statusState  = 'error';
+      state.errorMsg     = 'Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.';
+      _emitDestStatus(`icecast:${stationId}`, state);
+      _emitGlobal();
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('stream:status', {
-          stationId, live: false,
-          error: 'Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.',
-        });
+        mainWindow.webContents.send('stream:status', { stationId, live: false, error: state.errorMsg });
       }
       return;
     }
 
+    state.statusState = 'connecting';
+    _emitDestStatus(`icecast:${stationId}`, state);
     console.log(`[stream/${stationId}] ffmpeg exited, respawning in 500ms (attempt ${state.failureCount}/3)`);
     setTimeout(() => {
       if (state.armed) _spawnStream(stationId, args, label);
@@ -3432,8 +3436,9 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
     const pw     = station.icecast_password?.trim()   || 'hackme';
     const mount  = station.icecast_mount?.trim()      || '/live';
     const state  = _getStreamState(stationId);
-    state.url    = `icecast://source:${pw}@${server}:8000${mount}`;
-    state.armed  = true;
+    state.url       = `icecast://source:${pw}@${server}:8000${mount}`;
+    state.destLabel = `Icecast @ ${server}${mount}`;
+    state.armed     = true;
 
     // Sample rate is negotiated by the native engine with the output device.
     // Default 44100 is safe; the engine always resamples to match before writing.
@@ -3476,12 +3481,41 @@ ipcMain.handle('stream:get-status', (_, args = {}) => {
     const state = _getStreamState(args.stationId);
     return { stationId: args.stationId, live: state.armed };
   }
-  // No stationId — return all stations' status
   const all = [];
   for (const [stationId, state] of _stationStreams.entries()) {
     all.push({ stationId, live: state.armed });
   }
   return { stations: all };
+});
+
+ipcMain.handle('stream:get-all-status', () => {
+  const dests = [];
+  for (const [stationId, st] of _stationStreams.entries()) {
+    const uptimeSec = st.startTime ? Math.floor((Date.now() - st.startTime) / 1000) : null;
+    dests.push({
+      destId:       `icecast:${stationId}`,
+      label:        st.destLabel || `Icecast (${stationId})`,
+      state:        st.statusState,
+      speed:        st.speed,
+      bitrate:      st.bitrate,
+      uptimeSec,
+      errorMsg:     st.errorMsg,
+      speedHistory: [...st.speedHistory],
+    });
+  }
+  const rtmpUptime = _rtmpStreamStatus.startTime ? Math.floor((Date.now() - _rtmpStreamStatus.startTime) / 1000) : null;
+  dests.push({
+    destId:       'rtmp:video',
+    label:        _rtmpStreamStatus.destLabel || 'RTMP',
+    state:        _rtmpStreamStatus.statusState,
+    speed:        _rtmpStreamStatus.speed,
+    bitrate:      _rtmpStreamStatus.bitrate,
+    uptimeSec:    rtmpUptime,
+    errorMsg:     _rtmpStreamStatus.errorMsg,
+    speedHistory: [..._rtmpStreamStatus.speedHistory],
+  });
+  const liveCount = dests.filter(d => d.state === 'live').length;
+  return { dests, anyLive: liveCount > 0, liveCount };
 });
 
 // ── Stations CRUD ─────────────────────────────────────────────

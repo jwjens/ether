@@ -10,6 +10,8 @@ import { VideoEngineProvider, useVideoEngine } from "./VideoEngine/VideoEngineCo
 import VideoEngineCanvas from "./VideoEngine/VideoEngineCanvas";
 import VideoEnginePanel  from "./VideoEngine/VideoEnginePanel";
 import { useCaptions, CaptionsOverlay } from "./Captions";
+import StreamStatusPill from "./StreamStatusPill";
+import { QRCodeSVG } from "qrcode.react";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -17,6 +19,14 @@ const ipcOn  = (e: string, cb: (p: any) => void) =>
   (window as any).ether.on(e, cb);
 const ipcOff = (e: string, h: any) =>
   (window as any).ether.off(e, h);
+
+// Shared session token across all VideoStudio instances.
+// Generated once per app load, used by both host WebSocket
+// connection and guest invite URLs to ensure they match on
+// the signaling server.
+const SHARED_SESSION_TOKEN =
+  Math.random().toString(36).slice(2, 10) +
+  Math.random().toString(36).slice(2, 10);
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -378,13 +388,14 @@ function useWebRTCGuests(enabled: boolean) {
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
+  const sessionToken = SHARED_SESSION_TOKEN;
 
   useEffect(() => {
     if (!enabled) return;
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
 
     let ws: WebSocket;
-    try { ws = new WebSocket("ws://localhost:9091/signal?role=host"); }
+    try { ws = new WebSocket(`wss://guests.ether-technologies.com/signal?role=host&token=${sessionToken}`); }
     catch { return; }
     wsRef.current = ws;
 
@@ -515,7 +526,7 @@ function useWebRTCGuests(enabled: boolean) {
     };
   }, []);
 
-  return { guests, acceptGuest, denyGuest, removeGuest, toggleMute };
+  return { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -566,14 +577,14 @@ function LevelBar({ level, height = 4 }: { level: number; height?: number }) {
 function HostCamera({
   onStream, lowerThirds, teleMode, teleOpacity, teleScript, teleFontSize,
   teleScrolling, teleScrollRef, resolution, isRecording, showGrid, showFrameOverlays,
-  brandKit, smartCutActive,
+  brandKit, smartCutActive, active = true,
 }: {
   onStream: (s: MediaStream | null) => void;
   lowerThirds: LowerThird[];
   teleMode: TeleMode; teleOpacity: number; teleScript: string; teleFontSize: number;
   teleScrolling: boolean; teleScrollRef: React.RefObject<HTMLDivElement>;
   resolution: ResKey; isRecording?: boolean; showGrid?: boolean; showFrameOverlays?: boolean;
-  brandKit?: BrandKit; smartCutActive?: boolean;
+  brandKit?: BrandKit; smartCutActive?: boolean; active?: boolean;
 }) {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
@@ -602,9 +613,16 @@ function HostCamera({
   }, [onStream]); // eslint-disable-line
 
   useEffect(() => {
+    if (!active) {
+      // Stop camera when navigating away
+      streamRef.current?.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+      onStream(null);
+      return;
+    }
     start(resolution);
     return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [resolution]); // eslint-disable-line
+  }, [resolution, active]); // eslint-disable-line
 
   const ltPos = (i: number): React.CSSProperties => ({ position: "absolute", bottom: 48 + i * 56, left: 16 });
   const frameColor = "#4040a0";
@@ -848,32 +866,15 @@ function GuestTile({ guest, onMute, onRemove }: { guest: GuestPeer; onMute: () =
 // GuestSidebar
 // ─────────────────────────────────────────────────────────────
 
-function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove }: {
+function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove, onAccept, onDeny, sessionToken }: {
   guests: GuestPeer[]; enabled: boolean; onToggle: () => void;
   onMute: (id: string) => void; onRemove: (id: string) => void;
+  onAccept: (id: string) => void; onDeny: (id: string) => void;
+  sessionToken: string;
 }) {
-  const [localIp, setLocalIp] = useState("127.0.0.1");
-  const [copied, setCopied]   = useState(false);
-  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
-  const [tunnelLoading, setTunnelLoading] = useState(false);
-  const token = useMemo(() => Math.random().toString(36).slice(2, 10), []);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => { invoke("studio:getLocalIp").then((ip: string) => setLocalIp(ip || "127.0.0.1")); }, []);
-
-  useEffect(() => {
-    if (enabled) {
-      setTunnelLoading(true);
-      invoke("studio:startTunnel").then((res: { url: string | null; error: string | null }) => {
-        setTunnelUrl(res?.url ?? null); setTunnelLoading(false);
-      }).catch(() => { setTunnelUrl(null); setTunnelLoading(false); });
-    } else {
-      invoke("studio:stopTunnel").catch(() => {});
-      setTunnelUrl(null);
-    }
-  }, [enabled]);
-
-  const localLink = `http://${localIp}:9091/join?s=${token}`;
-  const link = tunnelUrl ? `${tunnelUrl}/join?s=${token}` : localLink;
+  const link = `https://guests.ether-technologies.com/join?s=${sessionToken}`;
   const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
 
   return (
@@ -885,15 +886,16 @@ function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove }: {
         </div>
         {enabled && (
           <div>
-            <div style={{ ...label, marginBottom: 3 }}>Invite Link{tunnelUrl ? "" : tunnelLoading ? "" : " (local)"}</div>
-            {tunnelLoading ? (
-              <div style={{ fontSize: 13, color: BOR, padding: "4px 0" }}>Getting public link…</div>
-            ) : (
-              <div style={{ display: "flex", gap: 4 }}>
-                <input readOnly value={link} style={{ ...inp, fontSize: 13, color: "#7090e8", flex: 1 }} />
-                <button onClick={copy} style={{ ...btn(copied, GRN), whiteSpace: "nowrap" }}>{copied ? "✓" : "Copy"}</button>
+            <div style={{ ...label, marginBottom: 3 }}>Invite Link</div>
+            <div style={{ display: "flex", gap: 4 }}>
+              <input readOnly value={link} style={{ ...inp, fontSize: 13, color: "#7090e8", flex: 1 }} />
+              <button onClick={copy} style={{ ...btn(copied, GRN), whiteSpace: "nowrap" }}>{copied ? "✓" : "Copy"}</button>
+            </div>
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+              <div style={{ padding: 8, background: "#fff", borderRadius: 4, lineHeight: 0 }}>
+                <QRCodeSVG value={link} size={140} level="M" bgColor="#ffffff" fgColor="#1a1228" />
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>
@@ -902,9 +904,20 @@ function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove }: {
           <div style={{ color: BOR, fontSize: 12, textAlign: "center", padding: "20px 10px" }}>
             {enabled ? "Waiting for guests…" : "Enable to invite guests"}
           </div>
-        ) : guests.map(g => (
-          <GuestTile key={g.id} guest={g} onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)} />
-        ))}
+        ) : <>
+          {guests.filter(g => g.status === "pending").map(g => (
+            <div key={g.id} style={{ padding: "10px 12px", marginBottom: 6, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>"{g.name}" wants to join</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={() => onAccept(g.id)} style={{ flex: 1, padding: "6px 10px", background: GRN, color: "#000", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Accept</button>
+                <button onClick={() => onDeny(g.id)} style={{ flex: 1, padding: "6px 10px", background: "transparent", color: TXT2, border: `1px solid ${BOR}`, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Deny</button>
+              </div>
+            </div>
+          ))}
+          {guests.filter(g => g.status === "accepted").map(g => (
+            <GuestTile key={g.id} guest={g} onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)} />
+          ))}
+        </>}
       </div>
     </div>
   );
@@ -1065,9 +1078,10 @@ function MultiRTMPPanel({ stream, bitrateKbps }: { stream: MediaStream | null; b
     patch(d.id, { status: "idle", error: undefined });
   };
 
-  const goLiveAll = () => dests.filter(d => d.enabled && d.url).forEach(goLive);
+  const goLiveAll = () => dests.filter(d => d.enabled && d.url && d.key.trim()).forEach(goLive);
   const stopAll   = () => dests.filter(d => d.status === "live").forEach(stopDest);
   const anyLive   = dests.some(d => d.status === "live");
+  const anyEnabledMissingKey = dests.some(d => d.enabled && d.url && !d.key.trim());
 
   useEffect(() => {
     const h = ipcOn("studio:rtmp:stopped", ({ destId }: { destId?: string }) => {
@@ -1098,14 +1112,28 @@ function MultiRTMPPanel({ stream, bitrateKbps }: { stream: MediaStream | null; b
             </button>
             {d.status === "live"
               ? <button onClick={() => stopDest(d)} style={{ ...btn(true, RED), padding: "2px 8px", fontSize: 11 }}>Stop</button>
-              : <button onClick={() => goLive(d)} disabled={!d.enabled || !d.url} style={{ ...btn(false, GRN), padding: "2px 8px", fontSize: 11, opacity: (!d.enabled || !d.url) ? 0.4 : 1 }}>Go</button>
+              : <button
+                  onClick={() => goLive(d)}
+                  disabled={!d.enabled || !d.url || !d.key.trim()}
+                  title={!d.key.trim() ? "Stream key required" : !d.url ? "RTMP URL required" : !d.enabled ? "Enable this destination first" : ""}
+                  style={{ ...btn(false, GRN), padding: "2px 8px", fontSize: 11, opacity: (!d.enabled || !d.url || !d.key.trim()) ? 0.4 : 1 }}
+                >Go</button>
             }
           </div>
           {editId === d.id && (
             <div style={{ padding: "6px 8px", borderTop: `1px solid ${BOR}`, display: "flex", flexDirection: "column", gap: 5 }}>
               <input value={d.name} onChange={e => patch(d.id, { name: e.target.value })} style={{ ...inp, fontSize: 12 }} placeholder="Name" />
               <input value={d.url} onChange={e => patch(d.id, { url: e.target.value })} style={{ ...inp, fontSize: 12, fontFamily: "monospace" }} placeholder="rtmp://..." />
-              <input value={d.key} onChange={e => patch(d.id, { key: e.target.value })} type="password" style={{ ...inp, fontSize: 12, fontFamily: "monospace" }} placeholder="Stream key" />
+              <input
+                value={d.key}
+                onChange={e => patch(d.id, { key: e.target.value })}
+                type="password"
+                style={{ ...inp, fontSize: 12, fontFamily: "monospace", borderColor: !d.key.trim() ? RED : inp.borderColor }}
+                placeholder="Stream key (required)"
+              />
+              {!d.key.trim() && (
+                <div style={{ fontSize: 10, color: RED, lineHeight: 1.4 }}>Stream key required — get it from your platform's live settings.</div>
+              )}
               {d.error && <div style={{ fontSize: 11, color: AMB }}>{d.error}</div>}
             </div>
           )}
@@ -1114,14 +1142,25 @@ function MultiRTMPPanel({ stream, bitrateKbps }: { stream: MediaStream | null; b
 
       {/* Global controls */}
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-        <button onClick={anyLive ? stopAll : goLiveAll} style={{ ...btn(anyLive, anyLive ? RED : GRN), flex: 1, padding: "7px 0", fontSize: 13 }}>
+        <button
+          onClick={anyLive ? stopAll : goLiveAll}
+          disabled={!anyLive && anyEnabledMissingKey}
+          title={!anyLive && anyEnabledMissingKey ? "One or more enabled destinations is missing a stream key" : ""}
+          style={{ ...btn(anyLive, anyLive ? RED : GRN), flex: 1, padding: "7px 0", fontSize: 13, opacity: (!anyLive && anyEnabledMissingKey) ? 0.45 : 1 }}
+        >
           {anyLive ? "Stop All" : "Go Live — All Enabled"}
         </button>
       </div>
+      {!anyLive && anyEnabledMissingKey && (
+        <div style={{ fontSize: 10, color: RED, lineHeight: 1.4 }}>
+          One or more enabled destinations is missing a stream key. Open "Edit" to add it.
+        </div>
+      )}
       <div style={{ fontSize: 11, color: TXT2, lineHeight: 1.5 }}>
         Check destinations to enable. Use "Go" per-destination or "Go Live" for all checked at once.
         Up to 4 simultaneous RTMP targets.
       </div>
+      <StreamStatusPill destId="rtmp:video" style={{ marginTop: 4 }} />
     </div>
   );
 }
@@ -1472,6 +1511,7 @@ function EmbeddedStudio({
   isRecording, isStreaming, setIsStreaming, showGrid, setShowGrid,
   teleScript, setTeleScript, teleScrollRef, hostLevel, toggleRecord,
   guests, acceptGuest, denyGuest, removeGuest, toggleMute, guestsEnabled, setGuestsEnabled,
+  sessionToken,
 }: {
   hostStream: MediaStream | null; setHostStream: (s: MediaStream | null) => void;
   lowerThirds: LowerThird[];
@@ -1484,6 +1524,7 @@ function EmbeddedStudio({
   hostLevel: number; toggleRecord: () => void;
   guests: GuestPeer[]; acceptGuest: (id: string) => void; denyGuest: (id: string) => void; removeGuest: (id: string) => void; toggleMute: (id: string) => void;
   guestsEnabled: boolean; setGuestsEnabled: (fn: (v: boolean) => boolean) => void;
+  sessionToken: string;
 }) {
   const [activeTab, setActiveTab] = useState<EmbedTab>("script");
   const [teleOverlay, setTeleOverlay] = useState(false);
@@ -1508,25 +1549,11 @@ function EmbeddedStudio({
     { id: "script", label: "Script" }, { id: "settings", label: "Settings" },
   ];
 
-  const [invitePublic, setInvitePublic] = useState<string | null>(null);
-  const [inviteLocal, setInviteLocal]   = useState<string | null>(null);
-  const [inviteLoading, setInviteLoading] = useState(false);
-  const [inviteCopied, setInviteCopied]   = useState(false);
-  const [inviteError, setInviteError]     = useState<string | null>(null);
-  const inviteToken = useMemo(() => Math.random().toString(36).slice(2, 10), []);
+  const [inviteLink, setInviteLink]     = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
-  const generateInvite = async () => {
-    setInviteLoading(true); setInviteError(null);
-    try {
-      const ip = await invoke("studio:getLocalIp") as string || "127.0.0.1";
-      setInviteLocal(`http://${ip}:9091/join?s=${inviteToken}`);
-      try {
-        const res = await invoke("studio:startTunnel") as { url: string | null; error: string | null };
-        if (res?.url) setInvitePublic(`${res.url}/join?s=${inviteToken}`);
-        else setInviteError(res?.error || "Tunnel failed — use local link");
-      } catch { setInviteError("Tunnel unavailable — local link works same-network"); }
-    } catch { setInviteError("Could not get network info"); }
-    setInviteLoading(false);
+  const generateInvite = () => {
+    setInviteLink(`https://guests.ether-technologies.com/join?s=${sessionToken}`);
   };
 
   const copyInvite = (link: string) => {
@@ -1550,7 +1577,7 @@ function EmbeddedStudio({
           teleScript={teleScript} teleFontSize={teleFontSize}
           teleScrolling={false} teleScrollRef={teleScrollRef}
           resolution={resolution} isRecording={isRecording}
-          showGrid={showGrid} showFrameOverlays
+          showGrid={showGrid} showFrameOverlays active={active}
         />
         <LevelBar level={hostLevel} height={3} />
       </div>
@@ -1583,27 +1610,22 @@ function EmbeddedStudio({
           <div style={{ padding: "10px 12px" }}>
             <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
               <button onClick={() => setGuestsEnabled(v => !v)} style={{ padding: "4px 10px", fontSize: 13, background: "transparent", border: `1px solid ${BOR}`, color: guestsEnabled ? "#22c55e" : TXT2, cursor: "pointer" }}>{guestsEnabled ? "● Guests On" : "Enable"}</button>
-              <button onClick={generateInvite} disabled={inviteLoading} style={{ padding: "4px 12px", fontSize: 13, fontWeight: 700, background: invitePublic || inviteLocal ? "transparent" : "#6040c0", border: invitePublic || inviteLocal ? `1px solid ${BOR}` : "none", color: invitePublic || inviteLocal ? TXT2 : "#fff", cursor: "pointer", opacity: inviteLoading ? 0.6 : 1 }}>{inviteLoading ? "Creating link..." : invitePublic || inviteLocal ? "Refresh Link" : "Get Invite Link"}</button>
+              <button onClick={generateInvite} style={{ padding: "4px 12px", fontSize: 13, fontWeight: 700, background: inviteLink ? "transparent" : "#6040c0", border: inviteLink ? `1px solid ${BOR}` : "none", color: inviteLink ? TXT2 : "#fff", cursor: "pointer" }}>{inviteLink ? "Refresh Link" : "Get Invite Link"}</button>
             </div>
-            {invitePublic && (
+            {inviteLink && (
               <div style={{ marginBottom: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#22c55e", letterSpacing: "0.1em", marginBottom: 3 }}>PUBLIC LINK</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: "#22c55e", letterSpacing: "0.1em", marginBottom: 3 }}>GUEST LINK</div>
                 <div style={{ display: "flex", gap: 4 }}>
-                  <input readOnly value={invitePublic} onClick={e => (e.target as HTMLInputElement).select()} style={{ flex: 1, padding: "4px 8px", fontSize: 12, fontFamily: "monospace", background: BG0, border: `1px solid ${BOR}`, color: "#7090e8", outline: "none" }} />
-                  <button onClick={() => copyInvite(invitePublic)} style={{ padding: "4px 8px", fontSize: 12, fontWeight: 700, background: inviteCopied ? "#22c55e" : "transparent", border: `1px solid ${inviteCopied ? "#22c55e" : BOR}`, color: inviteCopied ? "#000" : TXT2, cursor: "pointer" }}>{inviteCopied ? "✓" : "Copy"}</button>
+                  <input readOnly value={inviteLink} onClick={e => (e.target as HTMLInputElement).select()} style={{ flex: 1, padding: "4px 8px", fontSize: 12, fontFamily: "monospace", background: BG0, border: `1px solid ${BOR}`, color: "#7090e8", outline: "none" }} />
+                  <button onClick={() => copyInvite(inviteLink)} style={{ padding: "4px 8px", fontSize: 12, fontWeight: 700, background: inviteCopied ? "#22c55e" : "transparent", border: `1px solid ${inviteCopied ? "#22c55e" : BOR}`, color: inviteCopied ? "#000" : TXT2, cursor: "pointer" }}>{inviteCopied ? "✓" : "Copy"}</button>
+                </div>
+                <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+                  <div style={{ padding: 8, background: "#fff", borderRadius: 4, lineHeight: 0 }}>
+                    <QRCodeSVG value={inviteLink} size={140} level="M" bgColor="#ffffff" fgColor="#1a1228" />
+                  </div>
                 </div>
               </div>
             )}
-            {inviteLocal && (
-              <div style={{ marginBottom: 6 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#38bdf8", letterSpacing: "0.1em", marginBottom: 3 }}>LOCAL LINK</div>
-                <div style={{ display: "flex", gap: 4 }}>
-                  <input readOnly value={inviteLocal} onClick={e => (e.target as HTMLInputElement).select()} style={{ flex: 1, padding: "4px 8px", fontSize: 12, fontFamily: "monospace", background: BG0, border: `1px solid ${BOR}`, color: "#6080a8", outline: "none" }} />
-                  <button onClick={() => copyInvite(inviteLocal)} style={{ padding: "4px 8px", fontSize: 12, fontWeight: 700, background: "transparent", border: `1px solid ${BOR}`, color: TXT2, cursor: "pointer" }}>Copy</button>
-                </div>
-              </div>
-            )}
-            {inviteError && <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 6, padding: "4px 8px", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>{inviteError}</div>}
             {guests.filter(g => g.status === "pending").map(g => (
               <div key={g.id} style={{ padding: "10px 12px", marginBottom: 6, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", marginBottom: 4 }}>"{g.name}" wants to join</div>
@@ -1688,7 +1710,7 @@ function EmbeddedStudio({
 
 type RightTab = "engine" | "guests" | "tele" | "lower" | "rtmp" | "quality" | "sources" | "brand";
 
-export default function Studio({ embedded }: { embedded?: boolean } = {}) {
+export default function Studio({ embedded, active = true }: { embedded?: boolean; active?: boolean } = {}) {
   const [hostStream, setHostStream]       = useState<MediaStream | null>(null);
   const [guestsEnabled, setGuestsEnabled] = useState(false);
   const [rightTab, setRightTab]           = useState<RightTab>("engine");
@@ -1711,8 +1733,8 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
   const teleScrollRef = useRef<HTMLDivElement>(null);
 
   const hostLevel = useLevelMeter(hostStream);
-  const { guests, acceptGuest, denyGuest, removeGuest, toggleMute } = useWebRTCGuests(guestsEnabled);
-  const { enabled: captionsEnabled, lines: captionLines, status: captionsStatus, toggle: toggleCaptions, micDevices, micDeviceId, selectMic } = useCaptions();
+  const { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken } = useWebRTCGuests(guestsEnabled);
+  const { enabled: captionsEnabled, lines: captionLines, status: captionsStatus, toggle: toggleCaptions, micDevices, micDeviceId, selectMic } = useCaptions(active);
 
   // Smart cut sources — host + accepted guests
   const smartCutSources = useMemo(() => [
@@ -1791,6 +1813,7 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
         hostLevel={hostLevel} toggleRecord={toggleRecord}
         guests={guests} acceptGuest={acceptGuest} denyGuest={denyGuest} removeGuest={removeGuest} toggleMute={toggleMute}
         guestsEnabled={guestsEnabled} setGuestsEnabled={setGuestsEnabled}
+        sessionToken={sessionToken}
       />
     );
   }
@@ -1818,6 +1841,7 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
                 showFrameOverlays={!!embedded}
                 brandKit={brandKit}
                 smartCutActive={smartCutEnabled && smartCutActiveId === "host"}
+                active={active}
               />
 
               {/* Sidebar teleprompter */}
@@ -1857,7 +1881,7 @@ export default function Studio({ embedded }: { embedded?: boolean } = {}) {
 
           <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0, width: "100%" }}>
             {rightTab === "guests" && (
-              <GuestSidebar guests={guests} enabled={guestsEnabled} onToggle={() => setGuestsEnabled(v => !v)} onMute={toggleMute} onRemove={removeGuest} />
+              <GuestSidebar guests={guests} enabled={guestsEnabled} onToggle={() => setGuestsEnabled(v => !v)} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest} sessionToken={sessionToken} />
             )}
             {rightTab === "sources" && (
               <SourcesPanelWithEngine

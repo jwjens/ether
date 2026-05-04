@@ -32,7 +32,7 @@ export default function PairMobileApp() {
   const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
-    ether?.invoke?.("studio:getLocalIp")?.then((ip: string) => setLocalIp(ip));
+    ether?.invoke?.("system:getLocalIp")?.then((ip: string) => setLocalIp(ip));
     refreshDevices();
   }, []);
 
