@@ -20,7 +20,7 @@ const ether: any = (window as any).ether;
 // ── Types ───────────────────────────────────────────────────────────────────
 export interface VideoSource {
   id:         string;        // local stable id
-  kind:       "screen" | "window" | "camera" | "image";
+  kind:       "screen" | "window" | "camera" | "image" | "guest";
   label:      string;
   stream?:    MediaStream;   // for screen/window/camera
   imageBitmap?: ImageBitmap; // for image (logo)
@@ -250,6 +250,9 @@ interface CtxValue {
   addCameraSource: (deviceId: string, label: string) => Promise<void>;
   addImageSource: (file: File) => Promise<string | null>;
   removeSource: (id: string) => void;
+  addGuestSource: (guestId: string, name: string, stream: MediaStream, kind?: "guest" | "camera") => void;
+  removeGuestSource: (guestId: string) => void;
+  updateGuestSource: (guestId: string, name?: string, stream?: MediaStream) => void;
 
   // Scene actions
   addLayerFromSource: (sourceId: string) => void;
@@ -536,6 +539,57 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
     });
   }, []);
 
+  // Register a pre-existing stream (WebRTC guest or host camera) without calling getUserMedia.
+  // guestId "host" is reserved for the host's own camera stream.
+  const addGuestSource = useCallback((
+    guestId: string, name: string, stream: MediaStream, kind: "guest" | "camera" = "guest",
+  ) => {
+    const extId = guestId === "host" ? "host" : `guest:${guestId}`;
+    setSources(prev => {
+      if (prev.some(s => s.externalId === extId)) return prev;
+      return [...prev, {
+        id: crypto.randomUUID(),
+        kind,
+        label: name,
+        stream,
+        externalId: extId,
+        width:  stream.getVideoTracks()[0]?.getSettings()?.width,
+        height: stream.getVideoTracks()[0]?.getSettings()?.height,
+      }];
+    });
+  }, []);
+
+  // Remove a guest/host source from the engine without stopping its WebRTC tracks.
+  const removeGuestSource = useCallback((guestId: string) => {
+    const extId = guestId === "host" ? "host" : `guest:${guestId}`;
+    const target = sourcesRef.current.find(s => s.externalId === extId);
+    if (!target) return;
+    const targetId = target.id;
+    setSources(prev => prev.filter(s => s.id !== targetId));
+    setLayersState(prev => {
+      const filtered = prev.filter(l => l.source_id !== targetId);
+      const nextSources = sourcesRef.current.filter(s => s.id !== targetId);
+      return autoArrange(filtered, nextSources);
+    });
+  }, []);
+
+  // Update label/stream for an already-registered guest source (e.g. stream renegotiation).
+  const updateGuestSource = useCallback((guestId: string, name?: string, stream?: MediaStream) => {
+    const extId = guestId === "host" ? "host" : `guest:${guestId}`;
+    setSources(prev => prev.map(s => {
+      if (s.externalId !== extId) return s;
+      return {
+        ...s,
+        ...(name   !== undefined ? { label: name } : {}),
+        ...(stream !== undefined ? {
+          stream,
+          width:  stream.getVideoTracks()[0]?.getSettings()?.width  ?? s.width,
+          height: stream.getVideoTracks()[0]?.getSettings()?.height ?? s.height,
+        } : {}),
+      };
+    }));
+  }, []);
+
   // ── Scene actions ─────────────────────────────────────────────────────
   // Auto-arrange on add: 1 → solo, 2 → 2-up, 3 → 3-up, 4 → 4-up, 5+ → grid.
   // Image (logo) layers keep their position so a corner bug doesn't get reset.
@@ -707,6 +761,7 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
     setTransitionType, setTransitionDuration, finishTransition,
     // Sources
     listDesktopSources, addDesktopSource, addCameraSource, addImageSource, removeSource,
+    addGuestSource, removeGuestSource, updateGuestSource,
     addLayerFromSource, patchLayer, removeLayer, setLayers,
     selectLayer: setSelectedLayerIdx, applyLayoutPreset,
     setConfig, setDestination, setDestinations, addDestination, removeDestination, patchDestination,

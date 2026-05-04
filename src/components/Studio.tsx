@@ -28,6 +28,20 @@ const SHARED_SESSION_TOKEN =
   Math.random().toString(36).slice(2, 10) +
   Math.random().toString(36).slice(2, 10);
 
+const SHARED_ROOM_CODE = String(Math.floor(1000 + Math.random() * 9000));
+
+const ETHER_BACKEND_URL = "https://ether-backend-production.up.railway.app";
+
+async function getLicenseKey(stationId: string): Promise<string> {
+  try {
+    const result = await (window as any).ether.stationConfigKv.list(stationId);
+    const rows: { key: string; value: string }[] = result?.ok ? result.rows : [];
+    return rows.find(r => r.key === "license_key")?.value ?? "";
+  } catch {
+    return "";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
@@ -382,13 +396,16 @@ const inp: React.CSSProperties = {
 // useWebRTCGuests
 // ─────────────────────────────────────────────────────────────
 
-function useWebRTCGuests(enabled: boolean) {
+function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
   const [guests, setGuests] = useState<GuestPeer[]>([]);
   const wsRef    = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
+  const hostStreamRef = useRef<MediaStream | null>(hostStream);
+  hostStreamRef.current = hostStream;
   const sessionToken = SHARED_SESSION_TOKEN;
+  const roomCode = SHARED_ROOM_CODE;
 
   useEffect(() => {
     if (!enabled) return;
@@ -399,7 +416,10 @@ function useWebRTCGuests(enabled: boolean) {
     catch { return; }
     wsRef.current = ws;
 
-    ws.onopen = () => console.log("[STUDIO-HOST] WebSocket connected");
+    ws.onopen = () => {
+      console.log("[STUDIO-HOST] WebSocket connected");
+      ws.send(JSON.stringify({ type: "set-code", code: roomCode }));
+    };
 
     ws.onmessage = async (ev) => {
       try {
@@ -446,9 +466,27 @@ function useWebRTCGuests(enabled: boolean) {
       });
       peersRef.current.set(id, pc);
 
+      // Add host's local tracks so guest can hear/see the host
+      if (hostStreamRef.current) {
+        hostStreamRef.current.getTracks().forEach(track => {
+          try { pc.addTrack(track, hostStreamRef.current!); } catch (e) {
+            console.error("[acceptGuest] addTrack failed:", e);
+          }
+        });
+      }
+
       pc.ontrack = (e) => {
-        const stream = e.streams[0] || new MediaStream([e.track]);
-        setGuests(p => p.map(g => g.id === id ? { ...g, stream } : g));
+        setGuests(p => p.map(g => {
+          if (g.id !== id) return g;
+          if (!g.stream) {
+            const s = e.streams[0] || new MediaStream([e.track]);
+            return { ...g, stream: s };
+          }
+          if (!g.stream.getTracks().some(t => t.id === e.track.id)) {
+            try { g.stream.addTrack(e.track); } catch {}
+          }
+          return { ...g, stream: g.stream };
+        }));
       };
       pc.onicecandidate = (e) => {
         if (e.candidate && ws.readyState === WebSocket.OPEN)
@@ -526,7 +564,7 @@ function useWebRTCGuests(enabled: boolean) {
     };
   }, []);
 
-  return { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken };
+  return { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -577,14 +615,14 @@ function LevelBar({ level, height = 4 }: { level: number; height?: number }) {
 function HostCamera({
   onStream, lowerThirds, teleMode, teleOpacity, teleScript, teleFontSize,
   teleScrolling, teleScrollRef, resolution, isRecording, showGrid, showFrameOverlays,
-  brandKit, smartCutActive, active = true,
+  brandKit, smartCutActive, active = true, micDeviceId,
 }: {
   onStream: (s: MediaStream | null) => void;
   lowerThirds: LowerThird[];
   teleMode: TeleMode; teleOpacity: number; teleScript: string; teleFontSize: number;
   teleScrolling: boolean; teleScrollRef: React.RefObject<HTMLDivElement>;
   resolution: ResKey; isRecording?: boolean; showGrid?: boolean; showFrameOverlays?: boolean;
-  brandKit?: BrandKit; smartCutActive?: boolean; active?: boolean;
+  brandKit?: BrandKit; smartCutActive?: boolean; active?: boolean; micDeviceId?: string;
 }) {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
@@ -595,11 +633,14 @@ function HostCamera({
     try {
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
       const { w, h } = RES[res];
+      const audioConstraint: MediaStreamConstraints["audio"] = micDeviceId
+        ? { deviceId: { exact: micDeviceId } }
+        : true;
       let s: MediaStream;
       try {
-        s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: w }, height: { ideal: h } }, audio: true });
+        s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: w }, height: { ideal: h } }, audio: audioConstraint });
       } catch {
-        s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: true });
+        s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: audioConstraint });
         setError("4K not supported by camera — using 1080p");
       }
       streamRef.current = s;
@@ -610,7 +651,7 @@ function HostCamera({
       if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.muted = true; }
       if (error && !error.includes("4K")) setError(null);
     } catch (e: any) { setError(e.message); onStream(null); }
-  }, [onStream]); // eslint-disable-line
+  }, [onStream, micDeviceId]); // eslint-disable-line
 
   useEffect(() => {
     if (!active) {
@@ -622,7 +663,7 @@ function HostCamera({
     }
     start(resolution);
     return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
-  }, [resolution, active]); // eslint-disable-line
+  }, [resolution, active, micDeviceId]); // eslint-disable-line
 
   const ltPos = (i: number): React.CSSProperties => ({ position: "absolute", bottom: 48 + i * 56, left: 16 });
   const frameColor = "#4040a0";
@@ -831,13 +872,18 @@ function ScreenSourceTile({ src, onRemove, onAddToScene, smartCutActive }: { src
 function GuestTile({ guest, onMute, onRemove }: { guest: GuestPeer; onMute: () => void; onRemove: () => void }) {
   const vidRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (vidRef.current && guest.stream) vidRef.current.srcObject = guest.stream;
+    if (vidRef.current && guest.stream) {
+      vidRef.current.srcObject = guest.stream;
+      vidRef.current.play().catch(err => {
+        console.warn("[GuestTile] play() rejected:", err);
+      });
+    }
   }, [guest.stream]);
 
   return (
     <div style={{ position: "relative", background: BG0, border: `1px solid ${BOR}`, flexShrink: 0, height: 130 }}>
       {guest.stream ? (
-        <video ref={vidRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <video ref={vidRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       ) : (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ width: 40, height: 40, borderRadius: "50%", background: BG3, display: "flex", alignItems: "center", justifyContent: "center", color: TXT2, fontSize: 16, fontWeight: 700 }}>
@@ -863,14 +909,107 @@ function GuestTile({ guest, onMute, onRemove }: { guest: GuestPeer; onMute: () =
 }
 
 // ─────────────────────────────────────────────────────────────
+// EmailInviteForm
+// ─────────────────────────────────────────────────────────────
+
+function EmailInviteForm({ inviteLink, stationId, roomCode }: { inviteLink: string; stationId: string; roomCode: string }) {
+  const [expanded, setExpanded]           = useState(false);
+  const [to, setTo]                       = useState("");
+  const [guestName, setGuestName]         = useState("");
+  const [personalMessage, setPersonalMessage] = useState("");
+  const [sending, setSending]             = useState(false);
+  const [result, setResult]               = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const send = async () => {
+    setResult(null);
+    if (!to.trim() || !to.includes("@")) {
+      setResult({ ok: false, msg: "Enter a valid email address" });
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch(`${ETHER_BACKEND_URL}/invite/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: to.trim(),
+          guestName: guestName.trim() || undefined,
+          personalMessage: personalMessage.trim() || undefined,
+          inviteLink,
+          roomCode,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok) {
+        setResult({ ok: true, msg: `Sent to ${to.trim()}` });
+        setTo(""); setGuestName(""); setPersonalMessage("");
+        setTimeout(() => setResult(null), 4000);
+      } else {
+        setResult({ ok: false, msg: data.error || "Send failed" });
+      }
+    } catch (err: any) {
+      setResult({ ok: false, msg: err?.message || "Network error" });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (!expanded) {
+    return (
+      <div style={{ marginTop: 10, textAlign: "center" as const }}>
+        <button onClick={() => setExpanded(true)} style={{
+          padding: "6px 14px", background: "transparent", border: `1px solid ${BOR}`,
+          color: TXT2, fontSize: 12, fontWeight: 600, cursor: "pointer",
+        }}>✉ Email this link</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ marginTop: 10, padding: 10, background: "rgba(167,139,250,0.05)", border: "1px solid rgba(167,139,250,0.15)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa", letterSpacing: "0.1em" }}>EMAIL INVITE</div>
+        <button onClick={() => setExpanded(false)} style={{ background: "transparent", border: "none", color: TXT2, fontSize: 14, cursor: "pointer" }}>×</button>
+      </div>
+      <input type="email" placeholder="guest@example.com" value={to} onChange={e => setTo(e.target.value)} style={{
+        width: "100%", padding: "6px 8px", marginBottom: 6, background: BG0,
+        border: `1px solid ${BOR}`, color: TXT, fontSize: 13, boxSizing: "border-box" as const, outline: "none",
+      }} />
+      <input type="text" placeholder="Their name (optional)" value={guestName} onChange={e => setGuestName(e.target.value)} style={{
+        width: "100%", padding: "6px 8px", marginBottom: 6, background: BG0,
+        border: `1px solid ${BOR}`, color: TXT, fontSize: 13, boxSizing: "border-box" as const, outline: "none",
+      }} />
+      <textarea placeholder="Personal message (optional)" value={personalMessage} onChange={e => setPersonalMessage(e.target.value)} rows={2} style={{
+        width: "100%", padding: "6px 8px", marginBottom: 8, background: BG0,
+        border: `1px solid ${BOR}`, color: TXT, fontSize: 13, boxSizing: "border-box" as const,
+        outline: "none", resize: "vertical" as const, fontFamily: "inherit",
+      }} />
+      <button onClick={send} disabled={sending} style={{
+        width: "100%", padding: "8px", background: sending ? BOR : "#6841a0",
+        border: "none", color: "#fff", fontSize: 13, fontWeight: 700,
+        cursor: sending ? "default" : "pointer", opacity: sending ? 0.6 : 1,
+      }}>{sending ? "Sending..." : "Send Invite"}</button>
+      {result && (
+        <div style={{
+          marginTop: 8, padding: "6px 8px", fontSize: 12,
+          color: result.ok ? "#22c55e" : "#f59e0b",
+          background: result.ok ? "rgba(34,197,94,0.08)" : "rgba(245,158,11,0.08)",
+          border: `1px solid ${result.ok ? "rgba(34,197,94,0.2)" : "rgba(245,158,11,0.2)"}`,
+        }}>{result.ok ? "✓ " : "⚠ "}{result.msg}</div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // GuestSidebar
 // ─────────────────────────────────────────────────────────────
 
-function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove, onAccept, onDeny, sessionToken }: {
+function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove, onAccept, onDeny, sessionToken, stationId, roomCode }: {
   guests: GuestPeer[]; enabled: boolean; onToggle: () => void;
   onMute: (id: string) => void; onRemove: (id: string) => void;
   onAccept: (id: string) => void; onDeny: (id: string) => void;
-  sessionToken: string;
+  sessionToken: string; stationId: string; roomCode: string;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -878,46 +1017,60 @@ function GuestSidebar({ guests, enabled, onToggle, onMute, onRemove, onAccept, o
   const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0, overflow: "hidden" }}>
+      {/* Fixed header row — always visible */}
       <div style={{ padding: "8px 10px", borderBottom: `1px solid ${BOR}`, flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span style={{ ...label, marginBottom: 0 }}>Guests ({guests.length})</span>
           <button onClick={onToggle} style={btn(enabled, GRN)}>{enabled ? "On" : "Enable"}</button>
         </div>
+      </div>
+      {/* Scrollable body — invite section + guest tiles */}
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
         {enabled && (
-          <div>
+          <div style={{ padding: "8px 10px", borderBottom: `1px solid ${BOR}` }}>
             <div style={{ ...label, marginBottom: 3 }}>Invite Link</div>
             <div style={{ display: "flex", gap: 4 }}>
               <input readOnly value={link} style={{ ...inp, fontSize: 13, color: "#7090e8", flex: 1 }} />
               <button onClick={copy} style={{ ...btn(copied, GRN), whiteSpace: "nowrap" }}>{copied ? "✓" : "Copy"}</button>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: TXT2, letterSpacing: "0.12em", marginBottom: 4 }}>ROOM CODE</div>
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <div style={{ flex: 1, padding: "6px 12px", background: BG0, border: `1px solid ${BOR}`, fontSize: 22, fontWeight: 700, letterSpacing: "0.4em", textAlign: "center" as const, fontFamily: "monospace", color: "#a78bfa" }}>
+                  {roomCode}
+                </div>
+                <button onClick={() => { navigator.clipboard.writeText(roomCode); }} style={{ ...btn(false, GRN), whiteSpace: "nowrap" as const, padding: "6px 12px" }}>Copy</button>
+              </div>
             </div>
             <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
               <div style={{ padding: 8, background: "#fff", borderRadius: 4, lineHeight: 0 }}>
                 <QRCodeSVG value={link} size={140} level="M" bgColor="#ffffff" fgColor="#1a1228" />
               </div>
             </div>
+            <EmailInviteForm inviteLink={link} stationId={stationId} roomCode={roomCode} />
           </div>
         )}
-      </div>
-      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, padding: 6 }}>
-        {guests.length === 0 ? (
-          <div style={{ color: BOR, fontSize: 12, textAlign: "center", padding: "20px 10px" }}>
-            {enabled ? "Waiting for guests…" : "Enable to invite guests"}
-          </div>
-        ) : <>
-          {guests.filter(g => g.status === "pending").map(g => (
-            <div key={g.id} style={{ padding: "10px 12px", marginBottom: 6, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>"{g.name}" wants to join</div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={() => onAccept(g.id)} style={{ flex: 1, padding: "6px 10px", background: GRN, color: "#000", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Accept</button>
-                <button onClick={() => onDeny(g.id)} style={{ flex: 1, padding: "6px 10px", background: "transparent", color: TXT2, border: `1px solid ${BOR}`, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Deny</button>
-              </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: 6 }}>
+          {guests.length === 0 ? (
+            <div style={{ color: BOR, fontSize: 12, textAlign: "center", padding: "20px 10px" }}>
+              {enabled ? "Waiting for guests…" : "Enable to invite guests"}
             </div>
-          ))}
-          {guests.filter(g => g.status === "accepted").map(g => (
-            <GuestTile key={g.id} guest={g} onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)} />
-          ))}
-        </>}
+          ) : <>
+            {guests.filter(g => g.status === "pending").map(g => (
+              <div key={g.id} style={{ padding: "10px 12px", marginBottom: 6, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>"{g.name}" wants to join</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => onAccept(g.id)} style={{ flex: 1, padding: "6px 10px", background: GRN, color: "#000", border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Accept</button>
+                  <button onClick={() => onDeny(g.id)} style={{ flex: 1, padding: "6px 10px", background: "transparent", color: TXT2, border: `1px solid ${BOR}`, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Deny</button>
+                </div>
+              </div>
+            ))}
+            {guests.filter(g => g.status === "accepted").map(g => (
+              <GuestTile key={g.id} guest={g} onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)} />
+            ))}
+          </>}
+        </div>
       </div>
     </div>
   );
@@ -1501,6 +1654,165 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
 }
 
 // ─────────────────────────────────────────────────────────────
+// AudioPanel
+// ─────────────────────────────────────────────────────────────
+
+function AudioPanel({
+  micDeviceId, setMicDeviceId,
+  outputDeviceId, setOutputDeviceId,
+  selfMonitor, setSelfMonitor,
+  micVolume, setMicVolume,
+  monitorVolume, setMonitorVolume,
+  hostStream,
+}: {
+  micDeviceId: string;     setMicDeviceId:    (s: string) => void;
+  outputDeviceId: string;  setOutputDeviceId: (s: string) => void;
+  selfMonitor: boolean;    setSelfMonitor:    (b: boolean) => void;
+  micVolume: number;       setMicVolume:      (n: number) => void;
+  monitorVolume: number;   setMonitorVolume:  (n: number) => void;
+  hostStream: MediaStream | null;
+}) {
+  const [audioDevices, setAudioDevices] = useState<{ deviceId: string; label: string; kind: string }[]>([]);
+  const audioCtxRef     = useRef<AudioContext | null>(null);
+  const micGainRef      = useRef<GainNode | null>(null);
+  const monitorDestRef  = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const el = new Audio();
+    el.autoplay = true;
+    monitorAudioRef.current = el;
+    return () => { el.pause(); el.srcObject = null; monitorAudioRef.current = null; };
+  }, []);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setAudioDevices(all
+          .filter(d => d.kind === "audioinput" || d.kind === "audiooutput")
+          .map(d => ({ deviceId: d.deviceId, label: d.label || `Device ${d.deviceId.slice(0, 8)}`, kind: d.kind }))
+        );
+      } catch {}
+    };
+    load();
+    navigator.mediaDevices.addEventListener("devicechange", load);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", load);
+  }, []);
+
+  useEffect(() => {
+    if (micGainRef.current) micGainRef.current.gain.value = micVolume / 100;
+  }, [micVolume]);
+
+  useEffect(() => {
+    if (monitorAudioRef.current) monitorAudioRef.current.volume = monitorVolume / 100;
+  }, [monitorVolume]);
+
+  // Rebuild audio graph whenever hostStream changes (new mic device → HostCamera restarts → new stream)
+  useEffect(() => {
+    if (!hostStream) return;
+    const audioTrack = hostStream.getAudioTracks()[0];
+    if (!audioTrack) return;
+    audioCtxRef.current?.close();
+    const ctx = new AudioContext();
+    audioCtxRef.current = ctx;
+    const source = ctx.createMediaStreamSource(new MediaStream([audioTrack]));
+    const gain = ctx.createGain();
+    gain.gain.value = micVolume / 100;
+    micGainRef.current = gain;
+    source.connect(gain);
+    const dest = ctx.createMediaStreamDestination();
+    gain.connect(dest);
+    monitorDestRef.current = dest;
+    if (monitorAudioRef.current && selfMonitor) {
+      monitorAudioRef.current.srcObject = dest.stream;
+      if (outputDeviceId && typeof (monitorAudioRef.current as any).setSinkId === "function") {
+        (monitorAudioRef.current as any).setSinkId(outputDeviceId).catch(() => {});
+      }
+      monitorAudioRef.current.play().catch(() => {});
+    }
+  }, [hostStream]); // eslint-disable-line
+
+  useEffect(() => {
+    const el = monitorAudioRef.current;
+    if (!el) return;
+    if (selfMonitor && monitorDestRef.current) {
+      el.srcObject = monitorDestRef.current.stream;
+      el.volume = monitorVolume / 100;
+      if (outputDeviceId && typeof (el as any).setSinkId === "function") {
+        (el as any).setSinkId(outputDeviceId).catch(() => {});
+      }
+      el.play().catch(() => {});
+    } else {
+      el.pause();
+      el.srcObject = null;
+    }
+  }, [selfMonitor, outputDeviceId]); // eslint-disable-line
+
+  const changeMicDevice = (deviceId: string) => {
+    setMicDeviceId(deviceId);
+    // HostCamera picks up micDeviceId prop and restarts getUserMedia with the new device.
+    // The hostStream useEffect above will then rebuild the audio graph.
+  };
+
+  const changeOutputDevice = async (deviceId: string) => {
+    setOutputDeviceId(deviceId);
+    const el = monitorAudioRef.current;
+    if (el && typeof (el as any).setSinkId === "function") {
+      try { await (el as any).setSinkId(deviceId); } catch {}
+    }
+  };
+
+  return (
+    <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={label}>Audio</div>
+      <div>
+        <div style={{ fontSize: 10, color: TXT2, marginBottom: 3, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Mic Input</div>
+        <select value={micDeviceId} onChange={e => changeMicDevice(e.target.value)}
+          style={{ ...inp, appearance: "none" as any, cursor: "pointer" }}>
+          <option value="">Default</option>
+          {audioDevices.filter(d => d.kind === "audioinput").map(d => (
+            <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <div style={{ fontSize: 10, color: TXT2, marginBottom: 3, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Output Device</div>
+        <select value={outputDeviceId} onChange={e => changeOutputDevice(e.target.value)}
+          style={{ ...inp, appearance: "none" as any, cursor: "pointer" }}>
+          <option value="">Default</option>
+          {audioDevices.filter(d => d.kind === "audiooutput").map(d => (
+            <option key={d.deviceId} value={d.deviceId}>{d.label}</option>
+          ))}
+        </select>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 10, color: TXT2, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Self-Monitor</span>
+        <button onClick={() => setSelfMonitor(!selfMonitor)} style={{ padding: "3px 10px", fontSize: 12, fontWeight: 700, background: selfMonitor ? GRN : "transparent", border: `1px solid ${selfMonitor ? GRN : BOR}`, color: selfMonitor ? "#000" : TXT2, cursor: "pointer" }}>
+          {selfMonitor ? "On" : "Off"}
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <span style={{ fontSize: 10, color: TXT2, width: 74, flexShrink: 0, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Mic Vol</span>
+        <input type="range" min={0} max={100} step={1} value={micVolume}
+          onChange={e => setMicVolume(Number(e.target.value))}
+          style={{ flex: 1, accentColor: PUR, height: 3 }} />
+        <span style={{ fontSize: 11, color: TXT2, width: 28, textAlign: "right" as const }}>{micVolume}%</span>
+      </div>
+      <div style={{ display: "flex", gap: 6, alignItems: "center", opacity: selfMonitor ? 1 : 0.4 }}>
+        <span style={{ fontSize: 10, color: TXT2, width: 74, flexShrink: 0, textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Monitor</span>
+        <input type="range" min={0} max={100} step={1} value={monitorVolume}
+          disabled={!selfMonitor}
+          onChange={e => setMonitorVolume(Number(e.target.value))}
+          style={{ flex: 1, accentColor: PUR, height: 3 }} />
+        <span style={{ fontSize: 11, color: TXT2, width: 28, textAlign: "right" as const }}>{monitorVolume}%</span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // EmbeddedStudio
 // ─────────────────────────────────────────────────────────────
 
@@ -1511,7 +1823,9 @@ function EmbeddedStudio({
   isRecording, isStreaming, setIsStreaming, showGrid, setShowGrid,
   teleScript, setTeleScript, teleScrollRef, hostLevel, toggleRecord,
   guests, acceptGuest, denyGuest, removeGuest, toggleMute, guestsEnabled, setGuestsEnabled,
-  sessionToken,
+  sessionToken, stationId, roomCode,
+  micDeviceId, setMicDeviceId, outputDeviceId, setOutputDeviceId,
+  selfMonitor, setSelfMonitor, micVolume, setMicVolume, monitorVolume, setMonitorVolume,
 }: {
   hostStream: MediaStream | null; setHostStream: (s: MediaStream | null) => void;
   lowerThirds: LowerThird[];
@@ -1524,7 +1838,12 @@ function EmbeddedStudio({
   hostLevel: number; toggleRecord: () => void;
   guests: GuestPeer[]; acceptGuest: (id: string) => void; denyGuest: (id: string) => void; removeGuest: (id: string) => void; toggleMute: (id: string) => void;
   guestsEnabled: boolean; setGuestsEnabled: (fn: (v: boolean) => boolean) => void;
-  sessionToken: string;
+  sessionToken: string; stationId: string; roomCode: string;
+  micDeviceId: string;    setMicDeviceId:    (s: string) => void;
+  outputDeviceId: string; setOutputDeviceId: (s: string) => void;
+  selfMonitor: boolean;   setSelfMonitor:    (b: boolean) => void;
+  micVolume: number;      setMicVolume:      (n: number) => void;
+  monitorVolume: number;  setMonitorVolume:  (n: number) => void;
 }) {
   const [activeTab, setActiveTab] = useState<EmbedTab>("script");
   const [teleOverlay, setTeleOverlay] = useState(false);
@@ -1533,10 +1852,16 @@ function EmbeddedStudio({
   const [rtmpUrl, setRtmpUrl] = useState("");
   const [streamKey, setStreamKey] = useState("");
 
+  // Load persisted RTMP settings
   useEffect(() => {
-    dbQuery<{ key: string; value: string }>("SELECT key, value FROM station_config_kv WHERE key IN ('studio_rtmp_url','studio_stream_key')")
-      .then(rows => { rows.forEach(r => { if (r.key === "studio_rtmp_url") setRtmpUrl(r.value); if (r.key === "studio_stream_key") setStreamKey(r.value); }); })
-      .catch(() => {});
+    dbQuery<{ key: string; value: string }>(
+      "SELECT key, value FROM station_config_kv WHERE key IN ('studio_rtmp_url','studio_stream_key')"
+    ).then(rows => {
+      rows.forEach(r => {
+        if (r.key === "studio_rtmp_url")   setRtmpUrl(r.value);
+        if (r.key === "studio_stream_key") setStreamKey(r.value);
+      });
+    }).catch(() => {});
   }, []);
 
   const saveRtmp = () => {
@@ -1578,6 +1903,7 @@ function EmbeddedStudio({
           teleScrolling={false} teleScrollRef={teleScrollRef}
           resolution={resolution} isRecording={isRecording}
           showGrid={showGrid} showFrameOverlays active={active}
+          micDeviceId={micDeviceId}
         />
         <LevelBar level={hostLevel} height={3} />
       </div>
@@ -1619,11 +1945,21 @@ function EmbeddedStudio({
                   <input readOnly value={inviteLink} onClick={e => (e.target as HTMLInputElement).select()} style={{ flex: 1, padding: "4px 8px", fontSize: 12, fontFamily: "monospace", background: BG0, border: `1px solid ${BOR}`, color: "#7090e8", outline: "none" }} />
                   <button onClick={() => copyInvite(inviteLink)} style={{ padding: "4px 8px", fontSize: 12, fontWeight: 700, background: inviteCopied ? "#22c55e" : "transparent", border: `1px solid ${inviteCopied ? "#22c55e" : BOR}`, color: inviteCopied ? "#000" : TXT2, cursor: "pointer" }}>{inviteCopied ? "✓" : "Copy"}</button>
                 </div>
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: TXT2, letterSpacing: "0.12em", marginBottom: 4 }}>ROOM CODE</div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <div style={{ flex: 1, padding: "6px 12px", background: BG0, border: `1px solid ${BOR}`, fontSize: 22, fontWeight: 700, letterSpacing: "0.4em", textAlign: "center" as const, fontFamily: "monospace", color: "#a78bfa" }}>
+                      {roomCode}
+                    </div>
+                    <button onClick={() => { navigator.clipboard.writeText(roomCode); }} style={{ padding: "4px 8px", fontSize: 12, fontWeight: 700, background: "transparent", border: `1px solid ${BOR}`, color: TXT2, cursor: "pointer" }}>Copy</button>
+                  </div>
+                </div>
                 <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
                   <div style={{ padding: 8, background: "#fff", borderRadius: 4, lineHeight: 0 }}>
                     <QRCodeSVG value={inviteLink} size={140} level="M" bgColor="#ffffff" fgColor="#1a1228" />
                   </div>
                 </div>
+                <EmailInviteForm inviteLink={inviteLink} stationId={stationId} roomCode={roomCode} />
               </div>
             )}
             {guests.filter(g => g.status === "pending").map(g => (
@@ -1639,7 +1975,7 @@ function EmbeddedStudio({
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
                 {guests.filter(g => g.status === "accepted").map(g => (
                   <div key={g.id} style={{ background: BG0, border: `1px solid ${BOR}`, padding: 6 }}>
-                    {g.stream ? <video ref={el => { if (el && el.srcObject !== g.stream) el.srcObject = g.stream; }} autoPlay playsInline style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", background: "#0a0a10" }} /> : <div style={{ width: "100%", aspectRatio: "4/3", background: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 12, color: "#22c55e" }}>● Connected</span></div>}
+                    {g.stream ? <video ref={el => { if (el && el.srcObject !== g.stream) { el.srcObject = g.stream; el.play().catch(() => {}); } }} autoPlay playsInline style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", background: "#0a0a10" }} /> : <div style={{ width: "100%", aspectRatio: "4/3", background: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 12, color: "#22c55e" }}>● Connected</span></div>}
                     <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
                       <span style={{ flex: 1, fontSize: 12, color: TXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.name}</span>
                       <button onClick={() => toggleMute(g.id)} style={{ padding: "1px 5px", fontSize: 11, background: "none", border: `1px solid ${BOR}`, color: g.muted ? AMB : TXT2, cursor: "pointer" }}>{g.muted ? "Unmute" : "Mute"}</button>
@@ -1690,6 +2026,14 @@ function EmbeddedStudio({
                 ))}
               </div>
             </div>
+            <AudioPanel
+              micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
+              outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
+              selfMonitor={selfMonitor} setSelfMonitor={setSelfMonitor}
+              micVolume={micVolume} setMicVolume={setMicVolume}
+              monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
+              hostStream={hostStream}
+            />
             <div>
               <div style={label}>RTMP Destination</div>
               <input value={rtmpUrl} onChange={e => setRtmpUrl(e.target.value)} onBlur={saveRtmp} placeholder="rtmp://live.youtube.com/live2" style={{ ...inp, marginBottom: 4 }} />
@@ -1708,7 +2052,53 @@ function EmbeddedStudio({
 // Studio — main export
 // ─────────────────────────────────────────────────────────────
 
-type RightTab = "engine" | "guests" | "tele" | "lower" | "rtmp" | "quality" | "sources" | "brand";
+type RightTab = "engine" | "guests" | "tele" | "lower" | "rtmp" | "quality" | "sources" | "brand" | "audio";
+
+// Sync host stream and accepted WebRTC guests into VideoEngineContext so they
+// appear as sources in the Engine panel's source list. Must render inside
+// <VideoEngineProvider> (Studio is outside its own provider).
+function GuestEngineSync({
+  hostStream,
+  guests,
+}: {
+  hostStream: MediaStream | null;
+  guests: GuestPeer[];
+}) {
+  const { addGuestSource, removeGuestSource, updateGuestSource } = useVideoEngine();
+  const prevGuestIdsRef = React.useRef<Set<string>>(new Set());
+
+  // Register host camera stream as a "camera" source named "Host"
+  useEffect(() => {
+    if (!hostStream) {
+      removeGuestSource("host");
+      return;
+    }
+    addGuestSource("host", "Host", hostStream, "camera");
+    return () => { removeGuestSource("host"); };
+  }, [hostStream]); // eslint-disable-line
+
+  // Register/update/remove accepted guest sources
+  useEffect(() => {
+    const accepted = guests.filter(g => g.status === "accepted" && g.stream);
+    const acceptedIds = new Set(accepted.map(g => g.id));
+
+    for (const g of accepted) {
+      if (prevGuestIdsRef.current.has(g.id)) {
+        updateGuestSource(g.id, g.name, g.stream!);
+      } else {
+        addGuestSource(g.id, g.name, g.stream!);
+      }
+    }
+
+    for (const id of prevGuestIdsRef.current) {
+      if (!acceptedIds.has(id)) removeGuestSource(id);
+    }
+
+    prevGuestIdsRef.current = acceptedIds;
+  }, [guests]); // eslint-disable-line
+
+  return null;
+}
 
 export default function Studio({ embedded, active = true }: { embedded?: boolean; active?: boolean } = {}) {
   const [hostStream, setHostStream]       = useState<MediaStream | null>(null);
@@ -1732,9 +2122,36 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
   const [teleScrolling, setTeleScrolling] = useState(false);
   const teleScrollRef = useRef<HTMLDivElement>(null);
 
+  const [micDeviceId, setMicDeviceId]       = useState("");
+  const [outputDeviceId, setOutputDeviceId] = useState("");
+  const [selfMonitor, setSelfMonitor]       = useState(false);
+  const [micVolume, setMicVolume]           = useState(80);
+  const [monitorVolume, setMonitorVolume]   = useState(50);
+
+  // Load persisted audio settings
+  useEffect(() => {
+    dbQuery<{ key: string; value: string }>(
+      "SELECT key, value FROM station_config_kv WHERE key IN ('video_audio_input','video_audio_output','video_self_monitor','video_mic_volume','video_monitor_volume')"
+    ).then(rows => {
+      rows.forEach(r => {
+        if (r.key === "video_audio_input")    setMicDeviceId(r.value);
+        if (r.key === "video_audio_output")   setOutputDeviceId(r.value);
+        if (r.key === "video_self_monitor")   setSelfMonitor(r.value === "true");
+        if (r.key === "video_mic_volume")     setMicVolume(parseInt(r.value) || 80);
+        if (r.key === "video_monitor_volume") setMonitorVolume(parseInt(r.value) || 50);
+      });
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_audio_input',?)",    [micDeviceId]).catch(() => {}); }, [micDeviceId]);
+  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_audio_output',?)",   [outputDeviceId]).catch(() => {}); }, [outputDeviceId]);
+  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_self_monitor',?)",   [String(selfMonitor)]).catch(() => {}); }, [selfMonitor]);
+  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_mic_volume',?)",     [String(micVolume)]).catch(() => {}); }, [micVolume]);
+  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_monitor_volume',?)", [String(monitorVolume)]).catch(() => {}); }, [monitorVolume]);
+
   const hostLevel = useLevelMeter(hostStream);
-  const { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken } = useWebRTCGuests(guestsEnabled);
-  const { enabled: captionsEnabled, lines: captionLines, status: captionsStatus, toggle: toggleCaptions, micDevices, micDeviceId, selectMic } = useCaptions(active);
+  const { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode } = useWebRTCGuests(guestsEnabled, hostStream);
+  const { enabled: captionsEnabled, lines: captionLines, status: captionsStatus, toggle: toggleCaptions, micDevices, micDeviceId: captionsMicId, selectMic } = useCaptions(active);
 
   // Smart cut sources — host + accepted guests
   const smartCutSources = useMemo(() => [
@@ -1813,13 +2230,19 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
         hostLevel={hostLevel} toggleRecord={toggleRecord}
         guests={guests} acceptGuest={acceptGuest} denyGuest={denyGuest} removeGuest={removeGuest} toggleMute={toggleMute}
         guestsEnabled={guestsEnabled} setGuestsEnabled={setGuestsEnabled}
-        sessionToken={sessionToken}
+        sessionToken={sessionToken} stationId="" roomCode={roomCode}
+        micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
+        outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
+        selfMonitor={selfMonitor} setSelfMonitor={setSelfMonitor}
+        micVolume={micVolume} setMicVolume={setMicVolume}
+        monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
       />
     );
   }
 
   return (
     <VideoEngineProvider>
+    <GuestEngineSync hostStream={hostStream} guests={guests} />
     <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "100%", background: BG1, overflow: "hidden" }}>
 
       <div style={{ flex: 1, display: "flex", width: "100%", minHeight: 0, overflow: "hidden" }}>
@@ -1842,6 +2265,7 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
                 brandKit={brandKit}
                 smartCutActive={smartCutEnabled && smartCutActiveId === "host"}
                 active={active}
+                micDeviceId={micDeviceId}
               />
 
               {/* Sidebar teleprompter */}
@@ -1874,6 +2298,7 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
             <div style={{ display: "flex" }}>
               {tab("lower",   "L3rds")}
               {tab("rtmp",    "RTMP")}
+              {tab("audio",   "Audio")}
               {tab("brand",   "Brand")}
               {tab("quality", "Quality")}
             </div>
@@ -1881,7 +2306,7 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
 
           <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0, width: "100%" }}>
             {rightTab === "guests" && (
-              <GuestSidebar guests={guests} enabled={guestsEnabled} onToggle={() => setGuestsEnabled(v => !v)} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest} sessionToken={sessionToken} />
+              <GuestSidebar guests={guests} enabled={guestsEnabled} onToggle={() => setGuestsEnabled(v => !v)} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest} sessionToken={sessionToken} stationId="" roomCode={roomCode} />
             )}
             {rightTab === "sources" && (
               <SourcesPanelWithEngine
@@ -1912,6 +2337,16 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
             {rightTab === "rtmp" && (
               <MultiRTMPPanel stream={hostStream} bitrateKbps={bitrateKbps} />
             )}
+            {rightTab === "audio" && (
+              <AudioPanel
+                micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
+                outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
+                selfMonitor={selfMonitor} setSelfMonitor={setSelfMonitor}
+                micVolume={micVolume} setMicVolume={setMicVolume}
+                monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
+                hostStream={hostStream}
+              />
+            )}
             {rightTab === "brand" && (
               <BrandKitPanel kit={brandKit} onChange={setBrandKit} />
             )}
@@ -1935,7 +2370,7 @@ export default function Studio({ embedded, active = true }: { embedded?: boolean
         captionsEnabled={captionsEnabled}
         onToggleCaptions={toggleCaptions}
         micDevices={micDevices}
-        micDeviceId={micDeviceId}
+        micDeviceId={captionsMicId}
         onSelectMic={selectMic}
       />
       <CaptionsOverlay lines={captionLines} enabled={captionsEnabled} status={captionsStatus} />

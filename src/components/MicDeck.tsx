@@ -53,6 +53,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
   const analyserRef  = useRef<AnalyserNode | null>(null);
   const audioCtxRef  = useRef<AudioContext | null>(null);
   const eqFiltersRef = useRef<BiquadFilterNode[]>([]);
+  const gainNodeRef  = useRef<GainNode | null>(null);
   const animRef      = useRef<number>(0);
 
   // ── EQ state ─────────────────────────────────────────────────
@@ -113,13 +114,19 @@ export default function MicDeck({ inputDeviceId }: Props) {
       const filters = buildEqChain(ctx);
       eqFiltersRef.current = filters;
 
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = gainNodeRef.current?.gain.value ?? 1;
+      gainNodeRef.current = gainNode;
+
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 64;
       analyser.smoothingTimeConstant = 0.55;
 
-      // source → EQ chain → analyser (level metering reflects EQ)
+      // source → EQ chain → gainNode → analyser → destination
       source.connect(filters[0]);
-      filters[filters.length - 1].connect(analyser);
+      filters[filters.length - 1].connect(gainNode);
+      gainNode.connect(analyser);
+      analyser.connect(ctx.destination);
       analyserRef.current = analyser;
       setMicLive(true);
 
@@ -146,6 +153,16 @@ export default function MicDeck({ inputDeviceId }: Props) {
     setMicLive(false);
     setLevel(0);
   };
+
+  // Listen for volume changes dispatched from the ConsoleStrip fader
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { volume } = (e as CustomEvent).detail as { slot: string; volume: number };
+      if (gainNodeRef.current) gainNodeRef.current.gain.value = volume;
+    };
+    window.addEventListener("ether:mic-volume", handler);
+    return () => window.removeEventListener("ether:mic-volume", handler);
+  }, []);
 
   useEffect(() => () => stopMic(), []);
 

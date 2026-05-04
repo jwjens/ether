@@ -89,6 +89,29 @@ export default function SubscriptionPanel() {
   };
 
   const validateLicense = async () => {
+    const ADMIN_KEYS: Record<string, PlanTier> = {
+      "ETHER-OWNER-2026":    "station",
+      "ETHER-ADMIN-STATION": "station",
+      "ETHER-ADMIN-PRO":     "pro",
+      "ETHER-DEV-STATION":   "station",
+      "ETHER-DEV-PRO":       "pro",
+    };
+    const trimmedKey = licenseKey.trim();
+    if (ADMIN_KEYS[trimmedKey]) {
+      const tier = ADMIN_KEYS[trimmedKey];
+      setLoading(true);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', tier);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', trimmedKey);
+      if (licenseEmail.trim()) {
+        await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
+      }
+      setCurrentPlan(tier);
+      setLicenseSuccess(true);
+      setShowLicenseEntry(false);
+      setTimeout(() => setLicenseSuccess(false), 4000);
+      setLoading(false);
+      return;
+    }
     if (!licenseKey.trim() || !licenseEmail.trim()) {
       setLicenseError("Please enter your email and license key.");
       return;

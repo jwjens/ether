@@ -71,7 +71,7 @@ async function startLoopbackTap(deviceId: string | undefined, onChunk: (data: Fl
 // ── useCaptions hook ──────────────────────────────────────────
 // Shared hook — call once at the App level, pass state down as props.
 
-export function useCaptions() {
+export function useCaptions(active = true) {
   const [enabled,     setEnabled]     = useState(false);
   const [lines,       setLines]       = useState<CaptionLine[]>([]);
   const [status,      setStatus]      = useState<{ state: string; message: string } | null>(null);
@@ -82,12 +82,13 @@ export function useCaptions() {
   const stopTapRef = useRef<(() => void) | null>(null);
   const ether = (window as any).ether;
 
-  // Enumerate audio input devices once on mount
+  // Enumerate audio input devices only when video view is active
   useEffect(() => {
+    if (!active) return;
     navigator.mediaDevices.enumerateDevices().then(devices => {
       setMicDevices(devices.filter(d => d.kind === "audioinput"));
     }).catch(() => {});
-  }, []);
+  }, [active]);
 
   // Subscribe to push events from main process
   useEffect(() => {

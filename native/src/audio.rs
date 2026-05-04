@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use ringbuf::{HeapRb, HeapProd, traits::{Producer, Consumer, Split}};
+use ringbuf::{HeapRb, HeapProd, traits::{Producer, Consumer, Observer, Split}};
 
 // ── Existing public types ─────────────────────────────────────────────────────
 
@@ -433,8 +433,9 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
 //   Program Bus        → ring buffer → TCP → ffmpeg → Icecast (hardware-free)
 // Called from lib.rs get_or_create_engine after this lands in Step D.
 
-const DECK_LETTERS: [&str; 6] = ["A", "B", "C", "D", "E", "F"];
-const PROGRAM_BUS_BUF: usize  = 44100 * 2 * 4; // 4 s at 44100 Hz stereo
+const DECK_LETTERS:   [&str; 6] = ["A", "B", "C", "D", "E", "F"];
+const PROGRAM_RATE:   u32       = 44100;
+const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
 
 pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     std::sync::mpsc::Sender<AudioCmd>,
@@ -663,7 +664,7 @@ fn open_output_device(
 
 fn build_source(
     file_path: &str,
-    sample_rate: u32,
+    _sample_rate: u32,
 ) -> Option<Box<dyn Iterator<Item = f32> + Send>> {
     use rodio::source::UniformSourceIterator;
     use rodio::Source;
@@ -671,8 +672,10 @@ fn build_source(
     use std::io::BufReader;
     let file    = File::open(file_path).ok()?;
     let decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
+    // Always resample to PROGRAM_RATE so ring buffer → ffmpeg is always 44100 Hz.
+    // The cpal callback resamples to device rate separately for hardware output.
     let norm    = UniformSourceIterator::<_, f32>::new(
-        decoder.convert_samples::<f32>(), 2, sample_rate,
+        decoder.convert_samples::<f32>(), 2, PROGRAM_RATE,
     );
     Some(Box::new(norm))
 }
@@ -703,6 +706,15 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
     }
 }
 
+// ── Temporary rate diagnostics — remove after B1 sign-off ────────────────────
+use std::sync::atomic::AtomicU64;
+static SAMPLES_PUSHED:           AtomicU64  = AtomicU64::new(0);
+static LAST_REPORT_NS:           AtomicU64  = AtomicU64::new(0);
+static CB_COUNT:                 AtomicU64  = AtomicU64::new(0);
+static CB_REPORT_NS:             AtomicU64  = AtomicU64::new(0);
+static LAST_CB_NS:               AtomicU64  = AtomicU64::new(0);
+static STREAM_CLIENT_CONNECTED:  AtomicBool = AtomicBool::new(false);
+
 fn mixer_callback(
     data:    &mut [f32],
     ch:      u16,
@@ -710,14 +722,48 @@ fn mixer_callback(
     fin:     &FinishedFlags,
     playing: &Arc<Mutex<bool>>,
 ) {
-    let frames = data.len() / ch as usize;
+    // Callback fires/sec counter + stall detector
+    let now_cb = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let count = CB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let last_cb = CB_REPORT_NS.load(std::sync::atomic::Ordering::Relaxed);
+    if last_cb == 0 {
+        CB_REPORT_NS.store(now_cb, std::sync::atomic::Ordering::Relaxed);
+    } else if now_cb > last_cb + 1_000_000_000 {
+        eprintln!("[RUST] Callback fires/sec: {}  data.len={}  ch={}  (expected ~100 at 10ms/buf)",
+            count, data.len(), ch);
+        CB_REPORT_NS.store(now_cb, std::sync::atomic::Ordering::Relaxed);
+        CB_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
+    }
+    // Stall detector: log if gap between callbacks exceeds 30ms (expected ~10ms)
+    let last_ts = LAST_CB_NS.swap(now_cb, std::sync::atomic::Ordering::Relaxed);
+    if last_ts > 0 {
+        let gap_ms = (now_cb.saturating_sub(last_ts)) / 1_000_000;
+        if gap_ms > 30 {
+            eprintln!("[RUST] cpal callback gap: {}ms (expected ~10ms) — possible thread starvation", gap_ms);
+        }
+    }
+
+    let device_frames = data.len() / ch as usize;
+    if device_frames == 0 { return; }
+
     let mut bus = match bus_arc.try_lock() {
         Ok(b)  => b,
         Err(_) => { data.iter_mut().for_each(|s| *s = 0.0); return; }
     };
 
-    let mut mix_l = vec![0f32; frames];
-    let mut mix_r = vec![0f32; frames];
+    let device_sr = bus.sample_rate;
+    // How many PROGRAM_RATE (44100 Hz) frames cover this device buffer.
+    // +2 is a rounding safety margin so we never under-read.
+    let prog_frames = if device_sr == PROGRAM_RATE {
+        device_frames
+    } else {
+        (device_frames as f64 * PROGRAM_RATE as f64 / device_sr as f64).ceil() as usize + 2
+    };
+
+    let mut mix_l = vec![0f32; prog_frames];
+    let mut mix_r = vec![0f32; prog_frames];
     let mut any_playing = false;
     let mut exhausted   = [false; 6];
 
@@ -725,10 +771,11 @@ fn mixer_callback(
         if !deck.active || deck.paused { continue; }
         let Some(ref mut src) = deck.source else { continue };
         any_playing = true;
-        for f in 0..frames {
+        for f in 0..prog_frames {
+            // Source is always stereo (UniformSourceIterator built with 2 ch)
             match src.next() {
                 Some(l) => {
-                    let r = if ch == 2 { src.next().unwrap_or(0.0) } else { l };
+                    let r = src.next().unwrap_or(0.0);
                     mix_l[f] += l * deck.volume;
                     mix_r[f] += r * deck.volume;
                 }
@@ -737,8 +784,6 @@ fn mixer_callback(
         }
     }
 
-    // Mark exhausted decks; set finished flags outside the lock would be ideal
-    // but we set them here under the existing lock to keep it simple.
     for (i, done) in exhausted.iter().enumerate() {
         if *done {
             bus.decks[i].source = None;
@@ -748,11 +793,11 @@ fn mixer_callback(
         }
     }
 
-    // Apply EQ to stereo mix
+    // Apply EQ to the 44100 Hz stereo mix
     let (out_l, out_r): (Vec<f32>, Vec<f32>) = if let Ok(mut eq) = bus.eq.try_lock() {
-        let mut ol = Vec::with_capacity(frames);
-        let mut or_ = Vec::with_capacity(frames);
-        for f in 0..frames {
+        let mut ol = Vec::with_capacity(prog_frames);
+        let mut or_ = Vec::with_capacity(prog_frames);
+        for f in 0..prog_frames {
             let (l, r) = eq.process_stereo(mix_l[f], mix_r[f]);
             ol.push(l.clamp(-1.0, 1.0));
             or_.push(r.clamp(-1.0, 1.0));
@@ -763,23 +808,78 @@ fn mixer_callback(
          mix_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
     };
 
-    // Write to hardware output (Studio Monitor Bus)
-    for f in 0..frames {
-        if ch == 2 {
-            data[f * 2]     = out_l[f];
-            data[f * 2 + 1] = out_r[f];
-        } else {
-            data[f] = (out_l[f] + out_r[f]) * 0.5;
+    // Peak diagnostic — confirm mixer is producing audio, not silence
+    static PEAK_REPORT_NS: AtomicU64 = AtomicU64::new(0);
+    let peak = out_l.iter().chain(out_r.iter())
+        .map(|&s| s.abs())
+        .fold(0.0f32, f32::max);
+    let now_ns_peak = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let last_peak = PEAK_REPORT_NS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_ns_peak > last_peak + 1_000_000_000 {
+        PEAK_REPORT_NS.store(now_ns_peak, std::sync::atomic::Ordering::Relaxed);
+        let active_count = bus.decks.iter().filter(|d| d.active && !d.paused).count();
+        eprintln!("[RUST] Mixer peak: {:.4}  active_decks={}", peak, active_count);
+    }
+
+    // Program Bus: write 44100 Hz samples directly — ffmpeg always reads 44100 Hz
+    if STREAM_CLIENT_CONNECTED.load(Ordering::Relaxed) {
+        for f in 0..prog_frames {
+            let _ = bus.ring_prod.try_push(out_l[f]);
+            let _ = bus.ring_prod.try_push(out_r[f]);
         }
     }
 
-    // Tap to Program Bus ring buffer — drop newest if full (non-blocking)
-    for f in 0..frames {
-        let _ = bus.ring_prod.try_push(out_l[f]);
-        let _ = bus.ring_prod.try_push(out_r[f]);
+    // Studio Monitor Bus: resample 44100 Hz → device rate if they differ
+    if device_sr == PROGRAM_RATE || prog_frames <= 1 {
+        for f in 0..device_frames {
+            if ch == 2 {
+                data[f * 2]     = out_l[f];
+                data[f * 2 + 1] = out_r[f];
+            } else {
+                data[f] = (out_l[f] + out_r[f]) * 0.5;
+            }
+        }
+    } else {
+        // Linear interpolation: map device_frames output positions into prog_frames input
+        let scale = (prog_frames - 1) as f64 / (device_frames - 1).max(1) as f64;
+        for f in 0..device_frames {
+            let t    = f as f64 * scale;
+            let idx  = t as usize;
+            let frac = (t - idx as f64) as f32;
+            let l0 = out_l[idx];
+            let l1 = out_l.get(idx + 1).copied().unwrap_or(l0);
+            let r0 = out_r[idx];
+            let r1 = out_r.get(idx + 1).copied().unwrap_or(r0);
+            let l = l0 + (l1 - l0) * frac;
+            let r = r0 + (r1 - r0) * frac;
+            if ch == 2 {
+                data[f * 2]     = l;
+                data[f * 2 + 1] = r;
+            } else {
+                data[f] = (l + r) * 0.5;
+            }
+        }
     }
 
     if let Ok(mut p) = playing.try_lock() { *p = any_playing; }
+
+    // Rate diagnostic: count samples pushed to ring buffer, log once/sec
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64).unwrap_or(0);
+    let pushed = SAMPLES_PUSHED.fetch_add(
+        prog_frames as u64 * 2, std::sync::atomic::Ordering::Relaxed,
+    ) + prog_frames as u64 * 2;
+    let last = LAST_REPORT_NS.load(std::sync::atomic::Ordering::Relaxed);
+    if now_ns > last + 1_000_000_000 {
+        LAST_REPORT_NS.store(now_ns, std::sync::atomic::Ordering::Relaxed);
+        SAMPLES_PUSHED.store(0, std::sync::atomic::Ordering::Relaxed);
+        let occupancy = PROGRAM_BUS_BUF - bus.ring_prod.vacant_len();
+        eprintln!("[RUST] Program Bus rate: {} samples/sec  device_sr={}  prog_frames={}  device_frames={}  ring_occ={}/{}  (target 88200 = 44100×2ch)",
+            pushed, device_sr, prog_frames, device_frames, occupancy, PROGRAM_BUS_BUF);
+    }
 }
 
 fn drain_program_bus(
@@ -788,30 +888,94 @@ fn drain_program_bus(
     mut cons:   ringbuf::HeapCons<f32>,
 ) {
     use std::io::Write;
-    // Pre-allocated silence for stream-keepalive when buffer drains
-    let silence: Vec<u8> = vec![0u8; 256 * 4]; // 256 f32 frames of silence
+
+    static DRAIN_BYTES_TOTAL:     AtomicU64 = AtomicU64::new(0);
+    static DRAIN_ZERO_FILL_BYTES: AtomicU64 = AtomicU64::new(0);
+
+    // 44100 Hz × 2 ch × 4 bytes/sample = 352800 bytes/sec
+    const TARGET_BYTES_PER_SEC: f64 = 44100.0 * 2.0 * 4.0;
 
     loop {
         match listener.accept() {
             Ok((mut stream, addr)) => {
                 eprintln!("[RUST] Station {} stream client connected: {}", station_id, addr);
-                let mut chunk = vec![0f32; 1024];
+                let _ = stream.set_nodelay(true);
+                STREAM_CLIENT_CONNECTED.store(true, Ordering::Relaxed);
+                DRAIN_BYTES_TOTAL.store(0, Ordering::Relaxed);
+                DRAIN_ZERO_FILL_BYTES.store(0, Ordering::Relaxed);
+
+                let wall_start = std::time::Instant::now();
+                let mut bytes_written: u64 = 0;
+                let mut real_bytes_since_log: u64 = 0;
+                let mut zero_bytes_since_log: u64 = 0;
+                let mut last_log = std::time::Instant::now();
+
+                // Pre-allocate scratch buffers — reused every tick, no heap alloc in hot path.
+                // Sized for ~50ms burst headroom (352800 * 0.05 / 4 = 4410 samples).
+                let mut sample_buf: Vec<f32> = Vec::with_capacity(8820);
+                let mut out_bytes:   Vec<u8>  = Vec::with_capacity(8820 * 4);
+
                 loop {
-                    let n = cons.pop_slice(&mut chunk);
-                    if n > 0 {
-                        // SAFETY: f32 -> [u8; 4] via to_le_bytes; Vec<u8> stays in scope
-                        let byte_len = n * 4;
-                        let mut bytes = Vec::with_capacity(byte_len);
-                        for &s in &chunk[..n] {
-                            bytes.extend_from_slice(&s.to_le_bytes());
+                    let elapsed_secs = wall_start.elapsed().as_secs_f64();
+                    let target_bytes = (elapsed_secs * TARGET_BYTES_PER_SEC) as u64;
+
+                    // CRITICAL: align deficit to a multiple of 4 (one complete f32 sample).
+                    // Windows sleep granularity means elapsed_secs is never exactly N×5ms,
+                    // so the raw deficit can be non-multiple-of-4. Writing an odd number of
+                    // bytes permanently misaligns the f32le stream, producing stream-wide static.
+                    let deficit = {
+                        let raw = target_bytes.saturating_sub(bytes_written) as usize;
+                        (raw / 4) * 4
+                    };
+
+                    if deficit > 0 {
+                        let max_samples = deficit / 4;
+
+                        sample_buf.clear();
+                        sample_buf.resize(max_samples, 0.0f32);
+                        let popped = cons.pop_slice(&mut sample_buf);
+
+                        let real_byte_count = popped * 4;
+                        let zero_byte_count = deficit - real_byte_count;
+
+                        out_bytes.clear();
+                        for &s in &sample_buf[..popped] {
+                            out_bytes.extend_from_slice(&s.to_le_bytes());
                         }
-                        if stream.write_all(&bytes).is_err() { break; }
-                    } else {
-                        // Buffer empty — send silence to keep ffmpeg connection alive
-                        if stream.write_all(&silence).is_err() { break; }
-                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        out_bytes.resize(deficit, 0u8); // zero-fill remainder (whole samples only)
+
+                        if stream.write_all(&out_bytes).is_err() {
+                            STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                            break;
+                        }
+
+                        bytes_written += deficit as u64;
+                        real_bytes_since_log += real_byte_count as u64;
+                        zero_bytes_since_log += zero_byte_count as u64;
+                        DRAIN_BYTES_TOTAL.fetch_add(deficit as u64, Ordering::Relaxed);
+                        DRAIN_ZERO_FILL_BYTES.fetch_add(zero_byte_count as u64, Ordering::Relaxed);
                     }
+
+                    // Log every 5 seconds
+                    let log_elapsed = last_log.elapsed().as_secs_f64();
+                    if log_elapsed >= 5.0 {
+                        let occupancy = cons.occupied_len();
+                        let real_rate  = real_bytes_since_log as f64 / log_elapsed;
+                        let zero_rate  = zero_bytes_since_log as f64 / log_elapsed;
+                        let total_rate = (real_bytes_since_log + zero_bytes_since_log) as f64 / log_elapsed;
+                        eprintln!(
+                            "[RUST] Station {} drain: real={:.0} B/s  zero={:.0} B/s  total={:.0} B/s  ring_occ={}  (target 352800)",
+                            station_id, real_rate, zero_rate, total_rate, occupancy
+                        );
+                        real_bytes_since_log = 0;
+                        zero_bytes_since_log = 0;
+                        last_log = std::time::Instant::now();
+                    }
+
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
+                STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                { let mut discard = [0f32; 1024]; while cons.pop_slice(&mut discard) > 0 {} }
                 eprintln!("[RUST] Station {} stream client disconnected", station_id);
             }
             Err(e) => {

@@ -40,6 +40,92 @@
   --deck-a-bg: linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 100%);
   --deck-b-bg: linear-gradient(180deg, rgba(34,211,238,0.02) 0%, transparent 100%);
   --deck-c-bg: linear-gradient(180deg, rgba(167,139,250,0.02) 0%, transparent 100%);
+
+  /* Deck identity colors (per-strip type) */
+  --deck-mic-color: #ef4444;
+  --deck-guest-color: #a78bfa;
+  --deck-cart-color: #fbbf24;
+
+  /* VU meter palette (shared across ChannelStrip, MasterOutput, VUMeter) */
+  --vu-bg: #0a0a0e;
+  --vu-bg-master: #080810;
+  --vu-bg-meter: #0e0e12;
+  --vu-bar-unlit: #111116;
+  --vu-grad-low: #008878;
+  --vu-grad-mid: #a07020;
+  --vu-grad-high: #a02020;
+  --vu-peak-normal: #00c8a8;
+  --vu-peak-warn: #d09030;
+  --vu-peak-clip: #e04040;
+  --vu-tick: rgba(255,255,255,0.04);
+  --vu-watermark: #c0c0d0;
+  --vu-fallback-text: #606070;
+  --vu-standby-deck-c: #601820;
+  --vu-standby-deck-ab: #003828;
+
+  /* Channel strip surfaces */
+  --strip-bg: #0e0e12;
+  --strip-vu-container-bg: #080808;
+  --strip-thumb-border: rgba(0,0,0,0.4);
+  --strip-thumb-shadow: rgba(0,0,0,0.3);
+  --strip-time-shadow: rgba(0,0,0,0.8);
+
+  /* Status dots */
+  --status-live: #22c55e;
+  --status-offline: #3a3a4a;
+  --status-error: #c02828;
+
+  /* Master output panel accents */
+  --master-eq-bg: rgba(96,64,192,0.18);
+  --master-eq-border: #6040c0;
+  --master-eq-text: #8060e0;
+  --master-popout-text: #6080c0;
+  --master-collapse-bg: rgba(96,128,192,0.15);
+  --master-collapse-text: #88a8e0;
+
+  /* Material system — defaults to none/0px so nothing renders until a theme sets them */
+  --panel-bg: var(--bg-secondary);
+  --panel-gradient: none;
+  --panel-grain: none;
+  --panel-border: none;
+  --panel-inner-shadow: none;
+  --panel-outer-shadow: none;
+  --panel-radius: 0px;
+  --fader-track-bg: var(--bg-tertiary);
+  --fader-track-gradient: none;
+  --fader-track-inner-shadow: none;
+  --fader-track-radius: 0px;
+  --fader-track-width: 4px;
+  --fader-thumb-gradient: none;
+  --fader-thumb-shadow: 0 1px 2px var(--strip-thumb-shadow);
+  --fader-thumb-border: 1px solid var(--strip-thumb-border);
+  --fader-thumb-radius: 50%;
+  --fader-thumb-highlight: none;
+  --button-bg: var(--bg-tertiary);
+  --button-bg-hover: var(--bg-hover);
+  --button-bg-active: var(--bg-active, var(--bg-hover));
+  --button-gradient: none;
+  --button-shadow: none;
+  --button-shadow-active: none;
+  --button-border: 1px solid var(--border-primary);
+  --button-radius: 0px;
+  --button-text: var(--text-secondary);
+  --button-text-active: var(--text-primary);
+  --button-transition: background 0.12s, color 0.12s;
+  --button-press-transform: none;
+  --label-color: var(--text-secondary);
+  --label-text-shadow: none;
+  --label-letter-spacing: 0.1em;
+  --label-font-weight: 700;
+  --recess-bg: var(--vu-bg-meter);
+  --recess-inner-shadow: none;
+  --recess-border: none;
+  --recess-radius: 0px;
+  --transition-fast: 100ms ease-out;
+  --transition-medium: 200ms ease-out;
+  --transition-slow: 400ms ease-out;
+  --glow-active: none;
+  --glow-color: var(--accent-cyan);
 }
 
 /* ── Dark theme class (identical to :root — kept for compatibility) ── */
@@ -71,6 +157,92 @@
   --deck-a-bg: linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 100%);
   --deck-b-bg: linear-gradient(180deg, rgba(34,211,238,0.02) 0%, transparent 100%);
   --deck-c-bg: linear-gradient(180deg, rgba(167,139,250,0.02) 0%, transparent 100%);
+
+  /* Deck identity colors (per-strip type) */
+  --deck-mic-color: #ef4444;
+  --deck-guest-color: #a78bfa;
+  --deck-cart-color: #fbbf24;
+
+  /* VU meter palette (shared across ChannelStrip, MasterOutput, VUMeter) */
+  --vu-bg: #0a0a0e;
+  --vu-bg-master: #080810;
+  --vu-bg-meter: #0e0e12;
+  --vu-bar-unlit: #111116;
+  --vu-grad-low: #008878;
+  --vu-grad-mid: #a07020;
+  --vu-grad-high: #a02020;
+  --vu-peak-normal: #00c8a8;
+  --vu-peak-warn: #d09030;
+  --vu-peak-clip: #e04040;
+  --vu-tick: rgba(255,255,255,0.04);
+  --vu-watermark: #c0c0d0;
+  --vu-fallback-text: #606070;
+  --vu-standby-deck-c: #601820;
+  --vu-standby-deck-ab: #003828;
+
+  /* Channel strip surfaces */
+  --strip-bg: #0e0e12;
+  --strip-vu-container-bg: #080808;
+  --strip-thumb-border: rgba(0,0,0,0.4);
+  --strip-thumb-shadow: rgba(0,0,0,0.3);
+  --strip-time-shadow: rgba(0,0,0,0.8);
+
+  /* Status dots */
+  --status-live: #22c55e;
+  --status-offline: #3a3a4a;
+  --status-error: #c02828;
+
+  /* Master output panel accents */
+  --master-eq-bg: rgba(96,64,192,0.18);
+  --master-eq-border: #6040c0;
+  --master-eq-text: #8060e0;
+  --master-popout-text: #6080c0;
+  --master-collapse-bg: rgba(96,128,192,0.15);
+  --master-collapse-text: #88a8e0;
+
+  /* Material system */
+  --panel-bg: var(--bg-secondary);
+  --panel-gradient: none;
+  --panel-grain: none;
+  --panel-border: none;
+  --panel-inner-shadow: none;
+  --panel-outer-shadow: none;
+  --panel-radius: 0px;
+  --fader-track-bg: var(--bg-tertiary);
+  --fader-track-gradient: none;
+  --fader-track-inner-shadow: none;
+  --fader-track-radius: 0px;
+  --fader-track-width: 4px;
+  --fader-thumb-gradient: none;
+  --fader-thumb-shadow: 0 1px 2px var(--strip-thumb-shadow);
+  --fader-thumb-border: 1px solid var(--strip-thumb-border);
+  --fader-thumb-radius: 50%;
+  --fader-thumb-highlight: none;
+  --button-bg: var(--bg-tertiary);
+  --button-bg-hover: var(--bg-hover);
+  --button-bg-active: var(--bg-active, var(--bg-hover));
+  --button-gradient: none;
+  --button-shadow: none;
+  --button-shadow-active: none;
+  --button-border: 1px solid var(--border-primary);
+  --button-radius: 0px;
+  --button-text: var(--text-secondary);
+  --button-text-active: var(--text-primary);
+  --button-transition: background 0.12s, color 0.12s;
+  --button-press-transform: none;
+  --label-color: var(--text-secondary);
+  --label-text-shadow: none;
+  --label-letter-spacing: 0.1em;
+  --label-font-weight: 700;
+  --recess-bg: var(--vu-bg-meter);
+  --recess-inner-shadow: none;
+  --recess-border: none;
+  --recess-radius: 0px;
+  --transition-fast: 100ms ease-out;
+  --transition-medium: 200ms ease-out;
+  --transition-slow: 400ms ease-out;
+  --glow-active: none;
+  --glow-color: var(--accent-cyan);
 }
 
 /* ── Light theme (opt-in only) ───────────────────────────────── */
@@ -103,6 +275,237 @@
   --deck-a-bg: linear-gradient(180deg, rgba(5,150,105,0.04) 0%, transparent 100%);
   --deck-b-bg: linear-gradient(180deg, rgba(8,145,178,0.03) 0%, transparent 100%);
   --deck-c-bg: linear-gradient(180deg, rgba(124,58,237,0.03) 0%, transparent 100%);
+
+  /* Deck identity stays semantic across themes */
+  --deck-mic-color: #ef4444;
+  --deck-guest-color: #a78bfa;
+  --deck-cart-color: #fbbf24;
+
+  /* VU palette stays the same — meters look the same regardless of theme */
+  --vu-bg: #0a0a0e;
+  --vu-bg-master: #080810;
+  --vu-bg-meter: #0e0e12;
+  --vu-bar-unlit: #111116;
+  --vu-grad-low: #008878;
+  --vu-grad-mid: #a07020;
+  --vu-grad-high: #a02020;
+  --vu-peak-normal: #00c8a8;
+  --vu-peak-warn: #d09030;
+  --vu-peak-clip: #e04040;
+  --vu-tick: rgba(255,255,255,0.04);
+  --vu-watermark: #c0c0d0;
+  --vu-fallback-text: #606070;
+  --vu-standby-deck-c: #601820;
+  --vu-standby-deck-ab: #003828;
+
+  /* Strip surfaces — light variants */
+  --strip-bg: #1a1a20;
+  --strip-vu-container-bg: #0a0a0e;
+  --strip-thumb-border: rgba(0,0,0,0.4);
+  --strip-thumb-shadow: rgba(0,0,0,0.3);
+  --strip-time-shadow: rgba(0,0,0,0.6);
+
+  /* Status semantics stay the same */
+  --status-live: #22c55e;
+  --status-offline: #3a3a4a;
+  --status-error: #c02828;
+
+  /* Master output accents stay the same */
+  --master-eq-bg: rgba(96,64,192,0.18);
+  --master-eq-border: #6040c0;
+  --master-eq-text: #8060e0;
+  --master-popout-text: #6080c0;
+  --master-collapse-bg: rgba(96,128,192,0.15);
+  --master-collapse-text: #88a8e0;
+
+  /* Material system */
+  --panel-bg: var(--bg-secondary);
+  --panel-gradient: none;
+  --panel-grain: none;
+  --panel-border: none;
+  --panel-inner-shadow: none;
+  --panel-outer-shadow: none;
+  --panel-radius: 0px;
+  --fader-track-bg: var(--bg-tertiary);
+  --fader-track-gradient: none;
+  --fader-track-inner-shadow: none;
+  --fader-track-radius: 0px;
+  --fader-track-width: 4px;
+  --fader-thumb-gradient: none;
+  --fader-thumb-shadow: 0 1px 2px var(--strip-thumb-shadow);
+  --fader-thumb-border: 1px solid var(--strip-thumb-border);
+  --fader-thumb-radius: 50%;
+  --fader-thumb-highlight: none;
+  --button-bg: var(--bg-tertiary);
+  --button-bg-hover: var(--bg-hover);
+  --button-bg-active: var(--bg-active, var(--bg-hover));
+  --button-gradient: none;
+  --button-shadow: none;
+  --button-shadow-active: none;
+  --button-border: 1px solid var(--border-primary);
+  --button-radius: 0px;
+  --button-text: var(--text-secondary);
+  --button-text-active: var(--text-primary);
+  --button-transition: background 0.12s, color 0.12s;
+  --button-press-transform: none;
+  --label-color: var(--text-secondary);
+  --label-text-shadow: none;
+  --label-letter-spacing: 0.1em;
+  --label-font-weight: 700;
+  --recess-bg: var(--vu-bg-meter);
+  --recess-inner-shadow: none;
+  --recess-border: none;
+  --recess-radius: 0px;
+  --transition-fast: 100ms ease-out;
+  --transition-medium: 200ms ease-out;
+  --transition-slow: 400ms ease-out;
+  --glow-active: none;
+  --glow-color: var(--accent-cyan);
+}
+
+/* ================================================================
+   ETHER (DEFAULT) — Stainless steel material treatment
+   Brushed metal panels with recessed fader tracks,
+   raised hardware buttons, Apple-pro-tools quality
+   ================================================================ */
+.theme-ether-default {
+  /* App-wide backgrounds — light polished aluminum */
+  --bg-primary:    #b8bcc4;
+  --bg-secondary:  #c8ccd4;
+  --bg-tertiary:   #d4d8e0;
+  --bg-hover:      #dde2e8;
+
+  /* Text — dark for readability on silver */
+  --text-primary:   #1a1d24;
+  --text-secondary: #3c4452;
+  --text-tertiary:  #5a6370;
+
+  /* Borders */
+  --border-primary:   #9ca0a8;
+  --border-secondary: #b0b4bc;
+
+  /* Accents — deeper hues for contrast on silver */
+  --accent-blue:  #1e6bb8;
+  --accent-green: #1a9048;
+  --accent-cyan:  #0e8aaa;
+  --accent-red:   #c82535;
+  --accent-amber: #c87815;
+
+  /* Waveform */
+  --wave-played:   #0e8aaa;
+  --wave-unplayed: #b0b4bc;
+  --wave-playhead: #c87815;
+
+  /* Deck colors */
+  --deck-a: #0e8aaa;
+  --deck-b: #8060d8;
+  --deck-c: #c87815;
+
+  /* Strip support vars */
+  --strip-label-bg:   rgba(0,0,0,0.04);
+  --strip-divider:    rgba(0,0,0,0.12);
+  --strip-readout-bg: rgba(0,0,0,0.06);
+  --vu-meter-bg: #3a3e44;
+
+  /* Panel surfaces — bright polished aluminum */
+  --panel-bg: #dde0e4;
+  --panel-gradient: linear-gradient(
+    180deg,
+    #eef0f3 0%,
+    #dde0e4 30%,
+    #c8cdd2 70%,
+    #b4b9c0 100%
+  );
+  --panel-grain: repeating-linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 0px,
+    rgba(255,255,255,0.04) 1px,
+    rgba(0,0,0,0.04) 1px,
+    rgba(0,0,0,0.04) 2px,
+    transparent 2px,
+    transparent 4px
+  );
+  --panel-border: 1px solid rgba(0,0,0,0.5);
+  --panel-inner-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.25),
+    inset 0 -1px 0 rgba(0,0,0,0.4);
+  --panel-outer-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  --panel-radius: 4px;
+
+  /* Fader track — deeply recessed dark channel cut into the silver */
+  --fader-track-bg: #1a1d22;
+  --fader-track-gradient: linear-gradient(
+    90deg,
+    #0a0c10 0%,
+    #1a1d22 50%,
+    #0a0c10 100%
+  );
+  --fader-track-inner-shadow:
+    inset 0 2px 4px rgba(0,0,0,0.9),
+    inset 0 -1px 0 rgba(255,255,255,0.06);
+  --fader-track-radius: 2px;
+
+  /* Fader thumb — light silver hardware sitting on the track */
+  --fader-thumb-gradient: linear-gradient(
+    180deg,
+    #c8ccd2 0%,
+    #aab0b8 30%,
+    #8e94a0 70%,
+    #6b7079 100%
+  );
+  --fader-thumb-shadow:
+    0 2px 4px rgba(0,0,0,0.7),
+    inset 0 1px 0 rgba(255,255,255,0.5),
+    inset 0 -1px 0 rgba(0,0,0,0.3);
+  --fader-thumb-border: 1px solid rgba(0,0,0,0.6);
+  --fader-thumb-radius: 3px;
+  --fader-thumb-highlight: 0 0 8px rgba(255,255,255,0.15);
+
+  /* Buttons — raised stainless-steel hardware */
+  --button-bg: #6b7079;
+  --button-bg-hover: #7a8089;
+  --button-bg-active: #4a4e57;
+  --button-gradient: linear-gradient(
+    180deg,
+    #8a8f98 0%,
+    #6b7079 50%,
+    #5d626b 100%
+  );
+  --button-shadow:
+    0 1px 2px rgba(0,0,0,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.3),
+    inset 0 -1px 0 rgba(0,0,0,0.2);
+  --button-shadow-active:
+    inset 0 2px 4px rgba(0,0,0,0.6),
+    inset 0 -1px 0 rgba(255,255,255,0.05);
+  --button-border: 1px solid rgba(0,0,0,0.5);
+  --button-radius: 3px;
+  --button-text: #1a1d22;
+  --button-text-active: #ffffff;
+  --button-transition: background 120ms ease-out, color 120ms ease-out, box-shadow 120ms ease-out, transform 80ms ease-out;
+  --button-press-transform: translateY(1px);
+
+  /* Labels — engraved into the metal */
+  --label-color: #2a2d34;
+  --label-text-shadow: 0 1px 0 rgba(255,255,255,0.4);
+  --label-letter-spacing: 0.12em;
+  --label-font-weight: 700;
+
+  /* Recessed elements (VU meter window) — black void cut into silver */
+  --recess-bg: #050608;
+  --recess-inner-shadow:
+    inset 0 2px 6px rgba(0,0,0,0.95),
+    inset 0 -1px 0 rgba(255,255,255,0.06);
+  --recess-border: 1px solid rgba(0,0,0,0.6);
+  --recess-radius: 3px;
+
+  /* Animation timing */
+  --transition-fast: 100ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-medium: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Glow for active LED-like indicators */
+  --glow-active: 0 0 6px var(--glow-color);
 }
 
 /* ── Base ────────────────────────────────────────────────────── */
@@ -523,4 +926,5 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
 .pulse-border {
   animation: pulse-border 2s ease-in-out infinite;
 }
+
 

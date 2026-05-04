@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { engine } from "../audio/engine-rodio";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
@@ -54,7 +55,15 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const dragStartYRef  = useRef(0);
   const [dragVisual, setDragVisual] = useState<{ from: number | null; over: number | null }>({ from: null, over: null });
 
-  const queue = engine.getQueue();
+  const [queue, setQueue] = useState(() => engine.getQueue());
+
+  useEffect(() => {
+    setQueue(engine.getQueue());
+    const interval = setInterval(() => {
+      setQueue(engine.getQueue());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [queueLen]);
 
   useEffect(() => {
     const update = () => setAnyPlaying(
@@ -219,7 +228,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>Queue empty</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", opacity: 0.4 }}>Drag carts here or use GEN LOG</div>
           </div>
-        ) : queue.slice(0, 50).map((item, i) => {
+        ) : (
+          <AnimatePresence initial={false}>
+            {queue.slice(0, 50).map((item, i) => {
           const color = getItemColor(item);
           const catLabel = getCatLabel(item);
           const ms = (item as any).durationMs || (item as any).duration_ms || 0;
@@ -230,8 +241,28 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
           const isOnDeck = i === 0 && anyPlaying && !isBeingDragged;
 
           return (
-            <div
-              key={i}
+            <motion.div
+              key={`${item.title}-${item.artist}-${i}`}
+              layout
+              initial={{ opacity: 0, y: -8 }}
+              animate={i === 0 ? {
+                opacity: 1, y: 0,
+                boxShadow: [
+                  "0 0 0 0 rgba(255,140,40,0)",
+                  "0 0 0 4px rgba(255,140,40,0.15)",
+                  "0 0 0 0 rgba(255,140,40,0)",
+                ],
+              } : { opacity: 1, y: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={i === 0 ? {
+                layout: { duration: 0.35, ease: [0.4, 0, 0.2, 1] },
+                opacity: { duration: 0.2 },
+                boxShadow: { duration: 2.5, repeat: Infinity, ease: "easeInOut" },
+              } : {
+                layout: { duration: 0.35, ease: [0.4, 0, 0.2, 1] },
+                opacity: { duration: 0.2 },
+                y: { duration: 0.25 },
+              }}
               data-queue-item={i}
               onMouseDown={e => handleMouseDown(e, i)}
               onContextMenu={e => handleContext(e, i)}
@@ -317,9 +348,11 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                 >✕</button>
               </div>
-            </div>
+            </motion.div>
           );
         })}
+          </AnimatePresence>
+        )}
         {queue.length > 50 && (
           <div style={{ padding: 8, fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 50} more</div>
         )}

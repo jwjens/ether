@@ -3165,14 +3165,14 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     <div data-studiopro="true" style={{
       display: "flex", flexDirection: "column",
       width: "100%", height: "100%",
-      background: "#0a0a0c", color: "#eee",
+      background: "var(--bg-primary)", color: "var(--text-primary)",
       fontFamily: "Inter, system-ui, sans-serif",
       position: "relative",
     }}>
       {/* TOP TOOLBAR */}
       <div style={{
         height: TOOLBAR_H, flex: `0 0 ${TOOLBAR_H}px`,
-        background: "#080808", borderBottom: "1px solid #1a1a1e",
+        background: "var(--bg-primary)", borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
         overflow: "hidden",
       }}>
@@ -3185,7 +3185,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={toggleRecord} title="Record" danger={recording}>
           {recording ? "◼ Rec" : "Rec"}
         </TBtn>
-        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
+        <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn
           onClick={() => {
             if (!loopRange) { setStatus("Drag on the ruler to set a loop range"); return; }
@@ -3208,19 +3208,19 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <label style={lbl}>BPM</label>
         <input type="number" min={40} max={240} value={bpm}
           onChange={(e) => setBpm(Math.max(40, Math.min(240, +e.target.value || 120)))}
-          style={{ width: 44, background: "#111", color: "#eee", border: "1px solid #222", padding: "3px 4px", fontSize: 10, borderRadius: 0 }}
+          style={{ width: 44, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "3px 4px", fontSize: 10, borderRadius: 0 }}
         />
-        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
+        <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn onClick={() => setZoom(z => Math.max(0.25, z / 1.25))} title="Zoom out">−</TBtn>
-        <span style={{ fontSize: 10, color: "#888", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+        <span style={{ fontSize: 10, color: "var(--text-secondary)", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
         <TBtn onClick={() => setZoom(z => Math.min(8, z * 1.25))} title="Zoom in">+</TBtn>
-        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
+        <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>FX</TBtn>
         <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
         <NormalizeMenu onPick={(t) => autoNormalize(t)} />
         <TBtn onClick={sendToCartwall} title="Render mix and send to cart wall">📤</TBtn>
         <TBtn onClick={streamThisMix}  title="Render mix and send to stream engine">📡</TBtn>
-        <div style={{ width: 1, height: 20, background: "#1a1a1e", flexShrink: 0 }} />
+        <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         {/* Session name — double-click to rename */}
         {sessionNameEditing ? (
           <input
@@ -3244,7 +3244,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             title="Double-click to rename session"
             style={{
               height: 24, padding: "0 6px", display: "flex", alignItems: "center",
-              background: "#111", border: "1px solid #222", color: "#aaa",
+              background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)",
               fontSize: 10, cursor: "default", maxWidth: 120, flexShrink: 0,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}
@@ -3274,7 +3274,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       {/* EDIT TOOLS ROW */}
       <div style={{
         height: 36, flex: "0 0 36px",
-        background: "#0a0a0c", borderBottom: "1px solid #1a1a1e",
+        background: "var(--bg-primary)", borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
       }}>
         {([
@@ -3289,9 +3289,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             <button key={t.id} onClick={() => setTool(t.id as EditTool)} title={`${t.label} (${t.key})`}
               style={{
                 height: 26, padding: "0 10px", borderRadius: 0,
-                background: active ? `${accent}22` : "transparent",
-                color: active ? accent : "#888",
-                border: `1px solid ${active ? accent : "#222"}`,
+                background: active ? `${accent}22` : "var(--button-bg, var(--bg-tertiary))",
+                color: active ? accent : "var(--button-text, var(--text-secondary))",
+                border: active ? `1px solid ${accent}` : "var(--button-border, 1px solid var(--border-primary))",
                 fontSize: 12, cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 6,
                 fontFamily: "ui-monospace, monospace",
@@ -3299,12 +3299,12 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             >
               {t.icon}
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5 }}>{t.label}</span>
-              <span style={{ fontSize: 9, color: active ? accent : "#555", opacity: 0.7 }}>{t.key}</span>
+              <span style={{ fontSize: 9, color: active ? accent : "var(--text-tertiary)", opacity: 0.7 }}>{t.key}</span>
             </button>
           );
         })}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: "#555" }}>
+        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
           {tool === "select" && "Click to select · drag to move"}
           {tool === "blade"  && "Click region to cut at cursor"}
           {tool === "trim"   && "Drag region edges or body to trim"}
@@ -3313,7 +3313,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       </div>
 
       {status && (
-        <div style={{ height: 20, background: "#0c0c10", borderBottom: "1px solid #1a1a1e", fontSize: 11, color: "#888", padding: "2px 12px", display: "flex", alignItems: "center" }}>
+        <div style={{ height: 20, background: "var(--bg-primary)", borderBottom: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-secondary)", padding: "2px 12px", display: "flex", alignItems: "center" }}>
           {status}
         </div>
       )}
@@ -3323,10 +3323,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         {/* TRACK HEADERS */}
         <div style={{
           width: HEADER_W, flex: `0 0 ${HEADER_W}px`,
-          background: "#0d0d0f", borderRight: "1px solid #1a1a1e",
+          background: "var(--bg-primary)", borderRight: "1px solid var(--border-primary)",
           display: "flex", flexDirection: "column",
         }}>
-          <div style={{ height: RULER_H, borderBottom: "1px solid #1a1a1e" }} />
+          <div style={{ height: RULER_H, borderBottom: "1px solid var(--border-primary)" }} />
           <div style={{ flex: 1, overflowY: "auto" }}>
             {tracks.map((t, i) => (
               <TrackHeaderRow
@@ -3361,7 +3361,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
         {/* TIMELINE */}
         <div ref={timelineRef}
-          style={{ flex: 1, overflow: "auto", background: "#080808", position: "relative" }}
+          style={{ flex: 1, overflow: "auto", background: "var(--bg-primary)", position: "relative" }}
           className="studiopro-scroll"
         >
           {/* Ruler */}
@@ -3378,7 +3378,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             style={{
               height: RULER_H, width: msToX(totalDurMs),
               position: "sticky", top: 0, zIndex: 3,
-              background: "#0c0c10", borderBottom: "1px solid #1a1a1e",
+              background: "var(--bg-primary)", borderBottom: "1px solid var(--border-primary)",
               cursor: "text",
             }}
           >
@@ -3454,7 +3454,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 {notePopover === n.id && (
                   <div style={{
                     position: "absolute", bottom: "100%", left: 0,
-                    background: "#1a1a1e", border: `1px solid ${n.color}`,
+                    background: "var(--bg-secondary)", border: `1px solid ${n.color}`,
                     padding: "6px 8px", minWidth: 160, maxWidth: 240, zIndex: 20,
                     fontFamily: "Inter, system-ui, sans-serif", fontSize: 11,
                     boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
@@ -3462,11 +3462,11 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                     onClick={e => e.stopPropagation()}
                   >
                     <div style={{ color: n.color, fontWeight: 700, marginBottom: 3 }}>{n.author}</div>
-                    <div style={{ color: "#ddd", lineHeight: 1.4 }}>{n.text}</div>
-                    <div style={{ color: "#555", fontSize: 10, marginTop: 4 }}>{fmtTimecode(n.position_ms)}</div>
+                    <div style={{ color: "var(--text-primary)", lineHeight: 1.4 }}>{n.text}</div>
+                    <div style={{ color: "var(--text-tertiary)", fontSize: 10, marginTop: 4 }}>{fmtTimecode(n.position_ms)}</div>
                     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                       <button onClick={() => { setPlayheadMs(n.position_ms); setNotePopover(null); }}
-                        style={{ flex: 1, padding: "3px 0", fontSize: 10, background: "rgba(255,255,255,0.05)", color: "#aaa", border: "1px solid #333", cursor: "pointer" }}>
+                        style={{ flex: 1, padding: "3px 0", fontSize: 10, background: "rgba(255,255,255,0.05)", color: "var(--text-secondary)", border: "1px solid #333", cursor: "pointer" }}>
                         Jump
                       </button>
                       <button onClick={() => { resolveNote(n.id); setNotePopover(null); }}
@@ -3499,13 +3499,13 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   }}
                   placeholder="Add note… (Enter to save)"
                   style={{
-                    width: 200, padding: "3px 6px", background: "#111", color: "#fff",
+                    width: 200, padding: "3px 6px", background: "var(--bg-secondary)", color: "#fff",
                     border: "none", outline: "none", fontSize: 11,
                     fontFamily: "Inter, system-ui, sans-serif",
                   }}
                 />
                 <button onClick={() => { setNoteInput(null); setNoteInputText(""); }}
-                  style={{ background: "none", border: "none", color: "#666", cursor: "pointer", fontSize: 12 }}>✕</button>
+                  style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}>✕</button>
               </div>
             )}
           </div>
@@ -3549,7 +3549,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   <div style={{
                     position: "absolute", left: 0, top: TRACK_H,
                     width: "100%", height: trackHeights[i] - TRACK_H,
-                    background: "#070708", borderTop: "1px solid #1a1a1e",
+                    background: "var(--bg-primary)", borderTop: "1px solid var(--border-primary)",
                   }}>
                     {/* per-lane stack */}
                     {t.automationLanes.map((lane, li) => (
@@ -3622,7 +3622,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         {/* INSPECTOR (slimmed) */}
         <div style={{
           width: INSPECTOR_W, flex: `0 0 ${INSPECTOR_W}px`,
-          background: "#0a0a0c", borderLeft: "1px solid #1a1a1e",
+          background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)",
           padding: 12, overflowY: "auto",
         }}>
           <Inspector
@@ -3695,8 +3695,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       <div style={{
         height: vtOpen ? DRAWER_H : 0,
         transition: "height 140ms ease",
-        borderTop: vtOpen ? "1px solid #1a1a1e" : "none",
-        background: "#0a0a0c", overflow: "hidden", flex: `0 0 auto`,
+        borderTop: vtOpen ? "1px solid var(--border-primary)" : "none",
+        background: "var(--bg-primary)", overflow: "hidden", flex: `0 0 auto`,
       }}>
         {vtOpen && (
           <div style={{ height: "100%", overflow: "auto" }}>
@@ -3795,9 +3795,9 @@ function TBtn({ children, onClick, title, active, danger }: {
     <button onClick={onClick} title={title}
       style={{
         height: 24, minWidth: 24, padding: "0 6px",
-        background: danger ? "#7f1d1d" : active ? "#1e293b" : "#111",
-        color: danger ? "#fff" : "#eee",
-        border: `1px solid ${danger ? "#ef4444" : active ? "#334155" : "#222"}`,
+        background: danger ? "#7f1d1d" : active ? "#1e293b" : "var(--button-bg, var(--bg-tertiary))",
+        color: danger ? "#fff" : "var(--button-text, var(--text-secondary))",
+        border: danger ? "1px solid #ef4444" : active ? "1px solid #334155" : "var(--button-border, 1px solid var(--border-primary))",
         fontSize: 10, cursor: "pointer", borderRadius: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
         letterSpacing: 0, whiteSpace: "nowrap", flexShrink: 0,
@@ -3805,7 +3805,7 @@ function TBtn({ children, onClick, title, active, danger }: {
     >{children}</button>
   );
 }
-const lbl: React.CSSProperties = { fontSize: 10, color: "#888", textTransform: "uppercase", letterSpacing: 0.5 };
+const lbl: React.CSSProperties = { fontSize: 10, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 };
 
 function DeckMenu({ onPick }: { onPick: (d: "A" | "B" | "C") => void }) {
   const [open, setOpen] = useState(false);
@@ -3814,11 +3814,11 @@ function DeckMenu({ onPick }: { onPick: (d: "A" | "B" | "C") => void }) {
       <TBtn onClick={() => setOpen(o => !o)} title="Send to deck">To Deck ▾</TBtn>
       {open && (
         <div onMouseLeave={() => setOpen(false)}
-          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#111", border: "1px solid #222", zIndex: 20, minWidth: 120 }}
+          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 20, minWidth: 120 }}
         >
           {(["A", "B", "C"] as const).map(d => (
             <button key={d} onClick={() => { setOpen(false); onPick(d); }}
-              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", background: "transparent", color: "#eee", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
+              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", background: "transparent", color: "var(--text-primary)", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
             >Deck {d}</button>
           ))}
         </div>
@@ -3939,7 +3939,7 @@ function TrackHeaderRow({
       onContextMenu={onContext}
       style={{
         height,
-        borderBottom: "1px solid #1a1a1e",
+        borderBottom: "1px solid var(--border-primary)",
         background: selected ? "#141419" : "transparent",
         cursor: "pointer", position: "relative",
       }}
@@ -3957,7 +3957,7 @@ function TrackHeaderRow({
               onChange={(e) => setName(e.target.value)}
               onBlur={() => { setEditing(false); onPatch({ name: name || "Track" }); }}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={{ flex: 1, background: "#111", color: "#fff", border: "1px solid #333", fontSize: 12, padding: "2px 4px", borderRadius: 0 }}
+              style={{ flex: 1, background: "var(--bg-secondary)", color: "#fff", border: "1px solid #333", fontSize: 12, padding: "2px 4px", borderRadius: 0 }}
             />
           ) : (
             <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
@@ -3970,7 +3970,7 @@ function TrackHeaderRow({
           >▾</button>
           <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
             title="Delete track"
-            style={{ background: "transparent", border: "none", color: "#555", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
+            style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
           >×</button>
         </div>
 
@@ -3999,7 +3999,7 @@ function TrackHeaderRow({
               style={{ background: "transparent", border: "none", color: track.originalContent ? "#00c8a8" : "#555", fontSize: 11, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}
             >🛡</button>
             {shieldTooltip && (
-              <div style={{ position: "absolute", bottom: "100%", left: 0, zIndex: 50, width: 180, background: "#1e1e24", border: "1px solid #2a2a35", padding: "6px 8px", fontSize: 10, color: "#c0c0d8", lineHeight: 1.4, marginBottom: 4 }}>
+              <div style={{ position: "absolute", bottom: "100%", left: 0, zIndex: 50, width: 180, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "6px 8px", fontSize: 10, color: "#c0c0d8", lineHeight: 1.4, marginBottom: 4 }}>
                 Only enable for content <strong>you created or own</strong>. Do not mark commercial music or content owned by others.
               </div>
             )}
@@ -4032,17 +4032,17 @@ function TrackHeaderRow({
       {track.automationOpen && (
         <div style={{
           height: AUTOMATION_BAR_H,
-          background: "#08080a",
-          borderTop: "1px solid #1a1a1e",
+          background: "var(--bg-primary)",
+          borderTop: "1px solid var(--border-primary)",
           display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
         }}>
-          <span style={{ fontSize: 9, color: "#888", letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
+          <span style={{ fontSize: 9, color: "var(--text-secondary)", letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
             {track.automationLanes.length} lane{track.automationLanes.length === 1 ? "" : "s"}
           </span>
           <button
             onClick={(e) => { e.stopPropagation(); onAddAutomationLane(); }}
             title="Add automation lane"
-            style={{ background: "#111", border: "1px solid #222", color: "#888", fontSize: 10, cursor: "pointer", padding: "2px 6px", borderRadius: 0 }}
+            style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 10, cursor: "pointer", padding: "2px 6px", borderRadius: 0 }}
           >+ Lane</button>
         </div>
       )}
@@ -4051,14 +4051,14 @@ function TrackHeaderRow({
       {track.automationOpen && track.automationLanes.map(lane => (
         <div key={lane.id} style={{
           height: AUTOMATION_LANE_H,
-          background: "#08080a",
-          borderTop: "1px solid #14141a",
+          background: "var(--bg-primary)",
+          borderTop: "1px solid var(--border-primary)",
           display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
         }}>
           <select value={lane.param}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => onSetAutomationParam(lane.id, e.target.value as AutomationParam)}
-            style={{ flex: 1, background: "#111", color: "#eee", border: "1px solid #222", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
+            style={{ flex: 1, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
           >
             {Object.entries(AUTOMATION_SPECS).map(([k, spec]) => (
               <option key={k} value={k}>{spec.label}</option>
@@ -4066,7 +4066,7 @@ function TrackHeaderRow({
           </select>
           <button onClick={(e) => { e.stopPropagation(); onRemoveAutomationLane(lane.id); }}
             title="Remove lane"
-            style={{ background: "transparent", border: "none", color: "#555", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
+            style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
           >×</button>
         </div>
       ))}
@@ -4075,7 +4075,7 @@ function TrackHeaderRow({
         <div onClick={(e) => e.stopPropagation()} onMouseLeave={onClosePalette}
           style={{
             position: "absolute", top: 24, left: 8, zIndex: 30,
-            background: "#111", border: "1px solid #222", padding: 6,
+            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 6,
             display: "grid", gridTemplateColumns: "repeat(6, 16px)", gap: 4,
           }}
         >
@@ -4092,7 +4092,7 @@ function TrackHeaderRow({
           onMouseLeave={() => setShowFxMenu(false)}
           style={{
             position: "absolute", top: 50, left: 8, zIndex: 40,
-            background: "#111", border: "1px solid #2a2a32",
+            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
             padding: 4, minWidth: 180,
             boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
           }}
@@ -4135,9 +4135,9 @@ function MiniBtn({ children, onClick, active, activeColor }: {
     <button onClick={onClick}
       style={{
         width: 22, height: 16, fontSize: 9, fontWeight: 700,
-        background: active ? (activeColor || "#333") : "#151518",
-        color: active ? "#fff" : "#888",
-        border: `1px solid ${active ? (activeColor || "#333") : "#222"}`,
+        background: active ? (activeColor || "#333") : "var(--button-bg, var(--bg-tertiary))",
+        color: active ? "#fff" : "var(--button-text, var(--text-secondary))",
+        border: active ? `1px solid ${activeColor || "#333"}` : "var(--button-border, 1px solid var(--border-primary))",
         cursor: "pointer", borderRadius: 0, padding: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}
@@ -4159,7 +4159,7 @@ function Ruler({ totalMs, pps, bpm, showBeats }: { totalMs: number; pps: number;
     if (isMajor) {
       ticks.push(<div key={`l${s}`} style={{
         position: "absolute", left: x + 3, top: 2,
-        fontSize: 9, color: "#666",
+        fontSize: 9, color: "var(--text-tertiary)",
         fontFamily: "ui-monospace, monospace",
       }}>{fmtDuration(s * 1000)}</div>);
     }
@@ -4229,7 +4229,7 @@ function TrackLane({
       style={{
         position: "relative", height: TRACK_H,
         background: laneBg,
-        borderBottom: "1px solid #1a1a1e",
+        borderBottom: "1px solid var(--border-primary)",
         animation: track.armed ? "sp-arm-pulse 1.2s ease-in-out infinite" : undefined,
       }}
     >
@@ -4594,15 +4594,15 @@ function AutomationLaneView({
       style={{
         position: "absolute", top: topY,
         left: 0, width: w, height: h,
-        background: "#070708",
-        borderTop: "1px solid #14141a",
+        background: "var(--bg-primary)",
+        borderTop: "1px solid var(--border-primary)",
         cursor: "crosshair",
       }}
     >
       <canvas ref={canvasRef} style={{ width: w, height: h, display: "block" }} />
       <div style={{
         position: "absolute", left: 4, top: 2,
-        fontSize: 9, color: "#666", letterSpacing: 0.5, textTransform: "uppercase",
+        fontSize: 9, color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase",
         pointerEvents: "none",
       }}>{spec.label}</div>
     </div>
@@ -4637,9 +4637,9 @@ function Inspector({
   const knob = (label: string, min: number, max: number, val: number, step: number,
     onChange: (v: number) => void, unit = "", accent = "#38bdf8") => (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#888", marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>{label}</span>
-        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>
+        <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
           {val.toFixed(step < 1 ? 2 : 1)}{unit}
         </span>
       </div>
@@ -4651,8 +4651,8 @@ function Inspector({
   );
 
   const masterSection = (
-    <div style={{ padding: 8, marginBottom: 10, background: "#0c0c10", border: "1px solid #1a1a1e" }}>
-      <div style={{ fontSize: 10, color: "#888", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>Master</div>
+    <div style={{ padding: 8, marginBottom: 10, background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
+      <div style={{ fontSize: 10, color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>Master</div>
       <MeterBar level={masterLevel} color="#38bdf8" width={INSPECTOR_W - 32} height={6} />
       <SpectrumAnalyzer analyser={masterAnalyser} width={INSPECTOR_W - 32} height={50} />
       <div style={{ height: 6 }} />
@@ -4664,10 +4664,10 @@ function Inspector({
       </div>
       {limiterEnabled && knob("Threshold", -24, 0, limiterThresh, 0.5, setLimiterThresh, " dB", "#22c55e")}
       {loopRange && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #1a1a1e", fontSize: 10, color: "#888" }}>
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-secondary)" }}>
           Loop: {fmtDuration(loopRange.startMs)} → {fmtDuration(loopRange.endMs)}
           <button onClick={onClearLoop}
-            style={{ marginLeft: 8, padding: "2px 6px", background: "#111", color: "#888", border: "1px solid #222", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+            style={{ marginLeft: 8, padding: "2px 6px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
           >Clear</button>
         </div>
       )}
@@ -4678,7 +4678,7 @@ function Inspector({
     return (
       <div>
         {masterSection}
-        <div style={{ color: "#555", fontSize: 12, textAlign: "center", marginTop: 20 }}>
+        <div style={{ color: "var(--text-tertiary)", fontSize: 12, textAlign: "center", marginTop: 20 }}>
           Select a track
         </div>
       </div>
@@ -4693,11 +4693,11 @@ function Inspector({
         <div style={{ width: 12, height: 12, background: track.color }} />
         <input value={track.name}
           onChange={(e) => onPatchTrack({ name: e.target.value })}
-          style={{ flex: 1, background: "#111", color: "#fff", border: "1px solid #222", padding: "4px 6px", fontSize: 12, borderRadius: 0 }}
+          style={{ flex: 1, background: "var(--bg-secondary)", color: "#fff", border: "1px solid var(--border-primary)", padding: "4px 6px", fontSize: 12, borderRadius: 0 }}
         />
       </div>
 
-      <div style={{ fontSize: 10, color: "#666", marginBottom: 8 }}>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8 }}>
         {track.regions.length} region{track.regions.length !== 1 ? "s" : ""}
       </div>
 
@@ -4725,41 +4725,41 @@ function Inspector({
       </div>
 
       {region && (
-        <div style={{ marginTop: 14, padding: 8, background: "#0c0c10", border: "1px solid #1a1a1e" }}>
-          <div style={{ fontSize: 10, color: "#666", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>
+        <div style={{ marginTop: 14, padding: 8, background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>
             Selected region
           </div>
-          <div style={{ fontSize: 10, color: "#888", marginBottom: 3 }}>
-            Offset: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(region.offsetMs)}</span>
+          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+            Offset: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(region.offsetMs)}</span>
           </div>
-          <div style={{ fontSize: 10, color: "#888", marginBottom: 3 }}>
-            Length: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(regionDurMs(region))}</span>
+          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+            Length: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(regionDurMs(region))}</span>
           </div>
-          <div style={{ fontSize: 10, color: "#888", marginBottom: 3 }}>
-            Fade in: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{region.fadeInMs.toFixed(0)}ms</span>
-            {"  "}out: <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{region.fadeOutMs.toFixed(0)}ms</span>
+          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+            Fade in: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{region.fadeInMs.toFixed(0)}ms</span>
+            {"  "}out: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{region.fadeOutMs.toFixed(0)}ms</span>
           </div>
           <div style={{ marginTop: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#888", marginBottom: 3 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
               <span>Clip gain</span>
-              <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{(region.clipGainDb || 0).toFixed(1)} dB</span>
+              <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{(region.clipGainDb || 0).toFixed(1)} dB</span>
             </div>
             <input type="range" min={-24} max={12} step={0.5} value={region.clipGainDb || 0}
               onChange={(e) => onPatchRegion({ clipGainDb: +e.target.value })}
               style={{ width: "100%", accentColor: track.color }}
             />
           </div>
-          <div style={{ fontSize: 10, color: "#666", marginTop: 6, wordBreak: "break-all" }}>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, wordBreak: "break-all" }}>
             {region.filePath || "(recorded)"}
           </div>
           <button onClick={onDeleteRegion}
-            style={{ width: "100%", marginTop: 8, padding: "4px", background: "#111", color: "#888", border: "1px solid #222", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+            style={{ width: "100%", marginTop: 8, padding: "4px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
           >Delete region</button>
         </div>
       )}
 
       <button onClick={onClear}
-        style={{ width: "100%", marginTop: 10, padding: "6px", background: "#111", color: "#888", border: "1px solid #222", fontSize: 11, cursor: "pointer", borderRadius: 0 }}
+        style={{ width: "100%", marginTop: 10, padding: "6px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 11, cursor: "pointer", borderRadius: 0 }}
       >Clear all regions</button>
     </div>
   );
@@ -4768,9 +4768,9 @@ function Inspector({
 function insBtn(active: boolean, color: string): React.CSSProperties {
   return {
     flex: 1, padding: "5px",
-    background: active ? color : "#111",
-    color: active ? "#fff" : "#888",
-    border: `1px solid ${active ? color : "#222"}`,
+    background: active ? color : "var(--button-bg, var(--bg-tertiary))",
+    color: active ? "#fff" : "var(--button-text, var(--text-secondary))",
+    border: active ? `1px solid ${color}` : "var(--button-border, 1px solid var(--border-primary))",
     fontSize: 10, cursor: "pointer", borderRadius: 0,
   };
 }
@@ -4814,25 +4814,25 @@ function FxWindow({
         position: "absolute",
         left: position.x, top: position.y, width: 320,
         zIndex: 1000 + position.z,
-        background: "#0c0c10", border: "1px solid #2a2a2e",
+        background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
         fontFamily: "Inter, system-ui, sans-serif",
       }}
     >
       <div onMouseDown={startDrag}
         style={{
-          height: 28, background: "#15151a",
-          borderBottom: "1px solid #2a2a2e",
+          height: 28, background: "var(--bg-secondary)",
+          borderBottom: "1px solid var(--border-primary)",
           display: "flex", alignItems: "center", padding: "0 8px", gap: 8,
           cursor: "grab", userSelect: "none",
         }}
       >
         <div style={{ width: 8, height: 8, background: track.color }} />
-        <div style={{ flex: 1, fontSize: 11, color: "#ddd", fontWeight: 600 }}>
+        <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>
           {track.name} — {FX_WINDOW_LABELS[type]}
         </div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "#888", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
         >×</button>
       </div>
 
@@ -4857,12 +4857,12 @@ function ExportWatermarkDialog({ onConfirm }: { onConfirm: (embed: boolean) => v
   const [checked, setChecked] = useState(true);
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: 420, background: "#111114", border: "1px solid #2a2a35", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ width: 420, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#e8e8f0" }}>Export Mix</div>
         <div style={{ fontSize: 12, color: "#8080b0", lineHeight: 1.5 }}>
           One or more tracks are marked as <span style={{ color: "#00c8a8" }}>original content</span>. You can embed an invisible content provenance watermark into this export.
         </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 12px", background: "#0d0d0f", border: "1px solid #2a2a35" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
           <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} style={{ width: 14, height: 14, accentColor: "#00c8a8" }} />
           <div>
             <div style={{ fontSize: 12, color: "#e8e8f0", fontWeight: 600 }}>🛡 Embed content provenance watermark</div>
@@ -4870,7 +4870,7 @@ function ExportWatermarkDialog({ onConfirm }: { onConfirm: (embed: boolean) => v
           </div>
         </label>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={() => onConfirm(false)} style={{ padding: "6px 16px", background: "#1e1e24", border: "1px solid #2a2a35", color: "#8080b0", fontSize: 12, cursor: "pointer" }}>Export without watermark</button>
+          <button onClick={() => onConfirm(false)} style={{ padding: "6px 16px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "#8080b0", fontSize: 12, cursor: "pointer" }}>Export without watermark</button>
           <button onClick={() => onConfirm(checked)} style={{ padding: "6px 16px", background: "#00c8a8", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Export</button>
         </div>
       </div>
@@ -4896,13 +4896,13 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center" }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ width: 440, background: "#111114", border: "1px solid #2a2a35", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ width: 440, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: "#e8e8f0", letterSpacing: "-0.01em" }}>🛡 Watermark Verification</div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "#606080", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ fontSize: 11, color: "#6060a0", padding: "5px 8px", background: "#0d0d0f", border: "1px solid #1e1e28", wordBreak: "break-all" as const }}>
+        <div style={{ fontSize: 11, color: "#6060a0", padding: "5px 8px", background: "var(--bg-primary)", border: "1px solid #1e1e28", wordBreak: "break-all" as const }}>
           {fname}
         </div>
 
@@ -4949,7 +4949,7 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-          <button onClick={onClose} style={{ padding: "6px 18px", background: "#1e1e24", border: "1px solid #2a2a35", color: "#c0c0d8", fontSize: 12, cursor: "pointer" }}>Close</button>
+          <button onClick={onClose} style={{ padding: "6px 18px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "#c0c0d8", fontSize: 12, cursor: "pointer" }}>Close</button>
         </div>
       </div>
     </div>
@@ -4965,13 +4965,13 @@ function ExportMenu({ onExportMix, onExportStems }: { onExportMix: () => void; o
       <TBtn onClick={() => setOpen(o => !o)} title="Export options">Export ▾</TBtn>
       {open && (
         <div onMouseLeave={() => setOpen(false)}
-          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#111", border: "1px solid #222", zIndex: 30, minWidth: 160 }}
+          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 30, minWidth: 160 }}
         >
           <button onClick={() => { setOpen(false); onExportMix(); }}
-            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "#eee", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
+            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "var(--text-primary)", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
           >Export Mix (one WAV)</button>
           <button onClick={() => { setOpen(false); onExportStems(); }}
-            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "#eee", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
+            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "var(--text-primary)", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
           >Export Stems (one WAV per track)</button>
         </div>
       )}
@@ -5056,19 +5056,19 @@ function PresetMenu<T>({ store, current, onApply, label }: {
       <button onClick={() => setOpen(o => !o)}
         style={{
           width: "100%", padding: "4px 8px", textAlign: "left" as const,
-          background: "#111", color: "#888", border: "1px solid #222",
+          background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)",
           fontSize: 10, cursor: "pointer", borderRadius: 0,
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}
       >
         <span>{label || "Presets"}</span>
-        <span style={{ color: "#555" }}>▾</span>
+        <span style={{ color: "var(--text-tertiary)" }}>▾</span>
       </button>
       {open && (
         <div onMouseLeave={() => setOpen(false)}
           style={{
             position: "absolute", top: "100%", left: 0, right: 0,
-            background: "#0a0a0c", border: "1px solid #2a2a32",
+            background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
             zIndex: 50, maxHeight: 240, overflowY: "auto",
             boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
           }}
@@ -5087,12 +5087,12 @@ function PresetMenu<T>({ store, current, onApply, label }: {
               {!it.builtin && (
                 <button onClick={(e) => { e.stopPropagation(); store.delete(it.name); }}
                   title="Delete preset"
-                  style={{ background: "transparent", border: "none", color: "#555", fontSize: 12, cursor: "pointer", padding: "0 6px" }}
+                  style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 12, cursor: "pointer", padding: "0 6px" }}
                 >×</button>
               )}
             </div>
           ))}
-          <div style={{ borderTop: "1px solid #1a1a1e", padding: 4 }}>
+          <div style={{ borderTop: "1px solid var(--border-primary)", padding: 4 }}>
             <button onClick={() => {
               const name = prompt("Save current settings as preset:");
               if (name && name.trim()) { store.save(name.trim(), current); setOpen(false); }
@@ -5196,22 +5196,22 @@ function MasterFxWindow({
       position: "absolute",
       left: position.x, top: position.y, width: 340,
       zIndex: 1500,
-      background: "#0c0c10", border: "1px solid #2a2a2e",
+      background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
       boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       fontFamily: "Inter, system-ui, sans-serif",
     }}>
       <div onMouseDown={startDrag}
         style={{
-          height: 28, background: "#15151a",
-          borderBottom: "1px solid #2a2a2e",
+          height: 28, background: "var(--bg-secondary)",
+          borderBottom: "1px solid var(--border-primary)",
           display: "flex", alignItems: "center", padding: "0 8px", gap: 8,
           cursor: "grab", userSelect: "none",
         }}
       >
         <div style={{ width: 8, height: 8, background: "#38bdf8" }} />
-        <div style={{ flex: 1, fontSize: 11, color: "#ddd", fontWeight: 600 }}>Master Bus FX</div>
+        <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>Master Bus FX</div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "#888", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
         >×</button>
       </div>
 
@@ -5251,8 +5251,8 @@ function MasterFxWindow({
                       width: 18, height: 80, accentColor: "#38bdf8",
                     } as any}
                   />
-                  <span style={{ fontSize: 8, color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
-                  <span style={{ fontSize: 8, color: "#666" }}>{EQ_LABELS[i]}</span>
+                  <span style={{ fontSize: 8, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
+                  <span style={{ fontSize: 8, color: "var(--text-tertiary)" }}>{EQ_LABELS[i]}</span>
                 </div>
               );
             })}
@@ -5283,7 +5283,7 @@ function MasterFxWindow({
             style={miniToggle(limiterEnabled, "#ef4444")}>{limiterEnabled ? "ON" : "OFF"}</button>
         }>
           {compKnob("Threshold", -24, 0, limiterThresh, 0.5, setLimiterThresh, " dB")}
-          <div style={{ fontSize: 9, color: "#666", marginTop: 4 }}>
+          <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4 }}>
             Brick-wall ceiling: ratio 20:1 · attack 3ms · release 250ms · knee 0
           </div>
         </FxBlock>
@@ -5374,8 +5374,8 @@ function FxEqSection({ track, ctx, onPatch }: { track: StudioTrack; ctx: AudioCo
                   width: 18, height: 80, accentColor: track.color,
                 } as any}
               />
-              <span style={{ fontSize: 8, color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
-              <span style={{ fontSize: 8, color: "#666" }}>{EQ_LABELS[i]}</span>
+              <span style={{ fontSize: 8, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
+              <span style={{ fontSize: 8, color: "var(--text-tertiary)" }}>{EQ_LABELS[i]}</span>
             </div>
           );
         })}
@@ -5403,7 +5403,7 @@ function FxCompSection({ track, reductionDb, onPatch }: { track: StudioTrack; re
         liveReductionDb={reductionDb}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0" }}>
-        <span style={{ fontSize: 9, color: "#666", letterSpacing: 0.5, textTransform: "uppercase" }}>GR</span>
+        <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase" }}>GR</span>
         <div style={{ flex: 1, height: 6, background: "#1a1a1e", position: "relative", overflow: "hidden" }}>
           <div style={{
             position: "absolute", right: 0, top: 0, bottom: 0,
@@ -5411,7 +5411,7 @@ function FxCompSection({ track, reductionDb, onPatch }: { track: StudioTrack; re
             transition: "width 50ms linear",
           }} />
         </div>
-        <span style={{ fontSize: 9, color: "#ccc", fontFamily: "ui-monospace, monospace", minWidth: 36, textAlign: "right" }}>
+        <span style={{ fontSize: 9, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace", minWidth: 36, textAlign: "right" }}>
           {reductionDb.toFixed(1)} dB
         </span>
       </div>
@@ -5665,8 +5665,8 @@ function FxSidechainSection({ track, allTracks, onPatch }: { track: StudioTrack;
       <select value={track.sidechainSourceId || ""}
         onChange={(e) => onPatch({ sidechainSourceId: e.target.value || null })}
         style={{
-          width: "100%", background: "#111", color: "#eee",
-          border: "1px solid #222", padding: "4px 6px",
+          width: "100%", background: "var(--bg-secondary)", color: "var(--text-primary)",
+          border: "1px solid var(--border-primary)", padding: "4px 6px",
           fontSize: 11, borderRadius: 0, marginBottom: 6,
         }}
       >
@@ -5685,10 +5685,10 @@ function FxBlock({ title, right, children }: { title: string; right?: React.Reac
   return (
     <div style={{
       marginBottom: 10, padding: 8,
-      background: "#08080a", border: "1px solid #1a1a1e",
+      background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
     }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
-        <div style={{ flex: 1, fontSize: 9, color: "#888", letterSpacing: 0.5, textTransform: "uppercase", fontWeight: 700 }}>
+        <div style={{ flex: 1, fontSize: 9, color: "var(--text-secondary)", letterSpacing: 0.5, textTransform: "uppercase", fontWeight: 700 }}>
           {title}
         </div>
         {right}
@@ -5701,9 +5701,9 @@ function FxBlock({ title, right, children }: { title: string; right?: React.Reac
 function compKnob(label: string, min: number, max: number, val: number, step: number, onChange: (v: number) => void, unit = "") {
   return (
     <div style={{ marginBottom: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#888", marginBottom: 2 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginBottom: 2 }}>
         <span>{label}</span>
-        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>
+        <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
           {val.toFixed(step < 1 ? 2 : 1)}{unit}
         </span>
       </div>
@@ -5718,9 +5718,9 @@ function compKnob(label: string, min: number, max: number, val: number, step: nu
 function miniToggle(active: boolean, color: string): React.CSSProperties {
   return {
     padding: "3px 8px",
-    background: active ? color : "#111",
-    color: active ? "#fff" : "#888",
-    border: `1px solid ${active ? color : "#222"}`,
+    background: active ? color : "var(--button-bg, var(--bg-tertiary))",
+    color: active ? "#fff" : "var(--button-text, var(--text-secondary))",
+    border: active ? `1px solid ${color}` : "var(--button-border, 1px solid var(--border-primary))",
     fontSize: 9, fontWeight: 700, cursor: "pointer", borderRadius: 0,
   };
 }
@@ -5745,7 +5745,7 @@ function ContextMenu({ x, y, items, onClose }: {
     <div onMouseDown={(e) => e.stopPropagation()}
       style={{
         position: "fixed", left: adjX, top: adjY, minWidth: 200,
-        background: "#0c0c10", border: "1px solid #2a2a32", padding: 4,
+        background: "var(--bg-primary)", border: "1px solid var(--border-primary)", padding: 4,
         zIndex: 5000, fontFamily: "Inter, system-ui, sans-serif",
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       }}
@@ -5783,19 +5783,19 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
     <div style={{
       position: "fixed", right: 16, top: 110,
       width: 280, maxHeight: "60vh",
-      background: "#0c0c10", border: "1px solid #2a2a32",
+      background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
       boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
       zIndex: 1500, fontFamily: "Inter, system-ui, sans-serif",
       display: "flex", flexDirection: "column",
     }}>
       <div style={{
-        height: 28, padding: "0 10px", background: "#15151a",
-        borderBottom: "1px solid #2a2a32",
+        height: 28, padding: "0 10px", background: "var(--bg-secondary)",
+        borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", gap: 8,
       }}>
-        <div style={{ flex: 1, fontSize: 11, color: "#ddd", fontWeight: 600 }}>Snapshots</div>
+        <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>Snapshots</div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "#888", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
         >×</button>
       </div>
       <div style={{ padding: 8, overflowY: "auto", flex: 1 }}>
@@ -5809,7 +5809,7 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
           }}
         >+ TAKE SNAPSHOT</button>
         {snapshots.length === 0 && (
-          <div style={{ fontSize: 10, color: "#555", textAlign: "center" as const, padding: "20px 8px" }}>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const, padding: "20px 8px" }}>
             No snapshots yet. Capture the current mixer state to recall it later.
           </div>
         )}
@@ -5817,23 +5817,23 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
           <div key={s.id}
             style={{
               padding: 8, marginBottom: 6,
-              background: "#08080a", border: "1px solid #1a1a1e",
+              background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
               <div style={{ flex: 1, fontSize: 11, color: "#fff", fontWeight: 600 }}>{s.name}</div>
               <button onClick={() => onDelete(s.id)}
                 title="Delete snapshot"
-                style={{ background: "transparent", border: "none", color: "#555", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+                style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
               >×</button>
             </div>
-            <div style={{ fontSize: 9, color: "#666", marginBottom: 6, fontFamily: "ui-monospace, monospace" }}>
+            <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginBottom: 6, fontFamily: "ui-monospace, monospace" }}>
               {new Date(s.takenAt).toLocaleTimeString()} · {s.tracksJson.length} tracks
             </div>
             <button onClick={() => onRecall(s)}
               style={{
                 width: "100%", padding: "4px",
-                background: "#111", color: "#22c55e",
+                background: "var(--bg-secondary)", color: "#22c55e",
                 border: "1px solid #22c55e44",
                 fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0,
                 letterSpacing: 0.5,
@@ -5908,7 +5908,7 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
       <div onMouseDown={(e) => e.stopPropagation()}
         style={{
           width: 720, maxHeight: "80vh", overflowY: "auto",
-          background: "#0c0c10", border: "1px solid #2a2a32",
+          background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
           padding: 24, fontFamily: "Inter, system-ui, sans-serif",
           boxShadow: "0 16px 64px rgba(0,0,0,0.6)",
         }}
@@ -5918,7 +5918,7 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
             Keyboard Shortcuts
           </div>
           <button onClick={onClose}
-            style={{ background: "transparent", border: "none", color: "#888", fontSize: 18, cursor: "pointer" }}
+            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 18, cursor: "pointer" }}
           >×</button>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
@@ -5932,17 +5932,17 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
                   <div style={{
                     minWidth: 130, padding: "2px 6px",
                     background: "#1a1a22", color: "#fde047",
-                    border: "1px solid #2a2a32",
+                    border: "1px solid var(--border-primary)",
                     fontFamily: "ui-monospace, monospace",
                     marginRight: 10,
                   }}>{k}</div>
-                  <div style={{ flex: 1, color: "#bbb", paddingTop: 2 }}>{d}</div>
+                  <div style={{ flex: 1, color: "var(--text-secondary)", paddingTop: 2 }}>{d}</div>
                 </div>
               ))}
             </div>
           ))}
         </div>
-        <div style={{ marginTop: 16, fontSize: 10, color: "#555", textAlign: "center" as const }}>
+        <div style={{ marginTop: 16, fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const }}>
           Press <span style={{ color: "#fde047" }}>?</span> or <span style={{ color: "#fde047" }}>Esc</span> to close
         </div>
       </div>
@@ -5961,7 +5961,7 @@ function NormalizeMenu({ onPick }: { onPick: (target: number) => void }) {
         <div onMouseLeave={() => setOpen(false)}
           style={{
             position: "absolute", top: "100%", right: 0, marginTop: 4,
-            background: "#111", border: "1px solid #222",
+            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
             zIndex: 30, minWidth: 200,
           }}
         >
@@ -5976,7 +5976,7 @@ function NormalizeMenu({ onPick }: { onPick: (target: number) => void }) {
               style={{
                 display: "block", width: "100%", textAlign: "left" as const,
                 padding: "6px 10px",
-                background: "transparent", color: "#eee",
+                background: "transparent", color: "var(--text-primary)",
                 border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
               }}
             >{o.name}</button>
@@ -5996,7 +5996,7 @@ function AddTrackMenu({ onAdd }: { onAdd: (template: "vocal" | "music" | "drum" 
       <button onClick={() => setOpen(o => !o)}
         style={{
           width: "100%", height: 36, background: "transparent",
-          border: "1px dashed #2a2a2e", color: "#888",
+          border: "1px dashed var(--border-primary)", color: "var(--text-secondary)",
           fontSize: 11, cursor: "pointer", borderRadius: 0,
         }}
       >+ Add Track ▾</button>
@@ -6004,7 +6004,7 @@ function AddTrackMenu({ onAdd }: { onAdd: (template: "vocal" | "music" | "drum" 
         <div onMouseLeave={() => setOpen(false)}
           style={{
             position: "absolute", top: "100%", left: 0, right: 0,
-            background: "#0c0c10", border: "1px solid #2a2a32",
+            background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
             zIndex: 50, padding: 4,
           }}
         >
@@ -6018,14 +6018,14 @@ function AddTrackMenu({ onAdd }: { onAdd: (template: "vocal" | "music" | "drum" 
               style={{
                 display: "block", width: "100%", textAlign: "left" as const,
                 padding: "6px 8px",
-                background: "transparent", color: "#eee",
+                background: "transparent", color: "var(--text-primary)",
                 border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#1a1a22"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
             >
               <div style={{ fontWeight: 600 }}>{t.label}</div>
-              {t.desc && <div style={{ fontSize: 9, color: "#666" }}>{t.desc}</div>}
+              {t.desc && <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>{t.desc}</div>}
             </button>
           ))}
         </div>
@@ -6051,9 +6051,9 @@ function LUFSMeter({ lufsMomentary, width }: { lufsMomentary: number; width: num
   const color = v <= -23 ? "#3b82f6" : v <= -16 ? "#22c55e" : v <= -9 ? "#fde047" : "#ef4444";
   return (
     <div style={{ width }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#888", marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>LUFS (momentary, K-weighted)</span>
-        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>
+        <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
           {isFinite(v) ? v.toFixed(1) : "—"}
         </span>
       </div>
@@ -6066,7 +6066,7 @@ function LUFSMeter({ lufsMomentary, width }: { lufsMomentary: number; width: num
           </React.Fragment>
         ))}
       </div>
-      <div style={{ display: "flex", fontSize: 8, color: "#555", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ display: "flex", fontSize: 8, color: "var(--text-tertiary)", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
         <span style={{ flex: 1, textAlign: "left" }}>-50</span>
         <span style={{ flex: 1, textAlign: "center", color: "#22c55e" }}>-23 broadcast</span>
         <span style={{ flex: 1, textAlign: "center", color: "#fde047" }}>-16 stream</span>
@@ -6085,9 +6085,9 @@ function CorrelationMeter({ correlation, width }: { correlation: number; width: 
   const color = v >= 0.5 ? "#3b82f6" : v >= 0 ? "#22c55e" : v >= -0.5 ? "#fde047" : "#ef4444";
   return (
     <div style={{ width }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#888", marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>Stereo correlation</span>
-        <span style={{ color: "#ccc", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(2)}</span>
+        <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(2)}</span>
       </div>
       <div style={{ position: "relative", width: "100%", height: 10, background: "#1a1a1e", overflow: "hidden" }}>
         <div style={{ position: "absolute", left: "50%", top: 0, width: 1, height: "100%", background: "#444" }} />
@@ -6098,7 +6098,7 @@ function CorrelationMeter({ correlation, width }: { correlation: number; width: 
           background: color, transition: "all 80ms linear",
         }} />
       </div>
-      <div style={{ display: "flex", fontSize: 8, color: "#555", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ display: "flex", fontSize: 8, color: "var(--text-tertiary)", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
         <span style={{ flex: 1, textAlign: "left", color: "#ef4444" }}>-1 phase</span>
         <span style={{ flex: 1, textAlign: "center" }}>0 wide</span>
         <span style={{ flex: 1, textAlign: "right", color: "#3b82f6" }}>+1 mono</span>
@@ -6161,7 +6161,7 @@ function Goniometer({ lAnalyser, rAnalyser, size }: {
   }, [lAnalyser, rAnalyser, size]);
   return (
     <div>
-      <div style={{ fontSize: 9, color: "#888", marginBottom: 3 }}>Goniometer</div>
+      <div style={{ fontSize: 9, color: "var(--text-secondary)", marginBottom: 3 }}>Goniometer</div>
       <canvas ref={canvasRef}
         style={{ width: size, height: size, display: "block", background: "#050508", margin: "0 auto" }}
       />
@@ -6203,7 +6203,7 @@ function VersionHistoryPanel({
           padding: "10px 14px", cursor: "pointer",
           background: isPreview ? "rgba(99,102,241,0.12)" : "transparent",
           borderLeft: `3px solid ${isPreview ? "#6366f1" : "transparent"}`,
-          borderBottom: "1px solid #1a1a1e",
+          borderBottom: "1px solid var(--border-primary)",
           transition: "background 0.12s",
         }}
       >
@@ -6227,7 +6227,7 @@ function VersionHistoryPanel({
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {typeof v.track_count === "number" && (
-              <span style={{ fontSize: 10, color: "#555" }}>{v.track_count}t</span>
+              <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{v.track_count}t</span>
             )}
             <span style={{ fontSize: 10, color: "#444" }}>{fmtDate(v.created_at)}</span>
           </div>
@@ -6249,7 +6249,7 @@ function VersionHistoryPanel({
               onClick={e => { e.stopPropagation(); onPreview(v.id); }}
               style={{
                 padding: "7px 12px", background: "#1a1a1e", border: "1px solid #333",
-                color: "#888", fontSize: 11, cursor: "pointer",
+                color: "var(--text-secondary)", fontSize: 11, cursor: "pointer",
               }}
             >
               Collapse
@@ -6263,29 +6263,29 @@ function VersionHistoryPanel({
   return (
     <div style={{
       position: "absolute", top: 0, right: 0, bottom: 0,
-      width: 320, background: "#0d0d10", borderLeft: "1px solid #1a1a1e",
+      width: 320, background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)",
       display: "flex", flexDirection: "column", zIndex: 60,
       boxShadow: "-8px 0 32px rgba(0,0,0,0.6)",
     }}>
       {/* Header */}
       <div style={{
-        padding: "14px 16px 12px", borderBottom: "1px solid #1a1a1e",
+        padding: "14px 16px 12px", borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
       }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "#eee", marginBottom: 2 }}>Version History</div>
-          <div style={{ fontSize: 10, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>Version History</div>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
             {sessionName}
           </div>
         </div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "#888", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
           ✕
         </button>
       </div>
 
       {/* Save Version button */}
-      <div style={{ padding: "10px 14px", borderBottom: "1px solid #1a1a1e", flexShrink: 0 }}>
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <button
           onClick={onSaveVersion}
           style={{
@@ -6302,7 +6302,7 @@ function VersionHistoryPanel({
       {/* Version list */}
       <div className="studiopro-scroll" style={{ flex: 1, overflowY: "auto" }}>
         {safeVersions.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: "#555", fontSize: 12 }}>
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>
             No versions saved yet.<br />
             <span style={{ fontSize: 11 }}>Click "+ Save Version Now" or use Ctrl+Shift+S.</span>
           </div>
@@ -6310,7 +6310,7 @@ function VersionHistoryPanel({
           <>
             {manualSaves.length > 0 && (
               <>
-                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
                   Manual saves ({manualSaves.length})
                 </div>
                 {manualSaves.map(v => <VersionRow key={v.id} v={v} />)}
@@ -6318,7 +6318,7 @@ function VersionHistoryPanel({
             )}
             {autoSaves.length > 0 && (
               <>
-                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "#555", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
                   Auto-saves ({autoSaves.length}/{10})
                 </div>
                 {autoSaves.map(v => <VersionRow key={v.id} v={v} />)}
@@ -6329,7 +6329,7 @@ function VersionHistoryPanel({
       </div>
 
       {/* Footer */}
-      <div style={{ padding: "10px 14px", borderTop: "1px solid #1a1a1e", flexShrink: 0 }}>
+      <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ fontSize: 10, color: "#444", lineHeight: 1.6 }}>
           Auto-saves every 5 min · Max {10} auto-saves kept · Restoring auto-saves current state first
         </div>
@@ -6360,7 +6360,7 @@ function NotesDrawer({
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
         <div style={{ width: 8, height: 8, borderRadius: "50%", background: n.color, flexShrink: 0 }} />
         <span style={{ fontSize: 10, fontWeight: 700, color: n.color }}>{n.author}</span>
-        <span style={{ fontSize: 10, color: "#555", fontFamily: "ui-monospace, monospace", marginLeft: "auto" }}>
+        <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace", marginLeft: "auto" }}>
           {fmtTimecode(n.position_ms)}
         </span>
       </div>
@@ -6370,7 +6370,7 @@ function NotesDrawer({
       }}>{n.text}</div>
       <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
         <button onClick={() => onJump(n.position_ms)}
-          style={{ padding: "2px 8px", fontSize: 10, background: "rgba(255,255,255,0.04)", color: "#888", border: "1px solid #222", cursor: "pointer" }}>
+          style={{ padding: "2px 8px", fontSize: 10, background: "rgba(255,255,255,0.04)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
           Jump to
         </button>
         {!n.resolved && (
@@ -6390,23 +6390,23 @@ function NotesDrawer({
   return (
     <div style={{
       position: "absolute", right: 0, top: 0, bottom: 0, width: 300,
-      background: "#0d0d0f", borderLeft: "1px solid #1a1a1e",
+      background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)",
       display: "flex", flexDirection: "column", zIndex: 15,
       fontFamily: "Inter, system-ui, sans-serif",
     }}>
       <div style={{
-        padding: "10px 14px", borderBottom: "1px solid #1a1a1e",
+        padding: "10px 14px", borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#ccc" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>
           Notes {active.length > 0 && <span style={{ color: "#f59e0b" }}>({active.length})</span>}
         </span>
         <button onClick={onClose}
-          style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 14, padding: 0 }}>
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: 0 }}>
           ✕
         </button>
       </div>
-      <div style={{ fontSize: 9, color: "#555", padding: "6px 14px", borderBottom: "1px solid #111", flexShrink: 0 }}>
+      <div style={{ fontSize: 9, color: "var(--text-tertiary)", padding: "6px 14px", borderBottom: "1px solid #111", flexShrink: 0 }}>
         RIGHT-CLICK RULER TO ADD A NOTE
       </div>
       <div className="studiopro-scroll" style={{ flex: 1, overflowY: "auto" }}>

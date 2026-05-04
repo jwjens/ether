@@ -3,9 +3,11 @@ const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, ar
 import { query, execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { useStreaming } from "../hooks/useStreaming";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
 import { processLibrary as processAllSongs, getProcessingStats } from "../audio/songAnalysis";
 import StreamMetadataPanel from "./StreamMetadataPanel";
+import StreamStatusPill from "./StreamStatusPill";
 import PairMobileApp from "./PairMobileApp";
 import AIVoiceSettings from "./AIVoiceSettings";
 import BetaProgram from "./BetaProgram";
@@ -492,19 +494,20 @@ function CloudPlayoutSection() {
 
   useEffect(() => { checkStatus(); }, [playoutServer]);
 
+  const { goLive: doGoLive, stopLive: doStopLive } = useStreaming();
+
   const goLive = async (stationId: number) => {
-    setSyncMsg('');
     setStationStreams(prev => ({ ...prev, [stationId]: { ...prev[stationId], live: false, error: null } }));
-    const res = await (window as any).ether.invoke('stream:go-live', { stationId });
-    if (res?.ok) {
+    const res = await doGoLive(stationId);
+    if (res.ok) {
       setSyncMsg(`✓ Streaming → ${res.server}:8000${res.mount}`);
     } else {
-      setSyncMsg('✗ ' + (res?.error || 'Failed to start stream'));
+      setSyncMsg('✗ ' + (res.error || 'Failed to start stream'));
     }
   };
 
   const stopLive = async (stationId: number) => {
-    await (window as any).ether.invoke('stream:stop-live', { stationId });
+    await doStopLive(stationId);
     setSyncMsg('');
   };
 
@@ -611,6 +614,7 @@ function CloudPlayoutSection() {
                 {stationStreams[station.id]!.error}
               </div>
             )}
+            <StreamStatusPill destId={`icecast:${station.id}`} />
           </div>
         );
       })}

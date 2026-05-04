@@ -180,6 +180,14 @@ contextBridge.exposeInMainWorld("ether", {
     runNow:      ()  => ipcRenderer.invoke("cloud-backup:run-now"),
     getHistory:  ()  => ipcRenderer.invoke("cloud-backup:get-history"),
   },
+  // ── Live stream status (push events + snapshot query) ──────
+  stream: {
+    onDestStatus:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('stream:status:dest', h);   return h; },
+    offDestStatus: (h)  => ipcRenderer.removeListener('stream:status:dest', h),
+    onGlobal:      (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('stream:status:global', h); return h; },
+    offGlobal:     (h)  => ipcRenderer.removeListener('stream:status:global', h),
+    getAllStatus:   ()   => ipcRenderer.invoke('stream:get-all-status'),
+  },
   invoke: (channel, ...args) => ipcRenderer.invoke(channel, ...args),
   on: (channel, cb) => {
     const h = (_, ...a) => cb(...a);

@@ -80,6 +80,193 @@ export interface Preset {
 
 export const PRESETS: Preset[] = [
   {
+    id: "ether-default",
+    name: "Ether",
+    emoji: "🎚",
+    vars: {
+      "--bg-primary":    "#b8bcc4",
+      "--bg-secondary":  "#c8ccd4",
+      "--bg-tertiary":   "#d4d8e0",
+      "--bg-hover":      "#dde2e8",
+      "--text-primary":   "#1a1d24",
+      "--text-secondary": "#3c4452",
+      "--text-tertiary":  "#5a6370",
+      "--border-primary":   "#9ca0a8",
+      "--border-secondary": "#b0b4bc",
+      "--accent-blue":  "#1e6bb8",
+      "--accent-green": "#1a9048",
+      "--accent-cyan":  "#0e8aaa",
+      "--accent-red":   "#c82535",
+      "--accent-amber": "#c87815",
+      "--wave-played":   "#0e8aaa",
+      "--wave-unplayed": "#b0b4bc",
+      "--wave-playhead": "#c87815",
+      "--deck-a": "#0e8aaa",
+      "--deck-b": "#8060d8",
+      "--deck-c": "#c87815",
+    }
+  },
+  {
+    id: "newyork", name: "New York", emoji: "🗽",
+    vars: {
+      "--bg-primary": "#0a1428", "--bg-secondary": "#0f1d3d",
+      "--bg-tertiary": "#152952", "--bg-hover": "#1d3568",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#9aa6b8",
+      "--text-tertiary": "#6b7385",
+      "--border-primary": "#0a1428", "--border-secondary": "#152952",
+      "--accent-blue": "#006BB6", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#F58426",
+      "--accent-amber": "#F58426",
+      "--wave-played": "#F58426", "--wave-unplayed": "#152952",
+      "--wave-playhead": "#006BB6",
+      "--deck-a": "#F58426", "--deck-b": "#006BB6", "--deck-c": "#FFFFFF",
+    }
+  },
+  {
+    id: "losangeles", name: "Los Angeles", emoji: "🌴",
+    vars: {
+      "--bg-primary": "#0e0820", "--bg-secondary": "#1a0e35",
+      "--bg-tertiary": "#28154d", "--bg-hover": "#341c63",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#b8a8c8",
+      "--text-tertiary": "#7a6e8a",
+      "--border-primary": "#0e0820", "--border-secondary": "#28154d",
+      "--accent-blue": "#552583", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#FDB927",
+      "--accent-amber": "#FDB927",
+      "--wave-played": "#FDB927", "--wave-unplayed": "#28154d",
+      "--wave-playhead": "#552583",
+      "--deck-a": "#FDB927", "--deck-b": "#552583", "--deck-c": "#FFFFFF",
+    }
+  },
+  {
+    id: "chicago", name: "Chicago", emoji: "🌬",
+    vars: {
+      "--bg-primary": "#0a0a0a", "--bg-secondary": "#1a0a0a",
+      "--bg-tertiary": "#2a1010", "--bg-hover": "#3a1818",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#c8a0a0",
+      "--text-tertiary": "#7a5050",
+      "--border-primary": "#0a0a0a", "--border-secondary": "#2a1010",
+      "--accent-blue": "#5b9eff", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#CE1141",
+      "--accent-amber": "#f59e0b",
+      "--wave-played": "#CE1141", "--wave-unplayed": "#2a1010",
+      "--wave-playhead": "#FFFFFF",
+      "--deck-a": "#CE1141", "--deck-b": "#FFFFFF", "--deck-c": "#000000",
+    }
+  },
+  {
+    id: "atlanta", name: "Atlanta", emoji: "🦅",
+    vars: {
+      "--bg-primary": "#0a0d08", "--bg-secondary": "#15180e",
+      "--bg-tertiary": "#1f2415", "--bg-hover": "#2c321c",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#a8b89a",
+      "--text-tertiary": "#6e7a6b",
+      "--border-primary": "#0a0d08", "--border-secondary": "#1f2415",
+      "--accent-blue": "#5b9eff", "--accent-green": "#C1D32F",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#E03A3E",
+      "--accent-amber": "#C1D32F",
+      "--wave-played": "#C1D32F", "--wave-unplayed": "#1f2415",
+      "--wave-playhead": "#E03A3E",
+      "--deck-a": "#E03A3E", "--deck-b": "#C1D32F", "--deck-c": "#26282A",
+    }
+  },
+  {
+    id: "dallas", name: "Dallas", emoji: "🤠",
+    vars: {
+      "--bg-primary": "#06101e", "--bg-secondary": "#0a1a30",
+      "--bg-tertiary": "#0f2545", "--bg-hover": "#163058",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#a0b0c0",
+      "--text-tertiary": "#6b7585",
+      "--border-primary": "#06101e", "--border-secondary": "#0f2545",
+      "--accent-blue": "#00538C", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#ef4444",
+      "--accent-amber": "#f59e0b",
+      "--wave-played": "#00538C", "--wave-unplayed": "#0f2545",
+      "--wave-playhead": "#B8C4CA",
+      "--deck-a": "#00538C", "--deck-b": "#B8C4CA", "--deck-c": "#002B5E",
+    }
+  },
+  {
+    id: "toronto", name: "Toronto", emoji: "🍁",
+    vars: {
+      "--bg-primary": "#0a0a0a", "--bg-secondary": "#1a0e0e",
+      "--bg-tertiary": "#241414", "--bg-hover": "#321c1c",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#b8a8a8",
+      "--text-tertiary": "#7a5e5e",
+      "--border-primary": "#0a0a0a", "--border-secondary": "#241414",
+      "--accent-blue": "#5b9eff", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#CE1141",
+      "--accent-amber": "#f59e0b",
+      "--wave-played": "#CE1141", "--wave-unplayed": "#241414",
+      "--wave-playhead": "#A1A1A4",
+      "--deck-a": "#CE1141", "--deck-b": "#A1A1A4", "--deck-c": "#000000",
+    }
+  },
+  {
+    id: "miami", name: "Miami", emoji: "🌊",
+    vars: {
+      "--bg-primary": "#082d48", "--bg-secondary": "#0d4268",
+      "--bg-tertiary": "#124e7a", "--bg-hover": "#185e8e",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#a8d0e8",
+      "--text-tertiary": "#6a9ab8",
+      "--border-primary": "#082d48", "--border-secondary": "#124e7a",
+      "--accent-blue": "#00A8E0", "--accent-green": "#4ade80",
+      "--accent-cyan": "#00A8E0", "--accent-red": "#FF1493",
+      "--accent-amber": "#FFD400",
+      "--wave-played": "#00A8E0", "--wave-unplayed": "#051b30",
+      "--wave-playhead": "#FF1493",
+      "--deck-a": "#00A8E0", "--deck-b": "#FF1493", "--deck-c": "#FFD400",
+    }
+  },
+  {
+    id: "seattle", name: "Seattle", emoji: "☕",
+    vars: {
+      "--bg-primary": "#04140e", "--bg-secondary": "#0a2218",
+      "--bg-tertiary": "#0e3024", "--bg-hover": "#154030",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#a0c8b8",
+      "--text-tertiary": "#5e7e72",
+      "--border-primary": "#04140e", "--border-secondary": "#0e3024",
+      "--accent-blue": "#005C5C", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#ef4444",
+      "--accent-amber": "#FFC72C",
+      "--wave-played": "#FFC72C", "--wave-unplayed": "#0e3024",
+      "--wave-playhead": "#005C5C",
+      "--deck-a": "#005C5C", "--deck-b": "#FFC72C", "--deck-c": "#FFFFFF",
+    }
+  },
+  {
+    id: "houston", name: "Houston", emoji: "🚀",
+    vars: {
+      "--bg-primary": "#0a0a0a", "--bg-secondary": "#1a0a0a",
+      "--bg-tertiary": "#280e0e", "--bg-hover": "#3a1818",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#c8a8a8",
+      "--text-tertiary": "#7a5e5e",
+      "--border-primary": "#0a0a0a", "--border-secondary": "#280e0e",
+      "--accent-blue": "#5b9eff", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#CE1141",
+      "--accent-amber": "#f59e0b",
+      "--wave-played": "#CE1141", "--wave-unplayed": "#280e0e",
+      "--wave-playhead": "#C4CED4",
+      "--deck-a": "#CE1141", "--deck-b": "#C4CED4", "--deck-c": "#000000",
+    }
+  },
+  {
+    id: "philadelphia", name: "Philadelphia", emoji: "🔔",
+    vars: {
+      "--bg-primary": "#08101e", "--bg-secondary": "#0e1a30",
+      "--bg-tertiary": "#142545", "--bg-hover": "#1c3058",
+      "--text-primary": "#f0f2f5", "--text-secondary": "#a8b8c8",
+      "--text-tertiary": "#6e7a8a",
+      "--border-primary": "#08101e", "--border-secondary": "#142545",
+      "--accent-blue": "#006BB6", "--accent-green": "#4ade80",
+      "--accent-cyan": "#22d3ee", "--accent-red": "#ED174C",
+      "--accent-amber": "#f59e0b",
+      "--wave-played": "#006BB6", "--wave-unplayed": "#142545",
+      "--wave-playhead": "#ED174C",
+      "--deck-a": "#006BB6", "--deck-b": "#ED174C", "--deck-c": "#FFFFFF",
+    }
+  },
+  {
     id: "dark-studio", name: "Dark Studio", emoji: "🎙",
     vars: {
       "--bg-primary":    "#0e0e12",
@@ -285,11 +472,12 @@ const DEFAULT_PRESET = PRESETS[0];
 
 // ─── Variable injection ────────────────────────────────────────
 
-export function applyTheme(vars: ThemeVars, fontStack?: string) {
+export function applyTheme(vars: ThemeVars, fontStack?: string, presetId?: string) {
+  // Write vars only to documentElement and #root — never to .dark-theme / .light-theme
+  // elements, which would let the .dark-theme CSS rule's material vars cascade down
+  // and override the theme class values on <html>.
   const targets = [
     document.documentElement,
-    document.querySelector(".dark-theme"),
-    document.querySelector(".light-theme"),
     document.getElementById("root"),
   ].filter(Boolean) as Element[];
   for (const target of targets) {
@@ -300,6 +488,218 @@ export function applyTheme(vars: ThemeVars, fontStack?: string) {
       (target as HTMLElement).style.setProperty("--font-ui", fontStack);
     }
   }
+  // For themes with material overrides, set those as inline styles too so they
+  // beat any cascading var(--bg-*) fallback chain on <body> or #root.
+  const materialOverrides: Record<string, Record<string, string>> = {
+    'ether-default': {
+      '--panel-bg': '#d4d8dd',
+      '--panel-gradient': 'none',
+      '--panel-border': '1px solid rgba(40,44,50,0.45)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.5)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.2)',
+      '--vu-meter-bg': '#3a3e44',
+      '--strip-label-bg': 'transparent',
+      '--strip-divider': 'rgba(60,64,72,0.18)',
+      '--strip-readout-bg': 'transparent',
+      '--strip-label-text': '#5a6068',
+      '--scale-text': 'rgba(40,44,50,0.5)',
+      '--scale-text-unity': 'rgba(40,44,50,0.85)',
+      '--scale-tick': 'rgba(40,44,50,0.3)',
+      '--scale-tick-unity': 'rgba(40,44,50,0.7)',
+      '--text-tertiary': '#3a3e46',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-radius': '4px',
+      '--fader-track-bg': '#1a1d22',
+      '--fader-thumb-gradient': 'linear-gradient(180deg, #c8ccd2 0%, #aab0b8 30%, #8e94a0 70%, #6b7079 100%)',
+      '--fader-thumb-shadow': '0 2px 4px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -1px 0 rgba(0,0,0,0.3)',
+      '--fader-thumb-border': '1px solid rgba(0,0,0,0.6)',
+      '--fader-thumb-radius': '3px',
+      '--button-bg': '#cdd1d6',
+      '--button-bg-hover': '#bbc0c6',
+      '--button-bg-active': '#a6acb3',
+      '--button-gradient': 'linear-gradient(180deg, #8a8f98 0%, #6b7079 50%, #5d626b 100%)',
+      '--button-shadow': '0 1px 2px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.3), inset 0 -1px 0 rgba(0,0,0,0.2)',
+      '--button-border': '1px solid rgba(60,64,72,0.4)',
+      '--button-radius': '3px',
+      '--button-text': '#1a1d22',
+      '--button-text-hover': '#000',
+      '--button-text-active': '#ffffff',
+      '--label-color': '#2a2d34',
+      '--label-text-shadow': '0 1px 0 rgba(255,255,255,0.4)',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'newyork': {
+      '--vu-meter-bg': '#0a1428',
+      '--panel-bg': '#1d3568',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'losangeles': {
+      '--vu-meter-bg': '#0e0820',
+      '--panel-bg': '#341c63',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'chicago': {
+      '--vu-meter-bg': '#0a0a0a',
+      '--panel-bg': '#3a1818',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'atlanta': {
+      '--vu-meter-bg': '#0a0d08',
+      '--panel-bg': '#2c321c',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'dallas': {
+      '--vu-meter-bg': '#06101e',
+      '--panel-bg': '#163058',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'toronto': {
+      '--vu-meter-bg': '#0a0a0a',
+      '--panel-bg': '#321c1c',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'miami': {
+      '--panel-bg': '#0d4268',
+      '--panel-gradient': 'linear-gradient(180deg, #185e90 0%, #135280 25%, #0d4268 60%, #082d48 100%)',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--vu-meter-bg': '#030f1c',
+      '--recess-bg': '#030f1c',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'seattle': {
+      '--vu-meter-bg': '#04140e',
+      '--panel-bg': '#154030',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'houston': {
+      '--vu-meter-bg': '#0a0a0a',
+      '--panel-bg': '#3a1818',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+    'philadelphia': {
+      '--vu-meter-bg': '#08101e',
+      '--panel-bg': '#1c3058',
+      '--panel-gradient': 'none',
+      '--panel-grain': 'repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 1px, rgba(0,0,0,0.04) 1px, rgba(0,0,0,0.04) 2px, transparent 2px, transparent 4px)',
+      '--panel-border': '1px solid rgba(0,0,0,0.5)',
+      '--panel-inner-shadow': 'inset 0 1px 0 rgba(255,255,255,0.18), inset 0 -1px 0 rgba(0,0,0,0.4)',
+      '--panel-outer-shadow': '0 1px 2px rgba(0,0,0,0.5)',
+      '--panel-radius': '4px',
+      '--recess-bg': '#050608',
+      '--recess-inner-shadow': 'inset 0 2px 6px rgba(0,0,0,0.95), inset 0 -1px 0 rgba(255,255,255,0.06)',
+      '--recess-border': '1px solid rgba(0,0,0,0.6)',
+      '--recess-radius': '3px',
+    },
+  };
+
+  const allMaterialKeys = new Set<string>();
+  for (const overrides of Object.values(materialOverrides)) {
+    for (const k of Object.keys(overrides)) allMaterialKeys.add(k);
+  }
+  for (const target of targets) {
+    for (const k of allMaterialKeys) {
+      (target as HTMLElement).style.removeProperty(k);
+    }
+  }
+
+  if (presetId && materialOverrides[presetId]) {
+    for (const target of targets) {
+      for (const [k, v] of Object.entries(materialOverrides[presetId])) {
+        (target as HTMLElement).style.setProperty(k, v);
+      }
+    }
+  }
+
+  // Strip legacy dark-theme / light-theme and any prior theme-* class from both
+  // <html> and <body>, then add the new theme class.
+  const shouldStrip = (c: string) =>
+    c === 'dark-theme' || c === 'light-theme' || c.startsWith('theme-');
+  [document.documentElement, document.body].forEach(el => {
+    if (!el) return;
+    Array.from(el.classList).forEach(c => { if (shouldStrip(c)) el.classList.remove(c); });
+  });
+  if (presetId) document.documentElement.classList.add(`theme-${presetId}`);
 }
 
 // ─── Persistence ───────────────────────────────────────────────
@@ -336,7 +736,7 @@ async function loadTheme(stationId: number): Promise<{ presetId: string; vars: T
 
 // Apply dark defaults synchronously at module load so early-return screens
 // (OnShiftScreen, UserLogin, etc.) don't inherit the light :root CSS vars.
-applyTheme(DEFAULT_PRESET.vars);
+applyTheme(DEFAULT_PRESET.vars, undefined, DEFAULT_PRESET.id);
 
 // ─── useSkin hook ──────────────────────────────────────────────
 
@@ -368,16 +768,16 @@ export function useSkin() {
       const sid: number | null = station?.id ?? null;
       setStationId(sid);
 
-      if (sid == null) { applyTheme(DEFAULT_PRESET.vars); return; }
+      if (sid == null) { applyTheme(DEFAULT_PRESET.vars, undefined, DEFAULT_PRESET.id); return; }
 
       const saved = await loadTheme(sid);
       if (v !== loadVersionRef.current) return;
       if (saved) {
-        // If saved theme has a light background, force back to dark-studio
+        // If saved theme has a light background, force back to ether-default
         const bgPrimary = saved.vars["--bg-primary"] || "";
         if (bgPrimary.startsWith("#f") || bgPrimary.startsWith("#e") || bgPrimary === "#ffffff") {
           setSkinIdState(DEFAULT_PRESET.id);
-          applyTheme(DEFAULT_PRESET.vars);
+          applyTheme(DEFAULT_PRESET.vars, undefined, DEFAULT_PRESET.id);
           saveTheme(DEFAULT_PRESET.id, DEFAULT_PRESET.vars, sid);
           return;
         }
@@ -389,9 +789,9 @@ export function useSkin() {
         // restart rather than being overridden by the stale DB snapshot.
         const livePreset = PRESETS.find(p => p.id === saved.presetId);
         const varsToApply = livePreset ? livePreset.vars : saved.vars;
-        applyTheme(varsToApply, fontStack);
+        applyTheme(varsToApply, fontStack, livePreset ? livePreset.id : saved.presetId);
       } else {
-        applyTheme(DEFAULT_PRESET.vars);
+        applyTheme(DEFAULT_PRESET.vars, undefined, DEFAULT_PRESET.id);
       }
     }
     doLoad();
@@ -403,7 +803,7 @@ export function useSkin() {
     const preset = PRESETS.find(p => p.id === id) || DEFAULT_PRESET;
     setSkinIdState(id);
     const fontStack = FONT_OPTIONS.find(f => f.id === fontId)?.stack;
-    applyTheme(preset.vars, fontStack);
+    applyTheme(preset.vars, fontStack, preset.id);
     saveTheme(id, preset.vars, stationId, fontId);
   }, [fontId, stationId]);
 
@@ -535,9 +935,9 @@ function PresetCard({ p, active }: { p: Preset; active: boolean }) {
   return (
     <button onClick={() => {/* handled by parent */}} style={{
       display: "block", width: "100%", padding: "8px 10px",
-      border: "none", borderRadius: 0,
-      background: active ? "rgba(255,255,255,0.05)" : "transparent",
-      outline: active ? "1.5px solid var(--accent-cyan)" : "1px solid transparent",
+      border: "none", borderRadius: "var(--button-radius, 0px)",
+      background: active ? "var(--bg-hover, rgba(255,255,255,0.05))" : "var(--bg-secondary, transparent)",
+      outline: active ? "1.5px solid var(--accent-cyan)" : "1px solid var(--border-primary, transparent)",
       cursor: "pointer", textAlign: "left",
       transition: "all 0.12s",
     }}>
@@ -645,8 +1045,8 @@ export function SkinPickerOverlay({
   // Live preview on every change
   useEffect(() => {
     const fontStack = FONT_OPTIONS.find(f => f.id === fontId)?.stack;
-    applyTheme(vars, fontStack);
-  }, [vars, fontId]);
+    applyTheme(vars, fontStack, activePreset);
+  }, [vars, fontId, activePreset]);
 
   const selectPreset = (id: string) => {
     const preset = PRESETS.find(p => p.id === id)!;
@@ -660,7 +1060,7 @@ export function SkinPickerOverlay({
   };
 
   const handleSave = async () => {
-    await saveTheme(activePreset, vars, fontId);
+    await saveTheme(activePreset, vars, activeStationId, fontId);
     // Save operator theme if one is selected
     if (opThemeUuid !== null) {
       await (window as any).ether.operators.update(
@@ -668,8 +1068,11 @@ export function SkinPickerOverlay({
         { theme: JSON.stringify({ presetId: activePreset, vars }) }
       );
     }
-    onSelect(activePreset);
+    // Do not call onSelect here — the theme is already live on document.documentElement
+    // from the live-preview useEffect. Calling onSelect would invoke setSkin in App.tsx,
+    // which re-applies hardcoded preset vars and wipes any custom edits.
     setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
   };
 
   const handleExport = async () => {

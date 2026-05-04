@@ -280,7 +280,13 @@ async function getActiveShowClock(stationId: number): Promise<{ clockId: number;
       start_hour: number; end_hour: number; days: string;
     }>(
       `SELECT clock_id, name, start_hour, end_hour, days
-       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?`,
+       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?
+       ORDER BY CASE
+         WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
+         WHEN end_hour = 0 OR end_hour = start_hour THEN 24
+         WHEN end_hour > start_hour              THEN end_hour - start_hour
+         ELSE 24 - start_hour + end_hour
+       END ASC`,
       [stationId]
     );
 
@@ -389,15 +395,17 @@ interface ScheduledTrack {
 interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
 
 async function readGeneratedSchedule(count: number, stationId: number): Promise<ScheduledTrack[]> {
+  const nowTs = Math.floor(Date.now() / 1000);
   const rows = await query<ScheduledTrackRow>(
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
             s.file_path, s.intro_end, s.outro_start
      FROM generated_schedule gs
      LEFT JOIN songs s ON s.id = gs.song_id AND s.station_id = ?
      WHERE gs.id > ? AND gs.station_id = ?
+       AND gs.scheduled_at >= ? - 300
      ORDER BY gs.scheduled_at
      LIMIT ?`,
-    [stationId, _schedCursor, stationId, count]
+    [stationId, _schedCursor, stationId, nowTs, count]
   );
   if (rows.length > 0) {
     _schedCursor = rows[rows.length - 1].row_id;

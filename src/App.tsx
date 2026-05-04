@@ -21,6 +21,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
 import { queryScoped, executeScopedInsert } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
+import { useStreaming } from "./hooks/useStreaming";
 import { engine, DeckState } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
@@ -38,6 +39,10 @@ import BroadcastCalendar from "./components/BroadcastCalendar";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
+import { StreamStatusProvider } from "./contexts/StreamStatusContext";
+import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
+import EtherLogo from "./components/EtherLogo";
+import StreamStatusToast from "./components/StreamStatusToast";
 import DMCANotice from "./components/DMCANotice";
 import JockStrip from "./components/JockStrip";
 import UpNext from "./components/UpNext";
@@ -75,7 +80,6 @@ import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
-import PodcastStudio from "./components/PodcastStudio";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot } from "./components/HealthMonitor";
 import WidgetCanvas from "./canvas/WidgetCanvas";
@@ -96,7 +100,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "podcast" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -150,7 +154,6 @@ const NAV_ICONS: Record<string, JSX.Element> = {
   subscription: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
   settings:     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
   keyboard:     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg>,
-  podcast:      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>,
 };
 
 // ── Session name bar — editable layout name in header ─────────
@@ -408,6 +411,7 @@ export default function App() {
   const [onAir, setOnAir] = useState(false);
   const [onAirOverride, setOnAirOverride] = useState(false);
   const onAirOverrideRef = useRef(false); // ref avoids stale closure in engine.on
+  const { goLive, stopLive } = useStreaming();
   const prevDeckStatus = useRef<Record<string, string>>({}); // track status transitions for console logging
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
@@ -1026,13 +1030,24 @@ export default function App() {
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
   return (
+    <StreamStatusProvider>
     <MidiProvider>
     <EtherErrorBoundary>
-    <div className={"h-screen flex flex-col " + (darkMode ? "dark-theme" : "")} onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
 
       {/* ── Header ── */}
       <header style={{ height: 96, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+
+        {/* Logo — click to return to Mixer */}
+        <div
+          onClick={() => setPanel("live")}
+          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: "0 8px 0 0", opacity: 1, transition: "opacity 0.15s" }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "0.85"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+        >
+          <EtherLogo size={28} iconOnly />
+        </div>
 
         {/* LEFT: Search — width shrinks with viewport, becomes icon-only at <800px */}
         <div style={{ display: "flex", alignSelf: "stretch", flexShrink: 0, zIndex: 1 }}>
@@ -1082,6 +1097,24 @@ export default function App() {
               {!viewport.medium && "Pro"}
             </button>
           )}
+          {panel !== "live" && (
+            <button
+              onClick={() => setPanel("live")}
+              style={{
+                padding: "6px 12px",
+                background: "var(--button-bg, var(--bg-tertiary))",
+                border: "var(--button-border, 1px solid var(--border-primary))",
+                borderRadius: "var(--button-radius, 4px)",
+                color: "var(--button-text, var(--text-primary))",
+                fontSize: 11, fontWeight: 700, letterSpacing: "0.1em",
+                cursor: "pointer", textTransform: "uppercase" as const, transition: "all 0.15s",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--button-bg-hover, var(--bg-hover))"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--button-bg, var(--bg-tertiary))"; }}
+            >
+              Mixer
+            </button>
+          )}
           <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ height: 44, padding: viewport.narrow ? "0 12px" : "0 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", gap: 7 }}>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             {!viewport.narrow && currentUser?.name}
@@ -1111,27 +1144,42 @@ export default function App() {
             </svg>
           </button>
 
-          <button
-            data-tour="onair-btn"
+          <GlobalOnAirBadge
+            onAir={onAir}
             onClick={async () => {
               if (onAir) {
-                setOnAir(false); setOnAirOverride(true); onAirOverrideRef.current = true;
-                invoke("stream_stop").catch(() => {});
+                // OFF transition — set override BEFORE state change so the
+                // engine listener is already locked when React re-renders
+                onAirOverrideRef.current = true;
+                setOnAir(false);
+                setOnAirOverride(true);
+                await stopLive(stationId);
+                // Release override after engine has time to settle
+                setTimeout(() => {
+                  onAirOverrideRef.current = false;
+                  setOnAirOverride(false);
+                }, 1500);
               } else {
-                setOnAir(true); setOnAirOverride(false); onAirOverrideRef.current = false;
+                // ON transition — set override BEFORE state change so the
+                // engine listener cannot immediately revert to off-air
+                onAirOverrideRef.current = true;
+                setOnAir(true);
+                setOnAirOverride(false);
+                const res = await goLive(stationId);
+                if (!res.ok) {
+                  // Stream failed — revert the optimistic UI update
+                  setOnAir(false);
+                  onAirOverrideRef.current = false;
+                  console.error('[ON AIR] Stream failed to start:', res.error);
+                  return;
+                }
+                // Release override after engine has time to settle
+                setTimeout(() => {
+                  onAirOverrideRef.current = false;
+                }, 1500);
               }
             }}
-            style={{
-              height: 48, padding: "0 24px", borderRadius: 0, border: "none", cursor: "pointer",
-              fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
-              background: onAir ? "#ef4444" : "var(--bg-tertiary)",
-              color: onAir ? "#fff" : "var(--text-tertiary)",
-              boxShadow: onAir ? "0 0 16px rgba(239,68,68,0.5)" : "none",
-              transition: "all 0.2s",
-            }}
-          >
-            {onAir ? "● ON AIR" : "OFF AIR"}
-          </button>
+          />
         </div>
 
         {/* ── Slide-out Drawer ── */}
@@ -1186,6 +1234,24 @@ export default function App() {
 
                 {/* ── NAVIGATE ── */}
                 <div style={{ padding: "6px 16px 8px", fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)" }}>NAVIGATE</div>
+                {panel !== "live" && (
+                  <button
+                    onClick={() => { setPanel("live"); setDrawerOpen(false); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 11, width: "100%",
+                      padding: "10px 16px", background: "transparent",
+                      border: "none", borderLeft: "3px solid var(--accent-cyan)",
+                      color: "var(--accent-cyan)",
+                      fontSize: 13, fontWeight: 700,
+                      cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s",
+                    }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                  >
+                    <span style={{ fontSize: 15, lineHeight: 1 }}>🎚️</span>
+                    <span style={{ flex: 1 }}>Return to Mixer</span>
+                  </button>
+                )}
                 {([
                   { key: "library",    emoji: "🎵", label: "Library",     action: () => setPanel("library"),     active: panel === "library"     },
                   { key: "schedule",   emoji: "📋", label: "Schedule",    action: () => setPanel("clocks"),      active: panel === "clocks"      },
@@ -1293,15 +1359,10 @@ export default function App() {
 
       {/* ── Main ── */}
       <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <main style={{ flex: 1, overflow: "hidden", padding: (panel === "podcast" || panel === "videostudio" || panel === "clipeditor") ? 0 : 16, display: "flex", flexDirection: "column" }}>
-          {(panel === "live" || panel === "podcast") && (
+        <main style={{ flex: 1, overflow: "hidden", padding: ((panel as string) === "videostudio" || panel === "clipeditor") ? 0 : 16, display: "flex", flexDirection: "column" }}>
+          {panel === "live" && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
-              {panel === "podcast" ? (
-                <PodcastLayout
-                  deckA={deckA} deckB={deckB} deckC={deckC}
-                  inputDevice={inputDevice}
-                />
-              ) : useCanvas ? (
+              {useCanvas ? (
                 <WidgetCanvas
                   canvasEngine={canvasEngine}
                   deckStates={{ A: deckA, B: deckB, C: deckC }}
@@ -1336,7 +1397,7 @@ export default function App() {
               )}
             </div>
           )}
-          {panel !== "live" && panel !== "podcast" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
+          {panel !== "live" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
               {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
@@ -1422,11 +1483,10 @@ export default function App() {
               )}
             </div>
           )}
-          {/* VideoStudio is always mounted so camera streams and the WebRTC
-              compositor stay alive when the user navigates to another panel.
-              Hidden via display:none rather than unmounted. */}
+          {/* VideoStudio is always mounted so WebRTC state stays alive.
+              Camera only opens when active — see Studio.tsx HostCamera. */}
           <div style={{ display: panel === "videostudio" ? "flex" : "none", flex: 1, minHeight: 0 }}>
-            <VideoStudio />
+            <VideoStudio active={panel === "videostudio"} />
           </div>
           {panel === "clipeditor" && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
@@ -1619,6 +1679,8 @@ export default function App() {
       )}
     </EtherErrorBoundary>
     </MidiProvider>
+    <StreamStatusToast />
+    </StreamStatusProvider>
   );
 }
 
@@ -1736,7 +1798,6 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Save Layout" shortcut="⌘S" onClick={onSave} />
         <Item separator />
         <Item label="Import Music..." onClick={() => set("library")} />
-        <Item label="Export Episode..." onClick={() => set("podcast")} />
         <Item separator />
         {currentUser?.role === "admin" && <Item label="Preferences" onClick={() => set("settings")} />}
       </Menu>
@@ -1869,465 +1930,6 @@ function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => voi
         <circle cx="9" cy="19" r="1" fill="currentColor" stroke="none"/>
         <circle cx="15" cy="19" r="1" fill="currentColor" stroke="none"/>
       </svg>
-    </div>
-  );
-}
-
-// ── Podcast Layout ───────────────────────────────────────────
-// Clean layout: Vertical mixer | Studio panel
-// No music queue — this is a recording environment
-
-function PodcastLayout({ deckA, deckB, deckC, inputDevice }: {
-  deckA: any; deckB: any; deckC: any; inputDevice: string;
-}) {
-  const [hostDevice, setHostDevice] = React.useState<string>("");
-  const [guest1Device, setGuest1Device] = React.useState<string>("");
-  const [guest2Device, setGuest2Device] = React.useState<string>("");
-  const [audioDevices, setAudioDevices] = React.useState<MediaDeviceInfo[]>([]);
-
-  React.useEffect(() => {
-    const load = () => {
-      navigator.mediaDevices.enumerateDevices().then(devs => {
-        setAudioDevices(devs.filter(d => d.kind === "audioinput"));
-      }).catch(() => {});
-    };
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
-      s.getTracks().forEach(t => t.stop());
-      load();
-    }).catch(load);
-    navigator.mediaDevices.addEventListener?.("devicechange", load);
-    return () => navigator.mediaDevices.removeEventListener?.("devicechange", load);
-  }, []);
-
-  const channels = [
-    { label: "Host",    color: "#ef4444", deck: null,  deckSlot: undefined, isMic: true,  deviceId: hostDevice,   setDeviceId: setHostDevice,   guestStatus: undefined },
-    { label: "Guest 1", color: "#38bdf8", deck: deckB, deckSlot: "B",       isMic: false, deviceId: guest1Device, setDeviceId: setGuest1Device, guestStatus: "waiting" as const },
-    { label: "Guest 2", color: "#a78bfa", deck: deckC, deckSlot: "C",       isMic: false, deviceId: guest2Device, setDeviceId: setGuest2Device, guestStatus: "waiting" as const },
-    { label: "Music",   color: "#34d399", deck: deckA, deckSlot: "A",       isMic: false, deviceId: "",           setDeviceId: () => {},         guestStatus: undefined },
-  ];
-
-  return (
-    <div style={{ display: "flex", height: "100%", background: "var(--bg-primary)" }}>
-
-      {/* ── MIXER — vertical stacked channels ── */}
-      <div style={{
-        width: 200, flexShrink: 0,
-        borderRight: "1px solid var(--border-primary)",
-        background: "var(--bg-secondary)",
-        display: "flex", flexDirection: "column" as const,
-        overflow: "hidden",
-      }}>
-        {/* Mixer header */}
-        <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Mixer</div>
-        </div>
-        {/* Channel strips — stacked */}
-        <div style={{ flex: 1, overflowY: "auto" as const }}>
-          {channels.map((ch, i) => (
-            <ChannelStrip key={ch.label} {...ch} audioDevices={audioDevices} isLast={i === channels.length - 1} />
-          ))}
-        </div>
-      </div>
-
-      {/* ── STUDIO PANEL ── */}
-      <div style={{ flex: 1, minWidth: 0, overflow: "hidden", display: "flex", flexDirection: "column" as const }}>
-        <PodcastStudio />
-      </div>
-    </div>
-  );
-}
-
-// ── Channel Strip — horizontal card layout ─────────────────────
-function ChannelStrip({ label, color, deck, deckSlot, isMic, deviceId, setDeviceId, audioDevices, guestStatus, isLast, vertical }: {
-  label: string; color: string; deck: any; deckSlot?: string; isMic: boolean;
-  deviceId: string; setDeviceId: (id: string) => void;
-  audioDevices: MediaDeviceInfo[]; guestStatus?: "waiting"|"connecting"|"connected"|"dropped"; isLast: boolean;
-  vertical?: boolean;
-}) {
-  const [level, setLevel] = React.useState(0);
-  const [levelR, setLevelR] = React.useState(0);
-  const [peakHold, setPeakHold] = React.useState(0);
-  const [peakHoldR, setPeakHoldR] = React.useState(0);
-  const [muted, setMuted] = React.useState(false);
-  const [fader, setFader] = React.useState(100);
-  const animRef = React.useRef<number>(0);
-  const micAnimRef = React.useRef<number>(0);
-  const streamRef = React.useRef<MediaStream | null>(null);
-  const [showPicker, setShowPicker] = React.useState(false);
-  const [pickerRect, setPickerRect] = React.useState<DOMRect | null>(null);
-  const pickerBtnRef = React.useRef<HTMLButtonElement>(null);
-
-  // Mic level via Web Audio API
-  React.useEffect(() => {
-    if (!isMic) return;
-    let cancelled = false;
-    const audioConstraint: any = deviceId ? { deviceId: { exact: deviceId } } : true;
-    navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false }).then(stream => {
-      if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
-      streamRef.current = stream;
-      const ctx = new AudioContext();
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      src.connect(analyser);
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      const tick = () => {
-        analyser.getByteFrequencyData(data);
-        const avg = data.reduce((s, v) => s + v, 0) / data.length / 255;
-        const v = Math.min(1, avg * 3);
-        setLevel(v);
-        setPeakHold(p => Math.max(p * 0.992, v));
-        micAnimRef.current = requestAnimationFrame(tick);
-      };
-      micAnimRef.current = requestAnimationFrame(tick);
-    }).catch(() => {
-      const tick = () => {
-        const v = Math.random() * 0.06;
-        setLevel(v);
-        micAnimRef.current = requestAnimationFrame(tick);
-      };
-      micAnimRef.current = requestAnimationFrame(tick);
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(micAnimRef.current);
-      streamRef.current?.getTracks().forEach(t => t.stop());
-    };
-  }, [isMic, deviceId]);
-
-  // Deck level animation — smoothed, not pure random noise
-  React.useEffect(() => {
-    if (isMic) return;
-    if (deck?.status === "playing") {
-      let smoothedL = 0, smoothedR = 0;
-      let targetL = 0.4, targetR = 0.38;
-      let targetTimer = 0;
-      const tick = () => {
-        targetTimer++;
-        if (targetTimer % 12 === 0) {
-          targetL = 0.25 + Math.random() * 0.6;
-          targetR = 0.25 + Math.random() * 0.6;
-        }
-        smoothedL += (targetL - smoothedL) * 0.15;
-        smoothedR += (targetR - smoothedR) * 0.15;
-        const vL = Math.min(1, Math.max(0, smoothedL + Math.sin(Date.now() / 80) * 0.04));
-        const vR = Math.min(1, Math.max(0, smoothedR + Math.sin(Date.now() / 95 + 1) * 0.04));
-        setLevel(vL);
-        setLevelR(vR);
-        setPeakHold(p => Math.max(p * 0.994, vL));
-        setPeakHoldR(p => Math.max(p * 0.994, vR));
-        animRef.current = requestAnimationFrame(tick);
-      };
-      animRef.current = requestAnimationFrame(tick);
-      return () => cancelAnimationFrame(animRef.current);
-    } else {
-      // Animate decay to zero
-      let decaying = true;
-      const decay = () => {
-        setLevel(l => { const n = l * 0.82; if (n < 0.002) return 0; decaying && requestAnimationFrame(decay); return n; });
-        setLevelR(l => l * 0.82);
-        setPeakHold(p => p * 0.93);
-        setPeakHoldR(p => p * 0.93);
-      };
-      requestAnimationFrame(decay);
-      return () => { decaying = false; };
-    }
-  }, [deck?.status, isMic]);
-
-  const openPicker = () => {
-    if (pickerBtnRef.current) setPickerRect(pickerBtnRef.current.getBoundingClientRect());
-    setShowPicker(p => !p);
-  };
-
-  const isActive = isMic ? level > 0.05 : deck?.status === "playing";
-  const displayName = isMic ? "Host" : (deck?.title ? deck.title.replace(/\s*[-–]\s*([\d]{4}\s*)?remaster.*/gi, '').trim() : "No source");
-  const displaySub = isMic
-    ? (audioDevices.find(d => d.deviceId === deviceId)?.label || "Default Microphone")
-    : (deck?.artist || (guestStatus === "waiting" ? "Waiting for guest..." : "No guest"));
-  const dbVal = level > 0.001 ? Math.round(20 * Math.log10(level)) : null;
-  const NUM_SEGS = 20;
-
-  const statusColor = guestStatus === "connected" ? "var(--accent-green)"
-    : guestStatus === "connecting" ? "var(--accent-amber)"
-    : guestStatus === "dropped" ? "var(--accent-red)"
-    : isActive ? color : "var(--text-tertiary)";
-
-  // ── Vertical channel strip mode (compact deck layout) ──────────
-  if (vertical) {
-    const remaining = deck?.remaining ?? 0;
-    const duration  = deck?.duration ?? 0;
-    const timeStr   = remaining > 0
-      ? `-${Math.floor(remaining/60)}:${String(Math.floor(remaining%60)).padStart(2,'0')}`
-      : '0:00';
-    const pct = duration > 0 ? Math.max(0, Math.min(1, (duration - remaining) / duration)) : 0;
-
-    const VUBar = ({ lv, pk, mono }: { lv: number; pk: number; mono?: boolean }) => (
-      <div style={{ flex: mono ? 2 : 1, position: 'relative', borderRadius: 0, overflow: 'hidden', background: 'var(--bg-tertiary)' }}>
-        <div style={{
-          position: 'absolute', bottom: 0, left: 0, right: 0,
-          height: `${Math.min(100, lv * 100)}%`,
-          background: lv > 0.85 ? '#ef4444' : lv > 0.65 ? '#fbbf24' : color,
-          borderRadius: 0,
-          transition: 'height 0.06s ease-out',
-        }} />
-        {pk > 0.05 && (
-          <div style={{
-            position: 'absolute', left: 0, right: 0,
-            bottom: `${Math.min(98, pk * 100)}%`,
-            height: 2,
-            background: pk > 0.85 ? '#ef4444' : pk > 0.65 ? '#fbbf24' : color,
-          }} />
-        )}
-        {Array.from({ length: 9 }).map((_, i) => (
-          <div key={i} style={{
-            position: 'absolute', left: 0, right: 0,
-            bottom: `${(i+1) * 10}%`, height: 1,
-            background: 'var(--bg-secondary)', opacity: 0.5,
-          }} />
-        ))}
-      </div>
-    );
-
-    return (
-      <div style={{
-        width: '100%', height: '100%',
-        display: 'flex', flexDirection: 'column',
-        background: isActive ? `${color}12` : 'var(--bg-secondary)',
-        border: `1px solid ${isActive ? color+'80' : 'var(--border-primary)'}`,
-        boxShadow: isActive ? `0 0 0 1px ${color}30, inset 0 0 12px ${color}08` : 'none',
-        borderRadius: 0, overflow: 'hidden',
-        transition: 'border-color 0.2s, background 0.2s',
-      }}>
-
-        {/* Label + ON AIR badge */}
-        <div style={{ padding: '4px 6px 3px', flexShrink: 0, borderBottom: '1px solid var(--border-primary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: '0.1em', color: isActive ? color : 'var(--text-tertiary)', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</div>
-          {isActive && <div style={{ fontSize: 7, fontWeight: 800, color: '#fff', background: color, padding: '1px 5px', borderRadius: 0, flexShrink: 0, animation: 'mic-blink 2s ease-in-out infinite', letterSpacing: '0.05em' }}>ON AIR</div>}
-        </div>
-
-        {/* Music: track + artist + time. Mic: no info needed */}
-        {!isMic && (
-          <div style={{ padding: '3px 6px', flexShrink: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayName}</div>
-            {deck?.artist && <div style={{ fontSize: 7, color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{deck.artist}</div>}
-          </div>
-        )}
-
-        {/* VU Meter — shared canvas component, same as all other decks */}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
-          <VUMeter
-            deckId={isMic ? "mic" : (deckSlot || "A")}
-            isPlaying={isActive}
-            hasTrack={isActive}
-            externalLevel={isMic ? (muted ? 0 : level) : undefined}
-          />
-        </div>
-
-        {/* Time remaining for music */}
-        {!isMic && deck && (
-          <div style={{ textAlign: 'center', fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontWeight: 700, color: remaining < 10 && remaining > 0 ? '#ef4444' : 'var(--text-tertiary)', flexShrink: 0, padding: '1px 0' }}>
-            {isActive ? timeStr : '—'}
-          </div>
-        )}
-
-        {/* Progress bar — music only */}
-        {!isMic && (
-          <div style={{ height: 2, background: 'var(--bg-tertiary)', flexShrink: 0, margin: '0 6px' }}>
-            <div style={{ height: '100%', width: `${pct*100}%`, background: 'var(--accent-cyan)', borderRadius: 0, transition: 'width 0.5s linear' }} />
-          </div>
-        )}
-
-        {/* dB */}
-        <div style={{ textAlign: 'center', fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: dbVal !== null && dbVal > -3 ? '#ef4444' : 'var(--text-tertiary)', flexShrink: 0, padding: '1px 0' }}>
-          {dbVal !== null ? `${dbVal}dB` : '—'}
-        </div>
-
-        {/* Fader */}
-        <div style={{ padding: '1px 6px 3px', flexShrink: 0 }}>
-          <input type="range" min={0} max={100} value={fader}
-            onChange={e => { const v = Number(e.target.value); setFader(v); const master = (window as any).__etherMasterVol ?? 1; deckSlot && engine.getDeck(deckSlot)?.setVolume((v/100) * master); }}
-            style={{ width: '100%', accentColor: color, cursor: 'pointer', height: 10 }}
-          />
-        </div>
-
-        {/* Controls */}
-        <div style={{ padding: '2px 4px 5px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {!isMic ? (
-            <div style={{ display: 'flex', gap: 3 }}>
-              <button
-                onClick={() => deck?.status === 'playing' ? engine.getDeck(deckSlot!)?.pause() : engine.getDeck(deckSlot!)?.play()}
-                style={{ flex: 1, padding: '5px 0', borderRadius: 0, border: 'none', background: deck?.status === 'playing' ? color : 'var(--bg-tertiary)', color: deck?.status === 'playing' ? '#000' : 'var(--text-secondary)', fontSize: 13, fontWeight: 800, cursor: 'pointer', transition: 'all 0.15s' }}>
-                {deck?.status === 'playing' ? '❚❚' : '▶'}
-              </button>
-              <button onClick={() => engine.getDeck(deckSlot!)?.stop()}
-                style={{ width: 24, padding: '5px 0', borderRadius: 0, border: 'none', background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)', fontSize: 13, cursor: 'pointer' }}>■</button>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', gap: 3 }}>
-              <button onClick={() => setMuted(m => !m)} style={{
-                flex: 1, padding: '5px 0', borderRadius: 0, border: 'none',
-                background: muted ? '#ef444430' : 'var(--bg-tertiary)',
-                color: muted ? '#ef4444' : 'var(--text-tertiary)',
-                fontSize: 12, fontWeight: 800, letterSpacing: '0.05em', cursor: 'pointer',
-                outline: muted ? '1px solid #ef444450' : 'none',
-              }}>
-                {muted ? 'MUTED' : 'MUTE'}
-              </button>
-              <div style={{
-                width: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                borderRadius: 0, background: isActive && !muted ? `${color}20` : 'var(--bg-tertiary)',
-              }}>
-                <div style={{
-                  width: 6, height: 6, borderRadius: '50%',
-                  background: isActive && !muted ? color : 'var(--text-tertiary)',
-                  boxShadow: isActive && !muted ? `0 0 6px ${color}` : 'none',
-                  animation: isActive && !muted ? 'mic-blink 1.5s ease-in-out infinite' : 'none',
-                }} />
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{
-      borderBottom: isLast ? "none" : "1px solid var(--border-primary)",
-      padding: "12px 14px",
-      background: isActive ? `${color}06` : "transparent",
-      transition: "background 0.3s",
-      position: "relative" as const,
-    }}>
-      {/* Active left border */}
-      <div style={{
-        position: "absolute" as const, left: 0, top: 0, bottom: 0, width: 3,
-        background: isActive ? color : "transparent",
-        boxShadow: isActive ? `2px 0 8px ${color}60` : "none",
-        transition: "all 0.3s",
-      }} />
-
-      {/* Header row: label + status + dB */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 800, color: isActive ? color : "var(--text-secondary)", letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{label}</span>
-          {/* Guest status dot */}
-          {guestStatus && (
-            <div style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor, boxShadow: guestStatus === "connected" ? `0 0 5px ${statusColor}` : "none", animation: guestStatus === "connecting" ? "mic-blink 0.8s ease-in-out infinite" : "none" }} />
-          )}
-          {isActive && !guestStatus && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 0, background: `${color}15`, border: `1px solid ${color}25` }}>
-              <div style={{ width: 5, height: 5, borderRadius: "50%", background: color, animation: "mic-blink 1.5s ease-in-out infinite" }} />
-              <span style={{ fontSize: 12, fontWeight: 800, color, letterSpacing: "0.08em" }}>LIVE</span>
-            </div>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontWeight: 500, color: dbVal !== null && dbVal > -3 ? "#ef4444" : "var(--text-tertiary)", minWidth: 36, textAlign: "right" as const }}>
-            {dbVal !== null ? `${dbVal}dB` : "—"}
-          </span>
-          <button onClick={() => setMuted(m => !m)} style={{ padding: "2px 8px", borderRadius: 0, background: muted ? `${color}20` : "var(--bg-tertiary)", border: `1px solid ${muted ? color + "40" : "var(--border-primary)"}`, color: muted ? color : "var(--text-tertiary)", fontSize: 13, fontWeight: 800, cursor: "pointer", letterSpacing: "0.06em" }}>
-            {muted ? "MUTED" : "MUTE"}
-          </button>
-        </div>
-      </div>
-
-      {/* Track info */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 2 }}>{displayName}</div>
-        <button ref={pickerBtnRef} onClick={openPicker} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", padding: 0, cursor: "pointer", width: "100%" }}>
-          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.7 }}>
-            <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-            <path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/>
-          </svg>
-          <span style={{ fontSize: 12, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, textAlign: "left" as const }}>{displaySub}</span>
-          {(isMic || audioDevices.length > 0) && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>}
-        </button>
-      </div>
-
-      {/* Horizontal VU meter */}
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ display: "flex", gap: 1.5, height: 14, alignItems: "flex-end" }}>
-          {Array.from({ length: NUM_SEGS }).map((_, i) => {
-            const threshold = i / NUM_SEGS;
-            const lit = !muted && level > threshold;
-            const isPeak = peakHold > 0.05 && Math.abs(peakHold - threshold) < 1.5 / NUM_SEGS;
-            const segColor = i >= NUM_SEGS - 2 ? "#ef4444" : i >= NUM_SEGS - 5 ? "#fbbf24" : color;
-            const segHeight = i < 8 ? 8 : i < 14 ? 10 : 14;
-            return (
-              <div key={i} style={{
-                flex: 1,
-                height: segHeight,
-                borderRadius: 0,
-                background: lit ? segColor : isPeak ? segColor + "90" : "var(--bg-tertiary)",
-                opacity: lit ? 1 : isPeak ? 0.8 : 0.25,
-                boxShadow: lit && i >= NUM_SEGS - 2 ? `0 0 4px ${segColor}` : "none",
-                transition: "opacity 0.04s, background 0.04s",
-                alignSelf: "flex-end",
-              }} />
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Fader */}
-      <input
-        type="range" min={0} max={100} value={fader}
-        onChange={e => {
-          const v = Number(e.target.value);
-          setFader(v);
-          const master = (window as any).__etherMasterVol ?? 1;
-          deckSlot && engine.getDeck(deckSlot)?.setVolume((v / 100) * master);
-        }}
-        style={{ width: "100%", accentColor: color, cursor: "pointer", height: 3, display: "block" }}
-      />
-
-      {/* Device picker dropdown */}
-      {showPicker && audioDevices.length > 0 && pickerRect && (
-        <>
-          <div onClick={() => setShowPicker(false)} style={{ position: "fixed" as const, inset: 0, zIndex: 9000 }} />
-          <div style={{
-            position: "fixed" as const,
-            bottom: window.innerHeight - pickerRect.top + 6,
-            left: Math.max(8, pickerRect.left - 10),
-            zIndex: 9001,
-            background: "var(--bg-elevated)",
-            border: "1px solid var(--border-secondary)",
-            borderRadius: 0, padding: "8px 6px",
-            boxShadow: "0 -4px 32px rgba(0,0,0,0.4)",
-            minWidth: 260, maxWidth: 340,
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, padding: "2px 10px 8px" }}>
-              Audio Input — {label}
-            </div>
-            {audioDevices.map((dev, i) => {
-              const name = dev.label || `Microphone ${i + 1}`;
-              const active = dev.deviceId === deviceId || (!deviceId && dev.deviceId === "default");
-              return (
-                <button key={dev.deviceId} onClick={() => { setDeviceId(dev.deviceId); setShowPicker(false); }} style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  width: "100%", textAlign: "left" as const,
-                  padding: "8px 10px", borderRadius: 0, border: "none", cursor: "pointer",
-                  background: active ? `${color}18` : "none",
-                  color: active ? color : "var(--text-primary)",
-                  fontSize: 12, fontWeight: active ? 700 : 400,
-                  transition: "background 0.1s",
-                }}
-                  onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
-                  onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "none"; }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.5 }}>
-                    <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-                    <path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/>
-                  </svg>
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{name}</span>
-                  {active && <span style={{ flexShrink: 0 }}>✓</span>}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
     </div>
   );
 }
@@ -2671,6 +2273,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   }, []);
   // Mic ON state for console fader view
   const [consoleMicOn, setConsoleMicOn] = useState<Record<string, boolean>>({});
+  const [consoleMicVol, setConsoleMicVol] = useState<Record<string, number>>({});
   // Guest mic on/off state — keyed by slot ("E", "F", etc.). Mirrors mic state pattern.
   const [consoleGuestOn, setConsoleGuestOn] = useState<Record<string, boolean>>({});
   const [consoleGuestLevel, setConsoleGuestLevel] = useState<Record<string, number>>({});
@@ -2986,15 +2589,17 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   <ConsoleStrip
                     label={config?.label || "MIC"}
                     color="#ef4444"
-                    volume={1}
+                    volume={consoleMicVol[slot] ?? 1}
                     level={micIsOn ? masterLevel * 0.6 : 0}
                     isPlaying={micIsOn}
                     isOn={micIsOn}
-                    onVolumeChange={() => {}}
+                    onVolumeChange={v => {
+                      setConsoleMicVol(prev => ({ ...prev, [slot]: v }));
+                      window.dispatchEvent(new CustomEvent("ether:mic-volume", { detail: { slot, volume: v } }));
+                    }}
                     onToggleOn={() => {
                       const next = !micIsOn;
                       setConsoleMicOn(prev => ({ ...prev, [slot]: next }));
-                      // Broadcast mic state change to MicDeck components
                       window.dispatchEvent(new CustomEvent("ether:mic-toggle", { detail: { slot, active: next } }));
                     }}
                   />

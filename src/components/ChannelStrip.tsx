@@ -62,13 +62,38 @@ export default function ChannelStrip({
     const bPeaks = new Array(BAR_COUNT).fill(0);
     const bPeakTimes = new Array(BAR_COUNT).fill(0);
 
+    let cachedColors = {
+      bg: "#0a0a0e", barUnlit: "#111116", gradLow: "#008878",
+      gradMid: "#a07020", gradHigh: "#a02020", peakNorm: "#00c8a8",
+      peakWarn: "#d09030", peakClip: "#e04040", tick: "rgba(255,255,255,0.04)",
+    };
+    let colorCacheTs = 0;
+
     const draw = () => {
       const W = canvas.width;
       const H = canvas.height;
       ctx.clearRect(0, 0, W, H);
 
+      // Refresh theme colors every 2s
+      const now = Date.now();
+      if (now - colorCacheTs > 2000) {
+        const s = getComputedStyle(document.documentElement);
+        cachedColors = {
+          bg:       s.getPropertyValue("--vu-bg").trim()          || "#0a0a0e",
+          barUnlit: s.getPropertyValue("--vu-bar-unlit").trim()   || "#111116",
+          gradLow:  s.getPropertyValue("--vu-grad-low").trim()    || "#008878",
+          gradMid:  s.getPropertyValue("--vu-grad-mid").trim()    || "#a07020",
+          gradHigh: s.getPropertyValue("--vu-grad-high").trim()   || "#a02020",
+          peakNorm: s.getPropertyValue("--vu-peak-normal").trim() || "#00c8a8",
+          peakWarn: s.getPropertyValue("--vu-peak-warn").trim()   || "#d09030",
+          peakClip: s.getPropertyValue("--vu-peak-clip").trim()   || "#e04040",
+          tick:     s.getPropertyValue("--vu-tick").trim()        || "rgba(255,255,255,0.04)",
+        };
+        colorCacheTs = now;
+      }
+
       // Background
-      ctx.fillStyle = "#0a0a0e";
+      ctx.fillStyle = cachedColors.bg;
       ctx.fillRect(0, 0, W, H);
 
       const lvl = levelRef.current;
@@ -83,16 +108,16 @@ export default function ChannelStrip({
         const x = i * (barW + 1);
 
         // Unlit track
-        ctx.fillStyle = "#111116";
+        ctx.fillStyle = cachedColors.barUnlit;
         ctx.fillRect(x, 0, barW, H);
 
         // Gradient fill — teal bottom → amber → red top
         if (h > 0) {
           const grad = ctx.createLinearGradient(x, H, x, 0);
-          grad.addColorStop(0,    "#008878");
-          grad.addColorStop(0.60, "#a07020");
-          grad.addColorStop(0.80, "#a02020");
-          grad.addColorStop(1,    "#a02020");
+          grad.addColorStop(0,    cachedColors.gradLow);
+          grad.addColorStop(0.60, cachedColors.gradMid);
+          grad.addColorStop(0.80, cachedColors.gradHigh);
+          grad.addColorStop(1,    cachedColors.gradHigh);
           ctx.fillStyle = grad;
           ctx.fillRect(x, H - h, barW, h);
         }
@@ -102,13 +127,13 @@ export default function ChannelStrip({
         else if (Date.now() - bPeakTimes[i] > 1200) bPeaks[i] *= 0.97;
         if (bPeaks[i] > 0.05) {
           const ph = bPeaks[i] * H;
-          ctx.fillStyle = bPeaks[i] > 0.80 ? "#e04040" : bPeaks[i] > 0.60 ? "#d09030" : "#00c8a8";
+          ctx.fillStyle = bPeaks[i] > 0.80 ? cachedColors.peakClip : bPeaks[i] > 0.60 ? cachedColors.peakWarn : cachedColors.peakNorm;
           ctx.fillRect(x, H - ph - 2, barW, 2);
         }
       }
 
       // Zone ticks at 60% and 80%
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.strokeStyle = cachedColors.tick;
       ctx.lineWidth = 1;
       [0.40, 0.20].forEach(f => {
         const y = Math.floor(H * f);
@@ -136,10 +161,10 @@ export default function ChannelStrip({
     ? `-${Math.floor(remaining / 60)}:${String(Math.floor(remaining % 60)).padStart(2, "0")}`
     : "0:00";
 
-  // Color for strip type
-  const typeColor = type === "mic" ? "#ef4444"
-    : type === "guest" ? "#a78bfa"
-    : type === "cart"  ? "#fbbf24"
+  // Color for strip type — resolved via CSS custom properties
+  const typeColor = type === "mic"   ? "var(--deck-mic-color)"
+    : type === "guest" ? "var(--deck-guest-color)"
+    : type === "cart"  ? "var(--deck-cart-color)"
     : color;
 
   return (
@@ -148,10 +173,11 @@ export default function ChannelStrip({
       style={{
         width: "100%", height: "100%",
         display: "flex", flexDirection: "column",
-        background: "#0e0e12",
-        borderRadius: 0,
-        border: "none",
-        boxShadow: "none",
+        background: "linear-gradient(180deg, #8a8f98 0%, #7a8089 25%, #6b7079 60%, #5d626b 100%)",
+        backgroundColor: "#6b7079",
+        border: "1px solid rgba(0,0,0,0.5)",
+        borderRadius: "4px",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.5)",
         overflow: "hidden",
         userSelect: "none",
         transition: "border-color 0.2s, box-shadow 0.2s",
@@ -211,7 +237,7 @@ export default function ChannelStrip({
       </div>
 
       {/* ── VU Meter — takes remaining space ── */}
-      <div style={{ flex: 1, position: "relative", padding: "0 4px 4px", minHeight: 0, background: "#080808" }}>
+      <div style={{ flex: 1, position: "relative", padding: "0 4px 4px", minHeight: 0, background: "var(--recess-bg, var(--strip-vu-container-bg))", boxShadow: "var(--recess-inner-shadow, none)", border: "var(--recess-border, none)", borderRadius: "var(--recess-radius, 0px)" }}>
         <canvas
           ref={canvasRef}
           width={120}
@@ -224,8 +250,8 @@ export default function ChannelStrip({
             position: "absolute", bottom: 8, left: 0, right: 0,
             textAlign: "center",
             fontSize: 11, fontWeight: 800, fontFamily: "'DM Mono', monospace",
-            color: remaining < 10 ? "#ef4444" : "rgba(255,255,255,0.8)",
-            textShadow: "0 1px 4px rgba(0,0,0,0.8)",
+            color: remaining < 10 ? "var(--accent-red)" : "rgba(255,255,255,0.8)",
+            textShadow: "0 1px 4px var(--strip-time-shadow)",
             pointerEvents: "none",
           }}>
             {timeStr}
@@ -246,7 +272,28 @@ export default function ChannelStrip({
 
       {/* ── Volume fader ── */}
       <div style={{ padding: "4px 6px 2px", flexShrink: 0 }}>
+        <style>{`
+          #vol-${label.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px; height: 14px;
+            border-radius: var(--fader-thumb-radius, 50%);
+            background: ${typeColor};
+            background-image: var(--fader-thumb-gradient, none);
+            border: var(--fader-thumb-border, 1px solid var(--strip-thumb-border));
+            box-shadow: var(--fader-thumb-shadow, 0 1px 2px var(--strip-thumb-shadow));
+            cursor: pointer;
+          }
+          #vol-${label.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}::-moz-range-thumb {
+            width: 14px; height: 14px;
+            border-radius: var(--fader-thumb-radius, 50%);
+            background: ${typeColor};
+            background-image: var(--fader-thumb-gradient, none);
+            border: var(--fader-thumb-border, 1px solid var(--strip-thumb-border));
+            cursor: pointer;
+          }
+        `}</style>
         <input
+          id={`vol-${label.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}`}
           type="range" min={0} max={1} step={0.01} value={vol}
           onChange={handleVol}
           style={{ width: "100%", accentColor: typeColor, height: 12, cursor: "pointer" }}

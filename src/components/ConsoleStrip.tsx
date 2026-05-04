@@ -108,18 +108,21 @@ export default function ConsoleStrip({
   return (
     <div style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
-      background: "#1a1a20", borderRight: "1px solid #252530",
+      backgroundColor: "var(--panel-bg, #1a1a20)",
+      backgroundImage: "var(--panel-gradient, none)",
+      borderRight: "var(--panel-border, 1px solid #252530)",
+      boxShadow: "var(--panel-outer-shadow, none)",
       userSelect: "none", overflow: "hidden",
     }}>
 
       {/* ── Channel label ── */}
       <div style={{
         width: "100%", padding: "8px 0",
-        background: isOn && isPlaying ? color : "#252530",
-        borderBottom: "1px solid #303040",
+        background: isOn && isPlaying ? color : "var(--strip-label-bg, transparent)",
+        borderBottom: "1px solid var(--strip-divider, #303040)",
         textAlign: "center",
         fontSize: 11, fontWeight: 800, letterSpacing: "0.14em",
-        color: isOn && isPlaying ? "#000" : (isOn ? color : "#555"),
+        color: isOn && isPlaying ? "#000" : (isOn ? color : "var(--strip-label-text, #555)"),
         transition: "all 0.2s",
       }}>
         {label}
@@ -178,7 +181,7 @@ export default function ConsoleStrip({
             top: 0, right: 2,
             fontSize: 7, lineHeight: 1,
             fontFamily: "'DM Mono', ui-monospace, monospace",
-            color: "rgba(255,255,255,0.14)",
+            color: "var(--scale-text, rgba(255,255,255,0.14))",
             pointerEvents: "none", zIndex: 1,
           }}>+6</div>
 
@@ -200,8 +203,8 @@ export default function ConsoleStrip({
                   width: isUnity ? 16 : 9,
                   height: 1,
                   background: isUnity
-                    ? "rgba(255,255,255,0.50)"  // 0 dB notch — notably brighter
-                    : "rgba(255,255,255,0.14)",
+                    ? "var(--scale-tick-unity, rgba(255,255,255,0.50))"
+                    : "var(--scale-tick, rgba(255,255,255,0.14))",
                   pointerEvents: "none", zIndex: 1,
                 }} />
 
@@ -211,7 +214,7 @@ export default function ConsoleStrip({
                     position: "absolute",
                     left: "50%", transform: "translateX(-50%)",
                     top: y - 1, height: 3, width: 10,
-                    background: "rgba(255,255,255,0.22)",
+                    background: "var(--scale-tick-unity, rgba(255,255,255,0.22))",
                     boxShadow: "0 0 5px rgba(255,255,255,0.10)",
                     pointerEvents: "none", zIndex: 2,
                   }} />
@@ -224,8 +227,8 @@ export default function ConsoleStrip({
                   fontSize: 7, lineHeight: 1,
                   fontFamily: "'DM Mono', ui-monospace, monospace",
                   color: isUnity
-                    ? "rgba(255,255,255,0.55)"  // 0 dB label more visible
-                    : "rgba(255,255,255,0.24)",
+                    ? "var(--scale-text-unity, rgba(255,255,255,0.55))"
+                    : "var(--scale-text, rgba(255,255,255,0.24))",
                   pointerEvents: "none", zIndex: 1,
                 }}>
                   {lbl}
@@ -270,9 +273,9 @@ export default function ConsoleStrip({
         {/* ── Mono VU meter — full height, right side ── */}
         <div style={{
           flex: 1, minWidth: 16, height: "100%",
-          background: "#0a0a0f",
-          border: "1px solid #303040",
-          boxShadow: "inset 0 2px 6px rgba(0,0,0,0.5)",
+          background: "var(--vu-meter-bg, #0a0a0f)",
+          border: "1px solid var(--strip-divider, #303040)",
+          boxShadow: "inset 0 2px 6px rgba(0,0,0,0.4)",
           position: "relative", overflow: "hidden",
         }}>
           {/* Meter fill */}
@@ -309,8 +312,8 @@ export default function ConsoleStrip({
       <div style={{
         width: "100%", textAlign: "center", padding: "4px 0",
         fontSize: 9, fontFamily: "'DM Mono', monospace",
-        color: "#666", borderTop: "1px solid #303040",
-        background: "#141418",
+        color: "#666", borderTop: "1px solid var(--strip-divider, #303040)",
+        background: "var(--strip-readout-bg, transparent)",
       }}>
         {db} dB
       </div>
@@ -319,7 +322,7 @@ export default function ConsoleStrip({
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center",
         gap: 8, padding: "10px 0 12px",
-        background: "#141418", borderTop: "1px solid #303040",
+        background: "var(--strip-readout-bg, transparent)", borderTop: "1px solid var(--strip-divider, #303040)",
       }}>
 
         {/* ON / OFF — blue glow when active */}

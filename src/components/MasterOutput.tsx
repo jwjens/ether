@@ -12,10 +12,19 @@ import { AudioRoutingPicker, CurrentRoutingSummary } from "./AudioRoutingPanel";
 import { engine } from "../audio/engine-rodio";
 
 // ── Constants ────────────────────────────────────────────────
-// Accent colors only — backgrounds/text use CSS variables
+// Fallback values only — resolved via CSS custom properties at runtime
 const TEAL = "#00c8a8";
 const AMB  = "#c07820";
 const RED  = "#c02828";
+
+function readThemeColors() {
+  const s = getComputedStyle(document.documentElement);
+  return {
+    TEAL: s.getPropertyValue("--accent-teal").trim()  || TEAL,
+    AMB:  s.getPropertyValue("--accent-amber").trim() || AMB,
+    RED:  s.getPropertyValue("--accent-red").trim()   || RED,
+  };
+}
 const PEAK_HOLD_MS = 1400;
 
 // ── Console event bus ────────────────────────────────────────
@@ -65,9 +74,18 @@ function MasterVU({ master }: { master: number }) {
     });
     ro.observe(canvas);
 
-    // Cache theme colors — read from canvas element to inherit theme class
+    // Cache theme colors — refreshed every 2s so theme switches are reflected
     let cachedBg   = "#080810";
     let cachedTxt2 = "#606070";
+    let cachedVu = {
+      teal:     "#00c8a8",
+      amb:      "#c07820",
+      red:      "#c02828",
+      peakClip: "#e04040",
+      peakWarn: "#d09030",
+      peakNorm: "#00d8b0",
+      tick:     "rgba(255,255,255,0.04)",
+    };
     let colorCacheTs = 0;
 
     const draw = () => {
@@ -79,9 +97,18 @@ function MasterVU({ master }: { master: number }) {
 
       // Refresh theme colors at most every 2 seconds
       if (now - colorCacheTs > 2000) {
-        const cs = getComputedStyle(canvas);
-        cachedBg   = cs.getPropertyValue("--bg-primary").trim()     || "#080810";
-        cachedTxt2 = cs.getPropertyValue("--text-secondary").trim() || "#606070";
+        const cs = getComputedStyle(document.documentElement);
+        cachedBg   = cs.getPropertyValue("--vu-bg-master").trim()    || "#080810";
+        cachedTxt2 = cs.getPropertyValue("--text-secondary").trim()  || "#606070";
+        cachedVu = {
+          teal:     cs.getPropertyValue("--accent-teal").trim()   || "#00c8a8",
+          amb:      cs.getPropertyValue("--accent-amber").trim()  || "#c07820",
+          red:      cs.getPropertyValue("--accent-red").trim()    || "#c02828",
+          peakClip: cs.getPropertyValue("--vu-peak-clip").trim()  || "#e04040",
+          peakWarn: cs.getPropertyValue("--vu-peak-warn").trim()  || "#d09030",
+          peakNorm: cs.getPropertyValue("--vu-peak-normal").trim()|| "#00d8b0",
+          tick:     cs.getPropertyValue("--vu-tick").trim()       || "rgba(255,255,255,0.04)",
+        };
         colorCacheTs = now;
       }
 
@@ -114,11 +141,11 @@ function MasterVU({ master }: { master: number }) {
         if (barH > 0) {
           const grad = ctx.createLinearGradient(x, h, x, fillY);
           if (lv <= 0.60) {
-            grad.addColorStop(0, "#00c8a8"); grad.addColorStop(1, "#006058");
+            grad.addColorStop(0, cachedVu.teal); grad.addColorStop(1, "#006058");
           } else if (lv <= 0.80) {
-            grad.addColorStop(0, "#00c8a8"); grad.addColorStop(0.7, "#c07820"); grad.addColorStop(1, "#905010");
+            grad.addColorStop(0, cachedVu.teal); grad.addColorStop(0.7, cachedVu.amb); grad.addColorStop(1, "#905010");
           } else {
-            grad.addColorStop(0, "#00c8a8"); grad.addColorStop(0.5, "#c07820"); grad.addColorStop(0.8, "#c02828"); grad.addColorStop(1, "#901818");
+            grad.addColorStop(0, cachedVu.teal); grad.addColorStop(0.5, cachedVu.amb); grad.addColorStop(0.8, cachedVu.red); grad.addColorStop(1, "#901818");
           }
           ctx.fillStyle = grad;
           ctx.fillRect(x, fillY, barW, barH);
@@ -132,7 +159,7 @@ function MasterVU({ master }: { master: number }) {
         }
         if (peakRef.current > 0.05) {
           const py = Math.max(1, h - Math.floor(peakRef.current * h) - 1);
-          ctx.fillStyle = peakRef.current > 0.80 ? "#e04040" : peakRef.current > 0.60 ? "#d09030" : "#00d8b0";
+          ctx.fillStyle = peakRef.current > 0.80 ? cachedVu.peakClip : peakRef.current > 0.60 ? cachedVu.peakWarn : cachedVu.peakNorm;
           ctx.fillRect(x, py, barW, 1);
         }
       };
@@ -142,7 +169,7 @@ function MasterVU({ master }: { master: number }) {
       drawBar(0,         barW, levelL.current, peakL, peakLAt);
       drawBar(barW + gap, barW, levelR.current, peakR, peakRAt);
 
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.strokeStyle = cachedVu.tick;
       ctx.lineWidth = 1;
       [0.40, 0.20].forEach(f => {
         const y = Math.floor(h * f);
@@ -163,27 +190,88 @@ function MasterVU({ master }: { master: number }) {
   }, []);
 
   return (
-    <div style={{ width: "100%", height: 110, flexShrink: 0 }}>
+    <div style={{ width: "100%", height: 110, flexShrink: 0, background: "var(--recess-bg, var(--vu-bg-master))", boxShadow: "var(--recess-inner-shadow, none)", border: "var(--recess-border, none)", borderRadius: "var(--recess-radius, 0px)" }}>
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
     </div>
   );
 }
 
 // ── Fader ────────────────────────────────────────────────────
-function Fader({
-  label, value, onChange,
-}: { label: string; value: number; onChange: (v: number) => void }) {
+function Fader({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const updateFromClientX = useCallback((clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    onChange(ratio);
+  }, [onChange]);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setDragging(true);
+    updateFromClientX(e.clientX);
+    const onMove = (ev: MouseEvent) => updateFromClientX(ev.clientX);
+    const onUp = () => {
+      setDragging(false);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [updateFromClientX]);
+
   return (
     <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border-primary)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
         <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>{label}</span>
-        <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: TEAL }}>{Math.round(value * 100)}</span>
+        <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--accent-teal)" }}>{Math.round(value * 100)}</span>
       </div>
-      <input
-        type="range" min={0} max={1} step={0.01} value={value}
-        onChange={e => onChange(parseFloat(e.target.value))}
-        style={{ width: "100%", accentColor: TEAL, cursor: "pointer", height: 3 }}
-      />
+
+      <div
+        ref={trackRef}
+        onMouseDown={handleMouseDown}
+        style={{
+          position: "relative",
+          width: "100%", height: 12,
+          cursor: dragging ? "grabbing" : "pointer",
+          display: "flex", alignItems: "center",
+          userSelect: "none",
+        }}
+      >
+        {/* Track — 3px tall horizontal bar */}
+        <div style={{
+          position: "absolute", left: 0, right: 0, top: "50%",
+          transform: "translateY(-50%)",
+          height: 3,
+          background: "var(--fader-track-bg, rgba(255,255,255,0.08))",
+        }} />
+        {/* Fill — teal from 0 to thumb */}
+        <div style={{
+          position: "absolute", left: 0, top: "50%",
+          transform: "translateY(-50%)",
+          height: 3,
+          width: `${value * 100}%`,
+          background: "var(--accent-teal)",
+          pointerEvents: "none",
+        }} />
+        {/* Thumb — 12×12 */}
+        <div style={{
+          position: "absolute",
+          left: `${value * 100}%`,
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 12, height: 12,
+          borderRadius: "var(--fader-thumb-radius, 50%)",
+          background: "var(--accent-teal)",
+          backgroundImage: "var(--fader-thumb-gradient, none)",
+          border: "var(--fader-thumb-border, 1px solid var(--strip-thumb-border))",
+          boxShadow: "var(--fader-thumb-shadow, none)",
+          pointerEvents: "none",
+        }} />
+      </div>
     </div>
   );
 }
@@ -298,7 +386,7 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
       {/* Console header */}
       <div style={{ padding: "6px 10px 5px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
-        <div style={{ width: 5, height: 5, borderRadius: "50%", background: engineOk ? "#22c55e" : "#c02828", flexShrink: 0, animation: engineOk ? "none" : "con-blink 1s step-start infinite" }} />
+        <div style={{ width: 5, height: 5, borderRadius: "50%", background: engineOk ? "var(--status-live)" : "var(--status-error)", flexShrink: 0, animation: engineOk ? "none" : "con-blink 1s step-start infinite" }} />
         <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, flex: 1 }}>Console</span>
         <button
           onClick={() => { setLines([]); userScrolled.current = false; }}
@@ -314,9 +402,9 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
             flex: 1, padding: "3px 0", fontSize: 7, fontWeight: 700,
             letterSpacing: "0.06em", background: "none", border: "none",
             borderRight: f.id !== "audio" ? "1px solid var(--border-primary)" : "none",
-            color: filter === f.id ? TEAL : "var(--text-secondary)",
+            color: filter === f.id ? "var(--accent-teal)" : "var(--text-secondary)",
             cursor: "pointer",
-            borderBottom: filter === f.id ? `1px solid ${TEAL}` : "none",
+            borderBottom: filter === f.id ? "1px solid var(--accent-teal)" : "none",
             marginBottom: filter === f.id ? -1 : 0,
           }}>{f.label}</button>
         ))}
@@ -591,7 +679,7 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
           <MasterVU master={masterLevel * masterVol} />
         </div>
         <div style={{ padding: "6px 4px", borderTop: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-          <div title={onAir ? "ON AIR" : "STANDBY"} style={{ width: 8, height: 8, borderRadius: "50%", background: onAir ? "#22c55e" : "#3a3a4a", boxShadow: onAir ? "0 0 6px #22c55e" : "none" }} />
+          <div title={onAir ? "ON AIR" : "STANDBY"} style={{ width: 8, height: 8, borderRadius: "50%", background: onAir ? "var(--status-live)" : "var(--status-offline)", boxShadow: onAir ? "0 0 6px var(--status-live)" : "none" }} />
           <div style={{ fontSize: 7, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", writingMode: "vertical-rl" as const, transform: "rotate(180deg)", letterSpacing: "0.08em" }}>{uptime}</div>
         </div>
       </div>
@@ -623,7 +711,7 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
               display: "flex", alignItems: "center", justifyContent: "center",
               padding: 0, transition: "background 0.12s, color 0.12s",
             }}
-            onMouseEnter={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "rgba(96,128,192,0.15)"; el.style.color = "#88a8e0"; }}
+            onMouseEnter={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "var(--master-collapse-bg)"; el.style.color = "var(--master-collapse-text)"; }}
             onMouseLeave={e => { const el = e.currentTarget as HTMLButtonElement; el.style.background = "transparent"; el.style.color = "var(--text-secondary)"; }}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -639,7 +727,7 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
             title="Pop out to separate window"
             onClick={() => (window as any).ether?.invoke("window:popout", "master")}
             style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "1px 4px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0 }}
-            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
+            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--master-popout-text)"}
             onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
           >
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -669,7 +757,7 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
         <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Limiter</span>
         <span style={{
           fontSize: 9, fontFamily: "'DM Mono', monospace",
-          color: masterLevel > 0.85 ? AMB : TEAL,
+          color: masterLevel > 0.85 ? "var(--accent-amber)" : "var(--accent-teal)",
         }}>{limitDb} dB</span>
       </div>
 
@@ -678,8 +766,8 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <div style={{
             width: 5, height: 5, borderRadius: "50%",
-            background: eqActive ? AMB : "var(--border-primary)",
-            boxShadow: eqActive ? `0 0 4px ${AMB}` : "none",
+            background: eqActive ? "var(--accent-amber)" : "var(--border-primary)",
+            boxShadow: eqActive ? "0 0 4px var(--accent-amber)" : "none",
             transition: "all 0.2s",
           }} />
           <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Master EQ</span>
@@ -689,9 +777,9 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
           style={{
             fontSize: 7, fontWeight: 700, letterSpacing: "0.1em",
             padding: "2px 8px", borderRadius: 0,
-            background: eqOpen ? "rgba(96,64,192,0.18)" : "none",
-            border: `1px solid ${eqOpen ? "#6040c0" : "var(--border-primary)"}`,
-            color: eqOpen ? "#8060e0" : "var(--text-secondary)",
+            background: eqOpen ? "var(--master-eq-bg)" : "none",
+            border: `1px solid ${eqOpen ? "var(--master-eq-border)" : "var(--border-primary)"}`,
+            color: eqOpen ? "var(--master-eq-text)" : "var(--text-secondary)",
             cursor: "pointer", transition: "all 0.15s",
           }}
         >{eqOpen ? "CLOSE" : "OPEN"}</button>
@@ -706,21 +794,21 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
       )}
 
       {/* Station status — collapsible */}
-      <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+      <div style={{ flexShrink: 0 }}>
         <div
           onClick={() => setStationInfoOpen(o => !o)}
-          style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", cursor: "pointer", flexShrink: 0, background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", userSelect: "none" as const }}
         >
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
             style={{ color: "var(--text-secondary)", transform: stationInfoOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
             <polyline points="9 18 15 12 9 6" />
           </svg>
-          <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Station</span>
+          <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Station</span>
         </div>
         {stationInfoOpen && (
           <>
-            <StatusRow dot={onAir ? "#22c55e" : "#3a3a4a"} label="On Air" value={onAir ? "LIVE" : "STBY"} />
-            <StatusRow dot="#3a3a4a" label="Stream" value="—" />
+            <StatusRow dot={onAir ? "var(--status-live)" : "var(--status-offline)"} label="On Air" value={onAir ? "LIVE" : "STBY"} />
+            <StatusRow dot="var(--status-offline)" label="Stream" value="—" />
             <StatusRow label="Uptime" value={uptime} />
             <StatusRow label="Next Break" value={nextBreak} />
           </>
@@ -735,16 +823,16 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
       {expanded && (
         <>
           {/* NOW PLAYING */}
-          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+          <div style={{ flexShrink: 0 }}>
             <div
               onClick={() => setNowPlayingOpen(o => !o)}
-              style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", cursor: "pointer", flexShrink: 0, background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", userSelect: "none" as const }}
             >
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
                 style={{ color: "var(--text-secondary)", transform: nowPlayingOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-              <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Now playing</span>
+              <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Now playing</span>
             </div>
             {nowPlayingOpen && (
               <div style={{ padding: "8px 14px" }}>
@@ -758,11 +846,11 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
                     </div>
                     {/* Progress bar */}
                     <div style={{ height: 3, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden", marginBottom: 4 }}>
-                      <div style={{ height: "100%", width: `${playPct * 100}%`, background: TEAL, transition: "width 1s linear" }} />
+                      <div style={{ height: "100%", width: `${playPct * 100}%`, background: "var(--accent-teal)", transition: "width 1s linear" }} />
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
                       <span style={{ fontSize: 8, color: "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>{fmtSec(activeDeck.positionSec)}</span>
-                      <span style={{ fontSize: 8, color: timeRemaining !== null && timeRemaining < 30 ? AMB : "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
+                      <span style={{ fontSize: 8, color: timeRemaining !== null && timeRemaining < 30 ? "var(--accent-amber)" : "var(--text-tertiary)", fontFamily: "'DM Mono',monospace" }}>
                         -{fmtSec(timeRemaining ?? 0)}
                       </span>
                     </div>
@@ -775,16 +863,16 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
           </div>
 
           {/* NEXT UP */}
-          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+          <div style={{ flexShrink: 0 }}>
             <div
               onClick={() => setNextUpRightOpen(o => !o)}
-              style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", cursor: "pointer", flexShrink: 0, background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", userSelect: "none" as const }}
             >
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
                 style={{ color: "var(--text-secondary)", transform: nextUpRightOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-              <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Next up</span>
+              <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Next up</span>
             </div>
             {nextUpRightOpen && (
               <div style={{ padding: "8px 14px" }}>
@@ -802,22 +890,22 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
           </div>
 
           {/* SHOW ARC */}
-          <div style={{ flexShrink: 0, borderBottom: "1px solid var(--border-primary)" }}>
+          <div style={{ flexShrink: 0 }}>
             <div
               onClick={() => setShowProgressOpen(o => !o)}
-              style={{ padding: "5px 14px", display: "flex", alignItems: "center", gap: 5, cursor: "pointer", userSelect: "none" as const }}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", cursor: "pointer", flexShrink: 0, background: "var(--bg-tertiary)", borderBottom: "1px solid var(--border-primary)", userSelect: "none" as const }}
             >
               <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
                 style={{ color: "var(--text-secondary)", transform: showProgressOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
                 <polyline points="9 18 15 12 9 6" />
               </svg>
-              <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Show progress</span>
+              <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Show progress</span>
             </div>
             {showProgressOpen && (
               <div style={{ padding: "8px 14px" }}>
                 {currentShow ? (
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <ArcProgress pct={showPct} size={50} stroke={4} color={TEAL} />
+                    <ArcProgress pct={showPct} size={50} stroke={4} color="var(--accent-teal)" />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, marginBottom: 2 }}>
                         {currentShow.name}

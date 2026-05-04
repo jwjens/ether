@@ -31,10 +31,21 @@ export default function VUMeter({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Cache theme colors — read from canvas element (inherits theme class from DOM ancestors)
-    // Refreshed every 2s so theme switches are reflected without restarting the loop
-    let cachedBg = "#0e0e12";
-    let bgCacheTs = 0;
+    // Cache theme colors — refreshed every 2s so theme switches are reflected
+    let colors = {
+      bgMeter:       "#0e0e12",
+      standbyDeckC:  "#601820",
+      standbyDeckAB: "#003828",
+      watermark:     "#c0c0d0",
+      gradLow:       "#008878",
+      gradMid:       "#a07020",
+      gradHigh:      "#a02020",
+      peakNorm:      "#00c8a8",
+      peakWarn:      "#d09030",
+      peakClip:      "#e04040",
+      tick:          "rgba(255,255,255,0.04)",
+    };
+    let colorCacheTs = 0;
 
     const draw = () => {
       const ctx = canvas.getContext("2d");
@@ -44,16 +55,29 @@ export default function VUMeter({
       const h   = canvas.height;
       const now = Date.now();
 
-      // Refresh theme color at most every 2 seconds
-      if (now - bgCacheTs > 2000) {
-        cachedBg = getComputedStyle(canvas).getPropertyValue("--bg-primary").trim() || "#0e0e12";
-        bgCacheTs = now;
+      // Refresh theme colors at most every 2 seconds
+      if (now - colorCacheTs > 2000) {
+        const s = getComputedStyle(document.documentElement);
+        colors = {
+          bgMeter:       s.getPropertyValue("--vu-bg-meter").trim()        || "#0e0e12",
+          standbyDeckC:  s.getPropertyValue("--vu-standby-deck-c").trim()  || "#601820",
+          standbyDeckAB: s.getPropertyValue("--vu-standby-deck-ab").trim() || "#003828",
+          watermark:     s.getPropertyValue("--vu-watermark").trim()       || "#c0c0d0",
+          gradLow:       s.getPropertyValue("--vu-grad-low").trim()        || "#008878",
+          gradMid:       s.getPropertyValue("--vu-grad-mid").trim()        || "#a07020",
+          gradHigh:      s.getPropertyValue("--vu-grad-high").trim()       || "#a02020",
+          peakNorm:      s.getPropertyValue("--vu-peak-normal").trim()     || "#00c8a8",
+          peakWarn:      s.getPropertyValue("--vu-peak-warn").trim()       || "#d09030",
+          peakClip:      s.getPropertyValue("--vu-peak-clip").trim()       || "#e04040",
+          tick:          s.getPropertyValue("--vu-tick").trim()            || "rgba(255,255,255,0.04)",
+        };
+        colorCacheTs = now;
       }
 
       ctx.clearRect(0, 0, w, h);
 
-      // Background — matches var(--bg-primary)
-      ctx.fillStyle = cachedBg;
+      // Background
+      ctx.fillStyle = colors.bgMeter;
       ctx.fillRect(0, 0, w, h);
 
       // ── STANDBY ───────────────────────────────────────────────
@@ -62,7 +86,7 @@ export default function VUMeter({
           // Gentle center flatline wave — not a fake level simulation
           standbyPhase.current += 0.022;
           const p = standbyPhase.current;
-          const col = deckId === "C" ? "#601820" : "#003828";
+          const col = deckId === "C" ? colors.standbyDeckC : colors.standbyDeckAB;
           ctx.fillStyle = col;
           ctx.globalAlpha = 0.55;
           const lineH = Math.max(2, Math.floor(h * 0.06));
@@ -81,7 +105,7 @@ export default function VUMeter({
               ? Math.floor(Math.min(h * 0.40, w * 0.55))
               : Math.floor(Math.min(h * 0.40, w * 0.70));
             ctx.globalAlpha = hasTrack ? 0.18 : 0.30;
-            ctx.fillStyle = "#c0c0d0";
+            ctx.fillStyle = colors.watermark;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.font = `bold ${sz}px sans-serif`;
@@ -111,16 +135,16 @@ export default function VUMeter({
         const fillY = h - barH;
 
         // Unlit track — same as bg, invisible when silent
-        ctx.fillStyle = cachedBg;
+        ctx.fillStyle = colors.bgMeter;
         ctx.fillRect(x, 0, bw, h);
 
         // Lit fill — gradient: teal at bottom → amber at 60% → red at top
         if (barH > 0) {
           const grad = ctx.createLinearGradient(x, h, x, 0);
-          grad.addColorStop(0,    "#008878"); // teal at bottom
-          grad.addColorStop(0.60, "#a07020"); // amber at 60%
-          grad.addColorStop(0.80, "#a02020"); // red at 80%
-          grad.addColorStop(1,    "#a02020"); // red at top
+          grad.addColorStop(0,    colors.gradLow);  // teal at bottom
+          grad.addColorStop(0.60, colors.gradMid);  // amber at 60%
+          grad.addColorStop(0.80, colors.gradHigh); // red at 80%
+          grad.addColorStop(1,    colors.gradHigh); // red at top
           ctx.fillStyle = grad;
           ctx.fillRect(x, fillY, bw, barH);
         }
@@ -134,9 +158,9 @@ export default function VUMeter({
         }
         if (pkRef.current > 0.05) {
           const py = Math.max(0, h - Math.floor(pkRef.current * h) - 1);
-          ctx.fillStyle = pkRef.current > 0.80 ? "#e04040"
-            : pkRef.current > 0.60 ? "#d09030"
-            : "#00c8a8";
+          ctx.fillStyle = pkRef.current > 0.80 ? colors.peakClip
+            : pkRef.current > 0.60 ? colors.peakWarn
+            : colors.peakNorm;
           ctx.fillRect(x, py, bw, 1);
         }
       };
@@ -145,7 +169,7 @@ export default function VUMeter({
       drawBar(0, w, levelL.current, peakL, peakLAt);
 
       // Subtle zone ticks (60% and 80%)
-      ctx.strokeStyle = "rgba(255,255,255,0.04)";
+      ctx.strokeStyle = colors.tick;
       ctx.lineWidth   = 1;
       [0.40, 0.20].forEach(f => {
         const y = Math.floor(h * f);

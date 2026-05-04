@@ -49,6 +49,7 @@ export default function VideoEnginePanel() {
     setConfig, addDestination, removeDestination, patchDestination, setRecordPath,
     startStream, stopStream, startRecording, stopRecording,
     listCameras,
+    removeGuestSource,
   } = eng;
 
   const [dragFrom, setDragFrom] = useState<number | null>(null);
@@ -178,15 +179,34 @@ export default function VideoEnginePanel() {
           </div>
         )}
         {sources.map(s => {
+          const GUEST_PUR = "#a855f7";
           const accent = s.kind === "screen" ? GRN
                        : s.kind === "camera" ? PUR
                        : s.kind === "image"  ? AMB
+                       : s.kind === "guest"  ? GUEST_PUR
                        :                       "#888";
+          const isGuest = s.kind === "guest";
+          const icon = s.kind === "camera" ? "▶"
+                     : s.kind === "image"  ? "⬢"
+                     : s.kind === "guest"  ? "◉"
+                     : "▦";
+          const isHost = s.externalId === "host";
+          const sceneLayerIdx = layers.findIndex(l => l.source_id === s.id);
+          const onScene = sceneLayerIdx !== -1;
+          const handleRemove = () => {
+            if (isGuest) {
+              const guestId = s.externalId?.replace("guest:", "") ?? "";
+              removeGuestSource(guestId);
+            } else {
+              removeSource(s.id);
+            }
+          };
           return (
             <div key={s.id}
               style={{
                 display: "flex", alignItems: "center", gap: 6, padding: "5px 4px",
                 borderBottom: `1px solid ${BG3}`,
+                borderLeft: isGuest ? `2px solid ${GUEST_PUR}` : "2px solid transparent",
               }}
             >
               {s.thumbnailDataUrl ? (
@@ -197,7 +217,7 @@ export default function VideoEnginePanel() {
                 <div style={{ width: 36, height: 22, background: BG3, border: `1px solid ${BG3}`,
                               color: accent, display: "flex", alignItems: "center", justifyContent: "center",
                               fontSize: 13, flexShrink: 0 }}>
-                  {s.kind === "camera" ? "▶" : s.kind === "image" ? "⬢" : "▦"}
+                  {icon}
                 </div>
               )}
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -205,22 +225,32 @@ export default function VideoEnginePanel() {
                   {s.label}
                 </div>
                 <div style={{ fontSize: 8, color: TXT2, textTransform: "uppercase" as const, letterSpacing: 0.4 }}>
-                  <span style={{ color: accent }}>{s.kind}</span>
+                  {isGuest ? (
+                    <span style={{
+                      color: "#fff", background: GUEST_PUR,
+                      padding: "1px 4px", fontSize: 7, fontWeight: 700, letterSpacing: "0.06em",
+                      marginRight: 4,
+                    }}>GUEST</span>
+                  ) : (
+                    <span style={{ color: accent }}>{s.kind}</span>
+                  )}
                   {s.width && s.height && ` · ${s.width}×${s.height}`}
                   {s.stream && s.stream.getAudioTracks().length > 0 && " · audio"}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                 <button
-                  onClick={() => addLayerFromSource(s.id)}
-                  title="Add to scene"
-                  style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "#14b8a6", border: "none", color: "#fff", fontSize: 18, fontWeight: 700, cursor: "pointer", lineHeight: 1, borderRadius: 0 }}
-                >+</button>
-                <button
-                  onClick={() => removeSource(s.id)}
-                  title="Remove source"
-                  style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "#ef4444", border: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", lineHeight: 1, borderRadius: 0 }}
-                >×</button>
+                  onClick={() => onScene ? removeLayer(sceneLayerIdx) : addLayerFromSource(s.id)}
+                  title={onScene ? "Remove from scene" : "Add to scene"}
+                  style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: onScene ? "#6b21a8" : "#14b8a6", border: "none", color: "#fff", fontSize: 18, fontWeight: 700, cursor: "pointer", lineHeight: 1, borderRadius: 0 }}
+                >{onScene ? "−" : "+"}</button>
+                {!isHost && (
+                  <button
+                    onClick={handleRemove}
+                    title={isGuest ? "Remove from sources (guest stays connected)" : "Remove source"}
+                    style={{ width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "#ef4444", border: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", lineHeight: 1, borderRadius: 0 }}
+                  >×</button>
+                )}
               </div>
             </div>
           );
