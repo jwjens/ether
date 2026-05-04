@@ -2100,7 +2100,7 @@ function GuestEngineSync({
   return null;
 }
 
-export default function Studio({ embedded, active = true }: { embedded?: boolean; active?: boolean } = {}) {
+export default function ShowPlus({ embedded, active = true }: { embedded?: boolean; active?: boolean } = {}) {
   const [hostStream, setHostStream]       = useState<MediaStream | null>(null);
   const [guestsEnabled, setGuestsEnabled] = useState(false);
   const [rightTab, setRightTab]           = useState<RightTab>("engine");

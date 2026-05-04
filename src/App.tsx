@@ -1,7 +1,7 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import etherMarkSvg from "./assets/ether-logo.svg";
-import VideoStudio from "./components/Studio";
+import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
 // Electron IPC bridge (replaces @tauri-apps imports)
 const invoke = (cmd: string, args?: Record<string, unknown>) =>
