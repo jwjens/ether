@@ -2064,10 +2064,14 @@ function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove }: {
 }) {
   const vidRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (vidRef.current && guest.stream) {
-      vidRef.current.srcObject = guest.stream;
-      vidRef.current.play().catch(() => {});
-    }
+    const v = vidRef.current;
+    const s = guest.stream;
+    if (!v || !s) return;
+    v.srcObject = s;
+    v.play().catch(() => {});
+    const onAdd = () => { v.srcObject = s; v.play().catch(() => {}); };
+    s.addEventListener("addtrack", onAdd);
+    return () => { s.removeEventListener("addtrack", onAdd); };
   }, [guest.stream]);
 
   return (
