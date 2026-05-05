@@ -171,6 +171,14 @@ export default function ProgramLog({ onClose }: Props) {
   useEffect(() => { loadDayData(selectedDate); }, [selectedDate, loadDayData]);
 
   // ── Scheduling engine ─────────────────────────────────────────
+  // DEFERRED (phase-3.5 cluster C): every execute() write in this section
+  // targets scheduled_log using column names (song_title, song_artist,
+  // slot_type, category_code, category_color, label, status) that do NOT
+  // exist in the live DB schema (which has title, artist and nothing else
+  // from that list). Every INSERT silently fails inside the try/catch, so
+  // scheduled_log has 0 rows and schedule generation has never worked.
+  // Full fix — schema repair + typed-handler migration + UI corrections —
+  // is tracked in docs/phase-3.5-programlog-deferred.md.
 
   const scheduleOneHour = async (date: string, hour: number): Promise<boolean> => {
     try {
@@ -382,12 +390,14 @@ export default function ProgramLog({ onClose }: Props) {
   };
 
   const clearHour = async (hour: number) => {
+    // DEFERRED: scheduled_log write — see docs/phase-3.5-programlog-deferred.md
     await execute("DELETE FROM scheduled_log WHERE log_date=? AND hour=?", [selectedDate, hour]);
     loadDayData(selectedDate);
     loadScheduledDates();
   };
 
   const clearDay = async () => {
+    // DEFERRED: scheduled_log write — see docs/phase-3.5-programlog-deferred.md
     await execute("DELETE FROM scheduled_log WHERE log_date=?", [selectedDate]);
     loadDayData(selectedDate);
     loadScheduledDates();
@@ -1215,7 +1225,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
 
   const swapSong = async (newSong: Song) => {
     if (!swapTarget) return;
-    // Update in DB
+    // DEFERRED: scheduled_log UPDATE — see docs/phase-3.5-programlog-deferred.md
     await execute(
       `UPDATE scheduled_log SET song_id=?, song_title=?, song_artist=?, duration_ms=?
        WHERE id=?`,
@@ -1234,7 +1244,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
     const reordered = [...entries];
     const [moved] = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
-    // Update positions in DB
+    // DEFERRED: scheduled_log UPDATE — see docs/phase-3.5-programlog-deferred.md
     await Promise.all(reordered.map((e, i) =>
       execute("UPDATE scheduled_log SET position=? WHERE id=?", [i, e.id])
     ));

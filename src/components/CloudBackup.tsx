@@ -323,6 +323,14 @@ export default function CloudBackup() {
       }
 
       // Restore scheduled_log
+      // DEFERRED (phase-3.5 cluster C): these execute() calls are intentional
+      // raw writes that bypass the typed handler. Same class as the play_log
+      // restore above — cloud restore is a privileged DB operation, not a
+      // normal app write. Additionally, the column names here (song_title,
+      // song_artist, slot_type, etc.) do not match the live DB schema (title,
+      // artist), so this restore path is doubly broken. Both problems deferred.
+      // See docs/phase-3.5-programlog-deferred.md and
+      //     docs/phase-3.5-cloudbackup-restore-deferred.md
       if (payload.tables?.scheduled_log?.length > 0) {
         await execute("DELETE FROM scheduled_log", []);
         for (const row of payload.tables.scheduled_log) {
