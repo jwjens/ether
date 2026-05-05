@@ -225,52 +225,52 @@ function songsResetLoudnessByStation(db, stationId) {
 function installSongs(ipcMain, db) {
   ipcMain.handle('songs:list', (_, opts) => {
     try { return { ok: true, rows: songsList(db, opts) }; }
-    catch (e) { console.error('[songs:list] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:get-by-id', (_, uuid) => {
     try { return { ok: true, row: songsGet(db, uuid) }; }
-    catch (e) { console.error('[songs:get-by-id] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:create', (_, payload) => {
     try { return { ok: true, row: songsCreate(db, payload) }; }
-    catch (e) { console.error('[songs:create] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:update', (_, uuid, patch) => {
     try { return { ok: true, row: songsUpdate(db, uuid, patch) }; }
-    catch (e) { console.error('[songs:update] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:delete', (_, uuid) => {
     try { return { ok: true, ...songsDelete(db, uuid) }; }
-    catch (e) { console.error('[songs:delete] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:get-by-int-id', (_, intId) => {
     try { return { ok: true, row: songsGetByIntId(db, intId) }; }
-    catch (e) { console.error('[songs:get-by-int-id] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:update-by-id', (_, intId, patch) => {
     try { return { ok: true, row: songsUpdateById(db, intId, patch) }; }
-    catch (e) { console.error('[songs:update-by-id] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:delete-by-id', (_, intId) => {
     try { return { ok: true, ...songsDeleteById(db, intId) }; }
-    catch (e) { console.error('[songs:delete-by-id] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:delete-by-station', (_, stationId) => {
     try { return { ok: true, ...songsDeleteByStation(db, stationId) }; }
-    catch (e) { console.error('[songs:delete-by-station] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:reset-loudness-by-station', (_, stationId) => {
     try { return { ok: true, ...songsResetLoudnessByStation(db, stationId) }; }
-    catch (e) { console.error('[songs:reset-loudness-by-station] FAILED', e.message, e.stack); return { ok: false, error: e.message }; }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   console.log('[songs] handlers installed');
