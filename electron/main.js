@@ -947,6 +947,7 @@ function buildMenu() {
       { type: "separator" },
       { label: "Program Log",      click: () => send("nav:programlog") },
       { label: "Play Log",         click: () => send("nav:logs") },
+      { label: "Announcements",    click: () => send("nav:announce") },
     ]},
     { label: "Tools", submenu: [
       { label: "Voice Tracker", click: () => send("nav:voicetrack") },
