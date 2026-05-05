@@ -74,6 +74,8 @@ try {
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
+const { SYNCED_TABLES } = require('./sync/synced-tables');
+const SYNCED_TABLES_SET = new Set(SYNCED_TABLES);
 
 // ── App identity ──────────────────────────────────────────────
 app.setAppUserModelId("ether");
@@ -1218,8 +1220,12 @@ ipcMain.handle("db:query", (_, sql, params) => {
 
 ipcMain.handle("db:execute", (_, sql, params) => {
   try {
-    // Drop and recreate FTS triggers around deletes to avoid contentless table errors
-    if (sql.trim().toUpperCase().startsWith("DELETE FROM SONGS")) {
+    // FTS workaround: drop/recreate trigger around DELETE FROM songs to avoid
+    // contentless-table errors. Explicit exception to the synced-table guard below —
+    // closes in Commit 3+ when songs DELETE migrates to the typed handler.
+    // MINOR FIX: tightened from startsWith("DELETE FROM SONGS") which also matched
+    // "DELETE FROM SONGS_FTS"; new regex requires exact table name "songs".
+    if (/^\s*DELETE\s+FROM\s+songs\s*(?:WHERE|$)/i.test(sql)) {
       db.exec("DROP TRIGGER IF EXISTS trg_songs_fts_delete");
       const stmt = db.prepare(sql);
       const result = stmt.run(...(params || []));
@@ -1229,6 +1235,29 @@ ipcMain.handle("db:execute", (_, sql, params) => {
         END`);
       return { data: result, error: null };
     }
+
+    // Synced-table write guard (Phase 3.5 Commit 2). SELECTs are read-only — skip.
+    if (!/^\s*SELECT/i.test(sql)) {
+      const insertMatch = sql.match(/^\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)/i);
+      const updateMatch = sql.match(/^\s*UPDATE\s+(\w+)\s+SET/i);
+      const deleteMatch = sql.match(/^\s*DELETE\s+FROM\s+(\w+)/i);
+      const tableMatch  = insertMatch || updateMatch || deleteMatch;
+      const verb        = insertMatch ? 'INSERT' : updateMatch ? 'UPDATE' : deleteMatch ? 'DELETE' : null;
+      const tableName   = tableMatch ? tableMatch[1].toLowerCase() : null;
+
+      if (tableName && SYNCED_TABLES_SET.has(tableName)) {
+        const msg = `ERR_SYNCED_TABLE_WRITE: table '${tableName}' has a typed handler ` +
+          `(window.ether.${tableName}.*); db:execute is locked against direct writes to ` +
+          `synced tables. See docs/phase-3.5-status-audit.md for migration guidance.`;
+        console.error("[db:execute LOCKED]", verb, tableName, "— SQL:", sql.slice(0, 120));
+        return { data: null, error: msg };
+      }
+      // No table name parsed (unusual SQL form) — warn and allow through (degraded-mode safety).
+      if (!tableName && verb) {
+        console.warn("[db:execute] could not parse table name from non-SELECT SQL:", sql.slice(0, 120));
+      }
+    }
+
     const stmt = db.prepare(sql);
     const result = stmt.run(...(params || []));
     return { data: result, error: null };
