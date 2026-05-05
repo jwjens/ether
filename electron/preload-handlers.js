@@ -73,11 +73,12 @@ module.exports = function buildHandlers(ipcRenderer) {
     deleteById: (intId)           => ipcRenderer.invoke('clocks:delete-by-id', intId),
   },
   deckConfigs: {
-    list:    (stationId, opts) => ipcRenderer.invoke('deck_configs:list',      stationId, opts),
-    getById: (uuid)            => ipcRenderer.invoke('deck_configs:get-by-id', uuid),
-    create:  (payload)         => ipcRenderer.invoke('deck_configs:create',    payload),
-    update:  (uuid, patch)     => ipcRenderer.invoke('deck_configs:update',    uuid, patch),
-    delete:  (uuid, stationId) => ipcRenderer.invoke('deck_configs:delete',    uuid, stationId),
+    list:         (stationId, opts)        => ipcRenderer.invoke('deck_configs:list',             stationId, opts),
+    getById:      (uuid)                   => ipcRenderer.invoke('deck_configs:get-by-id',        uuid),
+    create:       (payload)                => ipcRenderer.invoke('deck_configs:create',           payload),
+    update:       (uuid, patch)            => ipcRenderer.invoke('deck_configs:update',           uuid, patch),
+    updateBySlot: (stationId, slot, patch) => ipcRenderer.invoke('deck_configs:update-by-slot',  stationId, slot, patch),
+    delete:       (uuid, stationId)        => ipcRenderer.invoke('deck_configs:delete',           uuid, stationId),
   },
   formatClocks: {
     list:       (stationId, opts) => ipcRenderer.invoke('format_clocks:list',           stationId, opts),

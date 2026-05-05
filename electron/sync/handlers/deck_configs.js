@@ -142,6 +142,20 @@ function deckConfigsDelete(db, uuid, stationId) {
 
 
 
+function deckConfigsUpdateBySlot(db, stationId, slot, patch) {
+  validateScope();
+  let existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND slot = ? AND deleted_at IS NULL`
+  ).get(stationId, slot);
+  if (!existing) throw new Error(`[deck_configs] slot not found: ${slot} for station ${stationId}`);
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE station_id = ? AND slot = ?`).run(uuid, stationId, slot);
+    existing = { ...existing, uuid };
+  }
+  return deckConfigsUpdate(db, existing.uuid, patch);
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installDeckConfigs(ipcMain, db) {
@@ -170,6 +184,10 @@ function installDeckConfigs(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('deck_configs:update-by-slot', (_, stationId, slot, patch) => {
+    try { return { ok: true, row: deckConfigsUpdateBySlot(db, stationId, slot, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[deck_configs] handlers installed');
 }
@@ -181,6 +199,6 @@ module.exports = {
   deckConfigsGet,
   deckConfigsCreate,
   deckConfigsUpdate,
+  deckConfigsUpdateBySlot,
   deckConfigsDelete,
-
 };

@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { engine } from "../audio/engine-rodio";
-import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -63,10 +62,10 @@ export function useDeckConfig() {
 
   const save = async (next: DeckConfig[]) => {
     await Promise.all(next.map(c =>
-      execute(
-        "UPDATE deck_configs SET type=?, label=?, color=?, enabled=?, purpose=? WHERE station_id=? AND slot=?",
-        [c.type, c.label, c.color, c.enabled ? 1 : 0, c.purpose || "", stationId, c.slot]
-      )
+      (window as any).ether.deckConfigs.updateBySlot(stationId, c.slot, {
+        type: c.type, label: c.label, color: c.color,
+        enabled: c.enabled ? 1 : 0, purpose: c.purpose || "",
+      })
     ));
     setConfigs([...next].sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)));
   };
