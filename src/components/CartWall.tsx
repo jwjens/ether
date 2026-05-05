@@ -29,7 +29,7 @@ export default function CartWall() {
 
   const load = async () => {
     if (!isReady) return;
-    const rows = await queryScoped<CartSlot>("SELECT * FROM cart_slots ORDER BY slot_number", [], stationId);
+    const rows = await queryScoped<CartSlot>("SELECT * FROM cart_slots WHERE deleted_at IS NULL ORDER BY slot_number", [], stationId);
     const g: (CartSlot | null)[] = [];
     for (let i = 0; i < TOTAL; i++) g.push(rows.find(r => r.slot_number === i) || null);
     setSlots(g);
@@ -108,7 +108,6 @@ export default function CartWall() {
                   onClick={() => fireCart(i)}
                   draggable
                   onDragStart={(e) => { e.dataTransfer.setData("application/cart", JSON.stringify({ filePath: slot.file_path, title: slot.title || "Cart " + (i+1), artist: "" })); e.dataTransfer.effectAllowed = "copy"; }}
-                  onContextMenu={(e) => { e.preventDefault(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }}
                   className={isFlashing ? "cart-flash" : ""}
                   style={{
                     width: "100%", height: "100%", minHeight: 80,
@@ -137,6 +136,7 @@ export default function CartWall() {
                     <span style={{ width: 6, height: 6, borderRadius: "50%", background: isPlaying ? slot.color : "transparent", flexShrink: 0, boxShadow: isPlaying ? `0 0 6px ${slot.color}` : "none" }} />
                   </div>
                 </button>
+                <button onClick={(e) => { e.stopPropagation(); setEditing(slot.slot_number); setEditTitle(slot.title || ""); setEditColor(slot.color); setEditHotkey(slot.hotkey || ""); }} style={{ position: "absolute", top: 3, right: 18, width: 14, height: 14, background: "#0e0e14", border: "1px solid #2a2a38", fontSize: 8, color: "#555568", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} className="opacity-0 group-hover:opacity-100 hover:!text-zinc-200">⚙</button>
                 <button onClick={() => clearSlot(i)} style={{ position: "absolute", top: 3, right: 3, width: 14, height: 14, background: "#0e0e14", border: "1px solid #2a2a38", fontSize: 8, color: "#555568", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} className="opacity-0 group-hover:opacity-100 hover:!text-red-400">×</button>
               </div>
             );
