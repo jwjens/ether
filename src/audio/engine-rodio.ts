@@ -181,6 +181,13 @@ export class AudioEngine {
           if (liveTo?.status === "playing") return;  // destination already playing — skip
         }
         await invoke("audio_play", { deck: toId });
+        // Schedule explicit stop on the source deck after the crossfade window.
+        // Rust keeps fromId in "playing" state until either the finished flag is
+        // consumed by audio_get_state OR an explicit audio_stop is issued. The
+        // 100ms poll and handleRotateCtoA's own audio_get_state race for that flag;
+        // the loser sees stale "playing" and bails the next C→A rotation. Stopping
+        // the source deck after the tail plays out eliminates the race entirely.
+        setTimeout(() => { invoke("audio_stop", { deck: fromId }).catch(() => {}); }, (this.crossfadeDuration * 1000) + 500);
         if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
         if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
         if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
