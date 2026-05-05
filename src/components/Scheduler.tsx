@@ -93,6 +93,7 @@ function ShowsTab() {
   const [shows, setShows] = useState<Show[]>([]);
   const [clocks, setClocks] = useState<Clock[]>([]);
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState("");
 
@@ -138,7 +139,7 @@ function ShowsTab() {
     load();
   };
 
-  const remove = async (id: number) => { await (window as any).ether.shows.deleteById(id); load(); };
+  const remove = async (id: number) => { await (window as any).ether.shows.deleteById(id); setConfirmDelete(null); load(); };
 
   return (
     <div className="space-y-3">
@@ -223,7 +224,15 @@ function ShowsTab() {
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setEditing(s)} className="px-2 py-1 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button>
-                <button onClick={() => remove(s.id)} className="px-2 py-1 bg-zinc-800 hover:bg-red-900 rounded text-[10px] text-zinc-500 hover:text-red-400">Del</button>
+                {confirmDelete === s.id ? (
+                  <div className="flex items-center gap-1 px-2 py-1 bg-red-950 border border-red-800 rounded text-[10px]">
+                    <span className="text-red-400">Sure?</span>
+                    <button onClick={() => remove(s.id)} className="font-bold text-red-400 hover:text-red-300 px-1">Yes</button>
+                    <button onClick={() => setConfirmDelete(null)} className="text-zinc-400 hover:text-zinc-300 px-1">No</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setConfirmDelete(s.id)} className="px-2 py-1 bg-zinc-800 hover:bg-red-900 rounded text-[10px] text-zinc-500 hover:text-red-400">Del</button>
+                )}
               </div>
             </div>
             <div className="mt-2 flex items-center gap-2">
