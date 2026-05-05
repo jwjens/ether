@@ -100,10 +100,10 @@ function ShowsTab() {
     if (!isReady) return;
     // station_id scoping: manual JOIN — shows.station_id filters scope; clocks joined by FK
     setShows(await queryScoped<Show>(
-      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? ORDER BY s.start_hour",
+      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.start_hour",
       [stationId], stationId, { skipScoping: true }
     ));
-    setClocks(await queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId));
+    setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
   };
   useEffect(() => { load(); }, [isReady]);
 
@@ -706,7 +706,7 @@ function ClocksTab() {
   // ── Fix: reload cats every time the tab is active ────────────
   const loadAll = async () => {
     if (!isReady) return;
-    setClocks(await queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId));
+    setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
     setCats(await queryScoped<Category>("SELECT * FROM categories ORDER BY priority, code", [], stationId));
   };
 
@@ -716,7 +716,7 @@ function ClocksTab() {
       `SELECT cs.*, c.code as category_code, c.color as category_color
        FROM clock_slots cs
        LEFT JOIN categories c ON c.id = cs.category_id
-       WHERE cs.clock_id = ? AND cs.station_id = ? ORDER BY cs.position`,
+       WHERE cs.clock_id = ? AND cs.station_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`,
       [clockId, stationId],
       stationId,
       { skipScoping: true }
