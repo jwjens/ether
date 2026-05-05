@@ -77,25 +77,6 @@ const Database = require("better-sqlite3");
 const { SYNCED_TABLES } = require('./sync/synced-tables');
 const SYNCED_TABLES_SET = new Set(SYNCED_TABLES);
 
-// ── Startup log mirror (debug, phase-3.5) ─────────────────────
-// Mirrors all console.log / console.error to ~/ether-startup.log
-// so we can inspect startup output without terminal access.
-// Remove before final phase-3.5 commit lands.
-{
-  const logPath = path.join(require('os').homedir(), 'ether-startup.log');
-  try { fs.writeFileSync(logPath, ''); } catch {} // clear on each launch
-  const _log = console.log;
-  const _err = console.error;
-  console.log = (...args) => {
-    try { fs.appendFileSync(logPath, args.map(String).join(' ') + '\n'); } catch {}
-    _log(...args);
-  };
-  console.error = (...args) => {
-    try { fs.appendFileSync(logPath, '[ERR] ' + args.map(String).join(' ') + '\n'); } catch {}
-    _err(...args);
-  };
-}
-
 // ── App identity ──────────────────────────────────────────────
 app.setAppUserModelId("ether");
 
