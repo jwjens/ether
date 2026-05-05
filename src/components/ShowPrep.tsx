@@ -261,22 +261,16 @@ function LinerCards() {
     if (!isReady) return;
     try {
       setCards(await queryScoped<LinerCard>("SELECT * FROM liner_cards ORDER BY pinned DESC, created_at DESC", [], stationId));
-    } catch {
-      // Table might not exist yet
-      await execute("CREATE TABLE IF NOT EXISTS liner_cards (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL, category TEXT DEFAULT 'Custom', color TEXT DEFAULT '#94a3b8', pinned INTEGER DEFAULT 0, created_at INTEGER DEFAULT (unixepoch()))");
-      setCards([]);
-    }
+    } catch { setCards([]); }
   };
   useEffect(() => { load(); }, [isReady]);
 
   const save = async () => {
     if (!editing?.title || !editing?.body) return;
     if (editing.id) {
-      await queryScoped("UPDATE liner_cards SET title=?, body=?, category=?, color=?, pinned=? WHERE id=?",
-        [editing.title, editing.body, editing.category || "Custom", editing.color || "#94a3b8", editing.pinned || 0, editing.id], stationId);
+      await (window as any).ether.linerCards.updateById(editing.id, { title: editing.title, body: editing.body, category: editing.category || "Custom", color: editing.color || "#94a3b8", pinned: editing.pinned || 0 });
     } else {
-      await executeScopedInsert("INSERT INTO liner_cards (title, body, category, color, pinned) VALUES (?,?,?,?,?)",
-        [editing.title, editing.body, editing.category || "Custom", LINER_COLORS[editing.category || "Custom"] || "#94a3b8", 0], stationId);
+      await (window as any).ether.linerCards.create({ station_id: stationId, title: editing.title, body: editing.body, category: editing.category || "Custom", color: LINER_COLORS[editing.category || "Custom"] || "#94a3b8", pinned: 0 });
     }
     setEditing(null); load();
   };
@@ -344,7 +338,7 @@ function LinerCards() {
                 </div>
                 <div style={{ display: "flex", gap: 4 }} onClick={e => e.stopPropagation()}>
                   <button onClick={() => setEditing(card)} style={{ padding: "2px 7px", borderRadius: 0, fontSize: 9, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
-                  <button onClick={async () => { await queryScoped("DELETE FROM liner_cards WHERE id=?", [card.id], stationId); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={async () => { await (window as any).ether.linerCards.deleteById(card.id); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {isActive && (

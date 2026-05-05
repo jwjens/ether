@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { query, execute } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -280,10 +279,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
       for (let i = 0; i < 18; i++) { if (!used.has(i)) { slot = i; break; } }
       if (slot === -1) { alert("All 18 cart slots are full."); return; }
       const label = text.slice(0, 40).replace(/\n/g, " ").trim();
-      await executeScopedInsert(
-        "INSERT OR REPLACE INTO cart_slots (slot_number, title, file_path, color, hotkey) VALUES (?,?,NULL,?,?)",
-        [slot, label, "#f59e0b", ""], stationId
-      );
+      await (window as any).ether.cartSlots.upsertBySlotNumber(stationId, slot, { title: label, file_path: null, color: "#f59e0b", hotkey: "" });
     } catch (e) { console.error("Cart push failed", e); }
   };
 

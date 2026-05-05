@@ -140,6 +140,27 @@ function spotsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function spotsUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[spots] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return spotsUpdate(db, existing.uuid, patch);
+}
+
+function spotsDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[spots] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return spotsDelete(db, existing.uuid, existing.station_id);
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +191,15 @@ function installSpots(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('spots:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: spotsUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('spots:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...spotsDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[spots] handlers installed');
 }
@@ -182,5 +212,6 @@ module.exports = {
   spotsCreate,
   spotsUpdate,
   spotsDelete,
-
+  spotsUpdateById,
+  spotsDeleteById,
 };

@@ -140,6 +140,27 @@ function macrosDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function macrosUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[macros] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return macrosUpdate(db, existing.uuid, patch);
+}
+
+function macrosDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[macros] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return macrosDelete(db, existing.uuid, existing.station_id);
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +191,15 @@ function installMacros(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('macros:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: macrosUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('macros:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...macrosDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[macros] handlers installed');
 }
@@ -182,5 +212,6 @@ module.exports = {
   macrosCreate,
   macrosUpdate,
   macrosDelete,
-
+  macrosUpdateById,
+  macrosDeleteById,
 };

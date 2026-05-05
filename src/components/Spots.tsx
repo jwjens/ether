@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { query, execute, queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
@@ -50,7 +49,7 @@ export default function Spots() {
       let n = 0;
       for (const fp of fileList) {
         const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp], stationId))[0] ?? null;
-        if (!ex) { await executeScopedInsert("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"], stationId); n++; }
+        if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo" }); n++; }
       }
       setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
       setImporting(false); load();
@@ -69,7 +68,7 @@ export default function Spots() {
           const sep = (folder as string).includes("/") ? "/" : "\\";
           const fp = (folder as string) + sep + e.name;
           const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp], stationId))[0] ?? null;
-          if (!ex) { await executeScopedInsert("INSERT INTO spots (title, file_path, spot_type) VALUES (?, ?, ?)", [titleFromFile(fp), fp, "promo"], stationId); n++; }
+          if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo" }); n++; }
         }
       }
       setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
@@ -152,16 +151,21 @@ export default function Spots() {
           ? (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE isci_code = ?", [isci], stationId))[0] ?? null
           : (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE title = ? AND advertiser = ?", [title, advertiser], stationId))[0] ?? null;
         if (ex) {
-          // Update dates/agency if changed
-          await queryScoped("UPDATE spots SET start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date), agency=COALESCE(?,agency), is_active=1 WHERE id=?",
-            [startDate, endDate, agency, ex.id], stationId);
+          // Update dates/agency if changed; only pass non-null values to preserve existing data
+          const patch: Record<string, any> = { is_active: 1 };
+          if (startDate != null) patch.start_date = startDate;
+          if (endDate != null) patch.end_date = endDate;
+          if (agency != null) patch.agency = agency;
+          await (window as any).ether.spots.updateById(ex.id, patch);
           continue;
         }
 
-        await executeScopedInsert(
-          "INSERT INTO spots (title, spot_type, advertiser, agency, isci_code, cart_number, length_sec, start_date, end_date, is_active) VALUES (?,?,?,?,?,?,?,?,?,1)",
-          [title, SPOT_TYPES.includes(spotType) ? spotType : "commercial", advertiser, agency, isci, isci, lengthSec, startDate, endDate], stationId
-        );
+        await (window as any).ether.spots.create({
+          station_id: stationId, title,
+          spot_type: SPOT_TYPES.includes(spotType) ? spotType : "commercial",
+          advertiser, agency, isci_code: isci, cart_number: isci,
+          length_sec: lengthSec, start_date: startDate, end_date: endDate, is_active: 1,
+        });
         imported++;
       }
 
@@ -174,13 +178,12 @@ export default function Spots() {
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
-      await queryScoped("UPDATE spots SET title=?, spot_type=?, advertiser=?, start_date=?, end_date=?, max_plays_day=?, is_active=?, notes=? WHERE id=?",
-        [editing.title, editing.spot_type || "promo", editing.advertiser || null, editing.start_date || null, editing.end_date || null, editing.max_plays_day || 999, editing.is_active ?? 1, editing.notes || null, editing.id], stationId);
+      await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null });
     }
     setEditing(null); load();
   };
 
-  const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await queryScoped("DELETE FROM spots WHERE id=?", [id], stationId); load(); };
+  const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await (window as any).ether.spots.deleteById(id); load(); };
 
   const playSpot = (spot: Spot) => {
     if (spot.file_path) { engine.init(); engine.loadToDeck("B", spot.file_path, spot.title, spot.spot_type); setTimeout(() => engine.getDeck("B")?.play(), 500); }

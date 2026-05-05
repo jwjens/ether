@@ -10,8 +10,7 @@
 // plus direct IPC calls for audio transport, streaming, etc.
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { query, execute } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 import { engine } from "../audio/engine-rodio";
 
@@ -205,18 +204,16 @@ export default function MacrosPanel() {
   const save = async (m: Macro) => {
     const actionsJson = JSON.stringify(m.actions);
     if (m.id) {
-      await queryScoped("UPDATE macros SET name=?, description=?, trigger_type=?, trigger_value=?, actions=?, hotkey=?, is_active=?, color=? WHERE id=?",
-        [m.name, m.description, m.trigger_type, m.trigger_value, actionsJson, m.hotkey, m.is_active, m.color, m.id], stationId);
+      await (window as any).ether.macros.updateById(m.id, { name: m.name, description: m.description, trigger_type: m.trigger_type, trigger_value: m.trigger_value, actions: actionsJson, hotkey: m.hotkey, is_active: m.is_active, color: m.color });
     } else {
-      await executeScopedInsert("INSERT INTO macros (name, description, trigger_type, trigger_value, actions, hotkey, is_active, color) VALUES (?,?,?,?,?,?,?,?)",
-        [m.name, m.description || null, m.trigger_type, m.trigger_value || null, actionsJson, m.hotkey || null, 1, m.color], stationId);
+      await (window as any).ether.macros.create({ station_id: stationId, name: m.name, description: m.description || null, trigger_type: m.trigger_type, trigger_value: m.trigger_value || null, actions: actionsJson, hotkey: m.hotkey || null, is_active: 1, color: m.color });
     }
     setEditing(null); load();
   };
 
   const deleteMacro = async (id: number) => {
     if (!confirm("Delete this macro?")) return;
-    await queryScoped("DELETE FROM macros WHERE id=?", [id], stationId);
+    await (window as any).ether.macros.deleteById(id);
     load();
   };
 

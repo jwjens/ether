@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { query, execute, queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
@@ -68,14 +67,12 @@ export default function CartWall() {
     if (!f) return;
     const fp = Array.isArray(f) ? f[0] : f;
     const title = titleFromFile(fp); const color = COLORS[n % COLORS.length]; const hk = n < 12 ? "F" + (n + 1) : "";
-    const ex = await (queryScoped<{ id: number }>("SELECT id FROM cart_slots WHERE slot_number = ?", [n], stationId).then(r => r[0] ?? null));
-    if (ex) await queryScoped("UPDATE cart_slots SET title=?, file_path=?, color=?, hotkey=? WHERE slot_number=?", [title, fp, color, hk, n], stationId);
-    else await executeScopedInsert("INSERT INTO cart_slots (slot_number, title, file_path, color, hotkey) VALUES (?,?,?,?,?)", [n, title, fp, color, hk], stationId);
+    await (window as any).ether.cartSlots.upsertBySlotNumber(stationId, n, { title, file_path: fp, color, hotkey: hk });
     load();
   };
 
-  const clearSlot = async (n: number) => { await queryScoped("DELETE FROM cart_slots WHERE slot_number = ?", [n], stationId); load(); };
-  const saveEdit = async () => { if (editing === null) return; await queryScoped("UPDATE cart_slots SET title=?, color=?, hotkey=? WHERE slot_number=?", [editTitle, editColor, editHotkey, editing], stationId); setEditing(null); load(); };
+  const clearSlot = async (n: number) => { await (window as any).ether.cartSlots.deleteBySlotNumber(stationId, n); load(); };
+  const saveEdit = async () => { if (editing === null) return; await (window as any).ether.cartSlots.upsertBySlotNumber(stationId, editing, { title: editTitle, color: editColor, hotkey: editHotkey }); setEditing(null); load(); };
 
   return (
     <div>

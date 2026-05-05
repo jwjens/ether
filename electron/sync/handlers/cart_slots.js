@@ -140,6 +140,26 @@ function cartSlotsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function cartSlotsUpsertBySlotNumber(db, stationId, slotNumber, payload) {
+  validateScope();
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND slot_number = ? AND deleted_at IS NULL`
+  ).get(stationId, slotNumber);
+  if (existing) {
+    return cartSlotsUpdate(db, existing.uuid, payload);
+  } else {
+    return cartSlotsCreate(db, { station_id: stationId, slot_number: slotNumber, ...payload });
+  }
+}
+
+function cartSlotsDeleteBySlotNumber(db, stationId, slotNumber) {
+  validateScope();
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND slot_number = ? AND deleted_at IS NULL`
+  ).get(stationId, slotNumber);
+  if (!existing) return { ok: true };
+  return cartSlotsDelete(db, existing.uuid, stationId);
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +190,15 @@ function installCartSlots(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('cart_slots:upsert-by-slot-number', (_, stationId, slotNumber, payload) => {
+    try { return { ok: true, row: cartSlotsUpsertBySlotNumber(db, stationId, slotNumber, payload) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('cart_slots:delete-by-slot-number', (_, stationId, slotNumber) => {
+    try { return { ok: true, ...cartSlotsDeleteBySlotNumber(db, stationId, slotNumber) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[cart_slots] handlers installed');
 }
@@ -182,5 +211,6 @@ module.exports = {
   cartSlotsCreate,
   cartSlotsUpdate,
   cartSlotsDelete,
-
+  cartSlotsUpsertBySlotNumber,
+  cartSlotsDeleteBySlotNumber,
 };

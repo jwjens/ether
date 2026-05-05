@@ -140,6 +140,27 @@ function linerCardsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function linerCardsUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[liner_cards] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return linerCardsUpdate(db, existing.uuid, patch);
+}
+
+function linerCardsDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[liner_cards] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return linerCardsDelete(db, existing.uuid, existing.station_id);
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +191,15 @@ function installLinerCards(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('liner_cards:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: linerCardsUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('liner_cards:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...linerCardsDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[liner_cards] handlers installed');
 }
@@ -182,5 +212,6 @@ module.exports = {
   linerCardsCreate,
   linerCardsUpdate,
   linerCardsDelete,
-
+  linerCardsUpdateById,
+  linerCardsDeleteById,
 };
