@@ -163,7 +163,9 @@ export class AudioEngine {
         else if (this.autoAdvance) { this.handleLoadNextToDeck("B"); }
       } else if (deckId === "C") {
         this.stateC = { ...this.stateC, status: "ended" };
+        console.log('[ENGINE] C end detected: dur=', dur, 'pos=', pos, 'autoAdv=', this.autoAdvance, 'queue=', this.queue.length);
         if (this.autoAdvance || this.queue.length > 0) { this.handleRotateCtoA(); }
+        else { console.log('[ENGINE] C end: NO handleRotateCtoA — autoAdv false AND queue empty'); }
       }
     }
   }
@@ -215,11 +217,12 @@ export class AudioEngine {
         // Check the Rust backend: if deck A (the destination) is already playing, bail.
         // C may still be playing when this fires (300ms before end), so we only check A.
         const liveState = await invoke("audio_get_state");
+        console.log('[ENGINE] CtoA: deckA=', liveState?.deckA?.status, 'queue=', this.queue.length);
         if (liveState) {
-          if (liveState.deckA?.status === "playing") return;  // A already playing — skip
+          if (liveState.deckA?.status === "playing") { console.log('[ENGINE] CtoA: BAIL deckA playing'); return; }
         }
         await this.refillIfNeeded();
-        if (this.queue.length === 0) return;
+        if (this.queue.length === 0) { console.log('[ENGINE] CtoA: BAIL queue empty'); return; }
         const next = this.dequeue();
         this.deckChainType["A"] = next.chainType || "segue";
         await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
@@ -227,7 +230,7 @@ export class AudioEngine {
         this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
         this.notifyPlayStart("A", next.title, next.artist, next.filePath);
         this.endTriggered.delete("A");
-        this.endTriggered.delete("C");
+        // Do NOT delete "C" — it's still physically playing (fired 300ms early); loadToDeck clears it when preloadDeck("C") runs.
         setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800);
       } catch (e) { console.error("[ENGINE] handleRotateCtoA error:", e); }
     });
