@@ -140,6 +140,16 @@ function clocksDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function clocksDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[clocks] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return clocksDelete(db, existing.uuid, existing.station_id);
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +180,10 @@ function installClocks(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('clocks:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...clocksDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[clocks] handlers installed');
 }
@@ -182,5 +196,6 @@ module.exports = {
   clocksCreate,
   clocksUpdate,
   clocksDelete,
+  clocksDeleteById,
 
 };

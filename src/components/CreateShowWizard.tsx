@@ -2,7 +2,6 @@
 // 4-step wizard to create a new Show with daypart, format clock, and music category.
 
 import { useState, useEffect, useCallback } from "react";
-import { query, execute } from "../db/client";
 import { queryScoped, executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -147,13 +146,8 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     if (!newClockName.trim()) return;
     setCreatingClock(true);
     try {
-      await executeScopedInsert(
-        "INSERT INTO clocks (name) VALUES (?)",
-        [newClockName.trim()], stationId
-      );
-      await loadClocks();
-      const updated = await queryScoped<Clock>("SELECT id, name FROM clocks ORDER BY id DESC LIMIT 1", [], stationId);
-      if (updated.length) setSelectedClockId(updated[0].id);
+      const res = await (window as any).ether.clocks.create({ station_id: stationId, name: newClockName.trim() });
+      setSelectedClockId(res.row.id);
       setNewClockName("");
       setClockCreated(true);
       setTimeout(() => setClockCreated(false), 2000);
@@ -183,10 +177,10 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     setSaving(true);
     setSaveError("");
     try {
-      await executeScopedInsert(
-        "INSERT INTO shows (name, start_hour, end_hour, color, days, is_active, clock_id) VALUES (?,?,?,?,?,?,?)",
-        [showName.trim(), startHour, endHour, showColor, activeDays || "0123456", 1, selectedClockId], stationId
-      );
+      await (window as any).ether.shows.create({
+        station_id: stationId, name: showName.trim(), start_hour: startHour, end_hour: endHour,
+        color: showColor, days: activeDays || "0123456", is_active: 1, clock_id: selectedClockId,
+      });
       onDone();
     } catch (e: any) {
       setSaveError(e?.message || "Save failed");

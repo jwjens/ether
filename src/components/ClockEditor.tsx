@@ -12,8 +12,7 @@
 //   • Production Editor right-click "Send to break library"
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { query, execute } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -143,16 +142,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
             });
           }
         }
-      } catch {
-        // Table may not exist yet — create it
-        await execute(`CREATE TABLE IF NOT EXISTS format_clocks (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          name TEXT NOT NULL,
-          daypart TEXT NOT NULL DEFAULT 'Morning Drive',
-          slots_json TEXT NOT NULL DEFAULT '[]',
-          created_at INTEGER DEFAULT (strftime('%s','now'))
-        )`);
-      }
+      } catch {}
     };
     load();
   }, [clockId, isReady]);
@@ -164,17 +154,12 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
     try {
       const json = JSON.stringify(clock.slots);
       if (clock.id) {
-        await queryScoped(
-          "UPDATE format_clocks SET name=?, daypart=?, slots_json=? WHERE id=?",
-          [clock.name, clock.daypart, json, clock.id], stationId
-        );
+        await (window as any).ether.formatClocks.updateById(clock.id, { name: clock.name, daypart: clock.daypart, slots_json: json });
       } else {
-        const result = await executeScopedInsert(
-          "INSERT INTO format_clocks (name, daypart, slots_json) VALUES (?,?,?)",
-          [clock.name, clock.daypart, json], stationId
-        );
-        const newId = result?.lastInsertRowid != null ? Number(result.lastInsertRowid) : null;
-        if (newId) setClock(prev => ({ ...prev, id: newId }));
+        const res = await (window as any).ether.formatClocks.create({
+          station_id: stationId, name: clock.name, daypart: clock.daypart, slots_json: json,
+        });
+        if (res.row?.id) setClock(prev => ({ ...prev, id: res.row.id }));
       }
       setStatus("✓ Clock saved");
       setSavedFlash(true);

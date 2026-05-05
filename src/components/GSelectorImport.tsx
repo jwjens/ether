@@ -18,7 +18,6 @@
 // bulk-remapped post-import.
 
 import { useState } from "react";
-import { execute, query } from "../db/client";
 import { queryScoped, executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -223,26 +222,29 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
       // ── Clocks ──
       if (doClocks && parsed.clocks.length > 0) {
+        const existingFc = ((await (window as any).ether.formatClocks.list(stationId))?.rows ?? []) as Array<{ id: number; name: string }>;
         for (const c of parsed.clocks) {
           setProgress(`Importing clocks… ${c.name}`);
           try {
-            await executeScopedInsert(
-              "INSERT OR IGNORE INTO format_clocks (name) VALUES (?)",
-              [c.name], stationId
-            );
-            const cr = await queryScoped<{ id: number }>("SELECT id FROM format_clocks WHERE name = ?", [c.name], stationId);
-            const clockId = cr[0]?.id;
+            const found = existingFc.find((r) => r.name === c.name);
+            let clockId: number;
+            if (found) {
+              clockId = found.id;
+            } else {
+              const res = await (window as any).ether.formatClocks.create({ station_id: stationId, name: c.name, slots_json: '[]' });
+              clockId = res.row.id;
+              existingFc.push({ id: clockId, name: c.name });
+            }
             if (!clockId) continue;
 
-            // Clear existing slots for this clock (re-import replaces)
-            await queryScoped("DELETE FROM clock_slots WHERE clock_id = ?", [clockId], stationId);
+            await (window as any).ether.clockSlots.clearByClockId(clockId, stationId);
 
             for (const slot of c.slots) {
               const catId = slot.category ? (catMap[slot.category.toUpperCase()] || null) : null;
-              await executeScopedInsert(
-                "INSERT INTO clock_slots (clock_id, position, slot_type, category_id) VALUES (?, ?, ?, ?)",
-                [clockId, slot.position, slot.type, catId], stationId
-              );
+              await (window as any).ether.clockSlots.create({
+                station_id: stationId, clock_id: clockId, position: slot.position,
+                slot_type: slot.type, category_id: catId,
+              });
             }
             importedClocks++;
           } catch (e) {

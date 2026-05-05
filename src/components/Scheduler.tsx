@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { execute, queryOne } from "../db/client";
 import { queryScoped, executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import CreateShowWizard from "./CreateShowWizard";
@@ -115,15 +114,16 @@ function ShowsTab() {
     const isActive = editing.is_active ?? 1;
     try {
       if (editing.id) {
-        await queryScoped(
-          "UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=?, days=?, is_active=? WHERE id=?",
-          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive, editing.id], stationId
-        );
+        await (window as any).ether.shows.updateById(editing.id, {
+          name: editing.name, start_hour: editing.start_hour || 0, end_hour: editing.end_hour || 0,
+          color: editing.color || null, description: editing.description || null, days, is_active: isActive,
+        });
       } else {
-        await executeScopedInsert(
-          "INSERT INTO shows (name, start_hour, end_hour, color, description, days, is_active) VALUES (?,?,?,?,?,?,?)",
-          [editing.name, editing.start_hour || 0, editing.end_hour || 0, editing.color || null, editing.description || null, days, isActive], stationId
-        );
+        await (window as any).ether.shows.create({
+          station_id: stationId, name: editing.name, start_hour: editing.start_hour || 0,
+          end_hour: editing.end_hour || 0, color: editing.color || null,
+          description: editing.description || null, days, is_active: isActive,
+        });
       }
       setSaved(true);
       load();
@@ -134,11 +134,11 @@ function ShowsTab() {
   };
 
   const assignClock = async (showId: number, clockId: number | null) => {
-    await queryScoped("UPDATE shows SET clock_id = ? WHERE id = ?", [clockId, showId], stationId);
+    await (window as any).ether.shows.updateById(showId, { clock_id: clockId });
     load();
   };
 
-  const remove = async (id: number) => { await queryScoped("DELETE FROM shows WHERE id=?", [id], stationId); load(); };
+  const remove = async (id: number) => { await (window as any).ether.shows.deleteById(id); load(); };
 
   return (
     <div className="space-y-3">
@@ -761,17 +761,17 @@ function ClocksTab() {
 
   const createClock = async () => {
     if (!newName.trim()) return;
-    const r = await executeScopedInsert("INSERT INTO clocks (name) VALUES (?)", [newName.trim()], stationId);
-    setNewName(""); loadAll(); setSelected(r.lastInsertRowid as number);
+    const res = await (window as any).ether.clocks.create({ station_id: stationId, name: newName.trim() });
+    setNewName(""); loadAll(); setSelected(res.row.id);
   };
 
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
 
   const deleteClock = async (id: number) => {
     try {
-      await queryScoped("UPDATE shows SET clock_id = NULL WHERE clock_id = ?", [id], stationId);
-      await queryScoped("DELETE FROM clock_slots WHERE clock_id=?", [id], stationId);
-      await queryScoped("DELETE FROM clocks WHERE id=?", [id], stationId);
+      await (window as any).ether.shows.clearClockReference(id, stationId);
+      await (window as any).ether.clockSlots.clearByClockId(id, stationId);
+      await (window as any).ether.clocks.deleteById(id);
       if (selected === id) { setSelected(null); setSlots([]); }
       setConfirmDelete(null);
       loadAll();
@@ -792,25 +792,25 @@ function ClocksTab() {
         if (avg[0]?.d && avg[0].d > 0) dur = Math.round(avg[0].d * 100) / 100;
       } catch {}
     }
-    await executeScopedInsert(
-      "INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min, label) VALUES (?,?,?,?,?,?)",
-      [selected, slots.length, type, catId, dur, label], stationId
-    );
+    await (window as any).ether.clockSlots.create({
+      station_id: stationId, clock_id: selected, position: slots.length,
+      slot_type: type, category_id: catId, duration_min: dur, label,
+    });
     setShowPicker(false);
     loadSlots(selected);
   };
 
   const removeSlot = async (id: number) => {
-    await queryScoped("DELETE FROM clock_slots WHERE id=?", [id], stationId);
+    await (window as any).ether.clockSlots.deleteById(id);
     if (selected) loadSlots(selected);
   };
 
   const duplicateSlot = async (s: ClockSlot) => {
     if (!selected) return;
-    await executeScopedInsert(
-      "INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min, label) VALUES (?,?,?,?,?,?)",
-      [selected, slots.length, s.slot_type, s.category_id, s.duration_min, s.label], stationId
-    );
+    await (window as any).ether.clockSlots.create({
+      station_id: stationId, clock_id: selected, position: slots.length,
+      slot_type: s.slot_type, category_id: s.category_id, duration_min: s.duration_min, label: s.label,
+    });
     loadSlots(selected);
   };
 
@@ -824,10 +824,11 @@ function ClocksTab() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "v") {
         if (copiedSlot && selected) {
-          executeScopedInsert(
-            "INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min, label) VALUES (?,?,?,?,?,?)",
-            [selected, slots.length, copiedSlot.slot_type, copiedSlot.category_id, copiedSlot.duration_min, copiedSlot.label], stationId
-          ).then(() => loadSlots(selected));
+          (window as any).ether.clockSlots.create({
+            station_id: stationId, clock_id: selected, position: slots.length,
+            slot_type: copiedSlot.slot_type, category_id: copiedSlot.category_id,
+            duration_min: copiedSlot.duration_min, label: copiedSlot.label,
+          }).then(() => loadSlots(selected));
         }
       }
     };
@@ -840,7 +841,7 @@ function ClocksTab() {
     const reordered = [...slots];
     const [moved] = reordered.splice(dragIdx, 1);
     reordered.splice(toIdx, 0, moved);
-    await Promise.all(reordered.map((s, i) => execute("UPDATE clock_slots SET position=? WHERE id=?", [i, s.id])));
+    await Promise.all(reordered.map((s, i) => (window as any).ether.clockSlots.updateById(s.id, { position: i })));
     setDragIdx(null); setDragOverIdx(null);
     if (selected) loadSlots(selected);
   };
@@ -1053,7 +1054,7 @@ function ClocksTab() {
                         onBlur={async e => {
                           const val = parseFloat(e.target.value);
                           if (!isNaN(val) && val > 0 && val !== s.duration_min) {
-                            await execute("UPDATE clock_slots SET duration_min=? WHERE id=?", [val, s.id]);
+                            await (window as any).ether.clockSlots.updateById(s.id, { duration_min: val });
                             if (selected) loadSlots(selected);
                           }
                         }}
@@ -1061,7 +1062,7 @@ function ClocksTab() {
                           if (e.key === "Enter") {
                             const val = parseFloat((e.target as HTMLInputElement).value);
                             if (!isNaN(val) && val > 0) {
-                              await execute("UPDATE clock_slots SET duration_min=? WHERE id=?", [val, s.id]);
+                              await (window as any).ether.clockSlots.updateById(s.id, { duration_min: val });
                               if (selected) loadSlots(selected);
                             }
                             (e.target as HTMLInputElement).blur();

@@ -140,6 +140,16 @@ function formatClocksDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function formatClocksUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[format_clocks] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return formatClocksUpdate(db, existing.uuid, patch);
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +180,10 @@ function installFormatClocks(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('format_clocks:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: formatClocksUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[format_clocks] handlers installed');
 }
@@ -182,5 +196,6 @@ module.exports = {
   formatClocksCreate,
   formatClocksUpdate,
   formatClocksDelete,
+  formatClocksUpdateById,
 
 };

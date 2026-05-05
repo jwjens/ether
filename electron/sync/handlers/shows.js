@@ -140,6 +140,34 @@ function showsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function showsUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[shows] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return showsUpdate(db, existing.uuid, patch);
+}
+
+function showsDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[shows] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return showsDelete(db, existing.uuid, existing.station_id);
+}
+
+function showsClearClockReference(db, clockId, stationId) {
+  validateScope();
+  const rows = db.prepare(`SELECT * FROM ${TABLE} WHERE clock_id = ? AND station_id = ? AND deleted_at IS NULL`).all(clockId, stationId);
+  for (const r of rows) showsUpdate(db, r.uuid, { clock_id: null });
+  return { ok: true, updated: rows.length };
+}
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +198,20 @@ function installShows(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('shows:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: showsUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('shows:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...showsDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('shows:clear-clock-reference', (_, clockId, stationId) => {
+    try { return { ok: true, ...showsClearClockReference(db, clockId, stationId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[shows] handlers installed');
 }
@@ -182,5 +224,8 @@ module.exports = {
   showsCreate,
   showsUpdate,
   showsDelete,
+  showsUpdateById,
+  showsDeleteById,
+  showsClearClockReference,
 
 };
