@@ -676,11 +676,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!stationId) return;
     engine.setRefillCallback(async () => {
       const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 500", [stationId], stationId, { skipScoping: true });
       return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }));
     });
-  }, []);
+  }, [stationId]);
 
   const [xfadeDuration, setXfadeDurationState] = useState(() => {
     try { const v = parseInt(localStorage.getItem("ether_xfade_duration") || "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(1, v)); } catch { return 3; }
