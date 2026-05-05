@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { execute, query, queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 interface ImportResult {
@@ -110,11 +109,8 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
         // Get or create artist
         let artistId: number | null = null;
         if (song.artist) {
-          let artist = await (queryScoped<{id:number}>("SELECT id FROM artists WHERE name=?", [song.artist], stationId).then(r => r[0] ?? null));
-          if (!artist) {
-            const r = await executeScopedInsert("INSERT INTO artists (name, sort_name) VALUES (?,?)", [song.artist, song.artist], stationId);
-            artistId = r.lastInsertId;
-          } else { artistId = artist.id; }
+          const artistRes = await (window as any).ether.artists.findOrCreateByName(song.artist);
+          artistId = artistRes.row?.id ?? null;
         }
 
         // Check duplicate by title+artist

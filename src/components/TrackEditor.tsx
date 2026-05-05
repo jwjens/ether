@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { execute } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import WaveformGL from "./WaveformGL";
@@ -81,9 +80,8 @@ function ImportPanel({ onImported }: ImportPanelProps) {
       } catch {}
 
       // Upsert artist
-      await executeScopedInsert("INSERT OR IGNORE INTO artists (name) VALUES (?)", [artistName], stationId);
-      const artistRow = (await queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId))[0] ?? null;
-      const artistId = artistRow?.id ?? 1;
+      const artistRes = await (window as any).ether.artists.findOrCreateByName(artistName);
+      const artistId = artistRes.row?.id ?? 1;
 
       // Upsert song — check first to replicate OR IGNORE semantics
       const existingByPath = await (window as any).ether.db.query(

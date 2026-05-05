@@ -109,6 +109,16 @@ function artistsUpdate(db, uuid, patch) {
   return artistsGet(db, uuid);
 }
 
+function artistsFindOrCreateByName(db, name) {
+  validateScope();
+  if (!name || !name.trim()) throw new Error('[artists] name is required for findOrCreateByName');
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE name = ? AND deleted_at IS NULL`
+  ).get(name.trim());
+  if (existing) return existing;
+  return artistsCreate(db, { name: name.trim(), sort_name: name.trim() });
+}
+
 function artistsDelete(db, uuid) {
   validateScope();
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
@@ -161,6 +171,11 @@ function installArtists(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('artists:find-or-create-by-name', (_, name) => {
+    try { return { ok: true, row: artistsFindOrCreateByName(db, name) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   console.log('[artists] handlers installed');
 }
 
@@ -172,4 +187,5 @@ module.exports = {
   artistsCreate,
   artistsUpdate,
   artistsDelete,
+  artistsFindOrCreateByName,
 };

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { query, execute, queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -369,13 +369,8 @@ export default function LibraryImport({ onClose }: Props) {
       // Resolve or create artist
       let artistId: number | null = null;
       if (mapped.artist) {
-        const a = await (queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [mapped.artist], stationId).then(r => r[0] ?? null));
-        if (a) {
-          artistId = a.id;
-        } else {
-          const r = await executeScopedInsert("INSERT INTO artists (name) VALUES (?)", [mapped.artist], stationId);
-          artistId = r?.lastInsertRowid ?? null;
-        }
+        const artistRes = await (window as any).ether.artists.findOrCreateByName(mapped.artist);
+        artistId = artistRes.row?.id ?? null;
       }
 
       // Resolve or create category
@@ -386,11 +381,8 @@ export default function LibraryImport({ onClose }: Props) {
         } else {
           const colors = ["#3b82f6","#22c55e","#f59e0b","#ef4444","#8b5cf6","#14b8a6"];
           const color = colors[Object.keys(catMap).length % colors.length];
-          const r = await executeScopedInsert(
-            "INSERT INTO categories (code, name, color) VALUES (?,?,?)",
-            [mapped.category_code, mapped.category_code, color], stationId
-          );
-          const newId = r?.lastInsertRowid;
+          const res = await (window as any).ether.categories.create({ station_id: stationId, code: mapped.category_code, name: mapped.category_code, color });
+          const newId = res.row?.id;
           if (newId) { catMap[mapped.category_code] = newId; categoryId = newId; }
         }
       }

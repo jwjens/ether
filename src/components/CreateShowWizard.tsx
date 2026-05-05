@@ -2,7 +2,7 @@
 // 4-step wizard to create a new Show with daypart, format clock, and music category.
 
 import { useState, useEffect, useCallback } from "react";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -159,13 +159,9 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     setCreatingCat(true);
     try {
-      await executeScopedInsert(
-        "INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
-        [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor, 0, 0], stationId
-      );
+      const res = await (window as any).ether.categories.create({ station_id: stationId, code: newCatCode.trim().toUpperCase(), name: newCatName.trim(), color: newCatColor, spins_per_hour: 0, priority: 0 });
       await loadCategories();
-      const updated = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY id DESC LIMIT 1", [], stationId);
-      if (updated.length) setSelectedCatId(updated[0].id);
+      if (res.row?.id) setSelectedCatId(res.row.id);
       setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
       setCatCreated(true);
       setTimeout(() => setCatCreated(false), 2000);

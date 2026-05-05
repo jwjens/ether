@@ -116,6 +116,17 @@ function categoriesUpdate(db, uuid, patch) {
   return categoriesGet(db, uuid);
 }
 
+function categoriesUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[categories] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return categoriesUpdate(db, existing.uuid, patch);
+}
+
 function categoriesDelete(db, uuid, stationId) {
   validateScope();
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
@@ -170,6 +181,10 @@ function installCategories(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('categories:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: categoriesUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[categories] handlers installed');
 }
@@ -181,6 +196,6 @@ module.exports = {
   categoriesGet,
   categoriesCreate,
   categoriesUpdate,
+  categoriesUpdateById,
   categoriesDelete,
-
 };

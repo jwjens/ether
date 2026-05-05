@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import CreateShowWizard from "./CreateShowWizard";
 
@@ -308,11 +308,15 @@ function CategoriesTab() {
     setSaveError("");
     try {
       if (editing.id) {
-        await queryScoped("UPDATE categories SET code=?, name=?, color=?, spins_per_hour=?, priority=? WHERE id=?",
-          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0, editing.id], stationId);
+        await (window as any).ether.categories.updateById(editing.id, {
+          code: editing.code, name: editing.name || editing.code, color: editing.color || null,
+          spins_per_hour: editing.spins_per_hour || 0, priority: editing.priority || 0,
+        });
       } else {
-        await executeScopedInsert("INSERT INTO categories (code, name, color, spins_per_hour, priority) VALUES (?,?,?,?,?)",
-          [editing.code, editing.name || editing.code, editing.color || null, editing.spins_per_hour || 0, editing.priority || 0], stationId);
+        await (window as any).ether.categories.create({ station_id: stationId,
+          code: editing.code, name: editing.name || editing.code, color: editing.color || null,
+          spins_per_hour: editing.spins_per_hour || 0, priority: editing.priority || 0,
+        });
       }
       setCatSaved(true);
       load();

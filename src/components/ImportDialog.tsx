@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { query, execute, queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: { directory?: boolean; title?: string }) =>
   opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
@@ -41,7 +41,7 @@ export default function ImportDialog({ onDone }: Props) {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     const colors = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6", "#6366f1"];
     const color = colors[categories.length % colors.length];
-    await executeScopedInsert("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), color], stationId);
+    await (window as any).ether.categories.create({ station_id: stationId, code: newCatCode.trim().toUpperCase(), name: newCatName.trim(), color });
     const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
     setCategories(cats);
     const newCat = cats.find(c => c.code === newCatCode.trim().toUpperCase());
@@ -109,11 +109,8 @@ export default function ImportDialog({ onDone }: Props) {
         const artistName = tags.artist || "Unknown";
 
         // Get or create artist
-        let artist = await (queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId).then(r => r[0] ?? null));
-        if (!artist) {
-          await executeScopedInsert("INSERT INTO artists (name) VALUES (?)", [artistName], stationId);
-          artist = await (queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId).then(r => r[0] ?? null));
-        }
+        const artistRes = await (window as any).ether.artists.findOrCreateByName(artistName);
+        const artist = artistRes.row;
 
         // Insert song (skip album lookup for reliability)
         await (window as any).ether.songs.create({

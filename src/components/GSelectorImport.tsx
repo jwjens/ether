@@ -18,7 +18,7 @@
 // bulk-remapped post-import.
 
 import { useState } from "react";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 interface ParsedSong {
@@ -164,16 +164,19 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
     try {
       // ── Categories first (songs will reference them) ──
+      const existingCats = ((await (window as any).ether.categories.list(stationId))?.rows ?? []) as Array<{ id: number; code: string }>;
+      const catCodes = new Set(existingCats.map((r: { code: string }) => r.code.toUpperCase()));
       if (doCats && parsed.categories.length > 0) {
         setProgress(`Importing ${parsed.categories.length} categories…`);
         for (let i = 0; i < parsed.categories.length; i++) {
           const c = parsed.categories[i];
           try {
             const color = c.color || DEFAULT_COLORS[i % DEFAULT_COLORS.length];
-            await executeScopedInsert(
-              "INSERT OR IGNORE INTO categories (code, name, color) VALUES (?, ?, ?)",
-              [c.code.toUpperCase(), c.name, color], stationId
-            );
+            const code = c.code.toUpperCase();
+            if (!catCodes.has(code)) {
+              await (window as any).ether.categories.create({ station_id: stationId, code, name: c.name, color });
+              catCodes.add(code);
+            }
             importedCats++;
           } catch {}
         }
@@ -193,9 +196,8 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
           // Insert artist first (if new)
           let artistId: number | null = null;
           if (s.artist) {
-            await executeScopedInsert("INSERT OR IGNORE INTO artists (name) VALUES (?)", [s.artist], stationId);
-            const ar = await queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [s.artist], stationId);
-            artistId = ar[0]?.id || null;
+            const artistRes = await (window as any).ether.artists.findOrCreateByName(s.artist);
+            artistId = artistRes.row?.id ?? null;
           }
 
           // Find category

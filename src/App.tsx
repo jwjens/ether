@@ -19,7 +19,7 @@ const readDir = (path: string) =>
   (window as any).ether.fs.readDir(path);
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
-import { queryScoped, executeScopedInsert } from "./db/stationScoped";
+import { queryScoped } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
 import { engine, DeckState } from "./audio/engine-rodio";
@@ -2901,8 +2901,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     try {
-      // station_id scoping: executeScopedInsert prepends station_id column
-      await executeScopedInsert("INSERT INTO categories (code, name, color) VALUES (?, ?, ?)", [newCatCode.trim().toUpperCase(), newCatName.trim(), newCatColor], stationId);
+      await (window as any).ether.categories.create({ station_id: stationId, code: newCatCode.trim().toUpperCase(), name: newCatName.trim(), color: newCatColor });
       setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
       setShowCreateCat(false);
       load();
