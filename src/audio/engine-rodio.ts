@@ -124,9 +124,15 @@ export class AudioEngine {
       this.listeners.forEach(l => l("B", this.stateB));
       this.listeners.forEach(l => l("C", this.stateC));
 
-      this.checkEndByPosition("A", posA, durA, prevA);
-      this.checkEndByPosition("B", posB, durB, prevB);
-      this.checkEndByPosition("C", posC, durC, prevC);
+      // Rust's finished flag is a reliable one-shot signal — use it as a fallback
+      // when get_file_duration failed (durX=0) and dur>5 can't fire.
+      const rustEndedA = s.deckA?.status === "ended" && prevA === "playing";
+      const rustEndedB = s.deckB?.status === "ended" && prevB === "playing";
+      const rustEndedC = s.deckC?.status === "ended" && prevC === "playing";
+
+      this.checkEndByPosition("A", posA, durA, prevA, rustEndedA);
+      this.checkEndByPosition("B", posB, durB, prevB, rustEndedB);
+      this.checkEndByPosition("C", posC, durC, prevC, rustEndedC);
       // Reset per-tick end gate — only one deck end is processed per 100ms poll cycle.
       this.processingEnd = false;
 
@@ -135,10 +141,12 @@ export class AudioEngine {
     }
   }
 
-  private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus) {
+  private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus, backendEnded = false) {
     // Only one end event per poll tick — if another deck already fired this tick, skip.
     if (this.processingEnd) return;
-    if (prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3 && !this.endTriggered.has(deckId)) {
+    // Two ways to detect end: position-based (300ms early, requires dur>5) OR Rust one-shot finished flag.
+    const positionEnd = prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3;
+    if ((positionEnd || backendEnded) && !this.endTriggered.has(deckId)) {
       this.processingEnd = true;
       this.endTriggered.add(deckId);
 
@@ -155,15 +163,17 @@ export class AudioEngine {
 
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
+        console.log('[ENGINE] A end: dur=', dur, 'pos=', pos, 'backendEnded=', backendEnded, 'stateB.fp=', !!this.stateB.filePath);
         if (this.stateB.filePath) { this.handleRotate("A", "B"); }
         else if (this.autoAdvance) { this.handleLoadNextToDeck("A"); }
       } else if (deckId === "B") {
         this.stateB = { ...this.stateB, status: "ended" };
+        console.log('[ENGINE] B end: dur=', dur, 'pos=', pos, 'backendEnded=', backendEnded, 'stateC.fp=', !!this.stateC.filePath);
         if (this.stateC.filePath) { this.handleRotate("B", "C"); }
         else if (this.autoAdvance) { this.handleLoadNextToDeck("B"); }
       } else if (deckId === "C") {
         this.stateC = { ...this.stateC, status: "ended" };
-        console.log('[ENGINE] C end detected: dur=', dur, 'pos=', pos, 'autoAdv=', this.autoAdvance, 'queue=', this.queue.length);
+        console.log('[ENGINE] C end: dur=', dur, 'pos=', pos, 'backendEnded=', backendEnded, 'autoAdv=', this.autoAdvance, 'queue=', this.queue.length);
         if (this.autoAdvance || this.queue.length > 0) { this.handleRotateCtoA(); }
         else { console.log('[ENGINE] C end: NO handleRotateCtoA — autoAdv false AND queue empty'); }
       }
@@ -178,10 +188,9 @@ export class AudioEngine {
         // (checkEndByPosition fires 300ms before the track ends, so the from-deck
         // hasn't stopped yet). Checking "any deck playing" would always bail here.
         const liveState = await invoke("audio_get_state");
-        if (liveState) {
-          const liveTo = toId === "A" ? liveState.deckA : toId === "B" ? liveState.deckB : liveState.deckC;
-          if (liveTo?.status === "playing") return;  // destination already playing — skip
-        }
+        const liveTo = liveState ? (toId === "A" ? liveState.deckA : toId === "B" ? liveState.deckB : liveState.deckC) : null;
+        console.log(`[ENGINE] rotate ${fromId}→${toId}: liveTo=`, liveTo?.status);
+        if (liveTo?.status === "playing") { console.log(`[ENGINE] rotate ${fromId}→${toId}: BAIL dest already playing`); return; }
         await invoke("audio_play", { deck: toId });
         // Schedule explicit stop on the source deck after the crossfade window.
         // Rust keeps fromId in "playing" state until either the finished flag is
@@ -335,7 +344,7 @@ export class AudioEngine {
       if (id === "A") this.stateA = { ...this.stateA, durationSec: dur };
       if (id === "B") this.stateB = { ...this.stateB, durationSec: dur };
       if (id === "C") this.stateC = { ...this.stateC, durationSec: dur };
-    }).catch(() => {});
+    }).catch((e: unknown) => { console.warn('[ENGINE] get_file_duration failed', id, filePath, e); });
     // NOTE: playStartCallbacks are NOT fired here — loadToDeck is also used for
     // preloading standby decks. Callers that actually start playback must call
     // notifyPlayStart() after audio_play succeeds.
