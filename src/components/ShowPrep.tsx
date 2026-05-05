@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { engine, DeckState } from "../audio/engine-rodio";
-import { query, execute } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 
@@ -371,10 +370,7 @@ function ScriptWriter() {
     if (!isReady) return;
     try {
       setNotes(await queryScoped<PrepNote>("SELECT * FROM prep_notes ORDER BY created_at DESC LIMIT 50", [], stationId));
-    } catch {
-      await execute("CREATE TABLE IF NOT EXISTS prep_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT DEFAULT '', show_date TEXT DEFAULT '', category TEXT DEFAULT 'Script', created_at INTEGER DEFAULT (unixepoch()))");
-      setNotes([]);
-    }
+    } catch { setNotes([]); }
   };
   useEffect(() => { load(); }, [isReady]);
 
@@ -385,11 +381,14 @@ function ScriptWriter() {
   const save = async () => {
     if (!activeNote?.title) return;
     if (activeNote.id) {
-      await queryScoped("UPDATE prep_notes SET title=?, body=?, category=?, show_date=? WHERE id=?",
-        [activeNote.title, activeNote.body, activeNote.category, activeNote.show_date, activeNote.id], stationId);
+      await (window as any).ether.prepNotes.updateById(activeNote.id, {
+        title: activeNote.title, body: activeNote.body, category: activeNote.category, show_date: activeNote.show_date,
+      });
     } else {
-      await executeScopedInsert("INSERT INTO prep_notes (title, body, category, show_date) VALUES (?,?,?,?)",
-        [activeNote.title, activeNote.body || "", activeNote.category || "Script", activeNote.show_date || ""], stationId);
+      await (window as any).ether.prepNotes.create({
+        station_id: stationId, title: activeNote.title, body: activeNote.body || "",
+        category: activeNote.category || "Script", show_date: activeNote.show_date || "",
+      });
     }
     setActiveNote(null); load();
   };
@@ -480,7 +479,7 @@ function ScriptWriter() {
                 </div>
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                   {note.show_date && <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{note.show_date}</span>}
-                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await queryScoped("DELETE FROM prep_notes WHERE id=?", [note.id], stationId); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  <button onClick={async e => { e.stopPropagation(); if (!confirm("Delete?")) return; await (window as any).ether.prepNotes.deleteById(note.id); load(); }} style={{ padding: "2px 6px", borderRadius: 0, fontSize: 9, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                 </div>
               </div>
               {note.body && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{note.body.substring(0, 100)}{note.body.length > 100 ? "…" : ""}</div>}

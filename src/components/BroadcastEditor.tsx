@@ -23,7 +23,6 @@
 //   • Export MP3 (requires: npm install lamejs)
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
@@ -1298,11 +1297,11 @@ export default function BroadcastEditor({
       await writeFile(outPath, wavBytes);
 
       // Insert into voice_tracks table so Voice Tracker picks it up immediately
-      await executeScopedInsert(
-        `INSERT INTO voice_tracks (title, file_path, duration_ms, recorded_by, recorded_at)
-         VALUES (?, ?, ?, ?, strftime('%s','now'))`,
-        [clipName.replace(".wav", ""), outPath, clip.sourceDurationMs, "Production Editor"], stationId
-      );
+      await (window as any).ether.voiceTracks.create({
+        station_id: stationId, title: clipName.replace(".wav", ""), file_path: outPath,
+        duration_ms: clip.sourceDurationMs, recorded_by: "Production Editor",
+        recorded_at: Math.floor(Date.now() / 1000),
+      });
 
       setStatus(`✓ Sent to Voice Tracker — "${clipName.replace(".wav","")}" ready to assign`);
       setContextMenu(null);

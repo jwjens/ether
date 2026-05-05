@@ -142,6 +142,48 @@ function voiceTracksDelete(db, uuid, stationId) {
 
 
 
+function voiceTracksUpdateById(db, intId, patch) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) throw new Error(`[voice_tracks] row not found: id=${intId}`);
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return voiceTracksUpdate(db, existing.uuid, patch);
+}
+
+function voiceTracksDeleteById(db, intId) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) return { ok: true };
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return voiceTracksDelete(db, existing.uuid, existing.station_id);
+}
+
+function voiceTracksClearClockSlotId(db, slotId) {
+  validateScope();
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE clock_slot_id = ? AND deleted_at IS NULL`
+  ).all(slotId);
+  db.transaction(() => {
+    for (const row of rows) {
+      if (!row.uuid) {
+        const uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+        row.uuid = uuid;
+      }
+      voiceTracksUpdate(db, row.uuid, { clock_slot_id: null });
+    }
+  })();
+  return { ok: true };
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installVoiceTracks(ipcMain, db) {
@@ -170,6 +212,20 @@ function installVoiceTracks(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('voice_tracks:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: voiceTracksUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('voice_tracks:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...voiceTracksDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('voice_tracks:clear-clock-slot-id', (_, slotId) => {
+    try { return { ok: true, ...voiceTracksClearClockSlotId(db, slotId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[voice_tracks] handlers installed');
 }
@@ -182,5 +238,7 @@ module.exports = {
   voiceTracksCreate,
   voiceTracksUpdate,
   voiceTracksDelete,
-
+  voiceTracksUpdateById,
+  voiceTracksDeleteById,
+  voiceTracksClearClockSlotId,
 };

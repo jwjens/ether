@@ -142,6 +142,30 @@ function announcementsDelete(db, uuid, stationId) {
 
 
 
+function announcementsUpdateById(db, intId, patch) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) throw new Error(`[announcements] row not found: id=${intId}`);
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return announcementsUpdate(db, existing.uuid, patch);
+}
+
+function announcementsDeleteById(db, intId) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) return { ok: true };
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return announcementsDelete(db, existing.uuid, existing.station_id);
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installAnnouncements(ipcMain, db) {
@@ -171,6 +195,16 @@ function installAnnouncements(ipcMain, db) {
   });
 
 
+  ipcMain.handle('announcements:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: announcementsUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('announcements:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...announcementsDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   console.log('[announcements] handlers installed');
 }
 
@@ -182,5 +216,6 @@ module.exports = {
   announcementsCreate,
   announcementsUpdate,
   announcementsDelete,
-
+  announcementsUpdateById,
+  announcementsDeleteById,
 };

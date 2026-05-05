@@ -142,6 +142,30 @@ function prepNotesDelete(db, uuid, stationId) {
 
 
 
+function prepNotesUpdateById(db, intId, patch) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) throw new Error(`[prep_notes] row not found: id=${intId}`);
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return prepNotesUpdate(db, existing.uuid, patch);
+}
+
+function prepNotesDeleteById(db, intId) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) return { ok: true };
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return prepNotesDelete(db, existing.uuid, existing.station_id);
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPrepNotes(ipcMain, db) {
@@ -170,6 +194,15 @@ function installPrepNotes(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('prep_notes:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: prepNotesUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('prep_notes:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...prepNotesDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[prep_notes] handlers installed');
 }
@@ -182,5 +215,6 @@ module.exports = {
   prepNotesCreate,
   prepNotesUpdate,
   prepNotesDelete,
-
+  prepNotesUpdateById,
+  prepNotesDeleteById,
 };

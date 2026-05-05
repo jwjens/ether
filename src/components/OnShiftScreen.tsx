@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { engine } from "../audio/engine-rodio";
 import { getNextTransition } from "../audio/showClock";
@@ -196,10 +196,9 @@ export default function OnShiftScreen({ onStart }: Props) {
   const saveNote = async () => {
     if (!operator) return;
     try {
-      await executeScopedInsert(
-        "INSERT INTO operator_notes (operator_id, note, updated_at) VALUES (?, ?, unixepoch())",
-        [operator.id, note], stationId
-      );
+      await (window as any).ether.operatorNotes.create({
+        station_id: stationId, operator_id: operator.id, note, updated_at: Math.floor(Date.now() / 1000),
+      });
       setNoteSaved(true);
       setTimeout(() => setNoteSaved(false), 1500);
     } catch {}
@@ -210,7 +209,7 @@ export default function OnShiftScreen({ onStart }: Props) {
   const addOperator = async () => {
     if (!newName.trim()) return;
     try {
-      await executeScopedInsert("INSERT INTO operators (name, initials) VALUES (?, ?)", [newName.trim(), newInitials.trim() || newName.trim().charAt(0)], stationId);
+      await (window as any).ether.operators.create({ station_id: stationId, name: newName.trim(), initials: newInitials.trim() || newName.trim().charAt(0) });
       const ops = await queryScoped<Operator>("SELECT id, name, initials FROM operators ORDER BY id", [], stationId);
       setOperators(ops);
       const newest = ops[ops.length - 1];

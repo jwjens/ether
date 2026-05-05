@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { query, execute, queryOne } from "../db/client";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
@@ -50,7 +49,7 @@ async function checkAnnouncements() {
           if (ann.duck_music && ann.resume_music) { deckA?.setVolume(1); deckB?.setVolume(1); }
         };
         audio.play();
-        await queryScoped("UPDATE announcements SET last_played_at = unixepoch() WHERE id = ?", [ann.id], getActiveStationIdSync());
+        (window as any).ether.announcements.updateById(ann.id, { last_played_at: Math.floor(Date.now() / 1000) });
       } catch (e) {
         if (ann.duck_music) { deckA?.setVolume(1); deckB?.setVolume(1); }
       }
@@ -100,18 +99,25 @@ export default function Announcements() {
   const save = async () => {
     if (!editing) return;
     if (editing.id) {
-      await queryScoped("UPDATE announcements SET title=?, trigger_time=?, days=?, duck_music=?, resume_music=?, duck_level=?, is_active=? WHERE id=?",
-        [editing.title, editing.trigger_time, editing.days, editing.duck_music ? 1 : 0, editing.resume_music ? 1 : 0, editing.duck_level, editing.is_active ? 1 : 0, editing.id], stationId);
+      await (window as any).ether.announcements.updateById(editing.id, {
+        title: editing.title, trigger_time: editing.trigger_time, days: editing.days,
+        duck_music: editing.duck_music ? 1 : 0, resume_music: editing.resume_music ? 1 : 0,
+        duck_level: editing.duck_level, is_active: editing.is_active ? 1 : 0,
+      });
     } else {
-      await executeScopedInsert("INSERT INTO announcements (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active) VALUES (?,?,?,?,?,?,?,?)",
-        [editing.title, editing.file_path, editing.trigger_time, editing.days, editing.duck_music ? 1 : 0, editing.resume_music ? 1 : 0, editing.duck_level, editing.is_active ? 1 : 0], stationId);
+      await (window as any).ether.announcements.create({
+        station_id: stationId, title: editing.title, file_path: editing.file_path,
+        trigger_time: editing.trigger_time, days: editing.days,
+        duck_music: editing.duck_music ? 1 : 0, resume_music: editing.resume_music ? 1 : 0,
+        duck_level: editing.duck_level, is_active: editing.is_active ? 1 : 0,
+      });
     }
     setEditing(null); load();
   };
 
   const remove = async (id: number) => {
     if (!confirm("Delete this announcement?")) return;
-    await queryScoped("DELETE FROM announcements WHERE id=?", [id], stationId); load();
+    await (window as any).ether.announcements.deleteById(id); load();
   };
 
   const toggleDay = (day: string) => {
@@ -260,7 +266,7 @@ export default function Announcements() {
                     {a.duck_music ? `↓ ${Math.round(a.duck_level * 100)}%` : "—"}
                   </td>
                   <td style={{ padding: "12px 14px" }}>
-                    <button onClick={async () => { await queryScoped("UPDATE announcements SET is_active=? WHERE id=?", [a.is_active ? 0 : 1, a.id], stationId); load(); }} style={{
+                    <button onClick={async () => { await (window as any).ether.announcements.updateById(a.id, { is_active: a.is_active ? 0 : 1 }); load(); }} style={{
                       padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", border: "none",
                       background: a.is_active ? "rgba(52,211,153,0.15)" : "var(--bg-tertiary)",
                       color: a.is_active ? "var(--accent-green)" : "var(--text-tertiary)",
