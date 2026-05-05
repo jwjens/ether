@@ -417,10 +417,7 @@ export default function PublishEpisode({ onClose, episodeTitle = "", episodeArti
         ["podcast_description", meta.showDescription],
       ];
       for (const [k, v] of kvUpdates) {
-        await execute(
-          "INSERT INTO station_config_kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-          [k, v]
-        );
+        await (window as any).ether.stationConfigKv.upsertByKey(stationId, k, v);
       }
 
       // 7. Log to DB

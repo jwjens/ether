@@ -4,7 +4,7 @@
 // CurrentRoutingSummary: read-only list of current assignments.
 
 import { useState, useEffect, useCallback } from "react";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 
 const TEAL = "#00c8a8";
 
@@ -123,16 +123,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
     console.log("[AudioRouting] Apply clicked", { selectedStation, selectedDevice });
     setApplying(true);
     try {
-      const upd = await execute(
-        "UPDATE station_config_kv SET value=?, updated_at=strftime('%s','now')*1000 WHERE station_id=? AND key='audio_output_device'",
-        [selectedDevice, selectedStation]
-      );
-      if (!upd || upd.changes === 0) {
-        await execute(
-          "INSERT INTO station_config_kv (uuid, station_id, key, value, updated_at) VALUES (?,?,?,?,strftime('%s','now')*1000)",
-          [crypto.randomUUID(), selectedStation, "audio_output_device", selectedDevice]
-        );
-      }
+      await (window as any).ether.stationConfigKv.upsertByKey(selectedStation, 'audio_output_device', selectedDevice);
       console.log("[AudioRouting] DB write OK, calling setOutputDevice");
       const result = await (window as any).ether.audio.setOutputDevice(selectedStation, selectedDevice);
       console.log("[AudioRouting] setOutputDevice returned:", result);

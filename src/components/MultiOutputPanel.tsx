@@ -10,7 +10,6 @@
 
 import { useState, useEffect } from "react";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
-import { query, execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
 
 // ─── Types ────────────────────────────────────────────────────
@@ -128,12 +127,10 @@ export default function MultiOutputPanel() {
         const devs = await invoke<AudioDevice[]>("list_audio_output_devices");
         setDevices(devs);
 
-        // Load saved routing from SQLite
-        const rows = await query<{ value: string }>(
-          "SELECT value FROM station_config_kv WHERE key = 'audio_routing'"
-        );
-        if (rows[0]?.value) {
-          try { setRouting(JSON.parse(rows[0].value)); } catch {}
+        // Load saved routing (install-scoped — deck-to-device map is per-machine)
+        const row = await (window as any).ether.installConfigKv.get('audio_routing');
+        if (row?.value) {
+          try { setRouting(JSON.parse(row.value)); } catch {}
         }
       } catch (e: any) {
         setError("Could not list audio devices: " + e.message);
@@ -161,11 +158,8 @@ export default function MultiOutputPanel() {
   const saveRouting = async () => {
     setSaving(true);
     try {
-      // Save to SQLite
-      await execute(
-        "INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('audio_routing', ?)",
-        [JSON.stringify(routing)]
-      );
+      // Save to install-scoped KV (deck-to-device map is per-machine, not per-station)
+      await (window as any).ether.installConfigKv.upsertByKey('audio_routing', JSON.stringify(routing));
 
       // Apply to Rust routing state
       await invoke("set_deck_output", { deck: "A",       deviceName: routing.deck_a  });
