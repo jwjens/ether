@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { processLibrary, getProcessingStats } from "../audio/songAnalysis";
-import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -46,8 +45,7 @@ export default function ProcessingPanel() {
   };
 
   const handleResetAll = async () => {
-    // station_id scoping: manual WHERE — UPDATE without original WHERE clause must be scoped explicitly
-    await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0 WHERE station_id=?", [stationId]);
+    await (window as any).ether.songs.resetLoudnessByStation(stationId);
     load();
   };
 

@@ -85,11 +85,13 @@ function ImportPanel({ onImported }: ImportPanelProps) {
       const artistRow = (await queryScoped<{ id: number }>("SELECT id FROM artists WHERE name = ?", [artistName], stationId))[0] ?? null;
       const artistId = artistRow?.id ?? 1;
 
-      // Upsert song
-      await executeScopedInsert(
-        "INSERT OR IGNORE INTO songs (title, artist_id, file_path, duration_ms) VALUES (?, ?, ?, ?)",
-        [title, artistId, filePath, durationMs], stationId
+      // Upsert song — check first to replicate OR IGNORE semantics
+      const existingByPath = await (window as any).ether.db.query(
+        "SELECT id FROM songs WHERE file_path = ? AND deleted_at IS NULL", [filePath]
       );
+      if (!existingByPath?.data?.length) {
+        await (window as any).ether.songs.create({ title, artist_id: artistId, file_path: filePath, duration_ms: durationMs });
+      }
       // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
       const [songRow] = await queryScoped<Song>(
         "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? AND s.station_id = ?",

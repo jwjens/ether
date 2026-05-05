@@ -1508,8 +1508,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           <button onClick={handleProcessAll} disabled={processing} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: processing ? "var(--bg-tertiary)" : "var(--accent-blue)", color: processing ? "var(--text-tertiary)" : "#fff", border: "none", cursor: processing ? "default" : "pointer" }}>
             {processing ? "Analyzing..." : "Analyze all songs"}
           </button>
-          {/* station_id scoping: manual WHERE — UPDATE without original WHERE must be scoped explicitly */}
-          <button onClick={async () => { await execute("UPDATE songs SET lufs_measured=NULL, peak_db=NULL, gain_db=0 WHERE station_id=?", [stationId]); getProcessingStats().then(setProcessingStats); }}
+          <button onClick={async () => { await (window as any).ether.songs.resetLoudnessByStation(stationId); getProcessingStats().then(setProcessingStats); }}
             style={{ padding: "8px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
             Reset
           </button>

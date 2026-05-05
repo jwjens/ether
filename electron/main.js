@@ -660,7 +660,16 @@ function runMigrations() {
     CREATE TRIGGER IF NOT EXISTS trg_songs_fts_insert AFTER INSERT ON songs BEGIN
       INSERT INTO songs_fts(rowid, title, artist) SELECT NEW.id, NEW.title, a.name FROM artists a WHERE a.id = NEW.artist_id;
     END;
-    CREATE TRIGGER IF NOT EXISTS trg_songs_fts_delete AFTER DELETE ON songs BEGIN
+  `);
+  // Migrate delete trigger to fire on soft-delete (UPDATE deleted_at NULL→non-NULL)
+  // rather than hard DELETE, because songsDelete uses UPDATE. The DROP+CREATE is
+  // idempotent — safe to run on every startup to pick up the new form.
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_songs_fts_delete;
+    CREATE TRIGGER trg_songs_fts_delete
+      AFTER UPDATE OF deleted_at ON songs
+      WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
+    BEGIN
       DELETE FROM songs_fts WHERE rowid = OLD.id;
     END;
   `);
@@ -1220,22 +1229,6 @@ ipcMain.handle("db:query", (_, sql, params) => {
 
 ipcMain.handle("db:execute", (_, sql, params) => {
   try {
-    // FTS workaround: drop/recreate trigger around DELETE FROM songs to avoid
-    // contentless-table errors. Explicit exception to the synced-table guard below —
-    // closes in Commit 3+ when songs DELETE migrates to the typed handler.
-    // MINOR FIX: tightened from startsWith("DELETE FROM SONGS") which also matched
-    // "DELETE FROM SONGS_FTS"; new regex requires exact table name "songs".
-    if (/^\s*DELETE\s+FROM\s+songs\s*(?:WHERE|$)/i.test(sql)) {
-      db.exec("DROP TRIGGER IF EXISTS trg_songs_fts_delete");
-      const stmt = db.prepare(sql);
-      const result = stmt.run(...(params || []));
-      db.exec(`CREATE TRIGGER IF NOT EXISTS trg_songs_fts_delete
-        AFTER DELETE ON songs BEGIN
-          DELETE FROM songs_fts WHERE rowid = OLD.id;
-        END`);
-      return { data: result, error: null };
-    }
-
     // Synced-table write guard (Phase 3.5 Commit 2). SELECTs are read-only — skip.
     if (!/^\s*SELECT/i.test(sql)) {
       const insertMatch = sql.match(/^\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)/i);
@@ -2916,6 +2909,7 @@ ipcMain.handle("discogs:updateTrack", (_, { id, title, artist, album, year, genr
 });
 
 // Write a Spotify-imported track to the songs table
+// TODO(phase-3.5-D): migrate these raw songs writes to the typed handler (songs:create).
 ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spotifyUri }) => {
   try {
     // Upsert artist

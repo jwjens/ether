@@ -9,7 +9,7 @@
 // on list. withMutation receives station_id: null per [N-89].
 
 const crypto = require('crypto');
-const { withMutation, serializePayload } = require('../mutation-writer');
+const { withMutation, logMutation, serializePayload } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE    = 'songs';
@@ -133,6 +133,93 @@ function songsDelete(db, uuid) {
   return { ok: true };
 }
 
+function songsGetByIntId(db, intId) {
+  return db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId) ?? null;
+}
+
+function songsUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[songs] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return songsUpdate(db, existing.uuid, patch);
+}
+
+function songsDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[songs] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return songsDelete(db, existing.uuid);
+}
+
+function songsDeleteByStation(db, stationId) {
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND deleted_at IS NULL`
+  ).all(stationId);
+  const now = new Date().toISOString();
+  const doAll = db.transaction(() => {
+    for (const row of rows) {
+      let uuid = row.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+      }
+      const before = serializePayload({ ...row, uuid }, TABLE);
+      db.prepare(`UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE id = ?`).run(now, now, row.id);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         uuid,
+        op:             'delete',
+        payload_before: before,
+        payload_after:  null,
+        station_id:     null,
+        actor_id:       null,
+      });
+    }
+  });
+  doAll();
+  return { ok: true, cleared: rows.length };
+}
+
+function songsResetLoudnessByStation(db, stationId) {
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND deleted_at IS NULL`
+  ).all(stationId);
+  const now = new Date().toISOString();
+  const doAll = db.transaction(() => {
+    for (const row of rows) {
+      let uuid = row.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+      }
+      const rowWithUuid = { ...row, uuid };
+      const before  = serializePayload(rowWithUuid, TABLE);
+      const updated = { ...rowWithUuid, lufs_measured: null, peak_db: null, gain_db: 0, updated_at: now };
+      const after   = serializePayload(updated, TABLE);
+      db.prepare(`UPDATE ${TABLE} SET lufs_measured = NULL, peak_db = NULL, gain_db = 0, updated_at = ? WHERE id = ?`).run(now, row.id);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         uuid,
+        op:             'update',
+        payload_before: before,
+        payload_after:  after,
+        station_id:     null,
+        actor_id:       null,
+      });
+    }
+  });
+  doAll();
+  return { ok: true, cleared: rows.length };
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSongs(ipcMain, db) {
@@ -161,6 +248,31 @@ function installSongs(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('songs:get-by-int-id', (_, intId) => {
+    try { return { ok: true, row: songsGetByIntId(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('songs:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: songsUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('songs:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...songsDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('songs:delete-by-station', (_, stationId) => {
+    try { return { ok: true, ...songsDeleteByStation(db, stationId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('songs:reset-loudness-by-station', (_, stationId) => {
+    try { return { ok: true, ...songsResetLoudnessByStation(db, stationId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   console.log('[songs] handlers installed');
 }
 
@@ -169,7 +281,12 @@ module.exports = {
   validateScope,
   songsList,
   songsGet,
+  songsGetByIntId,
   songsCreate,
   songsUpdate,
+  songsUpdateById,
   songsDelete,
+  songsDeleteById,
+  songsDeleteByStation,
+  songsResetLoudnessByStation,
 };

@@ -395,18 +395,18 @@ export default function LibraryImport({ onClose }: Props) {
         }
       }
 
-      await executeScopedInsert(
-        `INSERT INTO songs
-          (title, artist_id, album, duration_ms, category_id, rotation_status,
-           daypart_mask, is_explicit, energy, bpm, raw_metadata, created_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,unixepoch(),unixepoch())`,
-        [
-          mapped.title, artistId, mapped.album || null, mapped.duration_ms,
-          categoryId, mapped.rotation_status,
-          mapped.daypart_mask, mapped.is_explicit, mapped.energy, mapped.bpm,
-          mapped.raw_metadata,
-        ], stationId
-      );
+      await (window as any).ether.songs.create({
+        title:           mapped.title,
+        artist_id:       artistId,
+        duration_ms:     mapped.duration_ms,
+        category_id:     categoryId,
+        rotation_status: mapped.rotation_status,
+        daypart_mask:    mapped.daypart_mask,
+        is_explicit:     mapped.is_explicit,
+        energy:          mapped.energy,
+        bpm:             mapped.bpm,
+        raw_metadata:    mapped.raw_metadata,
+      });
       imported++;
       setProgress({ done: i + 1, total: parseResult.rows.length });
     }

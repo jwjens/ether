@@ -116,10 +116,13 @@ export default function ImportDialog({ onDone }: Props) {
         }
 
         // Insert song (skip album lookup for reliability)
-        await executeScopedInsert(
-          "INSERT INTO songs (title, file_path, artist_id, category_id, genre, created_at, updated_at) VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())",
-          [title, filePath, artist?.id || null, selectedCat, tags.genre || null], stationId
-        );
+        await (window as any).ether.songs.create({
+          title,
+          file_path:   filePath,
+          artist_id:   artist?.id || null,
+          category_id: selectedCat,
+          genre:       tags.genre || null,
+        });
 
         // Auto-analyze: BPM, LUFS, energy, cue points — runs in Rust background thread.
         // Non-blocking: we don't await so import stays fast; analysis happens in parallel.

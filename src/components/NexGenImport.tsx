@@ -122,10 +122,13 @@ export default function NexGenImport({ onDone }: { onDone: () => void }) {
         if (existing) { skipped++; continue; }
 
         // Insert song (no file_path - they'll need to relocate library)
-        await executeScopedInsert(
-          "INSERT INTO songs (title, artist_id, genre, rotation_status, gender, created_at, updated_at) VALUES (?,?,?,'active','unknown',unixepoch(),unixepoch())",
-          [song.title, artistId, song.genre || null], stationId
-        );
+        await (window as any).ether.songs.create({
+          title:           song.title,
+          artist_id:       artistId,
+          genre:           song.genre || null,
+          rotation_status: 'active',
+          gender:          'unknown',
+        });
         imported++;
       } catch (e) {
         errors.push(song.title + ": " + String(e));

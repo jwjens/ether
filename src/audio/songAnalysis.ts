@@ -98,33 +98,19 @@ export async function analyzeAndSave(songId: number, filePath: string): Promise<
   if (!result) return null;
 
   try {
-    const stationId = getActiveStationIdSync();
-    await execute(
-      `UPDATE songs SET
-        lufs_measured = ?,
-        peak_db       = ?,
-        gain_db       = ?,
-        bpm           = ?,
-        energy        = ?,
-        intro_end     = CASE WHEN intro_end IS NULL OR intro_end = 0 THEN ? ELSE intro_end END,
-        outro_start   = CASE WHEN outro_start IS NULL THEN ? ELSE outro_start END,
-        duration_ms   = ?,
-        is_processed  = 1,
-        updated_at    = unixepoch()
-       WHERE id = ? AND station_id = ?`,
-      [
-        result.loudness.lufs_integrated,
-        result.loudness.peak_db,
-        result.loudness.gain_db,
-        result.bpm.bpm || null,
-        result.energy.energy,
-        result.cue_points.intro_end,
-        result.cue_points.outro_start,
-        Math.round(result.duration_secs * 1000),
-        songId,
-        stationId,
-      ]
-    );
+    const current = await (window as any).ether.songs.getByIntId(songId);
+    const patch: Record<string, unknown> = {
+      lufs_measured: result.loudness.lufs_integrated,
+      peak_db:       result.loudness.peak_db,
+      gain_db:       result.loudness.gain_db,
+      bpm:           result.bpm.bpm || null,
+      energy:        result.energy.energy,
+      duration_ms:   Math.round(result.duration_secs * 1000),
+      is_processed:  1,
+    };
+    if (!current?.intro_end || current.intro_end === 0) patch.intro_end   = result.cue_points.intro_end;
+    if (!current?.outro_start)                          patch.outro_start = result.cue_points.outro_start;
+    await (window as any).ether.songs.updateById(songId, patch);
   } catch (e) {
     console.error("[songAnalysis] DB save failed:", e);
   }
@@ -222,14 +208,13 @@ export async function autoCueSong(songId: number, filePath: string): Promise<voi
 
     // Only apply if the auto-detected values are meaningful
     if (cues.intro_end > 0.3 || cues.outro_start < 9999) {
-      const stationId = getActiveStationIdSync();
-      await execute(
-        `UPDATE songs SET
-           intro_end   = COALESCE(NULLIF(intro_end, 0), ?),
-           outro_start = COALESCE(outro_start, ?)
-         WHERE id = ? AND station_id = ?`,
-        [cues.intro_end, cues.outro_start, songId, stationId]
-      );
+      const current = await (window as any).ether.songs.getByIntId(songId);
+      const patch: Record<string, unknown> = {};
+      if (!current?.intro_end || current.intro_end === 0) patch.intro_end   = cues.intro_end;
+      if (!current?.outro_start)                          patch.outro_start = cues.outro_start;
+      if (Object.keys(patch).length > 0) {
+        await (window as any).ether.songs.updateById(songId, patch);
+      }
     }
   } catch (e) {
     console.error("[songAnalysis] autoCueSong failed:", e);

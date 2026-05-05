@@ -204,11 +204,17 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
           // Insert song — use INSERT OR IGNORE on title+artist to avoid dupes
           try {
-            await executeScopedInsert(
-              `INSERT OR IGNORE INTO songs (title, artist_id, category_id, file_path, duration_ms, intro_end, outro_start, bpm, energy, year)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [s.title, artistId, catId, s.filepath || null, s.duration_ms || 0, s.intro_ms || null, s.outro_ms || null, s.bpm || null, s.energy || null, s.year || null], stationId
-            );
+            await (window as any).ether.songs.create({
+              title:       s.title,
+              artist_id:   artistId,
+              category_id: catId,
+              file_path:   s.filepath || null,
+              duration_ms: s.duration_ms || 0,
+              intro_end:   s.intro_ms || null,
+              outro_start: s.outro_ms || null,
+              bpm:         s.bpm || null,
+              energy:      s.energy || null,
+            });
             importedSongs++;
             if (s.filepath && !(await checkFileExists(s.filepath))) missingFiles++;
           } catch {}
