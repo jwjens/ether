@@ -509,6 +509,14 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
     if (newLabel) setCarts(p => p.map(c => c.key === key ? { ...c, label: newLabel } : c));
   };
 
+  const assignCart = async (key: string) => {
+    const f = await (window as any).ether.dialog.openFile({ multiple: false, title: "Select audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
+    if (!f) return;
+    const fp = Array.isArray(f) ? f[0] : f;
+    const label = (fp.split(/[\\/]/).pop() || fp).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+    setCarts(p => p.map(c => c.key === key ? { ...c, label, filePath: fp } : c));
+  };
+
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" as const, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Header — hidden in compact to save space */}
@@ -533,7 +541,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
           {carts.slice(0, 9).map(cart => (
             <div
               key={cart.key}
-              onClick={() => fireCart(cart.key)}
+              onClick={() => { if (cart.filePath) { fireCart(cart.key); } else { assignCart(cart.key); } }}
               onDoubleClick={() => editLabel(cart.key)}
               onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
               onDragLeave={() => setDragOver(null)}
@@ -543,7 +551,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
                 borderRadius: 0,
                 background: cart.playing ? cart.color : cart.filePath ? `${cart.color}15` : "var(--bg-tertiary)",
                 border: `1px solid ${cart.playing ? cart.color : cart.filePath ? cart.color + "40" : "var(--border-primary)"}`,
-                cursor: cart.filePath ? "pointer" : "default",
+                cursor: "pointer",
                 transition: "all 0.1s",
                 display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
               }}
@@ -564,7 +572,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
         {carts.map(cart => (
           <div
             key={cart.key}
-            onClick={() => fireCart(cart.key)}
+            onClick={() => { if (cart.filePath) { fireCart(cart.key); } else { assignCart(cart.key); } }}
             onDoubleClick={() => editLabel(cart.key)}
             onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
             onDragLeave={() => setDragOver(null)}
@@ -573,7 +581,7 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
               borderRadius: 0,
               background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",
               border: `1px solid ${cart.playing ? cart.color + "80" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "28" : "var(--border-primary)"}`,
-              cursor: cart.filePath ? "pointer" : "default",
+              cursor: "pointer",
               transition: "all 0.1s",
               boxShadow: cart.playing ? `0 0 8px ${cart.color}40` : "none",
               position: "relative" as const,

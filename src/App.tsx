@@ -28,7 +28,6 @@ import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
 import OnAirDeck from "./components/OnAirDeck";
-import CartWall from "./components/CartWall";
 import ClipEditor from "./components/ClipEditor";
 import { useCaptions, CaptionsOverlay, CaptionsLogPanel } from "./components/Captions";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
@@ -1953,6 +1952,14 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
 
   const save = (next: typeof carts) => { setCarts(next); localStorage.setItem("ether_carts_v1", JSON.stringify(next)); };
 
+  const titleFromFile = (p: string) => (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+  const assignCart = async (key: string) => {
+    const f = await (window as any).ether.dialog.openFile({ multiple: false, title: "Select audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
+    if (!f) return;
+    const fp = Array.isArray(f) ? f[0] : f;
+    save(carts.map(c => c.key === key ? { ...c, filePath: fp, label: titleFromFile(fp) } : c));
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (editing || e.target instanceof HTMLInputElement) return;
@@ -1993,7 +2000,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
         {carts.map(cart => (
           <div
             key={cart.key}
-            onClick={() => fire(cart.key)}
+            onClick={() => { if (cart.filePath) { fire(cart.key); } else { assignCart(cart.key); } }}
             onDoubleClick={() => setEditing(cart.key)}
             onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
             onDragLeave={() => setDragOver(null)}
@@ -2010,7 +2017,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
                 : dragOver === cart.key ? `${cart.color}20`
                 : cart.filePath ? `${cart.color}12` : "var(--bg-tertiary)",
               border: `1px solid ${cart.playing ? cart.color : dragOver === cart.key ? cart.color : cart.filePath ? cart.color + "40" : "var(--border-primary)"}`,
-              cursor: cart.filePath ? "pointer" : "default",
+              cursor: "pointer",
               transition: "all 0.12s",
               boxShadow: cart.playing ? `0 0 20px ${cart.color}60` : "none",
               position: "relative" as const, minHeight: 80,
