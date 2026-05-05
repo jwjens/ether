@@ -761,10 +761,13 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
   const save = async () => {
     if (!song) return;
     try {
-      await queryScoped(
-        "UPDATE songs SET cue_in=?, cue_out=?, intro_end=?, outro_start=?, is_explicit=? WHERE id=?",
-        [cueIn, cueOut, introEnd, outroStart, isExplicit, song.id], stationId
-      );
+      await (window as any).ether.songs.updateById(song.id, {
+        cue_in:      cueIn,
+        cue_out:     cueOut,
+        intro_end:   introEnd,
+        outro_start: outroStart,
+        is_explicit: isExplicit,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
       onSaved?.({ ...song, cue_in: cueIn, cue_out: cueOut, intro_end: introEnd, outro_start: outroStart, is_explicit: isExplicit });
@@ -794,7 +797,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
       const tags: string[] = (rec.tags || []).map((t: any) => (t.name || "").toLowerCase());
       const explicit = tags.some(t => t === "explicit" || t === "explicit content" || t === "parental advisory") ? 1 : 0;
       setIsExplicit(explicit);
-      await queryScoped("UPDATE songs SET is_explicit=? WHERE id=?", [explicit, song.id], stationId);
+      await (window as any).ether.songs.updateById(song.id, { is_explicit: explicit });
       const label = explicit ? "Marked EXPLICIT" : "Marked clean";
       setMbStatus(`${label} (score: ${rec.score}, tags: ${tags.length ? tags.join(", ") : "none"})`);
       console.log(`[mb] "${song.title}": ${label} — tags: [${tags.join(", ")}]`);

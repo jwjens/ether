@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
-import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -245,11 +244,13 @@ export default function CueEditor({ songId, filePath, onSaved }: Props) {
   };
 
   const save = async () => {
-    // station_id scoping: Strategy B — UPDATE on single table with WHERE id=?
-    await execute(
-      "UPDATE songs SET cue_in_ms=?, cue_out_ms=?, intro_end_ms=?, outro_start_ms=?, duration_ms=?, updated_at=unixepoch() WHERE id=? AND station_id=?",
-      [cueIn, cueOut, introEnd, outroStart, duration, songId, stationId]
-    );
+    await (window as any).ether.songs.updateById(songId, {
+      cue_in_ms:      cueIn,
+      cue_out_ms:     cueOut,
+      intro_end_ms:   introEnd,
+      outro_start_ms: outroStart,
+      duration_ms:    duration,
+    });
     onSaved();
   };
 

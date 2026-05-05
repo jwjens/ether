@@ -96,7 +96,7 @@ export default function ImportDialog({ onDone }: Props) {
         if (existing) {
           // Update category if one was selected
           if (selectedCat) {
-            await queryScoped("UPDATE songs SET category_id = ? WHERE id = ?", [selectedCat, existing.id], stationId);
+            await (window as any).ether.songs.updateById(existing.id, { category_id: selectedCat });
           }
           count++;
           setProgress({ done: count, total: files.length, current: filePath.split("/").pop() || "" });

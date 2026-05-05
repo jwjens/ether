@@ -23,7 +23,7 @@
 //   • Export MP3 (requires: npm install lamejs)
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { queryScoped, executeScopedInsert } from "../db/stationScoped";
+import { executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
@@ -1251,10 +1251,7 @@ export default function BroadcastEditor({
 
       // Update DB — flag the original song as having an intro version
       if (sourceSongId) {
-        await queryScoped(
-          "UPDATE songs SET intro_version_path = ?, has_intro = 1 WHERE id = ?",
-          [outPath, sourceSongId], stationId
-        );
+        await (window as any).ether.songs.updateById(sourceSongId, { intro_version_path: outPath, has_intro: 1 });
       }
 
       setStatus(`✓ Bounced & placed — ${name}_intro.wav`);

@@ -278,10 +278,12 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
         }
 
         if (introEnd || outroStart) {
-          await queryScoped(
-            "UPDATE songs SET intro_end=?, outro_start=?, bpm=COALESCE(?, bpm) WHERE id=?",
-            [introEnd ?? null, outroStart ?? null, bpm ?? null, song.id], stationId
-          );
+          const patch: Record<string, unknown> = {
+            intro_end:   introEnd ?? null,
+            outro_start: outroStart ?? null,
+          };
+          if (bpm != null) patch.bpm = bpm;
+          await (window as any).ether.songs.updateById(song.id, patch);
         }
       } catch {
         source = "skipped";

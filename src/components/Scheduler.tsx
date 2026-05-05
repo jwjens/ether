@@ -286,7 +286,7 @@ function CategoriesTab() {
           const durSec = await invoke<number>("get_file_duration", { filePath: song.file_path });
           const durMs = Math.round(durSec * 1000);
           if (durMs > 1000) {
-            await queryScoped("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, song.id], stationId);
+            await (window as any).ether.songs.updateById(song.id, { duration_ms: durMs });
             fixed++;
           } else { failed++; }
         } catch { failed++; }
@@ -741,7 +741,7 @@ function ClocksTab() {
                 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
                 const durSec = await invoke<number>("get_file_duration", { filePath: songs[0].file_path });
                 durMs = Math.round(durSec * 1000);
-                if (durMs > 0) await queryScoped("UPDATE songs SET duration_ms=? WHERE id=?", [durMs, songs[0].id], stationId);
+                if (durMs > 0) await (window as any).ether.songs.updateById(songs[0].id, { duration_ms: durMs });
               } catch {}
             }
             const durMin = durMs > 0
