@@ -432,6 +432,9 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
           ]);
         } else if (type === "ice") {
           const pc = peersRef.current.get(from);
+          console.log("[WEBRTC] Remote ICE candidate from guest", from, payload ? {
+            candidate: payload.candidate,
+          } : "null");
           if (pc && payload) try { await pc.addIceCandidate(payload); } catch {}
         } else if (type === "leave") {
           const pc = peersRef.current.get(from);
@@ -509,8 +512,18 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
         }));
       };
       pc.onicecandidate = (e) => {
+        console.log("[WEBRTC] Local ICE candidate for guest", id, e.candidate ? {
+          type: e.candidate.type,
+          protocol: e.candidate.protocol,
+          address: e.candidate.address,
+          port: e.candidate.port,
+          candidate: e.candidate.candidate,
+        } : "null (gathering complete)");
         if (e.candidate && ws.readyState === WebSocket.OPEN)
           ws.send(JSON.stringify({ to: id, type: "ice", payload: e.candidate }));
+      };
+      pc.onicegatheringstatechange = () => {
+        console.log("[WEBRTC] ICE gathering state for guest", id, pc.iceGatheringState);
       };
       pc.oniceconnectionstatechange = () => {
         console.log("[WEBRTC] ICE state for guest", id, pc.iceConnectionState);
@@ -2082,21 +2095,34 @@ type RightTab = "engine" | "showplus" | "sources" | "quality";
 // GuestGridTile — compact 2-col grid tile for accepted guests
 // ─────────────────────────────────────────────────────────────
 
-function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove }: {
+function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove, outputDeviceId }: {
   guest: GuestPeer; onScene: boolean;
   onToggleScene: () => void; onMute: () => void; onRemove: () => void;
+  outputDeviceId?: string;
 }) {
-  const vidRef = useRef<HTMLVideoElement>(null);
+  const vidRef   = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
   useEffect(() => {
     const v = vidRef.current;
+    const a = audioRef.current;
     const s = guest.stream;
-    if (!v || !s) return;
-    v.srcObject = s;
-    v.play().catch(() => {});
-    const onAdd = () => { v.srcObject = s; v.play().catch(() => {}); };
+    if (!s) return;
+    if (v) { v.srcObject = s; v.play().catch(() => {}); }
+    if (a) { a.srcObject = s; a.play().catch(() => {}); }
+    const onAdd = () => {
+      if (v) { v.srcObject = s; v.play().catch(() => {}); }
+      if (a) { a.srcObject = s; a.play().catch(() => {}); }
+    };
     s.addEventListener("addtrack", onAdd);
     return () => { s.removeEventListener("addtrack", onAdd); };
   }, [guest.stream]);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a || !outputDeviceId) return;
+    (a as any).setSinkId?.(outputDeviceId).catch(() => {});
+  }, [outputDeviceId]);
 
   return (
     <div style={{ position: "relative", background: BG0, border: `1px solid ${onScene ? "#a855f7" : BOR}` }}>
@@ -2104,7 +2130,9 @@ function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove }: {
         {guest.stream ? (
           <video ref={vidRef} autoPlay playsInline muted
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-        ) : (
+        ) : null}
+        <audio ref={audioRef} autoPlay playsInline style={{ display: "none" }} />
+        {!guest.stream && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ width: 32, height: 32, borderRadius: "50%", background: BG3, display: "flex", alignItems: "center", justifyContent: "center", color: TXT2, fontSize: 14, fontWeight: 700 }}>
               {(guest.name[0] || "?").toUpperCase()}
@@ -2274,7 +2302,8 @@ function ShowPlusPanel({
                 return (
                   <GuestGridTile key={g.id} guest={g} onScene={onScene}
                     onToggleScene={() => { if (!src) return; onScene ? removeLayer(srcLayerIdx) : addLayerFromSource(src.id); }}
-                    onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)} />
+                    onMute={() => onMute(g.id)} onRemove={() => onRemove(g.id)}
+                    outputDeviceId={outputDeviceId} />
                 );
               })}
             </div>
