@@ -1945,7 +1945,7 @@ function EmbeddedStudio({
           teleScript={teleScript} teleFontSize={teleFontSize}
           teleScrolling={false} teleScrollRef={teleScrollRef}
           resolution={resolution} isRecording={isRecording}
-          showGrid={showGrid} showFrameOverlays active={active}
+          showGrid={showGrid} showFrameOverlays active
           micDeviceId={micDeviceId}
         />
         <LevelBar level={hostLevel} height={3} />
