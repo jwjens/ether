@@ -142,6 +142,28 @@ function pinnedSongsDelete(db, uuid, stationId) {
 
 
 
+function pinnedSongsUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[pinned_songs] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return pinnedSongsUpdate(db, existing.uuid, patch);
+}
+
+function pinnedSongsDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[pinned_songs] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return pinnedSongsDelete(db, existing.uuid, existing.station_id);
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPinnedSongs(ipcMain, db) {
@@ -170,6 +192,15 @@ function installPinnedSongs(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('pinned_songs:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: pinnedSongsUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('pinned_songs:delete-by-id', (_, intId) => {
+    try { return { ok: true, ...pinnedSongsDeleteById(db, intId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[pinned_songs] handlers installed');
 }
@@ -181,6 +212,7 @@ module.exports = {
   pinnedSongsGet,
   pinnedSongsCreate,
   pinnedSongsUpdate,
+  pinnedSongsUpdateById,
   pinnedSongsDelete,
-
+  pinnedSongsDeleteById,
 };

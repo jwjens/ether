@@ -172,6 +172,7 @@ contextBridge.exposeInMainWorld("ether", {
   stationConfigKv:    handlers.stationConfigKv,
   installConfigKv:    handlers.installConfigKv,
   operators:          handlers.operators,
+  pinnedSongs:        handlers.pinnedSongs,
   playLog:            handlers.playLog,
   scheduledLog:       handlers.scheduledLog,
   songs:              handlers.songs,

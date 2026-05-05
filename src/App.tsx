@@ -1418,7 +1418,7 @@ export default function App() {
               )}
               {panel === "logs" && <Logs />}
               {panel === "eas" && <EASLogbook onClose={() => setPanel("live")} />}
-              {panel === "pdpicks" && <PDPicks onClose={() => setPanel("live")} />}
+              {panel === "pdpicks" && <PDPicks stationId={stationId} onClose={() => setPanel("live")} />}
               {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}
               {panel === "reasons" && <SchedulerReasons onClose={() => setPanel("live")} />}
               {panel === "vtinbox" && <VoiceTrackInbox onClose={() => setPanel("live")} />}

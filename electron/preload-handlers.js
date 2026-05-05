@@ -135,11 +135,13 @@ module.exports = function buildHandlers(ipcRenderer) {
     delete:  (uuid, stationId) => ipcRenderer.invoke('operators:delete',    uuid, stationId),
   },
   pinnedSongs: {
-    list:    (stationId, opts) => ipcRenderer.invoke('pinned_songs:list',      stationId, opts),
-    getById: (uuid)            => ipcRenderer.invoke('pinned_songs:get-by-id', uuid),
-    create:  (payload)         => ipcRenderer.invoke('pinned_songs:create',    payload),
-    update:  (uuid, patch)     => ipcRenderer.invoke('pinned_songs:update',    uuid, patch),
-    delete:  (uuid, stationId) => ipcRenderer.invoke('pinned_songs:delete',    uuid, stationId),
+    list:         (stationId, opts) => ipcRenderer.invoke('pinned_songs:list',          stationId, opts),
+    getById:      (uuid)            => ipcRenderer.invoke('pinned_songs:get-by-id',     uuid),
+    create:       (payload)         => ipcRenderer.invoke('pinned_songs:create',        payload),
+    update:       (uuid, patch)     => ipcRenderer.invoke('pinned_songs:update',        uuid, patch),
+    updateById:   (intId, patch)    => ipcRenderer.invoke('pinned_songs:update-by-id',  intId, patch),
+    delete:       (uuid, stationId) => ipcRenderer.invoke('pinned_songs:delete',        uuid, stationId),
+    deleteById:   (intId)           => ipcRenderer.invoke('pinned_songs:delete-by-id',  intId),
   },
   playLog: {
     list:           (stationId, opts) => ipcRenderer.invoke('play_log:list',             stationId, opts),

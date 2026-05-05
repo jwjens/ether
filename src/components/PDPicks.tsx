@@ -11,7 +11,7 @@
 // This is the GSelector "PD Picks" / Wide Orbit "Mandatory Songs" feature.
 
 import { useEffect, useState } from "react";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 
 interface PinnedRow {
   id: number;
@@ -58,7 +58,7 @@ function fmtDow(mask: number): string {
   return days.join(" ");
 }
 
-export default function PDPicks({ onClose }: { onClose?: () => void }) {
+export default function PDPicks({ stationId, onClose }: { stationId: number; onClose?: () => void }) {
   const [pins, setPins] = useState<PinnedRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -91,12 +91,12 @@ export default function PDPicks({ onClose }: { onClose?: () => void }) {
 
   const deletePin = async (id: number) => {
     if (!confirm("Remove this pin? The song will go back to normal rotation.")) return;
-    await execute("DELETE FROM pinned_songs WHERE id = ?", [id]);
+    await (window as any).ether.pinnedSongs.deleteById(id);
     load();
   };
 
   const reactivatePin = async (id: number) => {
-    await execute("UPDATE pinned_songs SET consumed_at = 0 WHERE id = ?", [id]);
+    await (window as any).ether.pinnedSongs.updateById(id, { consumed_at: 0 });
     load();
   };
 
@@ -189,14 +189,14 @@ export default function PDPicks({ onClose }: { onClose?: () => void }) {
       )}
 
       {showForm && (
-        <PinForm onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />
+        <PinForm stationId={stationId} onClose={() => setShowForm(false)} onSaved={() => { setShowForm(false); load(); }} />
       )}
     </div>
   );
 }
 
 // ── Pin creation form ──
-function PinForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function PinForm({ stationId, onClose, onSaved }: { stationId: number; onClose: () => void; onSaved: () => void }) {
   const [songId, setSongId]               = useState<number | null>(null);
   const [songSearch, setSongSearch]       = useState("");
   const [songResults, setSongResults]     = useState<SongOption[]>([]);
@@ -236,19 +236,19 @@ function PinForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => voi
         const d = new Date(oneShotDate); d.setHours(slotHour, 0, 0, 0);
         playAtUnix = Math.floor(d.getTime() / 1000);
       }
-      await execute(
-        `INSERT INTO pinned_songs
-         (uuid, song_id, slot_hour, slot_position, recur_dow, play_at_unix, start_unix, end_unix, force_play, pinned_by, reason)
-         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-        [
-          crypto.randomUUID(),
-          selectedSong.id, slotHour, slotPosition,
-          pinMode === "recurring" ? recurDow : 0,
-          playAtUnix,
-          forcePlay ? 1 : 0,
-          pinnedBy, reason,
-        ]
-      );
+      await (window as any).ether.pinnedSongs.create({
+        station_id:    stationId,
+        song_id:       selectedSong.id,
+        slot_hour:     slotHour,
+        slot_position: slotPosition,
+        recur_dow:     pinMode === "recurring" ? recurDow : 0,
+        play_at_unix:  playAtUnix,
+        start_unix:    0,
+        end_unix:      0,
+        force_play:    forcePlay ? 1 : 0,
+        pinned_by:     pinnedBy,
+        reason,
+      });
       onSaved();
     } catch (e: any) {
       alert("Save failed: " + (e?.message || e));
