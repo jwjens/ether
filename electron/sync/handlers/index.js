@@ -37,7 +37,10 @@ const { installSpots } = require('./spots');
 const { installStationConfigKv } = require('./station_config_kv');
 const { installInstallConfigKv } = require('./install_config_kv');
 const { installStationProgrammingMoods } = require('./station_programming_moods');
-const { installStations } = require('./stations');
+// installStations is intentionally excluded: stations:* IPC channels are
+// registered manually in main.js with custom logic (safety gate on create,
+// integer-id API, stations:get-active and stations:switch not in the generated
+// handler). Calling installStations here would throw a duplicate-handler error.
 const { installVoiceTracks } = require('./voice_tracks');
 
 function installAll(ipcMain, db) {
@@ -74,7 +77,6 @@ function installAll(ipcMain, db) {
   installStationConfigKv(ipcMain, db);
   installInstallConfigKv(ipcMain, db);
   installStationProgrammingMoods(ipcMain, db);
-  installStations(ipcMain, db);
   installVoiceTracks(ipcMain, db);
 }
 

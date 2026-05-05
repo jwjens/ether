@@ -1069,16 +1069,14 @@ app.whenReady().then(() => {
     console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
   }
 
-  // sync IPC handlers — opt-in per migrated table (Phase 3.5+)
+  // sync IPC handlers — all 30 typed handler sets via aggregator
+  // (stations:* excluded from installAll — registered manually below with custom logic)
   try {
-    const { installStationProgramming } = require('./sync/handlers/station_programming');
-    const { installStationConfigKv }    = require('./sync/handlers/station_config_kv');
-    const { installOperators }          = require('./sync/handlers/operators');
-    installStationProgramming(ipcMain, db);
-    installStationConfigKv(ipcMain, db);
-    installOperators(ipcMain, db);
+    const { installAll } = require('./sync/handlers/index');
+    installAll(ipcMain, db);
   } catch (e) {
-    console.warn("[sync/handlers] install failed:", e.message);
+    console.error("[sync/handlers] install failed:", e.message);
+    console.error(e.stack);
   }
 
   // Show native splash first; main window stays hidden behind it
