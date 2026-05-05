@@ -1071,11 +1071,13 @@ app.whenReady().then(() => {
 
   // sync IPC handlers — all 30 typed handler sets via aggregator
   // (stations:* excluded from installAll — registered manually below with custom logic)
+  console.log('[sync/handlers] ▶ installAll starting (phase-3.5)');
   try {
     const { installAll } = require('./sync/handlers/index');
     installAll(ipcMain, db);
+    console.log('[sync/handlers] ✓ installAll complete');
   } catch (e) {
-    console.error("[sync/handlers] install failed:", e.message);
+    console.error("[sync/handlers] ✗ install failed:", e.message);
     console.error(e.stack);
   }
 
