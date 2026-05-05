@@ -3,7 +3,7 @@
 // Dark steel: #0e0e12 bg, #1e1e28 borders, zero border-radius.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import MasterEQRack from "./MasterEQRack";
@@ -558,10 +558,9 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
 
   const handleMasterEqChange = useCallback((bands: number[]) => {
     setEqBands(bands);
-    execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('eq_master',?)",
-      [JSON.stringify(bands)]).catch(() => {});
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'eq_master', JSON.stringify(bands));
     try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("master", bands); } catch {}
-  }, []);
+  }, [stationId]);
 
   // Session uptime
   useEffect(() => {

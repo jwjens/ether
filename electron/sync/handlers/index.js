@@ -35,6 +35,7 @@ const { installSongMetadataValues } = require('./song_metadata_values');
 const { installSongs } = require('./songs');
 const { installSpots } = require('./spots');
 const { installStationConfigKv } = require('./station_config_kv');
+const { installInstallConfigKv } = require('./install_config_kv');
 const { installStationProgrammingMoods } = require('./station_programming_moods');
 const { installStations } = require('./stations');
 const { installVoiceTracks } = require('./voice_tracks');
@@ -71,6 +72,7 @@ function installAll(ipcMain, db) {
   installSongs(ipcMain, db);
   installSpots(ipcMain, db);
   installStationConfigKv(ipcMain, db);
+  installInstallConfigKv(ipcMain, db);
   installStationProgrammingMoods(ipcMain, db);
   installStations(ipcMain, db);
   installVoiceTracks(ipcMain, db);

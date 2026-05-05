@@ -219,9 +219,9 @@ export default function ProgramLog({ onClose }: Props) {
       for (const slot of clockSlots) {
         if (slot.slot_type !== "music" || !slot.category_id) {
           await execute(
-            `INSERT INTO scheduled_log (log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [date,hour,slot.position,slot.slot_type,slot.category_id,slot.category_code,slot.category_color,null,null,null,Math.round(slot.duration_min*60000),slot.label,"scheduled"]
+            `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [crypto.randomUUID(),date,hour,slot.position,slot.slot_type,slot.category_id,slot.category_code,slot.category_color,null,null,null,Math.round(slot.duration_min*60000),slot.label,"scheduled"]
           );
           continue;
         }
@@ -286,17 +286,17 @@ export default function ProgramLog({ onClose }: Props) {
           if (picked.artist_id) usedArtistIds.add(picked.artist_id);
           console.log(`[schedule] QUEUED: "${picked.title}" by "${picked.artist_name}" → slot ${slot.position} (cat: ${slot.category_code})`);
           await execute(
-            `INSERT INTO scheduled_log (log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,picked.id,picked.title,picked.artist_name,picked.duration_ms||Math.round(slot.duration_min*60000),picked.title,"scheduled",0,0,8000]
+            `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [crypto.randomUUID(),date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,picked.id,picked.title,picked.artist_name,picked.duration_ms||Math.round(slot.duration_min*60000),picked.title,"scheduled",0,0,8000]
           );
           await execute("UPDATE songs SET last_played_at=? WHERE id=?", [hourStartTs+slot.position, picked.id]);
         } else {
           console.warn(`[schedule] UNFILLED: slot ${slot.position} (cat: ${slot.category_code}) — no eligible songs remain after all rotation rules`);
           await execute(
-            `INSERT INTO scheduled_log (log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,null,null,null,Math.round(slot.duration_min*60000),"UNFILLED","unfilled",0,0,8000]
+            `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [crypto.randomUUID(),date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,null,null,null,Math.round(slot.duration_min*60000),"UNFILLED","unfilled",0,0,8000]
           );
         }
       }
@@ -335,9 +335,9 @@ export default function ProgramLog({ onClose }: Props) {
           if (overflowSong) {
             const fadeDurationMs = 8000; // 8-second crossfade
             await execute(
-              `INSERT INTO scheduled_log (log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-              [date, hour, clockSlots.length, "music",
+              `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [crypto.randomUUID(), date, hour, clockSlots.length, "music",
                lastMusicSlot.category_id, lastMusicSlot.category_code, lastMusicSlot.category_color,
                overflowSong.id, overflowSong.title, overflowSong.artist_name,
                overflowSong.duration_ms, overflowSong.title,

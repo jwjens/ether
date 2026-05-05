@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { query as dbQuery, execute as dbExec } from "../db/client";
+import { query as dbQuery } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 const BG0  = "#0d0d0f";
 const BG1  = "#111114";
@@ -160,6 +161,7 @@ function DeviceRow({ dev, selected, disabled, onSelect }: {
 }
 
 export default function ClipEditor() {
+  const { stationId } = useActiveStation();
   const [formatId, setFormatId]             = useState<FormatId>("landscape");
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [isRecording, setIsRecording]       = useState(false);
@@ -198,9 +200,8 @@ export default function ClipEditor() {
   }, []);
 
   const persist = useCallback((fid: FormatId, dev: Device | null) => {
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('clipeditor_format',?)",
-      [JSON.stringify({ formatId: fid, device: dev })]).catch(() => {});
-  }, []);
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'clipeditor_format', JSON.stringify({ formatId: fid, device: dev }));
+  }, [stationId]);
 
   // ── Camera ───────────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {

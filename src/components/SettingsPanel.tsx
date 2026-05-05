@@ -223,6 +223,7 @@ function StationLogoUploader() {
 }
 
 function ExperienceModeSelector() {
+  const { stationId } = useActiveStation();
   const [mode, setMode] = useState<string>("");
   const [saved, setSaved] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
@@ -239,7 +240,7 @@ function ExperienceModeSelector() {
     prevMode.current = next;
     setMode(next);
     try {
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('experience_mode', ?)", [next]);
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'experience_mode', next);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
     } catch {}
@@ -1270,7 +1271,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           </div>
         </SettingRow>
         <SettingRow label="Timezone" hint="Used for scheduling, play logs, and DST handling">
-          <select value={timezone} onChange={e => { setTimezone(e.target.value); setStationTimezone(e.target.value); }}
+          <select value={timezone} onChange={e => { setTimezone(e.target.value); setStationTimezone(e.target.value, stationId); }}
             style={{ padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", maxWidth: 280 }}>
             {COMMON_TIMEZONES.map(tz => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
           </select>

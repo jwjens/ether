@@ -3,7 +3,7 @@ import ArtistCard from "./ArtistCard";
 import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { DeckState } from "../audio/engine-rodio";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { fetchArt } from "./UpNext";
@@ -82,14 +82,13 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   // ── EQ save + send to engine ──────────────────────────────────
   const handleEqChange = useCallback((bands: number[]) => {
     setEqBands(bands);
-    execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES (?,?)",
-      [eqKey, JSON.stringify(bands)]).catch(() => {});
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, eqKey, JSON.stringify(bands));
     // Send to native audio engine (audioSetEq added in native addon)
     try {
       const w = window as any;
       if (w.ether?.audio?.setEq) w.ether.audio.setEq(deckId, bands);
     } catch {}
-  }, [eqKey, deckId]);
+  }, [stationId, eqKey, deckId]);
 
   const remaining = Math.max(0, dur - pos);
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;

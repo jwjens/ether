@@ -108,7 +108,7 @@ export async function executeScopedInsert(
     console.warn(`[stationScoped] executeScopedInsert: could not parse INSERT, falling through: ${sql.slice(0, 80)}`);
     return execute(sql, values);
   }
-  return execute(rewritten, [stationId, ...values]);
+  return execute(rewritten, [crypto.randomUUID(), stationId, ...values]);
 }
 
 // ─── SQL rewriters (intentionally simple — no full SQL parser) ─
@@ -159,5 +159,5 @@ function injectInsertStationId(sql: string): string | null {
   const m = /^(\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+\w+\s*\()([^)]+)(\)\s*VALUES\s*\()([^)]+)(\).*)$/is.exec(sql);
   if (!m) return null;
   const [, pre, cols, mid, vals, post] = m;
-  return `${pre}station_id, ${cols.trimStart()}${mid}?, ${vals.trimStart()}${post}`;
+  return `${pre}uuid, station_id, ${cols.trimStart()}${mid}?, ?, ${vals.trimStart()}${post}`;
 }

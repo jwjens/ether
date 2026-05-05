@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import VUMeter from "./VUMeter";
 import GraphicEQ, { EQ_DEFAULT, EQ_FREQS } from "./GraphicEQ";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // Inline stub — replace with full ProcessingPanel integration when ready
 function AudioProcessorPanel({ stream, compact, onLevel }: { stream: MediaStream; compact?: boolean; onLevel?: (level: number) => void }) {
@@ -46,6 +47,7 @@ function DuckToggle() {
 }
 
 export default function MicDeck({ inputDeviceId }: Props) {
+  const { stationId } = useActiveStation();
   const [micLive, setMicLive] = useState(false);
   const [showProcessing, setShowProcessing] = useState(false);
   const [level, setLevel] = useState(0);
@@ -77,11 +79,10 @@ export default function MicDeck({ inputDeviceId }: Props) {
 
   const handleEqChange = useCallback((bands: number[]) => {
     setEqBands(bands);
-    execute("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('eq_deck_mic',?)",
-      [JSON.stringify(bands)]).catch(() => {});
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'eq_deck_mic', JSON.stringify(bands));
     // Also send to native engine for actual broadcast path
     try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("mic", bands); } catch {}
-  }, []);
+  }, [stationId]);
 
   // ── Build Web Audio EQ filter chain ──────────────────────────
   const buildEqChain = (ctx: AudioContext): BiquadFilterNode[] => {

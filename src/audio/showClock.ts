@@ -124,8 +124,8 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
   try {
     const stationId = getActiveStationIdSync();
     await execute(
-      "INSERT INTO play_log (station_id, title, artist, deck, session_id) VALUES (?, ?, ?, ?, ?)",
-      [stationId, `[Show Transition: ${showName}]`, "", "AUTO", `show-${newHour}`]
+      "INSERT INTO play_log (uuid, station_id, title, artist, deck, session_id) VALUES (?, ?, ?, ?, ?, ?)",
+      [crypto.randomUUID(), stationId, `[Show Transition: ${showName}]`, "", "AUTO", `show-${newHour}`]
     );
   } catch { /* non-critical */ }
 

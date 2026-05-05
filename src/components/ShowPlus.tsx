@@ -5,7 +5,8 @@
 import React, {
   useState, useEffect, useRef, useCallback, useMemo,
 } from "react";
-import { query as dbQuery, execute as dbExec } from "../db/client";
+import { query as dbQuery } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 import { VideoEngineProvider, useVideoEngine } from "./VideoEngine/VideoEngineContext";
 import VideoEngineCanvas from "./VideoEngine/VideoEngineCanvas";
 import VideoEnginePanel  from "./VideoEngine/VideoEnginePanel";
@@ -124,6 +125,7 @@ const BITRATES: Record<BrKey, { kbps: number; label: string; desc: string }> = {
 // ─────────────────────────────────────────────────────────────
 
 function useVideoQuality() {
+  const { stationId } = useActiveStation();
   const [resolution, setResolutionState] = useState<ResKey>("720p");
   const [bitrate, setBitrateState]       = useState<BrKey>("medium");
 
@@ -140,13 +142,13 @@ function useVideoQuality() {
 
   const setResolution = useCallback((v: ResKey) => {
     setResolutionState(v);
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_resolution',?)", [v]).catch(() => {});
-  }, []);
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'studio_resolution', v);
+  }, [stationId]);
 
   const setBitrate = useCallback((v: BrKey) => {
     setBitrateState(v);
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_bitrate',?)", [v]).catch(() => {});
-  }, []);
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'studio_bitrate', v);
+  }, [stationId]);
 
   return { resolution, setResolution, bitrate, setBitrate, bitrateKbps: BITRATES[bitrate].kbps };
 }
@@ -158,6 +160,7 @@ function useVideoQuality() {
 const DEFAULT_SCENE: Scene = { id: "main", name: "Main", lowerThirds: [], layout: "camera-only" };
 
 function useScenes() {
+  const { stationId } = useActiveStation();
   const [scenes, setScenes] = useState<Scene[]>([DEFAULT_SCENE]);
   const [activeId, setActiveId] = useState("main");
 
@@ -172,8 +175,8 @@ function useScenes() {
   }, []);
 
   const persist = useCallback((s: Scene[]) => {
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_scenes',?)", [JSON.stringify(s)]).catch(() => {});
-  }, []);
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'studio_scenes', JSON.stringify(s));
+  }, [stationId]);
 
   const addScene = useCallback(() => {
     setScenes(prev => {
@@ -342,6 +345,7 @@ const DEFAULT_BRAND: BrandKit = {
 };
 
 function useBrandKit(): [BrandKit, (k: BrandKit) => void] {
+  const { stationId } = useActiveStation();
   const [kit, setKit] = useState<BrandKit>(DEFAULT_BRAND);
 
   useEffect(() => {
@@ -352,8 +356,8 @@ function useBrandKit(): [BrandKit, (k: BrandKit) => void] {
 
   const update = useCallback((k: BrandKit) => {
     setKit(k);
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_brand_kit',?)", [JSON.stringify(k)]).catch(() => {});
-  }, []);
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'studio_brand_kit', JSON.stringify(k));
+  }, [stationId]);
 
   return [kit, update];
 }
@@ -1222,6 +1226,7 @@ const RTMP_PRESETS = [
 ];
 
 function MultiRTMPPanel({ stream, bitrateKbps }: { stream: MediaStream | null; bitrateKbps: number }) {
+  const { stationId } = useActiveStation();
   const initDests = (): MultiRtmpDest[] => RTMP_PRESETS.map((p, i) => ({
     id: String(i), name: p.name, url: p.url, key: "", enabled: false, status: "idle",
   }));
@@ -1239,7 +1244,7 @@ function MultiRTMPPanel({ stream, bitrateKbps }: { stream: MediaStream | null; b
 
   const save = (d: MultiRtmpDest[]) => {
     setDests(d);
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_rtmp_multi',?)", [JSON.stringify(d)]).catch(() => {});
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'studio_rtmp_multi', JSON.stringify(d));
   };
 
   const patch = (id: string, p: Partial<MultiRtmpDest>) => save(dests.map(d => d.id === id ? { ...d, ...p } : d));
@@ -1882,6 +1887,7 @@ function EmbeddedStudio({
   micVolume: number;      setMicVolume:      (n: number) => void;
   monitorVolume: number;  setMonitorVolume:  (n: number) => void;
 }) {
+  const { stationId: numericStationId } = useActiveStation();
   const [activeTab, setActiveTab] = useState<EmbedTab>("script");
   const [teleOverlay, setTeleOverlay] = useState(false);
   const [teleSpeed, setTeleSpeed] = useState(14);
@@ -1902,8 +1908,8 @@ function EmbeddedStudio({
   }, []);
 
   const saveRtmp = () => {
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_rtmp_url',?)", [rtmpUrl]).catch(() => {});
-    dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('studio_stream_key',?)", [streamKey]).catch(() => {});
+    (window as any).ether.stationConfigKv.upsertByKey(numericStationId, 'studio_rtmp_url', rtmpUrl);
+    (window as any).ether.stationConfigKv.upsertByKey(numericStationId, 'studio_stream_key', streamKey);
   };
 
   const TABS: Array<{ id: EmbedTab; label: string }> = [
@@ -2431,11 +2437,9 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
   const [micVolume, setMicVolume]           = useState(80);
   const [monitorVolume, setMonitorVolume]   = useState(50);
 
-  // Load persisted audio settings
+  // Load persisted audio settings (install-scoped — shared across stations)
   useEffect(() => {
-    dbQuery<{ key: string; value: string }>(
-      "SELECT key, value FROM station_config_kv WHERE key IN ('video_audio_input','video_audio_output','video_self_monitor','video_mic_volume','video_monitor_volume')"
-    ).then(rows => {
+    (window as any).ether.installConfigKv.list().then((rows: { key: string; value: string }[]) => {
       rows.forEach(r => {
         if (r.key === "video_audio_input")    setMicDeviceId(r.value);
         if (r.key === "video_audio_output")   setOutputDeviceId(r.value);
@@ -2446,11 +2450,11 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_audio_input',?)",    [micDeviceId]).catch(() => {}); }, [micDeviceId]);
-  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_audio_output',?)",   [outputDeviceId]).catch(() => {}); }, [outputDeviceId]);
-  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_self_monitor',?)",   [String(selfMonitor)]).catch(() => {}); }, [selfMonitor]);
-  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_mic_volume',?)",     [String(micVolume)]).catch(() => {}); }, [micVolume]);
-  useEffect(() => { dbExec("INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('video_monitor_volume',?)", [String(monitorVolume)]).catch(() => {}); }, [monitorVolume]);
+  useEffect(() => { (window as any).ether.installConfigKv.upsertByKey('video_audio_input',    micDeviceId); },        [micDeviceId]);
+  useEffect(() => { (window as any).ether.installConfigKv.upsertByKey('video_audio_output',   outputDeviceId); },     [outputDeviceId]);
+  useEffect(() => { (window as any).ether.installConfigKv.upsertByKey('video_self_monitor',   String(selfMonitor)); }, [selfMonitor]);
+  useEffect(() => { (window as any).ether.installConfigKv.upsertByKey('video_mic_volume',     String(micVolume)); },   [micVolume]);
+  useEffect(() => { (window as any).ether.installConfigKv.upsertByKey('video_monitor_volume', String(monitorVolume)); }, [monitorVolume]);
 
   const hostLevel = useLevelMeter(hostStream);
   const { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode } = useWebRTCGuests(guestsEnabled, hostStream);

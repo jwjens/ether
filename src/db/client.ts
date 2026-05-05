@@ -125,7 +125,7 @@ export function getSessionId(): string {
 
 export async function logPlay(title: string, artist: string, deck: string, durationMs: number | undefined, stationId: number): Promise<void> {
   await execute(
-    "INSERT INTO play_log (station_id, title, artist, deck, duration_ms, session_id) VALUES (?, ?, ?, ?, ?, ?)",
-    [stationId, title, artist, deck, durationMs ?? null, getSessionId()]
+    "INSERT INTO play_log (uuid, station_id, title, artist, deck, duration_ms, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [crypto.randomUUID(), stationId, title, artist, deck, durationMs ?? null, getSessionId()]
   );
 }

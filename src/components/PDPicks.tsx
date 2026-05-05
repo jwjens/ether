@@ -238,9 +238,10 @@ function PinForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => voi
       }
       await execute(
         `INSERT INTO pinned_songs
-         (song_id, slot_hour, slot_position, recur_dow, play_at_unix, start_unix, end_unix, force_play, pinned_by, reason)
-         VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+         (uuid, song_id, slot_hour, slot_position, recur_dow, play_at_unix, start_unix, end_unix, force_play, pinned_by, reason)
+         VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
         [
+          crypto.randomUUID(),
           selectedSong.id, slotHour, slotPosition,
           pinMode === "recurring" ? recurDow : 0,
           playAtUnix,

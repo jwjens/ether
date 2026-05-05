@@ -326,6 +326,15 @@ function runMigrations() {
       value TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS install_config_kv (
+      key        TEXT PRIMARY KEY,
+      value      TEXT,
+      uuid       TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      deleted_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS smart_schedule_rules (
       id TEXT PRIMARY KEY,
       description TEXT,
@@ -563,6 +572,24 @@ function runMigrations() {
     }
   }
 
+  // Phase 3.5 Commit 1: add uuid + timestamp columns to ONLY
+  // the synced tables this commit's INSERTs actually touch.
+  // The remaining synced tables get the same treatment in
+  // a dedicated Commit 2 ("Phase Sync-1: complete sync
+  // column rollout"), aligned with the v8 plan's intent.
+  const uuidNeededNow = [
+    'announcements', 'artists', 'cart_slots', 'categories',
+    'clocks', 'liner_cards', 'macros', 'operators',
+    'pinned_songs', 'play_log', 'prep_notes', 'scheduled_log',
+    'spots',
+  ];
+  for (const tbl of uuidNeededNow) {
+    alterSafe(`ALTER TABLE ${tbl} ADD COLUMN uuid TEXT`);
+    alterSafe(`ALTER TABLE ${tbl} ADD COLUMN created_at TEXT`);
+    alterSafe(`ALTER TABLE ${tbl} ADD COLUMN updated_at TEXT`);
+    alterSafe(`ALTER TABLE ${tbl} ADD COLUMN deleted_at TEXT`);
+  }
+
   // Add station_id to all station-scoped tables
   const stationTables = [
     'artists', 'albums', 'categories', 'songs', 'separation_rules',
@@ -600,6 +627,13 @@ function runMigrations() {
     console.log("[DB] Migrated station_config_kv to composite PK (station_id, key)");
   }
 
+  // station_config_kv uuid + timestamp columns — must run AFTER the recreation block
+  // above, since that block creates a fresh table without these columns.
+  alterSafe('ALTER TABLE station_config_kv ADD COLUMN uuid TEXT');
+  alterSafe('ALTER TABLE station_config_kv ADD COLUMN created_at TEXT');
+  alterSafe('ALTER TABLE station_config_kv ADD COLUMN updated_at TEXT');
+  alterSafe('ALTER TABLE station_config_kv ADD COLUMN deleted_at TEXT');
+
   // Seed default separation rules — runs after Phase 1 so station_id column exists
   const ruleCount = db.prepare("SELECT COUNT(*) as c FROM separation_rules").get();
   if (ruleCount.c === 0) {
@@ -629,6 +663,10 @@ function runMigrations() {
     END;
   `);
 
+  // Enable all 6 deck slots — Apply Layout was broken in Phase 3b, so existing
+  // installs may have D/E/F stuck at disabled. Re-enable them so all 6 show.
+  db.exec("UPDATE deck_configs SET enabled=1 WHERE slot IN ('D','E','F')");
+
   console.log("[DB] Schema ready");
 }
 
@@ -649,9 +687,9 @@ function seedDeckConfigs() {
     { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: 1 },
     { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: 1 },
     { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: 1 },
-    { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 0 },
-    { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 0 },
-    { slot: "F", type: "music", label: "Deck F", color: "#a78bfa", enabled: 0 },
+    { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 1 },
+    { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 1 },
+    { slot: "F", type: "music", label: "Deck F", color: "#a78bfa", enabled: 1 },
   ];
   const insert = db.prepare(
     "INSERT OR IGNORE INTO deck_configs (slot, type, label, color, enabled) VALUES (?, ?, ?, ?, ?)"
@@ -959,7 +997,6 @@ function processInviteFile() {
     stationConfigKvUpsertByKey(db, inviteStationId, 'first_run_complete', '1');
     stationConfigKvUpsertByKey(db, inviteStationId, 'invite_used', '1');
     stationConfigKvUpsertByKey(db, inviteStationId, 'invited_by', invite.invited_by || "Deniro");
-    stationConfigKvUpsertByKey(db, inviteStationId, 'last_operator_id', op ? String(op.id) : "");
 
     _inviteUsed = true;
     _invitedBy = invite.invited_by || "Deniro";

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { query, queryOne, execute } from "../db/client";
+import { queryOne } from "../db/client";
 import { queryScoped, executeScopedInsert } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { engine } from "../audio/engine-rodio";
@@ -83,15 +83,7 @@ export default function OnShiftScreen({ onStart }: Props) {
         if (v !== loadVersionRef.current) return;
         setOperators(ops);
 
-        // Last selected operator
-        const lastId = await queryOne<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'last_operator_id'");
-        if (lastId && ops.length > 0) {
-          const found = ops.find(o => String(o.id) === lastId.value);
-          if (found) setOperator(found);
-          else setOperator(ops[0]);
-        } else if (ops.length > 0) {
-          setOperator(ops[0]);
-        }
+        if (ops.length > 0) setOperator(ops[0]);
 
         // Experience mode
         const modeRow = await queryOne<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'");
@@ -231,9 +223,6 @@ export default function OnShiftScreen({ onStart }: Props) {
 
   const startShift = async () => {
     if (!operator) return;
-    try {
-      await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('last_operator_id', ?)", [String(operator.id)]);
-    } catch {}
     setFadeOut(true);
     setTimeout(() => onStart(operator), 500);
   };

@@ -218,6 +218,12 @@ module.exports = function buildHandlers(ipcRenderer) {
     update:  (uuid, patch)     => ipcRenderer.invoke('spots:update',    uuid, patch),
     delete:  (uuid, stationId) => ipcRenderer.invoke('spots:delete',    uuid, stationId),
   },
+  installConfigKv: {
+    list:        ()           => ipcRenderer.invoke('install-config-kv:list'),
+    get:         (key)        => ipcRenderer.invoke('install-config-kv:get', key),
+    upsertByKey: (key, value) => ipcRenderer.invoke('install-config-kv:upsert-by-key', key, value),
+    removeByKey: (key)        => ipcRenderer.invoke('install-config-kv:remove-by-key', key),
+  },
   stationConfigKv: {
     list:    (stationId, opts) => ipcRenderer.invoke('station_config_kv:list',      stationId, opts),
     getById: (uuid)            => ipcRenderer.invoke('station_config_kv:get-by-id', uuid),

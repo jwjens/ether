@@ -1,4 +1,4 @@
-import { queryOne, execute } from "../db/client";
+import { queryOne } from "../db/client";
 
 let cachedTz: string | null = null;
 
@@ -13,8 +13,8 @@ export async function getStationTimezone(): Promise<string> {
   return cachedTz!;
 }
 
-export async function setStationTimezone(tz: string): Promise<void> {
-  await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('timezone', ?)", [tz]);
+export async function setStationTimezone(tz: string, stationId: number): Promise<void> {
+  await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'timezone', tz);
   cachedTz = tz;
 }
 

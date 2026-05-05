@@ -3,16 +3,14 @@ import {
   WidgetInstance, WidgetType, WidgetDefinition,
   WIDGET_REGISTRY, DEFAULT_LAYOUT, GRID_COLS, GRID_ROWS, CELL_SIZE
 } from "./WidgetRegistry";
-import { execute, query } from "../db/client";
+import { query } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Persistence ───────────────────────────────────────────────
 
-async function saveLayout(widgets: WidgetInstance[]) {
+async function saveLayout(widgets: WidgetInstance[], stationId: number) {
   try {
-    await execute(
-      "INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_layout', ?)",
-      [JSON.stringify(widgets)]
-    );
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_layout', JSON.stringify(widgets));
   } catch {}
 }
 
@@ -99,6 +97,7 @@ export interface CanvasEngineState {
 }
 
 export function useCanvasEngine(): CanvasEngineState {
+  const { stationId } = useActiveStation();
   const [widgets, setWidgets] = useState<WidgetInstance[]>(DEFAULT_LAYOUT);
   const [selected, setSelected] = useState<string | null>(null);
   const [editMode, setEditMode] = useState(false); // always starts false — never persisted
@@ -120,7 +119,7 @@ export function useCanvasEngine(): CanvasEngineState {
         setWidgets(saved);
       } else {
         // New install or version bump — use default layout and save version
-        try { await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_layout_version', ?)", [LAYOUT_VERSION]); } catch {}
+        try { await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_layout_version', LAYOUT_VERSION); } catch {}
       }
       // Load layout profiles
       try {
@@ -141,7 +140,7 @@ export function useCanvasEngine(): CanvasEngineState {
   useEffect(() => {
     if (!loaded) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => saveLayout(widgets), 1000);
+    saveTimer.current = setTimeout(() => saveLayout(widgets, stationId), 1000);
     return () => clearTimeout(saveTimer.current);
   }, [widgets, loaded]);
 
@@ -223,12 +222,12 @@ export function useCanvasEngine(): CanvasEngineState {
       const next = existing >= 0
         ? prev.map((p, i) => i === existing ? profile : p)
         : [...prev, profile];
-      execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_profiles', ?)", [JSON.stringify(next)]).catch(() => {});
+      (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_profiles', JSON.stringify(next)).catch(() => {});
       return next;
     });
     setActiveLayoutName(name);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_active_name', ?)", [name]).catch(() => {});
-    await saveLayout(widgets);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_active_name', name).catch(() => {});
+    await saveLayout(widgets, stationId);
   }, [widgets]);
 
   const loadLayoutProfile = useCallback((id: string) => {
@@ -237,8 +236,8 @@ export function useCanvasEngine(): CanvasEngineState {
       if (!profile) return prev;
       setWidgets(profile.widgets);
       setActiveLayoutName(profile.name);
-      saveLayout(profile.widgets).catch(() => {});
-      execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_active_name', ?)", [profile.name]).catch(() => {});
+      saveLayout(profile.widgets, stationId).catch(() => {});
+      (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_active_name', profile.name).catch(() => {});
       return prev;
     });
   }, []);
@@ -246,14 +245,14 @@ export function useCanvasEngine(): CanvasEngineState {
   const deleteLayout = useCallback((id: string) => {
     setLayouts(prev => {
       const next = prev.filter(p => p.id !== id);
-      execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_profiles', ?)", [JSON.stringify(next)]).catch(() => {});
+      (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_profiles', JSON.stringify(next)).catch(() => {});
       return next;
     });
   }, []);
 
   const renameActive = useCallback((name: string) => {
     setActiveLayoutName(name);
-    execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('canvas_active_name', ?)", [name]).catch(() => {});
+    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'canvas_active_name', name).catch(() => {});
   }, []);
 
   const getWidget = useCallback((id: string) => widgets.find(w => w.id === id), [widgets]);

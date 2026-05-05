@@ -170,6 +170,7 @@ contextBridge.exposeInMainWorld("ether", {
   // ── Typed sync handlers — opt-in per migrated table (Phase 3.5+) ───────
   stationProgramming: handlers.stationProgramming,
   stationConfigKv:    handlers.stationConfigKv,
+  installConfigKv:    handlers.installConfigKv,
   operators:          handlers.operators,
   // ── Cloud DR Backup (R2) ────────────────────────────────────
   cloudBackup: {

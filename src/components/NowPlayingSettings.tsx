@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import type { ReactNode } from "react";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 type WidgetType = "sponsor" | "instagram" | "weather" | "twitter";
 
@@ -20,6 +21,7 @@ const WIDGETS: { id: WidgetType; label: string; desc: string; badge?: string }[]
 ];
 
 export default function NowPlayingSettings() {
+  const { stationId } = useActiveStation();
   const [dashboardUrl, setDashboardUrl] = React.useState("");
   const [igHandle, setIgHandle] = useState("");
   const [igEnabled, setIgEnabled] = useState(false);
@@ -38,7 +40,7 @@ export default function NowPlayingSettings() {
 
   useEffect(() => { getStationTimezone().then(setTimezone); }, []);
 
-  const saveTimezone = async (tz: string) => { setTimezone(tz); await setStationTimezone(tz); };
+  const saveTimezone = async (tz: string) => { setTimezone(tz); await setStationTimezone(tz, stationId); };
 
   useEffect(() => {
     const isEnabled = () => (window as any).ether.autostart.isEnabled();
@@ -71,12 +73,12 @@ export default function NowPlayingSettings() {
   }, []);
 
   const save = async () => {
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ig_handle', ?)", [igHandle]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ig_enabled', ?)", [igEnabled ? "1" : "0"]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('now_playing_widget', ?)", [widgetType]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('weather_city', ?)", [weatherCity]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('weather_lat', ?)", [weatherLat]);
-    await execute("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('weather_lon', ?)", [weatherLon]);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'ig_handle', igHandle);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'ig_enabled', igEnabled ? "1" : "0");
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'now_playing_widget', widgetType);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'weather_city', weatherCity);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'weather_lat', weatherLat);
+    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'weather_lon', weatherLon);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
