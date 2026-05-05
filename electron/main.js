@@ -675,7 +675,7 @@ function runMigrations() {
 
   // FTS index for song search
   db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(title, artist, content='songs', content_rowid='id');
+    CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(title, artist);
     CREATE TRIGGER IF NOT EXISTS trg_songs_fts_insert AFTER INSERT ON songs BEGIN
       INSERT INTO songs_fts(rowid, title, artist) SELECT NEW.id, NEW.title, a.name FROM artists a WHERE a.id = NEW.artist_id;
     END;
@@ -692,6 +692,44 @@ function runMigrations() {
       DELETE FROM songs_fts WHERE rowid = OLD.id;
     END;
   `);
+
+  // FTS update trigger: keep search index in sync when title or artist changes.
+  // DROP+CREATE is idempotent — safe every boot.
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_songs_fts_update;
+    CREATE TRIGGER trg_songs_fts_update
+      AFTER UPDATE OF title, artist_id ON songs
+      WHEN NEW.deleted_at IS NULL
+    BEGIN
+      DELETE FROM songs_fts WHERE rowid = OLD.id;
+      INSERT INTO songs_fts(rowid, title, artist)
+        SELECT NEW.id, NEW.title, a.name FROM artists a WHERE a.id = NEW.artist_id;
+    END;
+  `);
+
+  // Phase 3.5 FTS fix: convert songs_fts from external-content to standalone if needed.
+  // External-content mode (content='songs') caused FTS5 to auto-generate
+  // SELECT T.title, T.artist FROM songs AS T on DELETE, failing because songs has
+  // artist_id not artist — rolling back every songsDelete transaction silently.
+  // Idempotent: only rebuilds when the current definition still contains content='songs'.
+  {
+    const ftsRow = db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='songs_fts'"
+    ).get();
+    if (ftsRow && ftsRow.sql && ftsRow.sql.includes("content='songs'")) {
+      console.log("[DB] Migrating songs_fts: external-content → standalone (phase-3.5 fix)");
+      db.exec(`
+        DROP TABLE IF EXISTS songs_fts;
+        CREATE VIRTUAL TABLE songs_fts USING fts5(title, artist);
+        INSERT INTO songs_fts(rowid, title, artist)
+          SELECT s.id, s.title, COALESCE(a.name, '')
+          FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+          WHERE s.deleted_at IS NULL;
+      `);
+      const { c } = db.prepare("SELECT COUNT(*) as c FROM songs_fts").get();
+      console.log("[DB] songs_fts rebuilt as standalone —", c, "rows indexed");
+    }
+  }
 
   // Enable all 6 deck slots — Apply Layout was broken in Phase 3b, so existing
   // installs may have D/E/F stuck at disabled. Re-enable them so all 6 show.
