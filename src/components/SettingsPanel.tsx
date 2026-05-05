@@ -1132,7 +1132,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   };
 
   const updateRule = async (id: number, field: string, val: number) => {
-    await execute("UPDATE separation_rules SET " + field + " = ? WHERE id = ? AND station_id = ?", [val, id, stationId]);
+    await (window as any).ether.separationRules.updateById(id, { [field]: val });
     // station_id scoping: Strategy B — single table
     queryScoped<any>("SELECT * FROM separation_rules ORDER BY id", [], stationId).then(setRules);
   };

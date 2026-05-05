@@ -198,11 +198,12 @@ module.exports = function buildHandlers(ipcRenderer) {
     delete:  (uuid, stationId) => ipcRenderer.invoke('scheduled_log:delete',    uuid, stationId),
   },
   separationRules: {
-    list:    (stationId, opts) => ipcRenderer.invoke('separation_rules:list',      stationId, opts),
-    getById: (uuid)            => ipcRenderer.invoke('separation_rules:get-by-id', uuid),
-    create:  (payload)         => ipcRenderer.invoke('separation_rules:create',    payload),
-    update:  (uuid, patch)     => ipcRenderer.invoke('separation_rules:update',    uuid, patch),
-    delete:  (uuid, stationId) => ipcRenderer.invoke('separation_rules:delete',    uuid, stationId),
+    list:       (stationId, opts) => ipcRenderer.invoke('separation_rules:list',          stationId, opts),
+    getById:    (uuid)            => ipcRenderer.invoke('separation_rules:get-by-id',     uuid),
+    create:     (payload)         => ipcRenderer.invoke('separation_rules:create',        payload),
+    update:     (uuid, patch)     => ipcRenderer.invoke('separation_rules:update',        uuid, patch),
+    updateById: (intId, patch)    => ipcRenderer.invoke('separation_rules:update-by-id',  intId, patch),
+    delete:     (uuid, stationId) => ipcRenderer.invoke('separation_rules:delete',        uuid, stationId),
   },
   shows: {
     list:                (stationId, opts)       => ipcRenderer.invoke('shows:list',                  stationId, opts),

@@ -142,6 +142,18 @@ function separationRulesDelete(db, uuid, stationId) {
 
 
 
+function separationRulesUpdateById(db, intId, patch) {
+  validateScope();
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ? AND deleted_at IS NULL`).get(intId);
+  if (!existing) throw new Error(`[separation_rules] row not found: id=${intId}`);
+  if (!existing.uuid) {
+    const uuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, intId);
+    existing = { ...existing, uuid };
+  }
+  return separationRulesUpdate(db, existing.uuid, patch);
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSeparationRules(ipcMain, db) {
@@ -170,6 +182,10 @@ function installSeparationRules(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('separation_rules:update-by-id', (_, intId, patch) => {
+    try { return { ok: true, row: separationRulesUpdateById(db, intId, patch) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[separation_rules] handlers installed');
 }
@@ -182,5 +198,5 @@ module.exports = {
   separationRulesCreate,
   separationRulesUpdate,
   separationRulesDelete,
-
+  separationRulesUpdateById,
 };

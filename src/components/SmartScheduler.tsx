@@ -148,11 +148,10 @@ export default function SmartScheduler({ onClose }: Props) {
 
   const saveRules = (r: SmartRule[]) => {
     setRules(r);
-    localStorage.setItem("ether_smart_rules", JSON.stringify(r));
-    // Write to DB — DELETE: manual WHERE station_id (no other WHERE clause to append to)
+    localStorage.setItem("ether_smart_rules", JSON.stringify(r)); // only persistence — see docs/phase-3.5-smartscheduler-deferred.md
+    // DB writes below are intentionally broken (schema mismatch + db:execute guard) — deferred, do not fix here
     execute("DELETE FROM smart_schedule_rules WHERE station_id = ?", [stationId]).catch(() => {});
     r.forEach(rule => {
-      // station_id scoping: executeScopedInsert prepends station_id column
       executeScopedInsert(
         "INSERT OR REPLACE INTO smart_schedule_rules (id, data) VALUES (?, ?)",
         [rule.id, JSON.stringify(rule)],
