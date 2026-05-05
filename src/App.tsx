@@ -3065,7 +3065,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
             { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
             { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
             null,
-            { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { await (window as any).ether.songs.deleteById(ctxMenu.song.id); load(); } }, danger: true },
+            { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { const res = await (window as any).ether.songs.deleteById(ctxMenu.song.id); console.error('[songs.deleteById] response:', res); if (!res?.ok) console.error('[songs.deleteById] FAILED:', res?.error); load(); } }, danger: true },
           ].map((item, idx) => item === null
             ? <div key={idx} style={{ height: 1, background: "var(--border-primary)", margin: "2px 0" }} />
             : <div key={item.label} onMouseDown={() => item.action()} style={{ padding: "9px 16px", fontSize: 13, cursor: "pointer", color: (item as any).danger ? "var(--accent-red)" : "var(--text-primary)", userSelect: "none" as any }}
