@@ -124,8 +124,12 @@ export function getSessionId(): string {
 }
 
 export async function logPlay(title: string, artist: string, deck: string, durationMs: number | undefined, stationId: number): Promise<void> {
-  await execute(
-    "INSERT INTO play_log (uuid, station_id, title, artist, deck, duration_ms, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [crypto.randomUUID(), stationId, title, artist, deck, durationMs ?? null, getSessionId()]
-  );
+  await (window as any).ether.playLog.create({
+    station_id:  stationId,
+    title,
+    artist,
+    deck,
+    duration_ms: durationMs ?? null,
+    session_id:  getSessionId(),
+  });
 }

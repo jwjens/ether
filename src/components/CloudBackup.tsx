@@ -305,6 +305,13 @@ export default function CloudBackup() {
       setStatus({ msg: "Restoring data...", type: "info" });
 
       // Restore play_log
+      // DEFERRED (phase-3.5 cluster B step 3): these two execute() calls are intentional
+      // raw writes that bypass the typed handler. Cloud restore is a privileged DB
+      // operation — NOT a normal app write. Wrapping in window.ether.playLog.* requires
+      // either a 'restore-batch' protocol op (out of scope) or a dedicated restore IPC
+      // that bypasses sync entirely (correct architecture, separate arc).
+      // The db:execute lock WILL fire here on a real restore. See:
+      //   docs/phase-3.5-cloudbackup-restore-deferred.md
       if (payload.tables?.play_log?.length > 0) {
         await execute("DELETE FROM play_log", []);
         for (const row of payload.tables.play_log) {

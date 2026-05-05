@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -75,7 +74,7 @@ export default function Logs() {
   const [reconcileData, setReconcileData] = useState<{ scheduled: any[]; actual: any[]; matched: any[] } | null>(null);
 
   // station_id scoping: manual WHERE — DELETE without original WHERE must be scoped explicitly
-  const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await execute("DELETE FROM play_log WHERE station_id = ?", [stationId]); load(); };
+  const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await (window as any).ether.playLog.clearByStation(stationId); load(); };
 
   // As-Run reconciliation: compare scheduled_log vs play_log for the current filter period
   const runReconcile = async () => {

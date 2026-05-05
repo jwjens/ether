@@ -9,7 +9,7 @@
 //   4. Load and play the first new song automatically
 //   5. Log the transition to play_log
 
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { engine } from "./engine-rodio";
 import { fillQueueFromSchedule } from "./loggen";
@@ -123,10 +123,13 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
   // 5. Log the transition in the play log so operators can see it
   try {
     const stationId = getActiveStationIdSync();
-    await execute(
-      "INSERT INTO play_log (uuid, station_id, title, artist, deck, session_id) VALUES (?, ?, ?, ?, ?, ?)",
-      [crypto.randomUUID(), stationId, `[Show Transition: ${showName}]`, "", "AUTO", `show-${newHour}`]
-    );
+    await (window as any).ether.playLog.create({
+      station_id: stationId,
+      title:      `[Show Transition: ${showName}]`,
+      artist:     "",
+      deck:       "AUTO",
+      session_id: `show-${newHour}`,
+    });
   } catch { /* non-critical */ }
 
   console.log(`[showClock] ✓ "${showName}" is live — ${count} songs queued`);

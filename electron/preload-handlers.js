@@ -142,11 +142,12 @@ module.exports = function buildHandlers(ipcRenderer) {
     delete:  (uuid, stationId) => ipcRenderer.invoke('pinned_songs:delete',    uuid, stationId),
   },
   playLog: {
-    list:    (stationId, opts) => ipcRenderer.invoke('play_log:list',      stationId, opts),
-    getById: (uuid)            => ipcRenderer.invoke('play_log:get-by-id', uuid),
-    create:  (payload)         => ipcRenderer.invoke('play_log:create',    payload),
-    update:  (uuid, patch)     => ipcRenderer.invoke('play_log:update',    uuid, patch),
-    delete:  (uuid, stationId) => ipcRenderer.invoke('play_log:delete',    uuid, stationId),
+    list:           (stationId, opts) => ipcRenderer.invoke('play_log:list',             stationId, opts),
+    getById:        (uuid)            => ipcRenderer.invoke('play_log:get-by-id',        uuid),
+    create:         (payload)         => ipcRenderer.invoke('play_log:create',           payload),
+    update:         (uuid, patch)     => ipcRenderer.invoke('play_log:update',           uuid, patch),
+    delete:         (uuid, stationId) => ipcRenderer.invoke('play_log:delete',           uuid, stationId),
+    clearByStation: (stationId)       => ipcRenderer.invoke('play_log:clear-by-station', stationId),
   },
   prepNotes: {
     list:    (stationId, opts) => ipcRenderer.invoke('prep_notes:list',      stationId, opts),

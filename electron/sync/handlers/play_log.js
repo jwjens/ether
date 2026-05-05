@@ -9,7 +9,7 @@
 // mutations table for future sync.
 
 const crypto = require('crypto');
-const { withMutation, serializePayload } = require('../mutation-writer');
+const { withMutation, serializePayload, logMutation } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'play_log';
@@ -140,6 +140,40 @@ function playLogDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function playLogClearByStation(db, stationId) {
+  validateScope();
+  if (stationId == null) throw new Error('[play_log] stationId required for clearByStation');
+
+  const now = new Date().toISOString();
+
+  // Soft-delete all non-deleted rows for this station in one atomic transaction.
+  // Per-row delete mutations are written with logMutation (direct use permitted
+  // for batch operations that manage their own transaction — mutation-writer.js §4 note).
+  return db.transaction(() => {
+    const rows = db.prepare(
+      `SELECT * FROM ${TABLE} WHERE station_id = ? AND deleted_at IS NULL`
+    ).all(stationId);
+
+    for (const row of rows) {
+      const before = serializePayload(row, TABLE);
+      db.prepare(
+        `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
+      ).run(now, now, row.uuid);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         row.uuid,
+        op:             'delete',
+        payload_before: before,
+        payload_after:  null,
+        station_id:     stationId,
+        actor_id:       null,
+      });
+    }
+
+    return { ok: true, cleared: rows.length };
+  })();
+}
+
 
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -170,6 +204,10 @@ function installPlayLog(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('play_log:clear-by-station', (_, stationId) => {
+    try { return playLogClearByStation(db, stationId); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[play_log] handlers installed');
 }
@@ -182,5 +220,5 @@ module.exports = {
   playLogCreate,
   playLogUpdate,
   playLogDelete,
-
+  playLogClearByStation,
 };

@@ -172,6 +172,7 @@ contextBridge.exposeInMainWorld("ether", {
   stationConfigKv:    handlers.stationConfigKv,
   installConfigKv:    handlers.installConfigKv,
   operators:          handlers.operators,
+  playLog:            handlers.playLog,
   // ── Cloud DR Backup (R2) ────────────────────────────────────
   cloudBackup: {
     getConfig:   ()  => ipcRenderer.invoke("cloud-backup:get-config"),
