@@ -2956,6 +2956,20 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     window.addEventListener("mouseup", onUp);
   };
 
+  const adjustColWidth = (col: LibraryColumn, delta: number) => {
+    if (col.kind === 'standard') {
+      const cur = colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id];
+      setColWidths(prev => ({ ...prev, [col.id]: Math.min(600, Math.max(40, cur + delta)) }));
+    } else {
+      const cur = metaColWidths[col.defId] ?? col.width;
+      setMetaColWidths(prev => {
+        const next = { ...prev, [col.defId]: Math.min(600, Math.max(40, cur + delta)) };
+        localStorage.setItem(`ether_lib_meta_col_widths_${stationId}`, JSON.stringify(next));
+        return next;
+      });
+    }
+  };
+
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
     try {
@@ -3308,7 +3322,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
               {visibleLibraryCols.map(col => (
                 <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                      style={{ width: col.kind === 'standard'
-                       ? (col.id === 'title' ? 'auto' : ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px"))
+                       ? (col.id === 'title' && !colWidths['title'] ? 'auto' : ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px"))
                        : ((metaColWidths[col.defId] ?? col.width) + "px")
                      }} />
               ))}
@@ -3323,7 +3337,11 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   return (
                   <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                       style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
-                    {col.label}
+                    <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1, minWidth: 0 }}>{col.label}</span>
+                      <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); adjustColWidth(col, -20); }} style={{ padding: "0 3px", fontSize: 10, lineHeight: "14px", background: "transparent", border: "1px solid var(--border-primary)", cursor: "pointer", color: "var(--text-tertiary)", borderRadius: 0, flexShrink: 0 }}>−</button>
+                      <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); adjustColWidth(col, +20); }} style={{ padding: "0 3px", fontSize: 10, lineHeight: "14px", background: "transparent", border: "1px solid var(--border-primary)", cursor: "pointer", color: "var(--text-tertiary)", borderRadius: 0, flexShrink: 0 }}>+</button>
+                    </div>
                     <span onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e) : startMetaColResize(col.defId, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
                   );
