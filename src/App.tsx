@@ -3070,9 +3070,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     btnOutline: { padding: "6px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600 as any, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" as any, border: "1px solid var(--border-primary)", cursor: "pointer" as any },
   };
 
+  const META_COL_WIDTHS: Record<MetadataDefinition['data_type'], number> = {
+    text: 180, number: 80, date: 110, boolean: 60, single_choice: 140, multi_choice: 200,
+  };
+
   const visibleLibraryCols: LibraryColumn[] = [
     ...ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(c => ({ kind: 'standard' as const, id: c, label: LIB_COL_LABELS[c] })),
-    ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type })),
+    ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type, width: META_COL_WIDTHS[d.data_type] })),
   ];
 
   return (
@@ -3261,7 +3265,10 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
               <col style={{ width: 36 }} />
               {visibleLibraryCols.map(col => (
                 <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
-                     style={{ width: col.kind === 'standard' && colWidths[col.id] ? colWidths[col.id] + "px" : undefined }} />
+                     style={{ width: col.kind === 'standard'
+                       ? (colWidths[col.id] ? colWidths[col.id] + "px" : undefined)
+                       : col.width + "px"
+                     }} />
               ))}
               <col style={{ width: 140 }} />
             </colgroup>
@@ -3310,7 +3317,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
                       if (col.dataType === 'single_choice') {
                         return (
-                          <td key={`meta_${col.defId}`} title="Click to select" style={{ padding: "8px 12px", cursor: "pointer" }}>
+                          <td key={`meta_${col.defId}`} title="Click to select" style={{ padding: "8px 12px", cursor: "pointer", overflow: "hidden" }}>
                             <select value={rawVal}
                               onChange={e => commitMetaEdit(s.id, col, e.target.value)}
                               style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: rawVal ? "var(--text-secondary)" : "var(--text-tertiary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>

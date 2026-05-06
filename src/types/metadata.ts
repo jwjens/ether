@@ -48,6 +48,7 @@ export type MetadataColumn = {
   defUuid: string;
   label: string;
   dataType: MetadataDefinition['data_type'];
+  width: number;
 };
 
 export type LibraryColumn = StandardColumn | MetadataColumn;
