@@ -77,6 +77,8 @@ import SplashScreen from "./components/SplashScreen";
 import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
+import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
+import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol } from "./types/metadata";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
@@ -2760,10 +2762,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 
 // ── Library Panel ────────────────────────────────────────────
 
-// ── Library column definitions ────────────────────────────────
-const ALL_LIB_COLS = ["title","artist","album","year","genre","bpm","format","duration","category","plays"] as const;
-type LibCol = typeof ALL_LIB_COLS[number];
-const LIB_COL_LABELS: Record<LibCol, string> = { title:"Title", artist:"Artist", album:"Album", year:"Year", genre:"Genre", bpm:"BPM", format:"Format", duration:"Duration", category:"Category", plays:"Plays" };
+// ── Library column definitions (ALL_LIB_COLS, LibCol, LIB_COL_LABELS imported from src/types/metadata.ts)
 
 interface EditMeta { id: number; title: string; artist: string; album: string; year: string; genre: string; bpm: string; }
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
@@ -2797,8 +2796,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     catch { return new Set(["title","artist","album","genre","bpm","format","duration","category"] as LibCol[]); }
   });
   const [colWidths, setColWidths] = useState<Partial<Record<LibCol, number>>>({});
-  const [showColPicker, setShowColPicker] = useState(false);
-  const colPickerRef = useRef<HTMLDivElement>(null);
+  const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
 
   const toggleCol = (col: LibCol) => {
@@ -2817,7 +2815,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   useEffect(() => {
     const close = (e: MouseEvent) => {
       if (ctxRef.current && !ctxRef.current.contains(e.target as Node)) setCtxMenu(null);
-      if (colPickerRef.current && !colPickerRef.current.contains(e.target as Node)) setShowColPicker(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
@@ -2991,6 +2988,15 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
       {/* Spotify import modal — rendered above everything else */}
       {showSpotify && <SpotifyImport onClose={() => { setShowSpotify(false); load(); }} />}
 
+      {/* Library columns panel */}
+      <LibraryColumnsPanel
+        isOpen={columnsPanelOpen}
+        onClose={() => setColumnsPanelOpen(false)}
+        visibleColumns={visibleCols}
+        onColumnToggle={toggleCol}
+        stationId={stationId}
+      />
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
@@ -3155,16 +3161,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
         </div>
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", position: "relative" as any }}>
-          {showColPicker && (
-            <div ref={colPickerRef} style={{ position: "absolute", right: 8, top: 42, zIndex: 999, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", padding: "8px 0", minWidth: 160 }}>
-              {ALL_LIB_COLS.map(col => (
-                <label key={col} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", cursor: "pointer", fontSize: 13, color: "var(--text-primary)", userSelect: "none" as any }}>
-                  <input type="checkbox" checked={visibleCols.has(col)} onChange={() => toggleCol(col)} style={{ cursor: "pointer" }} />
-                  {LIB_COL_LABELS[col]}
-                </label>
-              ))}
-            </div>
-          )}
           <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
@@ -3185,7 +3181,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   </th>
                 ))}
                 <th style={{ padding: "10px 12px", width: 140, textAlign: "right" as any, position: "relative" as any }}>
-                  <button onClick={() => setShowColPicker(p => !p)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
+                  <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
                 </th>
               </tr>
             </thead>

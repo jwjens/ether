@@ -1,0 +1,37 @@
+// src/types/metadata.ts — shared library-column and metadata type definitions
+
+export const ALL_LIB_COLS = ["title","artist","album","year","genre","bpm","format","duration","category","plays"] as const;
+export type LibCol = typeof ALL_LIB_COLS[number];
+export const LIB_COL_LABELS: Record<LibCol, string> = {
+  title: "Title", artist: "Artist", album: "Album", year: "Year",
+  genre: "Genre", bpm: "BPM", format: "Format", duration: "Duration",
+  category: "Category", plays: "Plays",
+};
+
+export interface MetadataDefinition {
+  id: number;
+  uuid: string;
+  station_id: number;
+  name: string;
+  data_type: "text" | "number" | "single_choice" | "multi_choice" | "boolean" | "date";
+  description: string | null;
+  is_built_in: number;
+  is_required: number;
+  display_order: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface MetadataVocabulary {
+  id: number;
+  uuid: string;
+  station_id: number;
+  definition_id: number;
+  value: string;
+  display_order: number;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
