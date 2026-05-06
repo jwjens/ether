@@ -2788,9 +2788,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
   const dragMetaColRef = useRef<{ defId: number; startX: number; startW: number } | null>(null);
-  const [libContainerEl, setLibContainerEl] = useState<HTMLDivElement | null>(null);
-  const [libContainerW, setLibContainerW] = useState(0);
-  const [colPage, setColPage] = useState(0);
+  const [hoveredSongId, setHoveredSongId] = useState<number | null>(null);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -2959,14 +2957,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     window.addEventListener("mouseup", onUp);
   };
 
-  // Measure container width whenever the table div mounts/unmounts or resizes
-  useEffect(() => {
-    if (!libContainerEl) return;
-    const ro = new ResizeObserver(() => setLibContainerW(libContainerEl.clientWidth));
-    ro.observe(libContainerEl);
-    setLibContainerW(libContainerEl.clientWidth);
-    return () => ro.disconnect();
-  }, [libContainerEl]);
 
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
@@ -3115,43 +3105,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type, width: META_COL_WIDTHS[d.data_type] })),
   ];
 
-  // Split middle columns (everything except the sticky title) into pages
-  // that fit within the measured container width.
   const hasTitleCol = visibleCols.has('title');
-  const middleCols = visibleLibraryCols.filter(c => !(c.kind === 'standard' && c.id === 'title'));
-  const colPages: LibraryColumn[][] = (() => {
-    const titleW = colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'];
-    const availW = libContainerW - 68 - titleW - 160; // checkbox+# + title + actions
-    if (middleCols.length === 0) return [[]];
-    if (availW < 60) return [middleCols]; // not yet measured
-    const pages: LibraryColumn[][] = [];
-    let cur: LibraryColumn[] = [];
-    let usedW = 0;
-    for (const col of middleCols) {
-      const w = col.kind === 'standard'
-        ? (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id])
-        : (metaColWidths[col.defId] ?? col.width);
-      if (cur.length > 0 && usedW + w > availW) {
-        pages.push(cur); cur = [col]; usedW = w;
-      } else {
-        cur.push(col); usedW += w;
-      }
-    }
-    if (cur.length > 0) pages.push(cur);
-    return pages;
-  })();
-  const totalColPages = colPages.length;
-  const safeColPage = Math.min(colPage, Math.max(0, totalColPages - 1));
-  const currentPageCols = colPages[safeColPage] ?? [];
-
-  // Compute explicit title width so all col widths sum to exactly containerW — eliminates
-  // browser ambiguity with width:auto in tableLayout:fixed.
-  const pageMiddleSum = currentPageCols.reduce((s, col) => s + (col.kind === 'standard'
-    ? (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id])
-    : (metaColWidths[col.defId] ?? col.width)), 0);
-  const titleColW = libContainerW > 0
-    ? Math.max(LIB_COL_DEFAULT_WIDTHS['title'], libContainerW - 68 - pageMiddleSum - 160)
-    : (colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title']);
+  // Standard non-title columns shown in the table — metadata lives in the right-click panel
+  const standardMiddleCols = visibleLibraryCols.filter(c => c.kind === 'standard' && c.id !== 'title');
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -3332,62 +3288,45 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div ref={setLibContainerEl} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any, overflow: "hidden" }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
           <style>{`.ether-lib-table th,.ether-lib-table td{border-right:1px solid var(--border-primary)}.ether-lib-table th:last-child,.ether-lib-table td:last-child{border-right:none}`}</style>
-          <table className="ether-lib-table" style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
-            <colgroup>
-              <col style={{ width: 32 }} />
-              <col style={{ width: 36 }} />
-              {hasTitleCol && <col style={{ width: titleColW + "px" }} />}
-              {currentPageCols.map(col => (
-                <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
-                     style={{ width: col.kind === 'standard'
-                       ? ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px")
-                       : ((metaColWidths[col.defId] ?? col.width) + "px")
-                     }} />
-              ))}
-              <col style={{ width: 160 }} />
-            </colgroup>
+          <table className="ether-lib-table" style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
                 <th style={{ padding: "10px 12px", width: 32, position: "sticky" as any, left: 0, zIndex: 4, background: "var(--bg-tertiary)" }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
                 <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "sticky" as any, left: 32, zIndex: 4, background: "var(--bg-tertiary)" }}>#</th>
                 {hasTitleCol && (
-                  <th style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 4, background: "var(--bg-tertiary)" }}>
+                  <th style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 4, background: "var(--bg-tertiary)", minWidth: LIB_COL_DEFAULT_WIDTHS['title'] }}>
                     Title
                     <span onMouseDown={e => startColResize('title', e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
                 )}
-                {currentPageCols.map(col => (
-                  <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
-                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any }}>
+                {standardMiddleCols.map(col => (
+                  <th key={(col as any).id}
+                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any, minWidth: LIB_COL_DEFAULT_WIDTHS[(col as any).id] }}>
                     {col.label}
-                    <span onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e) : startMetaColResize(col.defId, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
+                    <span onMouseDown={e => startColResize((col as any).id, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
                 ))}
-                <th style={{ padding: "6px 8px", width: 160, textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 4, background: "var(--bg-tertiary)", borderLeft: "1px solid var(--border-primary)" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
-                    <button onClick={() => setColPage(p => Math.max(0, p - 1))} disabled={safeColPage <= 0} title="Previous columns" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: safeColPage <= 0 ? "not-allowed" : "pointer", color: safeColPage <= 0 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: safeColPage <= 0 ? 0.3 : 1 }}>‹</button>
-                    <button onClick={() => setColPage(p => Math.min(totalColPages - 1, p + 1))} disabled={safeColPage >= totalColPages - 1} title="Next columns" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: safeColPage >= totalColPages - 1 ? "not-allowed" : "pointer", color: safeColPage >= totalColPages - 1 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: safeColPage >= totalColPages - 1 ? 0.3 : 1 }}>›</button>
-                    <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "4px 6px", fontSize: 14 }}>⚙</button>
-                  </div>
+                <th style={{ width: 32, padding: "6px 8px", textAlign: "right" as any, background: "var(--bg-tertiary)" }}>
+                  <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
                 </th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((s, i) => (
                 <tr key={s.id}
-                  style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+                  style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none", position: "relative" as any }}
                   onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.querySelectorAll("[data-sticky]").forEach((el: any) => { el.style.background = "var(--bg-hover)"; }); }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.querySelectorAll("[data-sticky]").forEach((el: any) => { el.style.background = "var(--bg-secondary)"; }); }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; setHoveredSongId(s.id); }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; setHoveredSongId(null); }}
                 >
-                  <td data-sticky="1" style={{ padding: "10px 12px", position: "sticky" as any, left: 0, zIndex: 2, background: "var(--bg-secondary)" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
-                  <td data-sticky="1" style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", position: "sticky" as any, left: 32, zIndex: 2, background: "var(--bg-secondary)" }}>{i + 1}</td>
+                  <td style={{ padding: "10px 12px", position: "sticky" as any, left: 0, zIndex: 2, background: "inherit" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
+                  <td style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", position: "sticky" as any, left: 32, zIndex: 2, background: "inherit" }}>{i + 1}</td>
                   {hasTitleCol && (() => {
                     const isInlineTitle = inlineEdit?.id === s.id && inlineEdit?.col === 'title';
                     return (
-                      <td data-sticky="1" style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 2, background: "var(--bg-secondary)" }}
+                      <td style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 2, background: "inherit" }}
                         onDoubleClick={() => setInlineEdit({ id: s.id, col: 'title', value: s.title || "" })}>
                         {s.file_path && watermarkedPaths.has(s.file_path) && (
                           <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
@@ -3398,76 +3337,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       </td>
                     );
                   })()}
-                  {currentPageCols.map(col => {
-                    if (col.kind === 'metadata') {
-                      const rawVal = metaMap[s.id]?.[col.defId] ?? '';
-                      const isEditingMeta = metaEdit?.songId === s.id && metaEdit?.col.defId === col.defId;
-                      const vocab = vocabByDef[col.defId] ?? [];
-
-                      if (col.dataType === 'boolean') {
-                        return (
-                          <td key={`meta_${col.defId}`}
-                              title="Click to toggle"
-                              style={{ padding: "10px 12px", color: rawVal === '1' ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer", textAlign: "center" as any }}
-                              onClick={() => commitMetaEdit(s.id, col, rawVal === '1' ? '0' : '1')}>
-                            {rawVal === '1' ? '✓' : '—'}
-                          </td>
-                        );
-                      }
-
-                      if (col.dataType === 'single_choice') {
-                        return (
-                          <td key={`meta_${col.defId}`} title="Click to select" style={{ padding: "4px 8px", cursor: "pointer", overflow: "hidden" }}>
-                            <select value={rawVal}
-                              onChange={e => commitMetaEdit(s.id, col, e.target.value)}
-                              style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: rawVal ? "var(--text-secondary)" : "var(--text-tertiary)", outline: "none", cursor: "pointer", width: "100%", maxWidth: "100%", boxSizing: "border-box" as any }}>
-                              <option value="">—</option>
-                              {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
-                            </select>
-                          </td>
-                        );
-                      }
-
-                      if (col.dataType === 'multi_choice') {
-                        const selected: string[] = rawVal ? (() => { try { return JSON.parse(rawVal); } catch { return rawVal.split(',').map((v: string) => v.trim()).filter(Boolean); } })() : [];
-                        const editSelected: string[] = isEditingMeta ? (() => { try { return JSON.parse(metaEdit!.value); } catch { return []; } })() : selected;
-                        return (
-                          <td key={`meta_${col.defId}`}
-                              title="Double-click to edit"
-                              style={{ padding: "8px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer" }}
-                              onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
-                            {isEditingMeta ? (
-                              <select autoFocus multiple value={editSelected}
-                                onChange={e => { const vals = Array.from(e.target.selectedOptions).map((o: HTMLOptionElement) => o.value); setMetaEdit(prev => prev ? { ...prev, value: JSON.stringify(vals) } : prev); }}
-                                onBlur={() => { const v = metaEdit?.value ?? ''; setMetaEdit(null); commitMetaEdit(s.id, col, v); }}
-                                onKeyDown={e => { if (e.key === 'Escape') setMetaEdit(null); }}
-                                style={{ width: "100%", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", minHeight: 60 }}>
-                                {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
-                              </select>
-                            ) : (selected.join(', ') || '—')}
-                          </td>
-                        );
-                      }
-
-                      // text | number | date
-                      return (
-                        <td key={`meta_${col.defId}`}
-                            title="Double-click to edit"
-                            style={{ padding: "10px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "text" }}
-                            onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
-                          {isEditingMeta ? (
-                            <input autoFocus
-                              type={col.dataType === 'number' ? 'number' : col.dataType === 'date' ? 'date' : 'text'}
-                              value={metaEdit!.value}
-                              onChange={e => setMetaEdit(prev => prev ? { ...prev, value: e.target.value } : prev)}
-                              onBlur={() => { const v = metaEdit?.value ?? ''; setMetaEdit(null); commitMetaEdit(s.id, col, v); }}
-                              onKeyDown={e => { if (e.key === 'Enter') { const v = metaEdit?.value ?? ''; setMetaEdit(null); commitMetaEdit(s.id, col, v); } if (e.key === 'Escape') setMetaEdit(null); }}
-                              style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
-                          ) : (rawVal || '—')}
-                        </td>
-                      );
-                    }
-                    const id = col.id;
+                  {standardMiddleCols.map(col => {
+                    const id = (col as any).id as LibCol;
                     const isInline = inlineEdit?.id === s.id && inlineEdit?.col === id;
                     const editableCols: LibCol[] = ["artist","album","year","genre","bpm"];
                     const isEditable = editableCols.includes(id);
@@ -3485,7 +3356,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                         default: return null;
                       }
                     })();
-
                     if (id === "category") return (
                       <td key={id} style={{ padding: "8px 12px" }}>
                         <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}
@@ -3495,7 +3365,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                         </select>
                       </td>
                     );
-
                     return (
                       <td key={id} style={{ padding: "10px 12px", color: id === "format" || id === "bpm" || id === "duration" || id === "year" ? "var(--text-tertiary)" : "var(--text-secondary)", fontSize: id === "format" ? 12 : 13, fontFamily: id === "format" || id === "bpm" || id === "duration" ? "'JetBrains Mono', ui-monospace, monospace" : undefined, textTransform: id === "format" ? "uppercase" as any : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: isEditable ? "text" : undefined }}
                         onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}>
@@ -3505,17 +3374,21 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       </td>
                     );
                   })}
-                  <td data-sticky="1" style={{ padding: "10px 12px", textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 2, background: "var(--bg-secondary)", borderLeft: "1px solid var(--border-primary)" }}>
-                    <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
-                      <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
-                      <button onClick={() => onQueue(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
-                      {s.file_path && <button onClick={() => onSendToStudio(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "none", cursor: "pointer" }} title="Send to Studio">Studio</button>}
-                      <button onClick={() => onEdit(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
-                      </button>
-                      <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { await (window as any).ether.songs.deleteById(s.id); load(); } }} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
-                    </div>
+                  {/* Zero-width phantom td — hover action panel overflows to the left */}
+                  <td style={{ width: 0, padding: 0, border: "none", position: "relative" as any, overflow: "visible" as any }}>
+                    {hoveredSongId === s.id && (
+                      <div style={{ position: "absolute" as any, right: 0, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 3, paddingLeft: 48, paddingRight: 8, background: "linear-gradient(to right, transparent, var(--bg-secondary) 30%)", zIndex: 10, whiteSpace: "nowrap" as any }}>
+                        <button onClick={() => onLoadA(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
+                        <button onClick={() => onLoadB(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
+                        <button onClick={() => onQueue(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
+                        {s.file_path && <button onClick={() => onSendToStudio(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "none", cursor: "pointer" }}>Studio</button>}
+                        <button onClick={() => onEdit(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
+                        </button>
+                        <button onClick={() => openEditMeta(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(251,191,36,0.12)", color: "#fbbf24", border: "none", cursor: "pointer" }} title="Edit metadata">⊞</button>
+                        <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { await (window as any).ether.songs.deleteById(s.id); load(); } }} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
