@@ -45,7 +45,8 @@ const TYPE_COLOR: Record<ConsoleEventType, string> = {
 };
 
 // ── MasterVU — two-bar L/R canvas meter ──────────────────────
-function MasterVU({ master }: { master: number }) {
+// Subscribes directly to audio:levels IPC — no prop needed.
+function MasterVU() {
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const levelL     = useRef(0);
   const levelR     = useRef(0);
@@ -54,9 +55,16 @@ function MasterVU({ master }: { master: number }) {
   const phaseL     = useRef(0);
   const phaseR     = useRef(Math.PI * 0.37);
   const rafRef     = useRef(0);
-  const masterRef  = useRef(master);
+  const masterRef  = useRef(0);
 
-  useEffect(() => { masterRef.current = master; }, [master]);
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.audio?.onLevels) return;
+    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number }) => {
+      masterRef.current = lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0);
+    });
+    return () => ether.audio.offLevels(h);
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -484,8 +492,9 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 }
 
 // ── MasterOutput ─────────────────────────────────────────────
-export default function MasterOutput({ masterLevel, expanded, collapsed = false, onToggleCollapsed }: { masterLevel: number; expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
+export default function MasterOutput({ expanded, collapsed = false, onToggleCollapsed }: { expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const { stationId, isReady } = useActiveStation();
+  const [masterLevel, setMasterLevel] = useState(0);
   const [masterVol,  setMasterVol]  = useState(1.0);
   const [monitorVol, setMonitorVol] = useState(() => {
     try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
@@ -507,6 +516,17 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
   const [onAir,      setOnAir]      = useState(false);
   const [uptime,     setUptime]     = useState("0:00");
   const sessionStart = useRef<number>(0);
+
+  // Subscribe to audio:levels directly — keeps masterLevel out of App.tsx state
+  // so the library table doesn't re-render at 30Hz.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.audio?.onLevels) return;
+    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number }) => {
+      setMasterLevel(lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0));
+    });
+    return () => ether.audio.offLevels(h);
+  }, []);
 
   // ── Expanded-mode state ───────────────────────────────────────
   const [activeDeck,  setActiveDeck]  = useState<{ title: string; artist: string; positionSec: number; durationSec: number } | null>(null);
@@ -675,7 +695,7 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
           </svg>
         </button>
         <div style={{ flex: 1, minHeight: 0, padding: "8px 6px", display: "flex" }}>
-          <MasterVU master={masterLevel * masterVol} />
+          <MasterVU />
         </div>
         <div style={{ padding: "6px 4px", borderTop: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
           <div title={onAir ? "ON AIR" : "STANDBY"} style={{ width: 8, height: 8, borderRadius: "50%", background: onAir ? "var(--status-live)" : "var(--status-offline)", boxShadow: onAir ? "0 0 6px var(--status-live)" : "none" }} />
@@ -744,7 +764,7 @@ export default function MasterOutput({ masterLevel, expanded, collapsed = false,
       {/* VU meters */}
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ fontSize: 7, color: "var(--text-secondary)", letterSpacing: "0.02em", marginBottom: 6, opacity: 0.5 }}>Output level</div>
-        <MasterVU master={masterLevel * masterVol} />
+        <MasterVU />
       </div>
 
       {/* Faders */}

@@ -2241,8 +2241,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 }) {
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();
-  const [masterLevel, setMasterLevel] = useState(0);
-
   // Master Output collapse state — persisted; auto-collapses below 1200px unless user opted in
   const [masterUserExpanded, setMasterUserExpanded] = useState<boolean>(() => {
     try { return localStorage.getItem("ether_master_user_expanded") === "1"; } catch { return false; }
@@ -2272,15 +2270,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     }
   }, [masterCollapsed]);
 
-  // Subscribe to master output level from push events
-  useEffect(() => {
-    const ether = (window as any).ether;
-    if (!ether?.audio) return;
-    const h = ether.audio.onLevels((lvl: { master?: number }) => {
-      setMasterLevel(lvl.master ?? 0);
-    });
-    return () => ether.audio.offLevels(h);
-  }, []);
   // Mic ON state for console fader view
   const [consoleMicOn, setConsoleMicOn] = useState<Record<string, boolean>>({});
   const [consoleMicVol, setConsoleMicVol] = useState<Record<string, number>>({});
@@ -2578,7 +2567,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     label={config?.label || `DECK ${slot}`}
                     color={deckColor}
                     volume={deck?.volume ?? 1}
-                    level={masterLevel * (deck?.status === "playing" ? 1 : 0.05)}
+                    deckId={slot}
                     isPlaying={deck?.status === "playing"}
                     isOn={true}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
@@ -2600,7 +2589,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     label={config?.label || "MIC"}
                     color="#ef4444"
                     volume={consoleMicVol[slot] ?? 1}
-                    level={micIsOn ? masterLevel * 0.6 : 0}
+                    deckId="mic"
                     isPlaying={micIsOn}
                     isOn={micIsOn}
                     onVolumeChange={v => {
@@ -2660,7 +2649,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   label={config?.label || slot}
                   color={deckColor}
                   volume={deck?.volume ?? 1}
-                  level={masterLevel * (deck?.status === "playing" ? 1 : 0.05)}
+                  deckId={slot}
                   isPlaying={deck?.status === "playing"}
                   isOn={true}
                   onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
@@ -2672,9 +2661,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               </div>
             );
           })}
-          {/* Master Output — still present in fader mode */}
+          {/* Master Output — owns its own audio:levels subscription */}
           <MasterOutput
-            masterLevel={masterLevel}
             expanded={!showCarts && !masterCollapsed}
             collapsed={masterCollapsed}
             onToggleCollapsed={toggleMasterCollapsed}

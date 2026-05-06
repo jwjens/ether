@@ -12,13 +12,16 @@ interface Props {
   label: string;
   color: string;
   volume: number;
-  level: number;
+  level?: number;
   isPlaying: boolean;
   isOn: boolean;
   onVolumeChange: (v: number) => void;
   onToggleOn: () => void;
   onPfl?: () => void;
   compact?: boolean;
+  /** When provided the strip subscribes to audio:levels IPC directly
+   *  and updates the VU bar without triggering React state. */
+  deckId?: string;
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -39,7 +42,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId,
 }: Props) {
   const midi = useMidiState();
   const [dragging, setDragging] = useState(false);
@@ -48,6 +51,12 @@ export default function ConsoleStrip({
   const trackRef = useRef<HTMLDivElement>(null);
   // faderAreaRef: the flex container we measure for faderH
   const faderAreaRef = useRef<HTMLDivElement>(null);
+  // VU DOM refs for direct update when deckId is provided
+  const vuFillRef   = useRef<HTMLDivElement>(null);
+  const vuPeakRef   = useRef<HTMLDivElement>(null);
+  const isOnRef     = useRef(isOn);
+  const isPlayingRef = useRef(isPlaying);
+  const colorRef    = useRef(color);
   const [faderH, setFaderH] = useState(220);
 
   // Measure actual rendered height so knob position math stays accurate
@@ -60,6 +69,49 @@ export default function ConsoleStrip({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Sync prop refs so the onLevels handler always sees current values
+  useEffect(() => { isOnRef.current = isOn; },       [isOn]);
+  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { colorRef.current = color; },     [color]);
+
+  // Direct DOM VU update when deckId is provided — bypasses React state
+  // so the parent (App.tsx) doesn't re-render the library table on each tick.
+  useEffect(() => {
+    if (!deckId) return;
+    const ether = (window as any).ether;
+    if (!ether?.audio?.onLevels) return;
+    let rafId = 0;
+    let pendingH = 0;
+    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; master?: number }) => {
+      const id = deckId.toUpperCase();
+      let raw = id === "A" ? (lvl.a ?? 0)
+              : id === "B" ? (lvl.b ?? 0)
+              : id === "C" ? (lvl.c ?? 0)
+              : (lvl.master ?? 0);
+      if (id === "MIC") raw = isOnRef.current ? (lvl.master ?? 0) * 0.6 : 0;
+      raw = isPlayingRef.current ? raw : raw * 0.05;
+      pendingH = Math.min(1, raw);
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const fill = vuFillRef.current;
+        const peak = vuPeakRef.current;
+        if (!fill) return;
+        const vuH = pendingH;
+        const c = colorRef.current;
+        const vuColor = vuH > 0.85 ? "var(--accent-red)" : vuH > 0.6 ? "var(--accent-amber)" : c;
+        fill.style.height  = `${vuH * 100}%`;
+        fill.style.opacity = isOnRef.current ? "0.9" : "0.04";
+        if (peak) {
+          peak.style.bottom     = `${vuH * 100}%`;
+          peak.style.background = vuColor;
+          peak.style.boxShadow  = `0 0 6px ${vuColor}`;
+          peak.style.display    = isOnRef.current && vuH > 0.02 ? "block" : "none";
+        }
+      });
+    });
+    return () => { ether.audio.offLevels(h); cancelAnimationFrame(rafId); };
+  }, [deckId]);
 
   // MIDI hardware fader sync
   const midiKey = `deck_${label.toLowerCase().replace(/[^a-z]/g, "")}_volume`;
@@ -278,22 +330,21 @@ export default function ConsoleStrip({
           boxShadow: "inset 0 2px 6px rgba(0,0,0,0.4)",
           position: "relative", overflow: "hidden",
         }}>
-          {/* Meter fill */}
-          <div style={{
+          {/* Meter fill — ref-updated at 30Hz when deckId is set, JSX-driven otherwise */}
+          <div ref={deckId ? vuFillRef : undefined} style={{
             position: "absolute", bottom: 0, left: 0, right: 0,
-            height: `${vuH * 100}%`,
+            height: deckId ? "0%" : `${vuH * 100}%`,
             background: `linear-gradient(to top, ${color} 0%, ${color} 50%, var(--accent-amber) 75%, var(--accent-red) 92%)`,
-            opacity: isOn ? 0.9 : 0.04,
+            opacity: deckId ? (isOn ? 0.9 : 0.04) : (isOn ? 0.9 : 0.04),
             transition: "height 0.06s linear",
           }} />
-          {/* Peak hold line */}
-          {isOn && level > 0.02 && (
-            <div style={{
-              position: "absolute", bottom: `${vuH * 100}%`, left: 0, right: 0,
-              height: 2, background: vuColor,
-              boxShadow: `0 0 6px ${vuColor}`,
-            }} />
-          )}
+          {/* Peak hold line — always rendered; display toggled via ref when deckId is set */}
+          <div ref={deckId ? vuPeakRef : undefined} style={{
+            position: "absolute", bottom: deckId ? "0%" : `${vuH * 100}%`, left: 0, right: 0,
+            height: 2, background: deckId ? color : vuColor,
+            boxShadow: deckId ? `0 0 6px ${color}` : `0 0 6px ${vuColor}`,
+            display: deckId ? "none" : (isOn && level > 0.02 ? "block" : "none"),
+          }} />
           {/* dB reference marks on meter */}
           {[0, -6, -12, -24, -48].map(dbVal => {
             const ratio = dbVal === 0 ? 1 : Math.pow(10, dbVal / 20);
