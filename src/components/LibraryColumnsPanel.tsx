@@ -7,6 +7,8 @@ interface Props {
   visibleColumns: Set<LibCol>;
   onColumnToggle: (col: LibCol) => void;
   stationId: number;
+  visibleMetadataColumns: Set<number>;
+  onMetadataColumnToggle: (defId: number) => void;
 }
 
 type DataType = MetadataDefinition["data_type"];
@@ -71,7 +73,7 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, onColumnToggle, stationId }: Props) {
+export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, onColumnToggle, stationId, visibleMetadataColumns, onMetadataColumnToggle }: Props) {
   // ── Data ──────────────────────────────────────────────────────
   const [definitions, setDefinitions]   = useState<MetadataDefinition[]>([]);
   const [vocabByDefId, setVocabByDefId] = useState<Record<number, MetadataVocabulary[]>>({});
@@ -389,6 +391,9 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                         {def.is_built_in === 1 && (
                           <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" as const }}>(built-in)</span>
                         )}
+                        <div onClick={e => { e.stopPropagation(); onMetadataColumnToggle(def.id); }}>
+                          <Toggle on={visibleMetadataColumns.has(def.id)} />
+                        </div>
                       </div>
                     </div>
 

@@ -78,7 +78,7 @@ import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
-import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol } from "./types/metadata";
+import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol, type LibraryColumn, type MetadataDefinition } from "./types/metadata";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
@@ -2808,6 +2808,20 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     });
   };
 
+  // ── Metadata column visibility (per-station) ───────────────
+  const [defs, setDefs] = useState<MetadataDefinition[]>([]);
+  const [visibleMetaCols, setVisibleMetaCols] = useState<Set<number>>(new Set());
+  const [metaMap, setMetaMap] = useState<Record<number, Record<number, string>>>({});
+
+  const toggleMetaCol = (defId: number) => {
+    setVisibleMetaCols(prev => {
+      const n = new Set(prev);
+      n.has(defId) ? n.delete(defId) : n.add(defId);
+      localStorage.setItem(`ether_lib_meta_cols_${stationId}`, JSON.stringify([...n]));
+      return n;
+    });
+  };
+
   // ── Right-click context menu ───────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; song: SongRow } | null>(null);
   const ctxRef = useRef<HTMLDivElement>(null);
@@ -2930,6 +2944,39 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   };
   useEffect(() => { load(); }, [stationId]);
 
+  // Load definitions and restore per-station metadata column visibility
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`ether_lib_meta_cols_${stationId}`);
+      setVisibleMetaCols(new Set(JSON.parse(stored || '[]')));
+    } catch { setVisibleMetaCols(new Set()); }
+    (async () => {
+      try {
+        const res = await (window as any).ether.metadataDefinitions.list(stationId);
+        const rows: MetadataDefinition[] = res?.ok ? (res.rows ?? []) : [];
+        setDefs(rows.filter(d => !d.deleted_at).sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name)));
+      } catch (e) { console.error('[LibraryPanel] failed to load definitions:', e); }
+    })();
+  }, [stationId]);
+
+  // Fetch song_metadata_values for visible metadata columns (skip if none visible)
+  useEffect(() => {
+    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); return; }
+    (async () => {
+      try {
+        const res = await (window as any).ether.songMetadataValues.list(stationId, { limit: 10000 });
+        const rows: any[] = res?.ok ? (res.rows ?? []) : [];
+        const map: Record<number, Record<number, string>> = {};
+        for (const r of rows) {
+          if (!visibleMetaCols.has(r.definition_id)) continue;
+          if (!map[r.song_id]) map[r.song_id] = {};
+          map[r.song_id][r.definition_id] = r.value_text ?? '';
+        }
+        setMetaMap(map);
+      } catch (e) { console.error('[LibraryPanel] failed to load metadata values:', e); }
+    })();
+  }, [stationId, songs, visibleMetaCols]);
+
   const toggleSelect = (id: number) => { setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };
   const deleteSelected = async () => {
@@ -2983,6 +3030,11 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     btnOutline: { padding: "6px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600 as any, background: "var(--bg-tertiary)", color: "var(--text-tertiary)" as any, border: "1px solid var(--border-primary)", cursor: "pointer" as any },
   };
 
+  const visibleLibraryCols: LibraryColumn[] = [
+    ...ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(c => ({ kind: 'standard' as const, id: c, label: LIB_COL_LABELS[c] })),
+    ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type })),
+  ];
+
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Spotify import modal — rendered above everything else */}
@@ -2995,6 +3047,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
         visibleColumns={visibleCols}
         onColumnToggle={toggleCol}
         stationId={stationId}
+        visibleMetadataColumns={visibleMetaCols}
+        onMetadataColumnToggle={toggleMetaCol}
       />
 
       {/* Header */}
@@ -3165,8 +3219,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
-              {ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(col => (
-                <col key={col} style={{ width: colWidths[col] ? colWidths[col] + "px" : undefined }} />
+              {visibleLibraryCols.map(col => (
+                <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
+                     style={{ width: col.kind === 'standard' && colWidths[col.id] ? colWidths[col.id] + "px" : undefined }} />
               ))}
               <col style={{ width: 140 }} />
             </colgroup>
@@ -3174,10 +3229,11 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
                 <th style={{ padding: "10px 12px", width: 32 }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
                 <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any }}>#</th>
-                {ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(col => (
-                  <th key={col} style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "relative" as any, userSelect: "none" as any, width: colWidths[col] || undefined }}>
-                    {LIB_COL_LABELS[col]}
-                    <span onMouseDown={e => startColResize(col, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
+                {visibleLibraryCols.map(col => (
+                  <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
+                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "relative" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined }}>
+                    {col.label}
+                    {col.kind === 'standard' && <span onMouseDown={e => startColResize(col.id, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />}
                   </th>
                 ))}
                 <th style={{ padding: "10px 12px", width: 140, textAlign: "right" as any, position: "relative" as any }}>
@@ -3195,12 +3251,24 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                 >
                   <td style={{ padding: "10px 12px" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
                   <td style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{i + 1}</td>
-                  {ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(col => {
-                    const isInline = inlineEdit?.id === s.id && inlineEdit?.col === col;
+                  {visibleLibraryCols.map(col => {
+                    if (col.kind === 'metadata') {
+                      const rawVal = metaMap[s.id]?.[col.defId] ?? null;
+                      const displayVal = col.dataType === 'boolean'
+                        ? (rawVal === '1' ? '✓' : '')
+                        : (rawVal ?? '');
+                      return (
+                        <td key={`meta_${col.defId}`} style={{ padding: "10px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>
+                          {displayVal || '—'}
+                        </td>
+                      );
+                    }
+                    const id = col.id;
+                    const isInline = inlineEdit?.id === s.id && inlineEdit?.col === id;
                     const editableCols: LibCol[] = ["title","artist","album","year","genre","bpm"];
-                    const isEditable = editableCols.includes(col);
+                    const isEditable = editableCols.includes(id);
                     const cellVal = (() => {
-                      switch (col) {
+                      switch (id) {
                         case "title":    return s.title;
                         case "artist":   return s.artist_name || null;
                         case "album":    return s.album_title || null;
@@ -3209,14 +3277,14 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                         case "bpm":      return s.bpm != null ? String(Math.round(s.bpm)) : null;
                         case "format":   return s.file_path ? fmtExt(s.file_path) : null;
                         case "duration": return s.duration_ms ? `${Math.floor(s.duration_ms/60000)}:${String(Math.floor((s.duration_ms%60000)/1000)).padStart(2,"0")}` : null;
-                        case "category": return null; // rendered specially
+                        case "category": return null;
                         case "plays":    return s.play_count != null ? String(s.play_count) : "0";
                         default: return null;
                       }
                     })();
 
-                    if (col === "category") return (
-                      <td key={col} style={{ padding: "8px 12px" }}>
+                    if (id === "category") return (
+                      <td key={id} style={{ padding: "8px 12px" }}>
                         <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}
                           style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
                           <option value="">—</option>
@@ -3225,9 +3293,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       </td>
                     );
 
-                    if (col === "title") return (
-                      <td key={col} style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}
-                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col, value: cellVal || "" })}>
+                    if (id === "title") return (
+                      <td key={id} style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}
+                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}>
                         {s.file_path && watermarkedPaths.has(s.file_path) && (
                           <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
                         )}
@@ -3238,8 +3306,8 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                     );
 
                     return (
-                      <td key={col} style={{ padding: "10px 12px", color: col === "format" || col === "bpm" || col === "duration" || col === "year" ? "var(--text-tertiary)" : "var(--text-secondary)", fontSize: col === "format" ? 12 : 13, fontFamily: col === "format" || col === "bpm" || col === "duration" ? "'JetBrains Mono', ui-monospace, monospace" : undefined, textTransform: col === "format" ? "uppercase" as any : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: isEditable ? "text" : undefined }}
-                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col, value: cellVal || "" })}>
+                      <td key={id} style={{ padding: "10px 12px", color: id === "format" || id === "bpm" || id === "duration" || id === "year" ? "var(--text-tertiary)" : "var(--text-secondary)", fontSize: id === "format" ? 12 : 13, fontFamily: id === "format" || id === "bpm" || id === "duration" ? "'JetBrains Mono', ui-monospace, monospace" : undefined, textTransform: id === "format" ? "uppercase" as any : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: isEditable ? "text" : undefined }}
+                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}>
                         {isInline
                           ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
                           : (cellVal || "—")}

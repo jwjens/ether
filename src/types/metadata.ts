@@ -35,3 +35,19 @@ export interface MetadataVocabulary {
   updated_at: string;
   deleted_at: string | null;
 }
+
+export type StandardColumn = {
+  kind: 'standard';
+  id: LibCol;
+  label: string;
+};
+
+export type MetadataColumn = {
+  kind: 'metadata';
+  defId: number;
+  defUuid: string;
+  label: string;
+  dataType: MetadataDefinition['data_type'];
+};
+
+export type LibraryColumn = StandardColumn | MetadataColumn;
