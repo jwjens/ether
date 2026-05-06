@@ -3103,6 +3103,23 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type, width: META_COL_WIDTHS[d.data_type] })),
   ];
 
+  // Sum of all column widths — drives minWidth on the table so the title (auto) column
+  // never collapses: at wide viewports table fills 100% and title absorbs extra space;
+  // when this sum exceeds the container the scroll wrapper kicks in.
+  const tableMinWidth = React.useMemo(() => {
+    let w = 32 + 36 + 140; // checkbox + # + actions
+    for (const col of visibleLibraryCols) {
+      if (col.kind === 'standard') {
+        w += col.id === 'title'
+          ? (colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'])
+          : (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]);
+      } else {
+        w += metaColWidths[col.defId] ?? col.width;
+      }
+    }
+    return w;
+  }, [visibleLibraryCols, colWidths, metaColWidths]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Spotify import modal — rendered above everything else */}
@@ -3284,7 +3301,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
           <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: "fit-content", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
+          <table style={{ width: "100%", minWidth: tableMinWidth, borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
