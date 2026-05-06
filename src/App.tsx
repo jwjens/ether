@@ -2788,9 +2788,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
   const dragMetaColRef = useRef<{ defId: number; startX: number; startW: number } | null>(null);
-  const libScrollRef = useRef<HTMLDivElement>(null);
-  const [libScrollX, setLibScrollX] = useState(0);
-  const [libMaxScrollX, setLibMaxScrollX] = useState(0);
+  const libContainerRef = useRef<HTMLDivElement>(null);
+  const [libContainerW, setLibContainerW] = useState(0);
+  const [colPage, setColPage] = useState(0);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -2959,20 +2959,15 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     window.addEventListener("mouseup", onUp);
   };
 
-  // Track scroll position of the middle zone for arrow button disabled states
+  // Measure container width to compute how many columns fit per page
   useEffect(() => {
-    const el = libScrollRef.current;
+    const el = libContainerRef.current;
     if (!el) return;
-    const update = () => {
-      setLibScrollX(Math.round(el.scrollLeft));
-      setLibMaxScrollX(Math.max(0, el.scrollWidth - el.clientWidth));
-    };
-    update();
-    el.addEventListener('scroll', update, { passive: true } as any);
-    const ro = new ResizeObserver(update);
+    const ro = new ResizeObserver(() => setLibContainerW(el.clientWidth));
     ro.observe(el);
-    return () => { el.removeEventListener('scroll', update); ro.disconnect(); };
-  }, [loading]);
+    setLibContainerW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
@@ -3121,22 +3116,34 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type, width: META_COL_WIDTHS[d.data_type] })),
   ];
 
-  // Sum of all column widths — drives minWidth on the table so the title (auto) column
-  // never collapses: at wide viewports table fills 100% and title absorbs extra space;
-  // when this sum exceeds the container the scroll wrapper kicks in.
-  const tableMinWidth = React.useMemo(() => {
-    let w = 32 + 36 + 160; // checkbox + # + actions
-    for (const col of visibleLibraryCols) {
-      if (col.kind === 'standard') {
-        w += col.id === 'title'
-          ? (colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'])
-          : (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]);
+  // Split middle columns (everything except the sticky title) into pages
+  // that fit within the measured container width.
+  const hasTitleCol = visibleCols.has('title');
+  const middleCols = visibleLibraryCols.filter(c => !(c.kind === 'standard' && c.id === 'title'));
+  const colPages: LibraryColumn[][] = (() => {
+    const titleW = colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'];
+    const availW = libContainerW - 68 - titleW - 160; // checkbox+# + title + actions
+    if (middleCols.length === 0) return [[]];
+    if (availW < 60) return [middleCols]; // not yet measured
+    const pages: LibraryColumn[][] = [];
+    let cur: LibraryColumn[] = [];
+    let usedW = 0;
+    for (const col of middleCols) {
+      const w = col.kind === 'standard'
+        ? (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id])
+        : (metaColWidths[col.defId] ?? col.width);
+      if (cur.length > 0 && usedW + w > availW) {
+        pages.push(cur); cur = [col]; usedW = w;
       } else {
-        w += metaColWidths[col.defId] ?? col.width;
+        cur.push(col); usedW += w;
       }
     }
-    return w;
-  }, [visibleLibraryCols, colWidths, metaColWidths]);
+    if (cur.length > 0) pages.push(cur);
+    return pages;
+  })();
+  const totalColPages = colPages.length;
+  const safeColPage = Math.min(colPage, Math.max(0, totalColPages - 1));
+  const currentPageCols = colPages[safeColPage] ?? [];
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -3317,17 +3324,17 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
+        <div ref={libContainerRef} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
           <style>{`.ether-lib-table th,.ether-lib-table td{border-right:1px solid var(--border-primary)}.ether-lib-table th:last-child,.ether-lib-table td:last-child{border-right:none}`}</style>
-          <div ref={libScrollRef} style={{ overflowX: "hidden" }}>
-          <table className="ether-lib-table" style={{ width: "100%", minWidth: tableMinWidth, borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
+          <table className="ether-lib-table" style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
-              {visibleLibraryCols.map(col => (
+              {hasTitleCol && <col style={{ width: colWidths['title'] ? colWidths['title'] + "px" : 'auto' }} />}
+              {currentPageCols.map(col => (
                 <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                      style={{ width: col.kind === 'standard'
-                       ? (col.id === 'title' && !colWidths['title'] ? 'auto' : ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px"))
+                       ? ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px")
                        : ((metaColWidths[col.defId] ?? col.width) + "px")
                      }} />
               ))}
@@ -3337,20 +3344,23 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
                 <th style={{ padding: "10px 12px", width: 32, position: "sticky" as any, left: 0, zIndex: 4, background: "var(--bg-tertiary)" }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
                 <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "sticky" as any, left: 32, zIndex: 4, background: "var(--bg-tertiary)" }}>#</th>
-                {visibleLibraryCols.map(col => {
-                  const isStickyTitle = col.kind === 'standard' && col.id === 'title';
-                  return (
+                {hasTitleCol && (
+                  <th style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 4, background: "var(--bg-tertiary)" }}>
+                    Title
+                    <span onMouseDown={e => startColResize('title', e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
+                  </th>
+                )}
+                {currentPageCols.map(col => (
                   <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
-                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
+                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any }}>
                     {col.label}
                     <span onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e) : startMetaColResize(col.defId, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
-                  );
-                })}
+                ))}
                 <th style={{ padding: "6px 8px", width: 160, textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 4, background: "var(--bg-tertiary)", borderLeft: "1px solid var(--border-primary)" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
-                    <button onClick={() => libScrollRef.current?.scrollBy({ left: -(libScrollRef.current.clientWidth), behavior: 'smooth' })} disabled={libScrollX <= 0} title="Scroll columns left" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: libScrollX <= 0 ? "not-allowed" : "pointer", color: libScrollX <= 0 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: libScrollX <= 0 ? 0.3 : 1 }}>‹</button>
-                    <button onClick={() => libScrollRef.current?.scrollBy({ left: libScrollRef.current.clientWidth, behavior: 'smooth' })} disabled={libMaxScrollX <= 0 || libScrollX >= libMaxScrollX} title="Scroll columns right" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "not-allowed" : "pointer", color: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? 0.3 : 1 }}>›</button>
+                    <button onClick={() => setColPage(p => Math.max(0, p - 1))} disabled={safeColPage <= 0} title="Previous columns" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: safeColPage <= 0 ? "not-allowed" : "pointer", color: safeColPage <= 0 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: safeColPage <= 0 ? 0.3 : 1 }}>‹</button>
+                    <button onClick={() => setColPage(p => Math.min(totalColPages - 1, p + 1))} disabled={safeColPage >= totalColPages - 1} title="Next columns" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: safeColPage >= totalColPages - 1 ? "not-allowed" : "pointer", color: safeColPage >= totalColPages - 1 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: safeColPage >= totalColPages - 1 ? 0.3 : 1 }}>›</button>
                     <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "4px 6px", fontSize: 14 }}>⚙</button>
                   </div>
                 </th>
@@ -3366,7 +3376,21 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                 >
                   <td data-sticky="1" style={{ padding: "10px 12px", position: "sticky" as any, left: 0, zIndex: 2, background: "var(--bg-secondary)" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
                   <td data-sticky="1" style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", position: "sticky" as any, left: 32, zIndex: 2, background: "var(--bg-secondary)" }}>{i + 1}</td>
-                  {visibleLibraryCols.map(col => {
+                  {hasTitleCol && (() => {
+                    const isInlineTitle = inlineEdit?.id === s.id && inlineEdit?.col === 'title';
+                    return (
+                      <td data-sticky="1" style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 2, background: "var(--bg-secondary)" }}
+                        onDoubleClick={() => setInlineEdit({ id: s.id, col: 'title', value: s.title || "" })}>
+                        {s.file_path && watermarkedPaths.has(s.file_path) && (
+                          <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
+                        )}
+                        {isInlineTitle
+                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          : (s.title || "—")}
+                      </td>
+                    );
+                  })()}
+                  {currentPageCols.map(col => {
                     if (col.kind === 'metadata') {
                       const rawVal = metaMap[s.id]?.[col.defId] ?? '';
                       const isEditingMeta = metaEdit?.songId === s.id && metaEdit?.col.defId === col.defId;
@@ -3437,11 +3461,10 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                     }
                     const id = col.id;
                     const isInline = inlineEdit?.id === s.id && inlineEdit?.col === id;
-                    const editableCols: LibCol[] = ["title","artist","album","year","genre","bpm"];
+                    const editableCols: LibCol[] = ["artist","album","year","genre","bpm"];
                     const isEditable = editableCols.includes(id);
                     const cellVal = (() => {
                       switch (id) {
-                        case "title":    return s.title;
                         case "artist":   return s.artist_name || null;
                         case "album":    return s.album_title || null;
                         case "year":     return s.album_year ? String(s.album_year) : null;
@@ -3462,18 +3485,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                           <option value="">—</option>
                           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
                         </select>
-                      </td>
-                    );
-
-                    if (id === "title") return (
-                      <td key={id} data-sticky="1" style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 2, background: "var(--bg-secondary)" }}
-                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}>
-                        {s.file_path && watermarkedPaths.has(s.file_path) && (
-                          <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
-                        )}
-                        {isInline
-                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
-                          : cellVal || "—"}
                       </td>
                     );
 
@@ -3502,7 +3513,6 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
               ))}
             </tbody>
           </table>
-          </div>
         </div>
       )}
     </div>
