@@ -78,7 +78,7 @@ import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
-import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol, type LibraryColumn, type MetadataDefinition } from "./types/metadata";
+import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
@@ -2812,6 +2812,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const [defs, setDefs] = useState<MetadataDefinition[]>([]);
   const [visibleMetaCols, setVisibleMetaCols] = useState<Set<number>>(new Set());
   const [metaMap, setMetaMap] = useState<Record<number, Record<number, string>>>({});
+  const [metaUuidMap, setMetaUuidMap] = useState<Record<number, Record<number, string>>>({});
+  const [vocabByDef, setVocabByDef] = useState<Record<number, MetadataVocabulary[]>>({});
+  const [metaEdit, setMetaEdit] = useState<{ songId: number; col: MetadataColumn; value: string } | null>(null);
 
   const toggleMetaCol = (defId: number) => {
     setVisibleMetaCols(prev => {
@@ -2901,6 +2904,22 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     await load();
   };
 
+  const commitMetaEdit = async (songId: number, col: MetadataColumn, value: string) => {
+    if (col.dataType === 'number' && value !== '' && isNaN(Number(value))) return;
+    const existingUuid = metaUuidMap[songId]?.[col.defId];
+    if (existingUuid) {
+      await (window as any).ether.songMetadataValues.update(existingUuid, { value_text: value });
+      setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: value } }));
+    } else {
+      if (value === '') return;
+      const res = await (window as any).ether.songMetadataValues.create({ station_id: stationId, song_id: songId, definition_id: col.defId, value_text: value });
+      setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: value } }));
+      if (res?.ok && res.row?.uuid) {
+        setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: res.row.uuid } }));
+      }
+    }
+  };
+
   // ── Column resize drag ─────────────────────────────────────
   const startColResize = (col: LibCol, e: React.MouseEvent) => {
     e.preventDefault();
@@ -2961,21 +2980,42 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
   // Fetch song_metadata_values for visible metadata columns (skip if none visible)
   useEffect(() => {
-    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); return; }
+    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaUuidMap({}); return; }
     (async () => {
       try {
         const res = await (window as any).ether.songMetadataValues.list(stationId, { limit: 10000 });
         const rows: any[] = res?.ok ? (res.rows ?? []) : [];
         const map: Record<number, Record<number, string>> = {};
+        const uuidMap: Record<number, Record<number, string>> = {};
         for (const r of rows) {
           if (!visibleMetaCols.has(r.definition_id)) continue;
           if (!map[r.song_id]) map[r.song_id] = {};
+          if (!uuidMap[r.song_id]) uuidMap[r.song_id] = {};
           map[r.song_id][r.definition_id] = r.value_text ?? '';
+          uuidMap[r.song_id][r.definition_id] = r.uuid;
         }
         setMetaMap(map);
+        setMetaUuidMap(uuidMap);
       } catch (e) { console.error('[LibraryPanel] failed to load metadata values:', e); }
     })();
   }, [stationId, songs, visibleMetaCols]);
+
+  // Load vocabulary for all definitions in this station (needed for choice-type cell editors)
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await (window as any).ether.metadataVocabulary.list(stationId);
+        const rows: MetadataVocabulary[] = res?.ok ? (res.rows ?? []) : [];
+        const byDef: Record<number, MetadataVocabulary[]> = {};
+        for (const v of rows.filter((v: MetadataVocabulary) => !v.deleted_at)) {
+          if (!byDef[v.definition_id]) byDef[v.definition_id] = [];
+          byDef[v.definition_id].push(v);
+        }
+        for (const arr of Object.values(byDef)) arr.sort((a, b) => a.display_order - b.display_order);
+        setVocabByDef(byDef);
+      } catch (e) { console.error('[LibraryPanel] failed to load vocabulary:', e); }
+    })();
+  }, [stationId]);
 
   const toggleSelect = (id: number) => { setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };
@@ -3253,13 +3293,73 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   <td style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{i + 1}</td>
                   {visibleLibraryCols.map(col => {
                     if (col.kind === 'metadata') {
-                      const rawVal = metaMap[s.id]?.[col.defId] ?? null;
-                      const displayVal = col.dataType === 'boolean'
-                        ? (rawVal === '1' ? '✓' : '')
-                        : (rawVal ?? '');
+                      const rawVal = metaMap[s.id]?.[col.defId] ?? '';
+                      const isEditingMeta = metaEdit?.songId === s.id && metaEdit?.col.defId === col.defId;
+                      const vocab = vocabByDef[col.defId] ?? [];
+
+                      if (col.dataType === 'boolean') {
+                        return (
+                          <td key={`meta_${col.defId}`}
+                              style={{ padding: "10px 12px", color: rawVal === '1' ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer", textAlign: "center" as any }}
+                              onClick={() => commitMetaEdit(s.id, col, rawVal === '1' ? '0' : '1')}>
+                            {rawVal === '1' ? '✓' : '—'}
+                          </td>
+                        );
+                      }
+
+                      if (col.dataType === 'single_choice') {
+                        return (
+                          <td key={`meta_${col.defId}`}
+                              style={{ padding: "8px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer" }}
+                              onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
+                            {isEditingMeta ? (
+                              <select autoFocus value={metaEdit!.value}
+                                onChange={e => { const v = e.target.value; setMetaEdit(null); commitMetaEdit(s.id, col, v); }}
+                                onBlur={() => setMetaEdit(null)}
+                                onKeyDown={e => { if (e.key === 'Escape') setMetaEdit(null); }}
+                                style={{ width: "100%", padding: "2px 4px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }}>
+                                <option value="">—</option>
+                                {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
+                              </select>
+                            ) : (rawVal || '—')}
+                          </td>
+                        );
+                      }
+
+                      if (col.dataType === 'multi_choice') {
+                        const selected: string[] = rawVal ? (() => { try { return JSON.parse(rawVal); } catch { return rawVal.split(',').map((v: string) => v.trim()).filter(Boolean); } })() : [];
+                        const editSelected: string[] = isEditingMeta ? (() => { try { return JSON.parse(metaEdit!.value); } catch { return []; } })() : selected;
+                        return (
+                          <td key={`meta_${col.defId}`}
+                              style={{ padding: "8px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer" }}
+                              onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
+                            {isEditingMeta ? (
+                              <select autoFocus multiple value={editSelected}
+                                onChange={e => { const vals = Array.from(e.target.selectedOptions).map((o: HTMLOptionElement) => o.value); setMetaEdit(prev => prev ? { ...prev, value: JSON.stringify(vals) } : prev); }}
+                                onBlur={() => { const v = metaEdit?.value ?? ''; setMetaEdit(null); commitMetaEdit(s.id, col, v); }}
+                                onKeyDown={e => { if (e.key === 'Escape') setMetaEdit(null); }}
+                                style={{ width: "100%", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", minHeight: 60 }}>
+                                {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
+                              </select>
+                            ) : (selected.join(', ') || '—')}
+                          </td>
+                        );
+                      }
+
+                      // text | number | date
                       return (
-                        <td key={`meta_${col.defId}`} style={{ padding: "10px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>
-                          {displayVal || '—'}
+                        <td key={`meta_${col.defId}`}
+                            style={{ padding: "10px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "text" }}
+                            onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
+                          {isEditingMeta ? (
+                            <input autoFocus
+                              type={col.dataType === 'number' ? 'number' : col.dataType === 'date' ? 'date' : 'text'}
+                              value={metaEdit!.value}
+                              onChange={e => setMetaEdit(prev => prev ? { ...prev, value: e.target.value } : prev)}
+                              onBlur={() => { const v = metaEdit?.value ?? ''; setMetaEdit(null); commitMetaEdit(s.id, col, v); }}
+                              onKeyDown={e => { if (e.key === 'Enter') { const v = metaEdit?.value ?? ''; setMetaEdit(null); commitMetaEdit(s.id, col, v); } if (e.key === 'Escape') setMetaEdit(null); }}
+                              style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          ) : (rawVal || '—')}
                         </td>
                       );
                     }
