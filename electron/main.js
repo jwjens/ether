@@ -717,6 +717,11 @@ function runMigrations() {
   db.exec("UPDATE deck_configs SET enabled=1 WHERE slot IN ('D','E','F')");
 
   console.log("[DB] Schema ready");
+
+  const maxVer = db.prepare("SELECT MAX(version) AS v FROM schema_version").get();
+  if (maxVer?.v) {
+    db.prepare("INSERT OR REPLACE INTO system_state (key, value) VALUES ('schema_version', ?)").run(String(maxVer.v));
+  }
 }
 
 // ── Active station helper ─────────────────────────────────────
