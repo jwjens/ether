@@ -3144,6 +3144,15 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const safeColPage = Math.min(colPage, Math.max(0, totalColPages - 1));
   const currentPageCols = colPages[safeColPage] ?? [];
 
+  // Compute explicit title width so all col widths sum to exactly containerW — eliminates
+  // browser ambiguity with width:auto in tableLayout:fixed.
+  const pageMiddleSum = currentPageCols.reduce((s, col) => s + (col.kind === 'standard'
+    ? (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id])
+    : (metaColWidths[col.defId] ?? col.width)), 0);
+  const titleColW = libContainerW > 0
+    ? Math.max(LIB_COL_DEFAULT_WIDTHS['title'], libContainerW - 68 - pageMiddleSum - 160)
+    : (colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title']);
+
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Spotify import modal — rendered above everything else */}
@@ -3323,13 +3332,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div ref={setLibContainerEl} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
+        <div ref={setLibContainerEl} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any, overflow: "hidden" }}>
           <style>{`.ether-lib-table th,.ether-lib-table td{border-right:1px solid var(--border-primary)}.ether-lib-table th:last-child,.ether-lib-table td:last-child{border-right:none}`}</style>
           <table className="ether-lib-table" style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
-              {hasTitleCol && <col style={{ width: colWidths['title'] ? colWidths['title'] + "px" : 'auto' }} />}
+              {hasTitleCol && <col style={{ width: titleColW + "px" }} />}
               {currentPageCols.map(col => (
                 <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                      style={{ width: col.kind === 'standard'
