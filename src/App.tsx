@@ -896,6 +896,11 @@ export default function App() {
     await engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
     if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("B", s.gain_db);
   }, []);
+  const loadC = useCallback(async (s: SongRow) => {
+    if (!s.file_path) return;
+    await engine.loadToDeck("C", s.file_path, s.title, s.artist_name || "");
+    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("C", s.gain_db);
+  }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
   });
@@ -1401,7 +1406,7 @@ export default function App() {
           )}
           {panel !== "live" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
+              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "studio" && (
@@ -2755,7 +2760,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 interface EditMeta { id: number; title: string; artist: string; album: string; year: string; genre: string; bpm: string; }
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
-function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
+function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
   const { stationId } = useActiveStation();
   const watermarkedPaths = React.useMemo<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem("ether_watermarked_paths") || "[]")); }
@@ -2786,9 +2791,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const [colWidths, setColWidths] = useState<Partial<Record<LibCol, number>>>({});
   const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
-  const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
-  const dragMetaColRef = useRef<{ defId: number; startX: number; startW: number } | null>(null);
-  const [hoveredSongId, setHoveredSongId] = useState<number | null>(null);
+  const middleHeaderRef = useRef<HTMLDivElement | null>(null);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -2815,6 +2818,14 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
       return n;
     });
   };
+
+  // ── Per-station column width persistence ──────────────────
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`ether_lib_col_widths_${stationId}`) || '{}');
+      setColWidths(saved);
+    } catch { /* ignore */ }
+  }, [stationId]);
 
   // ── Right-click context menu ───────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; song: SongRow } | null>(null);
@@ -2924,35 +2935,36 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   };
 
   // ── Column resize drag ─────────────────────────────────────
-  const startColResize = (col: LibCol, e: React.MouseEvent) => {
+  const startColResize = (col: LibCol, e: React.MouseEvent, currentW: number) => {
     e.preventDefault();
-    const thEl = (e.target as HTMLElement).closest("th") as HTMLElement;
-    dragColRef.current = { col, startX: e.clientX, startW: thEl?.offsetWidth || 120 };
+    const startX = e.clientX;
+    const startW = currentW;
     const onMove = (ev: MouseEvent) => {
-      if (!dragColRef.current) return;
-      const newW = Math.min(600, Math.max(40, dragColRef.current.startW + ev.clientX - dragColRef.current.startX));
-      setColWidths(prev => ({ ...prev, [dragColRef.current!.col]: newW }));
+      const newW = Math.min(600, Math.max(40, startW + ev.clientX - startX));
+      setColWidths(prev => {
+        const next = { ...prev, [col]: newW };
+        localStorage.setItem(`ether_lib_col_widths_${stationId}`, JSON.stringify(next));
+        return next;
+      });
     };
-    const onUp = () => { dragColRef.current = null; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
 
-  const startMetaColResize = (defId: number, e: React.MouseEvent) => {
+  const startMetaColResize = (defId: number, e: React.MouseEvent, currentW: number) => {
     e.preventDefault();
-    const thEl = (e.target as HTMLElement).closest("th") as HTMLElement;
-    dragMetaColRef.current = { defId, startX: e.clientX, startW: thEl?.offsetWidth || 120 };
+    const startX = e.clientX;
+    const startW = currentW;
     const onMove = (ev: MouseEvent) => {
-      if (!dragMetaColRef.current) return;
-      const newW = Math.min(600, Math.max(40, dragMetaColRef.current.startW + ev.clientX - dragMetaColRef.current.startX));
-      const id = dragMetaColRef.current.defId;
+      const newW = Math.min(600, Math.max(40, startW + ev.clientX - startX));
       setMetaColWidths(prev => {
-        const next = { ...prev, [id]: newW };
+        const next = { ...prev, [defId]: newW };
         localStorage.setItem(`ether_lib_meta_col_widths_${stationId}`, JSON.stringify(next));
         return next;
       });
     };
-    const onUp = () => { dragMetaColRef.current = null; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
@@ -3097,7 +3109,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   };
 
   const META_COL_WIDTHS: Record<MetadataDefinition['data_type'], number> = {
-    text: 180, number: 80, date: 110, boolean: 60, single_choice: 140, multi_choice: 200,
+    text: 160, number: 90, date: 110, boolean: 70, single_choice: 140, multi_choice: 180,
   };
 
   const visibleLibraryCols: LibraryColumn[] = [
@@ -3106,8 +3118,21 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   ];
 
   const hasTitleCol = visibleCols.has('title');
-  // Standard non-title columns shown in the table — metadata lives in the right-click panel
-  const standardMiddleCols = visibleLibraryCols.filter(c => c.kind === 'standard' && c.id !== 'title');
+  const ACTION_ZONE_W = 240;
+  const titleW = colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'];
+  const middleCols = visibleLibraryCols.filter(c => !(c.kind === 'standard' && c.id === 'title'));
+  const colW = (col: LibraryColumn): number =>
+    col.kind === 'standard'
+      ? (colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id])
+      : (metaColWidths[col.defId] ?? META_COL_WIDTHS[col.dataType]);
+  const gridCols = ['32px', '36px', ...(hasTitleCol ? [`${titleW}px`] : []), '1fr', `${ACTION_ZONE_W}px`].join(' ');
+
+  useEffect(() => {
+    if (!middleHeaderRef.current || process.env.NODE_ENV !== 'development') return;
+    const availW = middleHeaderRef.current.offsetWidth;
+    const totalW = middleCols.reduce((sum, col) => sum + colW(col), 0);
+    if (totalW > availW) console.warn(`[LibraryPanel] middle zone overflow: ${totalW}px cols in ${availW}px — paging (Commit 2) will fix this`);
+  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -3202,6 +3227,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
             { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
             { label: "Load to Deck A", action: () => { onLoadA(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
+            { label: "Load to Deck C", action: () => { onLoadC(ctxMenu.song); setCtxMenu(null); } },
             { label: "Add to Queue",   action: () => { onQueue(ctxMenu.song); setCtxMenu(null); } },
             { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
             { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
@@ -3288,59 +3314,95 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
-          <style>{`.ether-lib-table th,.ether-lib-table td{border-right:1px solid var(--border-primary)}.ether-lib-table th:last-child,.ether-lib-table td:last-child{border-right:none}`}</style>
-          <table className="ether-lib-table" style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-                <th style={{ padding: "10px 12px", width: 32, position: "sticky" as any, left: 0, zIndex: 4, background: "var(--bg-tertiary)" }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
-                <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "sticky" as any, left: 32, zIndex: 4, background: "var(--bg-tertiary)" }}>#</th>
-                {hasTitleCol && (
-                  <th style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 4, background: "var(--bg-tertiary)", minWidth: LIB_COL_DEFAULT_WIDTHS['title'] }}>
-                    Title
-                    <span onMouseDown={e => startColResize('title', e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
-                  </th>
-                )}
-                {standardMiddleCols.map(col => (
-                  <th key={(col as any).id}
-                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any, minWidth: LIB_COL_DEFAULT_WIDTHS[(col as any).id] }}>
+        <div
+          role="grid"
+          style={{
+            background: "var(--bg-secondary)",
+            border: "1px solid var(--border-primary)",
+            borderRadius: 0,
+            fontSize: 13,
+            ["--lib-grid" as any]: gridCols,
+          }}
+        >
+          <style>{`.ether-lib-row{display:grid;grid-template-columns:var(--lib-grid)}.ether-lib-row:hover{background:var(--bg-hover)}`}</style>
+
+          {/* Header */}
+          <div role="row" className="ether-lib-row" style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", userSelect: "none" as any }}>
+            <div role="columnheader" style={{ padding: "10px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
+              <input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} />
+            </div>
+            <div role="columnheader" style={{ padding: "10px 6px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>#</div>
+            {hasTitleCol && (
+              <div role="columnheader" style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", display: "flex", alignItems: "center", overflow: "hidden", position: "relative" as any, borderRight: "1px solid var(--border-primary)" }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>Title</span>
+                <span onMouseDown={e => startColResize('title', e, titleW)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
+              </div>
+            )}
+            <div ref={middleHeaderRef} style={{ display: "flex", overflow: "hidden" }}>
+              {middleCols.map(col => {
+                const w = colW(col);
+                const key = col.kind === 'standard' ? col.id : `meta-${col.defId}`;
+                return (
+                  <div key={key} role="columnheader" style={{ flex: `0 0 ${w}px`, padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any, borderRight: "1px solid var(--border-primary)" }}>
                     {col.label}
-                    <span onMouseDown={e => startColResize((col as any).id, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
-                  </th>
-                ))}
-                <th style={{ width: 32, padding: "6px 8px", textAlign: "right" as any, background: "var(--bg-tertiary)" }}>
-                  <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((s, i) => (
-                <tr key={s.id}
-                  style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none", position: "relative" as any }}
-                  onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
-                  onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; setHoveredSongId(s.id); }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; setHoveredSongId(null); }}
-                >
-                  <td style={{ padding: "10px 12px", position: "sticky" as any, left: 0, zIndex: 2, background: "inherit" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
-                  <td style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", position: "sticky" as any, left: 32, zIndex: 2, background: "inherit" }}>{i + 1}</td>
-                  {hasTitleCol && (() => {
-                    const isInlineTitle = inlineEdit?.id === s.id && inlineEdit?.col === 'title';
-                    return (
-                      <td style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 2, background: "inherit" }}
-                        onDoubleClick={() => setInlineEdit({ id: s.id, col: 'title', value: s.title || "" })}>
-                        {s.file_path && watermarkedPaths.has(s.file_path) && (
-                          <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
-                        )}
-                        {isInlineTitle
-                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
-                          : (s.title || "—")}
-                      </td>
-                    );
-                  })()}
-                  {standardMiddleCols.map(col => {
-                    const id = (col as any).id as LibCol;
+                    <span
+                      onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e, w) : startMetaColResize(col.defId, e, w)}
+                      style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div role="columnheader" style={{ display: "flex", alignItems: "center", padding: "0 8px", borderLeft: "1px solid var(--border-primary)" }}>
+              <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
+            </div>
+          </div>
+
+          {/* Body rows */}
+          {filtered.map((s, i) => (
+            <div
+              key={s.id}
+              role="row"
+              className="ether-lib-row"
+              style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
+            >
+              {/* Checkbox */}
+              <div role="gridcell" style={{ padding: "10px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
+                <input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} />
+              </div>
+              {/* Row # */}
+              <div role="gridcell" style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
+                {i + 1}
+              </div>
+              {/* Title */}
+              {hasTitleCol && (() => {
+                const isInlineTitle = inlineEdit?.id === s.id && inlineEdit?.col === 'title';
+                return (
+                  <div
+                    role="gridcell"
+                    style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", cursor: "text", borderRight: "1px solid var(--border-primary)" }}
+                    onDoubleClick={() => setInlineEdit({ id: s.id, col: 'title', value: s.title || "" })}
+                  >
+                    {s.file_path && watermarkedPaths.has(s.file_path) && (
+                      <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8", flexShrink: 0 }}>🛡</span>
+                    )}
+                    {isInlineTitle
+                      ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                      : <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title || "—"}</span>}
+                  </div>
+                );
+              })()}
+              {/* Middle zone — all other columns, clipped to 1fr */}
+              <div style={{ display: "flex", overflow: "hidden" }}>
+                {middleCols.map(col => {
+                  const w = colW(col);
+                  if (col.kind === 'standard') {
+                    const id = col.id;
                     const isInline = inlineEdit?.id === s.id && inlineEdit?.col === id;
-                    const editableCols: LibCol[] = ["artist","album","year","genre","bpm"];
+                    const editableCols: LibCol[] = ["artist", "album", "year", "genre", "bpm"];
                     const isEditable = editableCols.includes(id);
                     const cellVal = (() => {
                       switch (id) {
@@ -3350,50 +3412,81 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                         case "genre":    return s.genre || null;
                         case "bpm":      return s.bpm != null ? String(Math.round(s.bpm)) : null;
                         case "format":   return s.file_path ? fmtExt(s.file_path) : null;
-                        case "duration": return s.duration_ms ? `${Math.floor(s.duration_ms/60000)}:${String(Math.floor((s.duration_ms%60000)/1000)).padStart(2,"0")}` : null;
-                        case "category": return null;
+                        case "duration": return s.duration_ms ? `${Math.floor(s.duration_ms / 60000)}:${String(Math.floor((s.duration_ms % 60000) / 1000)).padStart(2, "0")}` : null;
                         case "plays":    return s.play_count != null ? String(s.play_count) : "0";
-                        default: return null;
+                        default:         return null;
                       }
                     })();
                     if (id === "category") return (
-                      <td key={id} style={{ padding: "8px 12px" }}>
+                      <div key={id} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
                         <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}
                           style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
                           <option value="">—</option>
                           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
                         </select>
-                      </td>
+                      </div>
                     );
                     return (
-                      <td key={id} style={{ padding: "10px 12px", color: id === "format" || id === "bpm" || id === "duration" || id === "year" ? "var(--text-tertiary)" : "var(--text-secondary)", fontSize: id === "format" ? 12 : 13, fontFamily: id === "format" || id === "bpm" || id === "duration" ? "'JetBrains Mono', ui-monospace, monospace" : undefined, textTransform: id === "format" ? "uppercase" as any : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: isEditable ? "text" : undefined }}
-                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}>
+                      <div
+                        key={id}
+                        role="gridcell"
+                        style={{ flex: `0 0 ${w}px`, padding: "10px 12px", color: ["format","bpm","duration","year"].includes(id) ? "var(--text-tertiary)" : "var(--text-secondary)", fontSize: id === "format" ? 12 : 13, fontFamily: ["format","bpm","duration"].includes(id) ? "'JetBrains Mono', ui-monospace, monospace" : undefined, textTransform: id === "format" ? "uppercase" as any : undefined, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", cursor: isEditable ? "text" : undefined, borderRight: "1px solid var(--border-primary)" }}
+                        onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}
+                      >
                         {isInline
-                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ width: "100%", padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
                           : (cellVal || "—")}
-                      </td>
-                    );
-                  })}
-                  {/* Zero-width phantom td — hover action panel overflows to the left */}
-                  <td style={{ width: 0, padding: 0, border: "none", position: "relative" as any, overflow: "visible" as any }}>
-                    {hoveredSongId === s.id && (
-                      <div style={{ position: "absolute" as any, right: 0, top: "50%", transform: "translateY(-50%)", display: "flex", alignItems: "center", gap: 3, paddingLeft: 48, paddingRight: 8, background: "linear-gradient(to right, transparent, var(--bg-secondary) 30%)", zIndex: 10, whiteSpace: "nowrap" as any }}>
-                        <button onClick={() => onLoadA(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
-                        <button onClick={() => onLoadB(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
-                        <button onClick={() => onQueue(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
-                        {s.file_path && <button onClick={() => onSendToStudio(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(99,102,241,0.15)", color: "#a5b4fc", border: "none", cursor: "pointer" }}>Studio</button>}
-                        <button onClick={() => onEdit(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }} title="Edit cue points">
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
-                        </button>
-                        <button onClick={() => openEditMeta(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(251,191,36,0.12)", color: "#fbbf24", border: "none", cursor: "pointer" }} title="Edit metadata">⊞</button>
-                        <button onClick={async () => { if (confirm("Delete " + s.title + "?")) { await (window as any).ether.songs.deleteById(s.id); load(); } }} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                       </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    );
+                  } else {
+                    // MetadataColumn
+                    const rawVal = metaMap[s.id]?.[col.defId] ?? '';
+                    const isMetaInline = metaEdit?.songId === s.id && metaEdit?.col.defId === col.defId;
+                    if (col.dataType === 'single_choice') return (
+                      <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
+                        <select value={rawVal} onChange={e => commitMetaEdit(s.id, col, e.target.value)}
+                          style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
+                          <option value="">—</option>
+                          {vocabByDef[col.defId]?.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
+                        </select>
+                      </div>
+                    );
+                    if (col.dataType === 'boolean') return (
+                      <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "10px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
+                        <input type="checkbox" checked={rawVal === 'true' || rawVal === '1'} onChange={e => commitMetaEdit(s.id, col, e.target.checked ? 'true' : 'false')} />
+                      </div>
+                    );
+                    return (
+                      <div
+                        key={col.defId}
+                        role="gridcell"
+                        style={{ flex: `0 0 ${w}px`, padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", fontSize: 13, color: "var(--text-secondary)", borderRight: "1px solid var(--border-primary)", cursor: col.dataType !== 'multi_choice' ? "text" : undefined }}
+                        onDoubleClick={() => col.dataType !== 'multi_choice' && setMetaEdit({ songId: s.id, col, value: rawVal })}
+                      >
+                        {isMetaInline
+                          ? <input autoFocus value={metaEdit!.value} onChange={e => setMetaEdit(prev => prev ? { ...prev, value: e.target.value } : prev)}
+                              onBlur={() => { commitMetaEdit(metaEdit!.songId, metaEdit!.col, metaEdit!.value); setMetaEdit(null); }}
+                              onKeyDown={e => { if (e.key === 'Enter') { commitMetaEdit(metaEdit!.songId, metaEdit!.col, metaEdit!.value); setMetaEdit(null); } if (e.key === 'Escape') setMetaEdit(null); }}
+                              style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          : (rawVal || "—")}
+                      </div>
+                    );
+                  }
+                })}
+              </div>
+              {/* Right action zone — always visible, no hover gate */}
+              <div role="gridcell" style={{ display: "flex", alignItems: "center", gap: 3, padding: "0 6px", borderLeft: "1px solid var(--border-primary)", flexShrink: 0 }}>
+                <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
+                <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
+                <button onClick={() => onLoadC(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>C</button>
+                <button onClick={() => onQueue(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
+                <button onClick={() => onEdit(s)} title="Cue Editor" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
+                </button>
+                <button onClick={async () => { if (confirm("Delete " + (s.title || "this track") + "?")) { await (window as any).ether.songs.deleteById(s.id); load(); } }} title="Delete" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
