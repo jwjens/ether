@@ -78,7 +78,7 @@ import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
-import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
+import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
@@ -3258,15 +3258,16 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", position: "relative" as any }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
+          <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
               {visibleLibraryCols.map(col => (
                 <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                      style={{ width: col.kind === 'standard'
-                       ? (colWidths[col.id] ? colWidths[col.id] + "px" : undefined)
+                       ? ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px")
                        : col.width + "px"
                      }} />
               ))}
@@ -3274,15 +3275,18 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-                <th style={{ padding: "10px 12px", width: 32 }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
-                <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any }}>#</th>
-                {visibleLibraryCols.map(col => (
+                <th style={{ padding: "10px 12px", width: 32, position: "sticky" as any, left: 0, zIndex: 4, background: "var(--bg-tertiary)" }}><input type="checkbox" checked={selectedIds.size === filtered.length && filtered.length > 0} onChange={selectAll} /></th>
+                <th style={{ padding: "10px 6px", width: 36, fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "sticky" as any, left: 32, zIndex: 4, background: "var(--bg-tertiary)" }}>#</th>
+                {visibleLibraryCols.map(col => {
+                  const isStickyTitle = col.kind === 'standard' && col.id === 'title';
+                  return (
                   <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
-                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, position: "relative" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined }}>
+                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
                     {col.label}
                     {col.kind === 'standard' && <span onMouseDown={e => startColResize(col.id, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />}
                   </th>
-                ))}
+                  );
+                })}
                 <th style={{ padding: "10px 12px", width: 140, textAlign: "right" as any, position: "relative" as any }}>
                   <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
                 </th>
@@ -3293,11 +3297,11 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                 <tr key={s.id}
                   style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none" }}
                   onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
-                  onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
-                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  onMouseEnter={e => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.querySelectorAll("[data-sticky]").forEach((el: any) => { el.style.background = "var(--bg-hover)"; }); }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.querySelectorAll("[data-sticky]").forEach((el: any) => { el.style.background = "var(--bg-secondary)"; }); }}
                 >
-                  <td style={{ padding: "10px 12px" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
-                  <td style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{i + 1}</td>
+                  <td data-sticky="1" style={{ padding: "10px 12px", position: "sticky" as any, left: 0, zIndex: 2, background: "var(--bg-secondary)" }}><input type="checkbox" checked={selectedIds.has(s.id)} onChange={() => toggleSelect(s.id)} /></td>
+                  <td data-sticky="1" style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", position: "sticky" as any, left: 32, zIndex: 2, background: "var(--bg-secondary)" }}>{i + 1}</td>
                   {visibleLibraryCols.map(col => {
                     if (col.kind === 'metadata') {
                       const rawVal = metaMap[s.id]?.[col.defId] ?? '';
@@ -3398,7 +3402,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                     );
 
                     if (id === "title") return (
-                      <td key={id} style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}
+                      <td key={id} data-sticky="1" style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "sticky" as any, left: 68, zIndex: 2, background: "var(--bg-secondary)" }}
                         onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}>
                         {s.file_path && watermarkedPaths.has(s.file_path) && (
                           <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8" }}>🛡</span>
@@ -3434,6 +3438,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

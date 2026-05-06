@@ -8,6 +8,11 @@ export const LIB_COL_LABELS: Record<LibCol, string> = {
   category: "Category", plays: "Plays",
 };
 
+export const LIB_COL_DEFAULT_WIDTHS: Record<LibCol, number> = {
+  title: 200, artist: 150, album: 130, year: 60, genre: 100,
+  bpm: 60, format: 70, duration: 85, category: 90, plays: 60,
+};
+
 export interface MetadataDefinition {
   id: number;
   uuid: string;
