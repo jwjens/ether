@@ -2907,16 +2907,28 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const commitMetaEdit = async (songId: number, col: MetadataColumn, value: string) => {
     if (col.dataType === 'number' && value !== '' && isNaN(Number(value))) return;
     const existingUuid = metaUuidMap[songId]?.[col.defId];
-    if (existingUuid) {
-      await (window as any).ether.songMetadataValues.update(existingUuid, { value_text: value });
-      setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: value } }));
-    } else {
-      if (value === '') return;
-      const res = await (window as any).ether.songMetadataValues.create({ station_id: stationId, song_id: songId, definition_id: col.defId, value_text: value });
-      setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: value } }));
-      if (res?.ok && res.row?.uuid) {
-        setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: res.row.uuid } }));
+    if (!existingUuid && value === '') return;
+
+    // Optimistic update — show new value immediately so 30Hz re-renders don't snap the cell back
+    const prevValue = metaMap[songId]?.[col.defId];
+    setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: value } }));
+
+    try {
+      if (existingUuid) {
+        await (window as any).ether.songMetadataValues.update(existingUuid, { value_text: value });
+      } else {
+        const res = await (window as any).ether.songMetadataValues.create({ station_id: stationId, song_id: songId, definition_id: col.defId, value_text: value });
+        if (res?.ok && res.row?.uuid) {
+          setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: res.row.uuid } }));
+        }
       }
+    } catch (e) {
+      console.error('[commitMetaEdit] IPC failed, reverting:', e);
+      setMetaMap(prev => {
+        const row = { ...(prev[songId] ?? {}) };
+        if (prevValue === undefined) delete row[col.defId]; else row[col.defId] = prevValue;
+        return { ...prev, [songId]: row };
+      });
     }
   };
 
@@ -3300,6 +3312,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       if (col.dataType === 'boolean') {
                         return (
                           <td key={`meta_${col.defId}`}
+                              title="Click to toggle"
                               style={{ padding: "10px 12px", color: rawVal === '1' ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer", textAlign: "center" as any }}
                               onClick={() => commitMetaEdit(s.id, col, rawVal === '1' ? '0' : '1')}>
                             {rawVal === '1' ? '✓' : '—'}
@@ -3309,7 +3322,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
                       if (col.dataType === 'single_choice') {
                         return (
-                          <td key={`meta_${col.defId}`} style={{ padding: "8px 12px" }}>
+                          <td key={`meta_${col.defId}`} title="Click to select" style={{ padding: "8px 12px", cursor: "pointer" }}>
                             <select value={rawVal}
                               onChange={e => commitMetaEdit(s.id, col, e.target.value)}
                               style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: rawVal ? "var(--text-secondary)" : "var(--text-tertiary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
@@ -3325,6 +3338,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                         const editSelected: string[] = isEditingMeta ? (() => { try { return JSON.parse(metaEdit!.value); } catch { return []; } })() : selected;
                         return (
                           <td key={`meta_${col.defId}`}
+                              title="Double-click to edit"
                               style={{ padding: "8px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer" }}
                               onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
                             {isEditingMeta ? (
@@ -3343,6 +3357,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       // text | number | date
                       return (
                         <td key={`meta_${col.defId}`}
+                            title="Double-click to edit"
                             style={{ padding: "10px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "text" }}
                             onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
                           {isEditingMeta ? (
