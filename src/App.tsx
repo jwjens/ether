@@ -2788,7 +2788,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
   const dragMetaColRef = useRef<{ defId: number; startX: number; startW: number } | null>(null);
-  const libContainerRef = useRef<HTMLDivElement>(null);
+  const [libContainerEl, setLibContainerEl] = useState<HTMLDivElement | null>(null);
   const [libContainerW, setLibContainerW] = useState(0);
   const [colPage, setColPage] = useState(0);
 
@@ -2959,15 +2959,14 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     window.addEventListener("mouseup", onUp);
   };
 
-  // Measure container width to compute how many columns fit per page
+  // Measure container width whenever the table div mounts/unmounts or resizes
   useEffect(() => {
-    const el = libContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setLibContainerW(el.clientWidth));
-    ro.observe(el);
-    setLibContainerW(el.clientWidth);
+    if (!libContainerEl) return;
+    const ro = new ResizeObserver(() => setLibContainerW(libContainerEl.clientWidth));
+    ro.observe(libContainerEl);
+    setLibContainerW(libContainerEl.clientWidth);
     return () => ro.disconnect();
-  }, []);
+  }, [libContainerEl]);
 
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
@@ -3324,7 +3323,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
           <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
         </div>
       ) : (
-        <div ref={libContainerRef} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
+        <div ref={setLibContainerEl} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
           <style>{`.ether-lib-table th,.ether-lib-table td{border-right:1px solid var(--border-primary)}.ether-lib-table th:last-child,.ether-lib-table td:last-child{border-right:none}`}</style>
           <table className="ether-lib-table" style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
