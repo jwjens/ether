@@ -3309,19 +3309,13 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
                       if (col.dataType === 'single_choice') {
                         return (
-                          <td key={`meta_${col.defId}`}
-                              style={{ padding: "8px 12px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, cursor: "pointer" }}
-                              onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}>
-                            {isEditingMeta ? (
-                              <select autoFocus value={metaEdit!.value}
-                                onChange={e => { const v = e.target.value; setMetaEdit(null); commitMetaEdit(s.id, col, v); }}
-                                onBlur={() => setMetaEdit(null)}
-                                onKeyDown={e => { if (e.key === 'Escape') setMetaEdit(null); }}
-                                style={{ width: "100%", padding: "2px 4px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }}>
-                                <option value="">—</option>
-                                {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
-                              </select>
-                            ) : (rawVal || '—')}
+                          <td key={`meta_${col.defId}`} style={{ padding: "8px 12px" }}>
+                            <select value={rawVal}
+                              onChange={e => commitMetaEdit(s.id, col, e.target.value)}
+                              style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: rawVal ? "var(--text-secondary)" : "var(--text-tertiary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
+                              <option value="">—</option>
+                              {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
+                            </select>
                           </td>
                         );
                       }
