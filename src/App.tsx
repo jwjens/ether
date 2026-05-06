@@ -2784,8 +2784,10 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     catch { return new Set(["title","artist","album","genre","bpm","format","duration","category"] as LibCol[]); }
   });
   const [colWidths, setColWidths] = useState<Partial<Record<LibCol, number>>>({});
+  const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
+  const dragMetaColRef = useRef<{ defId: number; startX: number; startW: number } | null>(null);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -2927,11 +2929,29 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     dragColRef.current = { col, startX: e.clientX, startW: thEl?.offsetWidth || 120 };
     const onMove = (ev: MouseEvent) => {
       if (!dragColRef.current) return;
-      const delta = ev.clientX - dragColRef.current.startX;
-      const newW = Math.max(60, dragColRef.current.startW + delta);
+      const newW = Math.min(600, Math.max(40, dragColRef.current.startW + ev.clientX - dragColRef.current.startX));
       setColWidths(prev => ({ ...prev, [dragColRef.current!.col]: newW }));
     };
     const onUp = () => { dragColRef.current = null; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  const startMetaColResize = (defId: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    const thEl = (e.target as HTMLElement).closest("th") as HTMLElement;
+    dragMetaColRef.current = { defId, startX: e.clientX, startW: thEl?.offsetWidth || 120 };
+    const onMove = (ev: MouseEvent) => {
+      if (!dragMetaColRef.current) return;
+      const newW = Math.min(600, Math.max(40, dragMetaColRef.current.startW + ev.clientX - dragMetaColRef.current.startX));
+      const id = dragMetaColRef.current.defId;
+      setMetaColWidths(prev => {
+        const next = { ...prev, [id]: newW };
+        localStorage.setItem(`ether_lib_meta_col_widths_${stationId}`, JSON.stringify(next));
+        return next;
+      });
+    };
+    const onUp = () => { dragMetaColRef.current = null; window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   };
@@ -2963,12 +2983,16 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   };
   useEffect(() => { load(); }, [stationId]);
 
-  // Load definitions and restore per-station metadata column visibility
+  // Load definitions and restore per-station metadata column visibility + widths
   useEffect(() => {
     try {
       const stored = localStorage.getItem(`ether_lib_meta_cols_${stationId}`);
       setVisibleMetaCols(new Set(JSON.parse(stored || '[]')));
     } catch { setVisibleMetaCols(new Set()); }
+    try {
+      const storedW = localStorage.getItem(`ether_lib_meta_col_widths_${stationId}`);
+      setMetaColWidths(JSON.parse(storedW || '{}'));
+    } catch { setMetaColWidths({}); }
     (async () => {
       try {
         const res = await (window as any).ether.metadataDefinitions.list(stationId);
@@ -3260,15 +3284,15 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
           <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
+          <table style={{ width: "100%", minWidth: "fit-content", borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
               {visibleLibraryCols.map(col => (
                 <col key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                      style={{ width: col.kind === 'standard'
-                       ? ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px")
-                       : col.width + "px"
+                       ? (col.id === 'title' ? 'auto' : ((colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id]) + "px"))
+                       : ((metaColWidths[col.defId] ?? col.width) + "px")
                      }} />
               ))}
               <col style={{ width: 140 }} />
@@ -3283,7 +3307,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                       style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
                     {col.label}
-                    {col.kind === 'standard' && <span onMouseDown={e => startColResize(col.id, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />}
+                    <span onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e) : startMetaColResize(col.defId, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
                   );
                 })}
