@@ -3107,7 +3107,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   // never collapses: at wide viewports table fills 100% and title absorbs extra space;
   // when this sum exceeds the container the scroll wrapper kicks in.
   const tableMinWidth = React.useMemo(() => {
-    let w = 32 + 36 + 140; // checkbox + # + actions
+    let w = 32 + 36 + 160; // checkbox + # + actions
     for (const col of visibleLibraryCols) {
       if (col.kind === 'standard') {
         w += col.id === 'title'
@@ -3312,7 +3312,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                        : ((metaColWidths[col.defId] ?? col.width) + "px")
                      }} />
               ))}
-              <col style={{ width: 140 }} />
+              <col style={{ width: 160 }} />
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
@@ -3328,7 +3328,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   </th>
                   );
                 })}
-                <th style={{ padding: "10px 12px", width: 140, textAlign: "right" as any, position: "relative" as any }}>
+                <th style={{ padding: "10px 12px", width: 160, textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 4, background: "var(--bg-tertiary)", borderLeft: "1px solid var(--border-primary)" }}>
                   <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
                 </th>
               </tr>
@@ -3463,7 +3463,7 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                       </td>
                     );
                   })}
-                  <td style={{ padding: "10px 12px", textAlign: "right" as any }}>
+                  <td data-sticky="1" style={{ padding: "10px 12px", textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 2, background: "var(--bg-secondary)", borderLeft: "1px solid var(--border-primary)" }}>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
                       <button onClick={() => onLoadA(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
                       <button onClick={() => onLoadB(s)} style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
