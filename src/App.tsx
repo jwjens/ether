@@ -2788,6 +2788,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const dragColRef = useRef<{ col: LibCol; startX: number; startW: number } | null>(null);
   const dragMetaColRef = useRef<{ defId: number; startX: number; startW: number } | null>(null);
+  const libScrollRef = useRef<HTMLDivElement>(null);
+  const [libScrollX, setLibScrollX] = useState(0);
+  const [libMaxScrollX, setLibMaxScrollX] = useState(0);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -2956,19 +2959,20 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
     window.addEventListener("mouseup", onUp);
   };
 
-  const adjustColWidth = (col: LibraryColumn, delta: number) => {
-    if (col.kind === 'standard') {
-      const cur = colWidths[col.id] ?? LIB_COL_DEFAULT_WIDTHS[col.id];
-      setColWidths(prev => ({ ...prev, [col.id]: Math.min(600, Math.max(40, cur + delta)) }));
-    } else {
-      const cur = metaColWidths[col.defId] ?? col.width;
-      setMetaColWidths(prev => {
-        const next = { ...prev, [col.defId]: Math.min(600, Math.max(40, cur + delta)) };
-        localStorage.setItem(`ether_lib_meta_col_widths_${stationId}`, JSON.stringify(next));
-        return next;
-      });
-    }
-  };
+  // Track scroll position of the middle zone for arrow button disabled states
+  useEffect(() => {
+    const el = libScrollRef.current;
+    if (!el) return;
+    const update = () => {
+      setLibScrollX(Math.round(el.scrollLeft));
+      setLibMaxScrollX(Math.max(0, el.scrollWidth - el.clientWidth));
+    };
+    update();
+    el.addEventListener('scroll', update, { passive: true } as any);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', update); ro.disconnect(); };
+  }, [loading]);
 
   const createCategory = async () => {
     if (!newCatCode.trim() || !newCatName.trim()) return;
@@ -3314,8 +3318,9 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
         </div>
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, position: "relative" as any }}>
-          <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", minWidth: tableMinWidth, borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
+          <style>{`.ether-lib-table th,.ether-lib-table td{border-right:1px solid var(--border-primary)}.ether-lib-table th:last-child,.ether-lib-table td:last-child{border-right:none}`}</style>
+          <div ref={libScrollRef} style={{ overflowX: "hidden" }}>
+          <table className="ether-lib-table" style={{ width: "100%", minWidth: tableMinWidth, borderCollapse: "collapse" as any, fontSize: 13, tableLayout: "fixed" as any }}>
             <colgroup>
               <col style={{ width: 32 }} />
               <col style={{ width: 36 }} />
@@ -3337,17 +3342,17 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   return (
                   <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
                       style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1, minWidth: 0 }}>{col.label}</span>
-                      <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); adjustColWidth(col, -20); }} style={{ padding: "0 3px", fontSize: 10, lineHeight: "14px", background: "transparent", border: "1px solid var(--border-primary)", cursor: "pointer", color: "var(--text-tertiary)", borderRadius: 0, flexShrink: 0 }}>−</button>
-                      <button onMouseDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); adjustColWidth(col, +20); }} style={{ padding: "0 3px", fontSize: 10, lineHeight: "14px", background: "transparent", border: "1px solid var(--border-primary)", cursor: "pointer", color: "var(--text-tertiary)", borderRadius: 0, flexShrink: 0 }}>+</button>
-                    </div>
+                    {col.label}
                     <span onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e) : startMetaColResize(col.defId, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
                   );
                 })}
-                <th style={{ padding: "10px 12px", width: 160, textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 4, background: "var(--bg-tertiary)", borderLeft: "1px solid var(--border-primary)" }}>
-                  <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
+                <th style={{ padding: "6px 8px", width: 160, textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 4, background: "var(--bg-tertiary)", borderLeft: "1px solid var(--border-primary)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 1 }}>
+                    <button onClick={() => libScrollRef.current?.scrollBy({ left: -(libScrollRef.current.clientWidth), behavior: 'smooth' })} disabled={libScrollX <= 0} title="Scroll columns left" style={{ background: "none", border: "none", padding: "3px 6px", fontSize: 14, lineHeight: 1, cursor: libScrollX <= 0 ? "not-allowed" : "pointer", color: libScrollX <= 0 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: libScrollX <= 0 ? 0.3 : 1 }}>‹</button>
+                    <button onClick={() => libScrollRef.current?.scrollBy({ left: libScrollRef.current.clientWidth, behavior: 'smooth' })} disabled={libMaxScrollX <= 0 || libScrollX >= libMaxScrollX} title="Scroll columns right" style={{ background: "none", border: "none", padding: "3px 6px", fontSize: 14, lineHeight: 1, cursor: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "not-allowed" : "pointer", color: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? 0.3 : 1 }}>›</button>
+                    <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
+                  </div>
                 </th>
               </tr>
             </thead>
