@@ -58,13 +58,15 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
     setLoading(true);
     (async () => {
       try {
-        const defs: MetadataDefinition[] = await (window as any).ether.metadataDefinitions.list(stationId) ?? [];
+        const defsRes = await (window as any).ether.metadataDefinitions.list(stationId);
+        const defs: MetadataDefinition[] = defsRes?.ok ? (defsRes.rows ?? []) : [];
         const active = defs
           .filter(d => !d.deleted_at)
           .sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name));
         setDefinitions(active);
 
-        const vocab: MetadataVocabulary[] = await (window as any).ether.metadataVocabulary.list(stationId) ?? [];
+        const vocabRes = await (window as any).ether.metadataVocabulary.list(stationId);
+        const vocab: MetadataVocabulary[] = vocabRes?.ok ? (vocabRes.rows ?? []) : [];
         const counts: Record<number, number> = {};
         for (const v of vocab) {
           if (!v.deleted_at) counts[v.definition_id] = (counts[v.definition_id] ?? 0) + 1;
