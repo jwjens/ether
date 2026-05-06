@@ -3341,17 +3341,17 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
                   const isStickyTitle = col.kind === 'standard' && col.id === 'title';
                   return (
                   <th key={col.kind === 'standard' ? col.id : `meta_${col.defId}`}
-                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
+                      style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", textAlign: "left" as any, userSelect: "none" as any, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, width: col.kind === 'standard' ? (colWidths[col.id] || undefined) : undefined, position: isStickyTitle ? "sticky" as any : "relative" as any, ...(isStickyTitle ? { left: 68, zIndex: 4, background: "var(--bg-tertiary)" } : {}) }}>
                     {col.label}
                     <span onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e) : startMetaColResize(col.defId, e)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
                   </th>
                   );
                 })}
                 <th style={{ padding: "6px 8px", width: 160, textAlign: "right" as any, position: "sticky" as any, right: 0, zIndex: 4, background: "var(--bg-tertiary)", borderLeft: "1px solid var(--border-primary)" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 1 }}>
-                    <button onClick={() => libScrollRef.current?.scrollBy({ left: -(libScrollRef.current.clientWidth), behavior: 'smooth' })} disabled={libScrollX <= 0} title="Scroll columns left" style={{ background: "none", border: "none", padding: "3px 6px", fontSize: 14, lineHeight: 1, cursor: libScrollX <= 0 ? "not-allowed" : "pointer", color: libScrollX <= 0 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: libScrollX <= 0 ? 0.3 : 1 }}>‹</button>
-                    <button onClick={() => libScrollRef.current?.scrollBy({ left: libScrollRef.current.clientWidth, behavior: 'smooth' })} disabled={libMaxScrollX <= 0 || libScrollX >= libMaxScrollX} title="Scroll columns right" style={{ background: "none", border: "none", padding: "3px 6px", fontSize: 14, lineHeight: 1, cursor: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "not-allowed" : "pointer", color: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? 0.3 : 1 }}>›</button>
-                    <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 4 }}>
+                    <button onClick={() => libScrollRef.current?.scrollBy({ left: -(libScrollRef.current.clientWidth), behavior: 'smooth' })} disabled={libScrollX <= 0} title="Scroll columns left" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: libScrollX <= 0 ? "not-allowed" : "pointer", color: libScrollX <= 0 ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: libScrollX <= 0 ? 0.3 : 1 }}>‹</button>
+                    <button onClick={() => libScrollRef.current?.scrollBy({ left: libScrollRef.current.clientWidth, behavior: 'smooth' })} disabled={libMaxScrollX <= 0 || libScrollX >= libMaxScrollX} title="Scroll columns right" style={{ background: "none", border: "none", padding: "4px 8px", fontSize: 15, lineHeight: 1, cursor: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "not-allowed" : "pointer", color: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? "var(--text-tertiary)" : "var(--accent-blue)", opacity: (libMaxScrollX <= 0 || libScrollX >= libMaxScrollX) ? 0.3 : 1 }}>›</button>
+                    <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "4px 6px", fontSize: 14 }}>⚙</button>
                   </div>
                 </th>
               </tr>
@@ -3385,10 +3385,10 @@ function LibraryPanel({ onLoadA, onLoadB, onQueue, onEdit, onSendToStudio }: { o
 
                       if (col.dataType === 'single_choice') {
                         return (
-                          <td key={`meta_${col.defId}`} title="Click to select" style={{ padding: "8px 12px", cursor: "pointer", overflow: "hidden" }}>
+                          <td key={`meta_${col.defId}`} title="Click to select" style={{ padding: "4px 8px", cursor: "pointer", overflow: "hidden" }}>
                             <select value={rawVal}
                               onChange={e => commitMetaEdit(s.id, col, e.target.value)}
-                              style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: rawVal ? "var(--text-secondary)" : "var(--text-tertiary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
+                              style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: rawVal ? "var(--text-secondary)" : "var(--text-tertiary)", outline: "none", cursor: "pointer", width: "100%", maxWidth: "100%", boxSizing: "border-box" as any }}>
                               <option value="">—</option>
                               {vocab.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
                             </select>

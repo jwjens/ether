@@ -9,7 +9,7 @@ export const LIB_COL_LABELS: Record<LibCol, string> = {
 };
 
 export const LIB_COL_DEFAULT_WIDTHS: Record<LibCol, number> = {
-  title: 150, artist: 120, album: 100, year: 50, genre: 80,
+  title: 150, artist: 120, album: 110, year: 50, genre: 80,
   bpm: 50, format: 60, duration: 70, category: 80, plays: 50,
 };
 
