@@ -333,26 +333,17 @@ export class AudioEngine {
   }
 
   async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number) {
-    console.log('[engine.loadToDeck] entry', { id, filePath, title });
     this.init();
-    console.log('[engine.loadToDeck] calling IPC audio_load via window.ether.audio.load');
-    let ipcResult: any;
-    try {
-      ipcResult = await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
-      console.log('[engine.loadToDeck] IPC audio_load returned:', ipcResult);
-    } catch (err) {
-      console.error('[engine.loadToDeck] IPC audio_load threw:', err);
-      throw err;
-    }
+    await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
     const newState = { title, artist, filePath, positionSec: 0, durationSec: 0, status: "idle" as DeckStatus, volume: 1, peaks: [] };
-    if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; console.log('[engine.loadToDeck] new stateA:', this.stateA); }
-    if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; console.log('[engine.loadToDeck] new stateB:', this.stateB); }
-    if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; console.log('[engine.loadToDeck] new stateC:', this.stateC); }
+    if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
+    if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
+    if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; this.listeners.forEach(l => l("C", this.stateC)); }
     this.endTriggered.delete(id as DeckId);
     invoke("get_file_duration", { filePath }).then((dur: number) => {
-      if (id === "A") this.stateA = { ...this.stateA, durationSec: dur };
-      if (id === "B") this.stateB = { ...this.stateB, durationSec: dur };
-      if (id === "C") this.stateC = { ...this.stateC, durationSec: dur };
+      if (id === "A") { this.stateA = { ...this.stateA, durationSec: dur }; this.listeners.forEach(l => l("A", this.stateA)); }
+      if (id === "B") { this.stateB = { ...this.stateB, durationSec: dur }; this.listeners.forEach(l => l("B", this.stateB)); }
+      if (id === "C") { this.stateC = { ...this.stateC, durationSec: dur }; this.listeners.forEach(l => l("C", this.stateC)); }
     }).catch((e: unknown) => { console.warn('[ENGINE] get_file_duration failed', id, filePath, e); });
     // NOTE: playStartCallbacks are NOT fired here — loadToDeck is also used for
     // preloading standby decks. Callers that actually start playback must call
