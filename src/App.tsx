@@ -2801,6 +2801,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const middleHeaderRef = useRef<HTMLDivElement | null>(null);
+  const tableRef        = useRef<HTMLDivElement | null>(null);
   const [libPageIdx, setLibPageIdx]   = useState(0);
   const [middleZoneW, setMiddleZoneW] = useState(0);
 
@@ -3138,16 +3139,18 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
       : (metaColWidths[col.defId] ?? META_COL_WIDTHS[col.dataType]);
   const gridCols = ['32px', '36px', ...(hasTitleCol ? [`${titleW}px`] : []), '1fr', `${ACTION_ZONE_W}px`].join(' ');
 
-  // Greedy column pager — pack middleCols into pages that fit middleZoneW
+  // Greedy column pager — subtract frozen track widths to get true available space
   const libPages: LibraryColumn[][] = (() => {
-    if (!middleZoneW || middleCols.length === 0) return [middleCols];
+    const frozenW = 32 + 36 + (hasTitleCol ? titleW : 0) + ACTION_ZONE_W;
+    const availW  = middleZoneW - frozenW;
+    if (availW <= 0 || middleCols.length === 0) return [middleCols];
     const pages: LibraryColumn[][] = [];
     let page: LibraryColumn[] = [];
     let pageW = 0;
     for (const col of middleCols) {
       const w = colW(col);
       if (page.length === 0) { page.push(col); pageW = w; }
-      else if (pageW + w <= middleZoneW) { page.push(col); pageW += w; }
+      else if (pageW + w <= availW) { page.push(col); pageW += w; }
       else { pages.push(page); page = [col]; pageW = w; }
     }
     if (page.length > 0) pages.push(page);
@@ -3175,11 +3178,12 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     try { localStorage.setItem(`ether_lib_page_${stationId}`, String(libPageIdx)); } catch {}
   }, [libPageIdx, stationId]);
 
-  // ResizeObserver — track available width for middle columns zone
+  // ResizeObserver — observe the table CONTAINER (not the overflowing inner cell)
+  // so middleZoneW gives the true constrained width of the entire grid.
   useEffect(() => {
-    const el = middleHeaderRef.current;
+    const el = tableRef.current;
     if (!el) return;
-    setMiddleZoneW(el.offsetWidth);
+    setMiddleZoneW(el.getBoundingClientRect().width);
     const obs = new ResizeObserver(entries => { setMiddleZoneW(entries[0].contentRect.width); });
     obs.observe(el);
     return () => obs.disconnect();
@@ -3366,12 +3370,14 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         </div>
       ) : (
         <div
+          ref={tableRef}
           role="grid"
           style={{
             background: "var(--bg-secondary)",
             border: "1px solid var(--border-primary)",
             borderRadius: 0,
             fontSize: 13,
+            overflow: "hidden" as const,
             ["--lib-grid" as any]: gridCols,
           }}
         >
