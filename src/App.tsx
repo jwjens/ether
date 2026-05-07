@@ -2801,9 +2801,17 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const middleHeaderRef = useRef<HTMLDivElement | null>(null);
-  const tableRef        = useRef<HTMLDivElement | null>(null);
   const [libPageIdx, setLibPageIdx]   = useState(0);
   const [middleZoneW, setMiddleZoneW] = useState(0);
+  const _tableResizeObs = useRef<ResizeObserver | null>(null);
+  // Callback ref — fires on mount/unmount so it catches the conditional render
+  const tableRef = useCallback((el: HTMLDivElement | null) => {
+    if (_tableResizeObs.current) { _tableResizeObs.current.disconnect(); _tableResizeObs.current = null; }
+    if (!el) return;
+    setMiddleZoneW(el.getBoundingClientRect().width);
+    _tableResizeObs.current = new ResizeObserver(entries => { setMiddleZoneW(entries[0].contentRect.width); });
+    _tableResizeObs.current.observe(el);
+  }, []);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -3178,16 +3186,6 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     try { localStorage.setItem(`ether_lib_page_${stationId}`, String(libPageIdx)); } catch {}
   }, [libPageIdx, stationId]);
 
-  // ResizeObserver — observe the table CONTAINER (not the overflowing inner cell)
-  // so middleZoneW gives the true constrained width of the entire grid.
-  useEffect(() => {
-    const el = tableRef.current;
-    if (!el) return;
-    setMiddleZoneW(el.getBoundingClientRect().width);
-    const obs = new ResizeObserver(entries => { setMiddleZoneW(entries[0].contentRect.width); });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
 
   return (
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 14, fontFamily: "'Inter', system-ui, sans-serif" }}>
