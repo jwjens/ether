@@ -2720,8 +2720,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           }}>{label}</button>
         ))}
 
-        {/* NOW PLAYING — live, with slide/fade animation on track change */}
-        <NowPlayingPill />
+        {/* ON AIR / NEXT / AFTER — three-slot queue display */}
+        <ThreeSlotBar queueLen={queueLen} />
       </div>
 
       {/* Main layout — drag-reorderable + resizable */}
@@ -3498,6 +3498,108 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Three-Slot Bar — replaces NowPlayingPill in the LivePanel toolbar ──
+// Shows ON AIR / NEXT / AFTER reading queue[0..2] and deck A state.
+function ThreeSlotBar({ queueLen }: { queueLen: number }) {
+  const [slots, setSlots] = useState<[any, any, any]>([null, null, null]);
+  const [deckAPos, setDeckAPos]       = useState(0);
+  const [deckADur, setDeckADur]       = useState(0);
+  const [deckAStatus, setDeckAStatus] = useState("");
+
+  useEffect(() => {
+    const pull = () => {
+      const q = engine.getQueue();
+      setSlots([q[0] ?? null, q[1] ?? null, q[2] ?? null]);
+      const da = engine.getDeck("A")?.getState?.();
+      if (da) { setDeckAPos(da.positionSec ?? 0); setDeckADur(da.durationSec ?? 0); setDeckAStatus(da.status ?? ""); }
+    };
+    pull();
+    const unsub = engine.on(pull);
+    const tick  = setInterval(pull, 1000);
+    return () => { unsub(); clearInterval(tick); };
+  }, [queueLen]);
+
+  const fmt = (s: number) => {
+    const m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+
+  const remaining    = Math.max(0, deckADur - deckAPos);
+  const isEndingSoon = deckAStatus === "playing" && remaining > 0 && remaining < 15;
+
+  const slot0Time = (deckAStatus === "playing" || deckAStatus === "paused") && deckADur > 0
+    ? `-${fmt(remaining)}`
+    : deckADur > 0 ? fmt(deckADur) : "";
+  const getDur = (item: any) => {
+    const ms = (item?.durationMs || item?.duration_ms || 0) as number;
+    return ms > 0 ? fmt(ms / 1000) : "";
+  };
+
+  const COLS = [
+    { label: "ON AIR", color: "#38bdf8", glow: "0 0 4px rgba(56,189,248,0.7)" },
+    { label: "NEXT",   color: "#34d399", glow: "none" },
+    { label: "AFTER",  color: "#a78bfa", glow: "none" },
+  ] as const;
+
+  return (
+    <div style={{
+      flex: 1, minWidth: 0, marginLeft: 8, height: 34,
+      display: "flex",
+      border: "1px solid var(--border-primary)",
+      background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
+      overflow: "hidden",
+    }}>
+      {COLS.map(({ label, color, glow }, idx) => {
+        const item = slots[idx];
+        const timeStr = idx === 0 ? slot0Time : getDur(item);
+        const active  = !!item;
+        return (
+          <div key={label} style={{
+            flex: 1, minWidth: 0,
+            borderRight: idx < 2 ? "1px solid var(--border-primary)" : "none",
+            padding: "2px 10px",
+            display: "flex", flexDirection: "column", justifyContent: "center", gap: 1,
+          }}>
+            {/* Row 1: dot · label · time */}
+            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                background: active ? color : "var(--text-tertiary)",
+                boxShadow: active && idx === 0 ? glow : "none",
+                transition: "background 0.3s",
+              }} />
+              <span style={{
+                fontSize: 9, fontWeight: 800, letterSpacing: "0.12em",
+                color: active ? color : "var(--text-tertiary)",
+                textTransform: "uppercase" as const, flexShrink: 0,
+                transition: "color 0.3s",
+              }}>{label}</span>
+              {timeStr && (
+                <span style={{
+                  fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                  color: isEndingSoon && idx === 0 ? "#fbbf24" : "var(--text-tertiary)",
+                  fontWeight: isEndingSoon && idx === 0 ? 700 : 400,
+                  marginLeft: "auto", flexShrink: 0,
+                  transition: "color 0.3s",
+                }}>{timeStr}</span>
+              )}
+            </div>
+            {/* Row 2: title */}
+            <div style={{
+              fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
+              color: active ? "var(--text-primary)" : "var(--text-tertiary)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+              fontStyle: active ? "normal" : "italic",
+            }}>
+              {item?.title || "—"}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
