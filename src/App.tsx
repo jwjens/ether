@@ -888,26 +888,32 @@ export default function App() {
 
   const loadA = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
-    const q = engine.getQueue(); q.splice(0, 0, item); engine.replaceQueue(q);
-    setQueueLen(engine.getQueue().length);
-    engine.triggerPreload();
+    if (engine.getDeck("A").getState().status === "playing") return;
+    setDeckA(prev => ({
+      ...(prev ?? { id: "A", status: "idle", title: "", artist: "", filePath: "", positionSec: 0, durationSec: 0, volume: 1, peaks: [] }),
+      title: s.title, artist: s.artist_name || "", filePath: s.file_path!, status: "idle",
+    }));
+    engine.loadToDeck("A", s.file_path, s.title, s.artist_name || "");
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const loadB = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
-    const q = engine.getQueue(); q.splice(1, 0, item); engine.replaceQueue(q);
-    setQueueLen(engine.getQueue().length);
-    engine.triggerPreload();
+    if (engine.getDeck("B").getState().status === "playing") return;
+    setDeckB(prev => ({
+      ...(prev ?? { id: "B", status: "idle", title: "", artist: "", filePath: "", positionSec: 0, durationSec: 0, volume: 1, peaks: [] }),
+      title: s.title, artist: s.artist_name || "", filePath: s.file_path!, status: "idle",
+    }));
+    engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const loadC = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
-    const q = engine.getQueue(); q.splice(2, 0, item); engine.replaceQueue(q);
-    setQueueLen(engine.getQueue().length);
-    engine.triggerPreload();
+    if (engine.getDeck("C").getState().status === "playing") return;
+    setDeckC(prev => ({
+      ...(prev ?? { id: "C", status: "idle", title: "", artist: "", filePath: "", positionSec: 0, durationSec: 0, volume: 1, peaks: [] }),
+      title: s.title, artist: s.artist_name || "", filePath: s.file_path!, status: "idle",
+    }));
+    engine.loadToDeck("C", s.file_path, s.title, s.artist_name || "");
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {

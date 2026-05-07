@@ -138,10 +138,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
         const rect = items[i].getBoundingClientRect();
         if (ev.clientY < rect.top + rect.height / 2) { over = i; break; }
       }
-      // `over` is a visual index (0 = first rendered item = engine queue index 3)
-      const engineOver = over + 3;
-      dragOverIdxRef.current = engineOver;
-      setDragVisual({ from: dragIdxRef.current, over: engineOver });
+      dragOverIdxRef.current = over;
+      setDragVisual({ from: dragIdxRef.current, over });
     };
     const onUp = () => {
       window.removeEventListener("mousemove", onMove);
@@ -225,25 +223,24 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
       {/* Queue list */}
       <div style={{ flex: 1, overflowY: "auto" as any }} onDragOver={handleCartDragOver} onDrop={handleCartDrop}>
-        {queue.length < 4 ? (
+        {queue.length === 0 ? (
           <div style={{ padding: "28px 14px", textAlign: "center" as any }}>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>Queue empty</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", opacity: 0.4 }}>Drag carts here or use GEN LOG</div>
           </div>
         ) : (
           <AnimatePresence initial={false}>
-            {queue.slice(3, 53).map((item, i) => {
-          const engineIdx = i + 3;
+            {queue.slice(0, 50).map((item, i) => {
           const color = getItemColor(item);
           const catLabel = getCatLabel(item);
           const ms = (item as any).durationMs || (item as any).duration_ms || 0;
           const artKey = `${item.title}::${item.artist}`;
-          const isBeingDragged = dragVisual.from === engineIdx;
-          const isDropTarget = dragVisual.over === engineIdx && dragVisual.from !== null && dragVisual.from !== engineIdx;
+          const isBeingDragged = dragVisual.from === i;
+          const isDropTarget = dragVisual.over === i && dragVisual.from !== null && dragVisual.from !== i;
 
           return (
             <motion.div
-              key={`${item.title}-${item.artist}-${engineIdx}`}
+              key={`${item.title}-${item.artist}-${i}`}
               layout
               initial={{ opacity: 0, y: -8 }}
               animate={i === 0 ? {
@@ -265,8 +262,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 y: { duration: 0.25 },
               }}
               data-queue-item={i}
-              onMouseDown={e => handleMouseDown(e, engineIdx)}
-              onContextMenu={e => handleContext(e, engineIdx)}
+              onMouseDown={e => handleMouseDown(e, i)}
+              onContextMenu={e => handleContext(e, i)}
               className=""
               style={{
                 "--pulse-rgb": "34, 211, 153",
@@ -286,7 +283,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               {/* Main content */}
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, padding: "10px 10px 10px 8px", minWidth: 0 }}>
                 {/* Position */}
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 12, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 4}</span>
+                <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 12, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 1}</span>
 
                 {/* Album art thumbnail */}
                 <div style={{ width: 36, height: 36, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
@@ -354,8 +351,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
         })}
           </AnimatePresence>
         )}
-        {queue.length > 53 && (
-          <div style={{ padding: 8, fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 53} more</div>
+        {queue.length > 50 && (
+          <div style={{ padding: 8, fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 50} more</div>
         )}
       </div>
 
