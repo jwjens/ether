@@ -97,6 +97,9 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   const [vocabFormError, setVocabFormError]   = useState("");
   const [vocabFormPending, setVocabFormPending] = useState(false);
 
+  // ── Vocab value context menu ──────────────────────────────────
+  const [vocabCtxMenu, setVocabCtxMenu] = useState<{ x: number; y: number; def: MetadataDefinition; vocab: MetadataVocabulary } | null>(null);
+
   // ── Highlight new definition row ──────────────────────────────
   const [newDefUuid, setNewDefUuid] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,6 +164,24 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
     highlightTimer.current = setTimeout(() => setNewDefUuid(null), 1500);
     return () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); };
   }, [newDefUuid]);
+
+  // Dismiss vocab context menu on outside click or Escape
+  useEffect(() => {
+    if (!vocabCtxMenu) return;
+    function handleDown(e: MouseEvent) {
+      const menu = document.getElementById("vocab-ctx-menu");
+      if (menu && !menu.contains(e.target as Node)) setVocabCtxMenu(null);
+    }
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setVocabCtxMenu(null);
+    }
+    document.addEventListener("mousedown", handleDown);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handleDown);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [vocabCtxMenu]);
 
   // Reset form state on panel close or station change
   useEffect(() => {
@@ -233,7 +254,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   }
 
   async function removeVocab(def: MetadataDefinition, vocab: MetadataVocabulary) {
-    if (!confirm(`Remove value "${vocab.value}" from category "${def.name}"?`)) return;
+    if (!confirm(`Delete '${vocab.value}'? This cannot be undone.`)) return;
     try {
       const res = await (window as any).ether.metadataVocabulary.delete(vocab.uuid, stationId);
       if (!res?.ok) { alert(res?.error ?? "Failed to remove value."); return; }
@@ -410,15 +431,10 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                           <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" as const }}>No values yet.</div>
                         )}
                         {vocabRows.map((v, vi) => (
-                          <div key={v.uuid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: vi < vocabRows.length - 1 || vocabFormDefId === def.id ? "1px solid var(--border-primary)" : "none" }}>
+                          <div key={v.uuid}
+                            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setVocabCtxMenu({ x: e.clientX, y: e.clientY, def, vocab: v }); }}
+                            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: vi < vocabRows.length - 1 || vocabFormDefId === def.id ? "1px solid var(--border-primary)" : "none", cursor: "context-menu" }}>
                             <span style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>{v.value}</span>
-                            <button
-                              onClick={e => { e.stopPropagation(); removeVocab(def, v); }}
-                              title={`Remove "${v.value}"`}
-                              style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
-                              onMouseEnter={e => (e.currentTarget.style.color = "var(--accent-red)")}
-                              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}
-                            >×</button>
                           </div>
                         ))}
 
@@ -473,6 +489,29 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
 
         </div>
       </div>
+
+      {/* Vocab value context menu */}
+      {vocabCtxMenu && (
+        <div id="vocab-ctx-menu" style={{
+          position: "fixed", left: vocabCtxMenu.x, top: vocabCtxMenu.y, zIndex: 10000,
+          background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
+          borderRadius: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", minWidth: 140, overflow: "hidden",
+        }}>
+          <button
+            onMouseDown={e => { e.stopPropagation(); }}
+            onClick={() => {
+              const { def, vocab } = vocabCtxMenu;
+              setVocabCtxMenu(null);
+              removeVocab(def, vocab);
+            }}
+            style={{ display: "block", width: "100%", padding: "9px 14px", background: "none", border: "none", textAlign: "left" as const, fontSize: 13, color: "var(--accent-red)", cursor: "pointer" }}
+            onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
+            onMouseLeave={e => (e.currentTarget.style.background = "none")}
+          >
+            Delete value
+          </button>
+        </div>
+      )}
     </div>
   );
 }
