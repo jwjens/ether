@@ -249,28 +249,54 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS play_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      artist TEXT,
-      deck TEXT,
-      deck_id TEXT,
-      duration_ms INTEGER,
-      session_id TEXT,
-      played_at INTEGER DEFAULT (unixepoch())
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      title              TEXT NOT NULL,
+      artist             TEXT,
+      deck               TEXT,
+      deck_id            TEXT,
+      duration_ms        INTEGER,
+      session_id         TEXT,
+      played_at          INTEGER DEFAULT (unixepoch()),
+      scheduled_log_id   INTEGER,
+      show_name          TEXT,
+      category_code      TEXT,
+      programming_row_id INTEGER,
+      station_id         INTEGER NOT NULL DEFAULT 1,
+      uuid               TEXT,
+      created_at         TEXT,
+      updated_at         TEXT,
+      deleted_at         TEXT
     );
 
     CREATE TABLE IF NOT EXISTS scheduled_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      log_date TEXT,
-      hour INTEGER,
-      position INTEGER,
-      song_id INTEGER REFERENCES songs(id),
-      title TEXT,
-      artist TEXT,
-      category_id INTEGER,
-      duration_ms INTEGER,
-      clock_id INTEGER,
-      created_at INTEGER DEFAULT (unixepoch())
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      log_date         TEXT NOT NULL,
+      hour             INTEGER NOT NULL,
+      position         INTEGER NOT NULL,
+      song_id          INTEGER REFERENCES songs(id),
+      title            TEXT,
+      artist           TEXT,
+      category_id      INTEGER,
+      category_code    TEXT,
+      duration_ms      INTEGER DEFAULT 0,
+      clock_id         INTEGER,
+      created_at       INTEGER DEFAULT (unixepoch()),
+      -- renderer display optimization columns (denormalized for fast UI rendering, not synced)
+      slot_type        TEXT,
+      song_title       TEXT,
+      song_artist      TEXT,
+      category_color   TEXT,
+      label            TEXT,
+      status           TEXT,
+      -- sync columns
+      overflow         INTEGER DEFAULT 0,
+      fade_out_at_ms   INTEGER DEFAULT 0,
+      fade_duration_ms INTEGER DEFAULT 8000,
+      chain_type       TEXT DEFAULT 'segue',
+      station_id       INTEGER NOT NULL DEFAULT 1,
+      uuid             TEXT,
+      updated_at       TEXT,
+      deleted_at       TEXT
     );
 
     CREATE TABLE IF NOT EXISTS spots (
@@ -471,6 +497,46 @@ function runMigrations() {
       clock_id     INTEGER,
       generated_at INTEGER DEFAULT (unixepoch())
     );
+
+    CREATE TABLE IF NOT EXISTS midi_mappings (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_name TEXT,
+      channel     INTEGER DEFAULT 0,
+      type        TEXT DEFAULT 'cc',
+      number      INTEGER DEFAULT 0,
+      action      TEXT NOT NULL,
+      label       TEXT,
+      is_fader    INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS studio_sessions (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS studio_session_versions (
+      id             TEXT PRIMARY KEY,
+      session_id     TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      label          TEXT,
+      snapshot       TEXT NOT NULL,
+      created_at     INTEGER NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES studio_sessions(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS studio_notes (
+      id          TEXT PRIMARY KEY,
+      session_id  TEXT NOT NULL,
+      position_ms INTEGER NOT NULL,
+      track_id    TEXT,
+      author      TEXT NOT NULL,
+      text        TEXT NOT NULL,
+      color       TEXT DEFAULT '#f59e0b',
+      resolved    INTEGER DEFAULT 0,
+      created_at  INTEGER NOT NULL
+    );
   `);
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
@@ -486,6 +552,16 @@ function runMigrations() {
   alterSafe("ALTER TABLE songs ADD COLUMN has_intro INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_out_at_ms INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_duration_ms INTEGER DEFAULT 8000");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN category_code TEXT");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN slot_type TEXT");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN song_title TEXT");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN song_artist TEXT");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN category_color TEXT");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN label TEXT");
+  alterSafe("ALTER TABLE scheduled_log ADD COLUMN status TEXT");
   alterSafe("ALTER TABLE spots ADD COLUMN isci_code TEXT");
   alterSafe("ALTER TABLE spots ADD COLUMN cart_number TEXT");
   alterSafe("ALTER TABLE spots ADD COLUMN agency TEXT");
@@ -493,6 +569,7 @@ function runMigrations() {
   alterSafe("ALTER TABLE play_log ADD COLUMN scheduled_log_id INTEGER");
   alterSafe("ALTER TABLE play_log ADD COLUMN show_name TEXT");
   alterSafe("ALTER TABLE play_log ADD COLUMN category_code TEXT");
+  alterSafe("ALTER TABLE play_log ADD COLUMN programming_row_id INTEGER");
   alterSafe("ALTER TABLE clocks ADD COLUMN description TEXT");
   alterSafe("ALTER TABLE clocks ADD COLUMN color TEXT");
   alterSafe("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)");
