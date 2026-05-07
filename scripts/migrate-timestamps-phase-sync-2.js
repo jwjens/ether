@@ -133,16 +133,19 @@ function convertToIso(val, format, fallback) {
 }
 
 module.exports = {
-  // TODO-SYNC(A2.4): [N-70] VIOLATION — identity transformer is non-compliant.
-  // Migration 2 adds created_at/updated_at/deleted_at to all 27 synced tables.
-  // Per [N-70], this transformer MUST add those fields with defaults when
-  // transforming v1 payloads from any synced table.
-  // Blocking question [Q-15]: default semantics for backfilled timestamps at
-  // receive-time (wall-clock-now vs null-let-SQL-fill vs mutation's own HLC wall ms)?
-  // Safe for now: no v1 peers exist in the wild. MUST be fixed before first v1 client
-  // ever sends a mutation to a v2+ peer.
+  // [N-70] Migration 2 adds created_at/updated_at/deleted_at to all synced tables.
+  // For v1 payloads missing these fields, inject defaults (wall-clock at receive time).
+  // [Q-15] resolved: option α — wall-clock now. Semantically "when this row arrived"
+  // which is the best truth available for backfilled rows from a v1 peer.
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
-    return payload;
+    if (fromVersion !== 1) return payload;
+    const now = new Date().toISOString();
+    return {
+      ...payload,
+      created_at: payload.created_at ?? now,
+      updated_at: payload.updated_at ?? now,
+      deleted_at: payload.deleted_at ?? null,
+    };
   },
 };
 
