@@ -903,6 +903,10 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
   50% { opacity: 0.3; }
 }
 
+/* ── Library panel action buttons (A / B / C / Q / Cue / ×) ─── */
+.ether-action-btn:hover  { filter: brightness(1.25); }
+.ether-action-btn:active { transform: scale(0.91); filter: brightness(0.80); }
+
 /* ── NEXT UP heading glow ────────────────────────────────────── */
 @keyframes next-up-glow {
   0%, 100% { text-shadow: 0 0 6px rgba(249,115,22,0.30); }
