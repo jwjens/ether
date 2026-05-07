@@ -63,6 +63,7 @@ export class AudioEngine {
 
   private pollTimer: any = null;
   private lastPollTime = Date.now();
+  private lastFiredState: { A?: DeckState; B?: DeckState; C?: DeckState } = {};
 
   private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[] = [];
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
@@ -94,7 +95,7 @@ export class AudioEngine {
   init() {
     if (this.pollTimer) return;
     this.processingEnd = false;  // clear any flag left over from a previous session
-    this.pollTimer = setInterval(() => this.poll(), 100);
+    this.pollTimer = setInterval(() => this.poll(), 250);
   }
 
   private async poll() {
@@ -120,9 +121,12 @@ export class AudioEngine {
       this.stateB = { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB };
       this.stateC = { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC };
 
-      this.listeners.forEach(l => l("A", this.stateA));
-      this.listeners.forEach(l => l("B", this.stateB));
-      this.listeners.forEach(l => l("C", this.stateC));
+      if (this.stateChanged(this.lastFiredState.A, this.stateA)) { this.listeners.forEach(l => l("A", this.stateA)); }
+      this.lastFiredState.A = this.stateA;
+      if (this.stateChanged(this.lastFiredState.B, this.stateB)) { this.listeners.forEach(l => l("B", this.stateB)); }
+      this.lastFiredState.B = this.stateB;
+      if (this.stateChanged(this.lastFiredState.C, this.stateC)) { this.listeners.forEach(l => l("C", this.stateC)); }
+      this.lastFiredState.C = this.stateC;
 
       // Rust's finished flag is a reliable one-shot signal — use it as a fallback
       // when get_file_duration failed (durX=0) and dur>5 can't fire.
@@ -133,12 +137,23 @@ export class AudioEngine {
       this.checkEndByPosition("A", posA, durA, prevA, rustEndedA);
       this.checkEndByPosition("B", posB, durB, prevB, rustEndedB);
       this.checkEndByPosition("C", posC, durC, prevC, rustEndedC);
-      // Reset per-tick end gate — only one deck end is processed per 100ms poll cycle.
+      // Reset per-tick end gate — only one deck end is processed per 250ms poll cycle.
       this.processingEnd = false;
 
     } catch (e) {
       console.error("[ENGINE] Poll error:", e);
     }
+  }
+
+  private stateChanged(prev: DeckState | undefined, next: DeckState): boolean {
+    if (!prev) return true;
+    return (
+      prev.status !== next.status ||
+      prev.filePath !== next.filePath ||
+      prev.title !== next.title ||
+      Math.floor(prev.positionSec) !== Math.floor(next.positionSec) ||
+      prev.durationSec !== next.durationSec
+    );
   }
 
   private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus, backendEnded = false) {
