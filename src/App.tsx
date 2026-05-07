@@ -886,20 +886,29 @@ export default function App() {
 
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
 
-  const loadA = useCallback(async (s: SongRow) => {
+  const loadA = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    await engine.loadToDeck("A", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("A", s.gain_db);
+    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
+    const q = engine.getQueue(); q.splice(0, 0, item); engine.replaceQueue(q);
+    setQueueLen(engine.getQueue().length);
+    engine.triggerPreload();
+    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
-  const loadB = useCallback(async (s: SongRow) => {
+  const loadB = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    await engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("B", s.gain_db);
+    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
+    const q = engine.getQueue(); q.splice(1, 0, item); engine.replaceQueue(q);
+    setQueueLen(engine.getQueue().length);
+    engine.triggerPreload();
+    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
-  const loadC = useCallback(async (s: SongRow) => {
+  const loadC = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    await engine.loadToDeck("C", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("C", s.gain_db);
+    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
+    const q = engine.getQueue(); q.splice(2, 0, item); engine.replaceQueue(q);
+    setQueueLen(engine.getQueue().length);
+    engine.triggerPreload();
+    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
