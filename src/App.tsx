@@ -2801,6 +2801,8 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const middleHeaderRef = useRef<HTMLDivElement | null>(null);
+  const [libPageIdx, setLibPageIdx]   = useState(0);
+  const [middleZoneW, setMiddleZoneW] = useState(0);
 
   const toggleCol = (col: LibCol) => {
     setVisibleCols(prev => {
@@ -3136,11 +3138,51 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
       : (metaColWidths[col.defId] ?? META_COL_WIDTHS[col.dataType]);
   const gridCols = ['32px', '36px', ...(hasTitleCol ? [`${titleW}px`] : []), '1fr', `${ACTION_ZONE_W}px`].join(' ');
 
+  // Greedy column pager — pack middleCols into pages that fit middleZoneW
+  const libPages: LibraryColumn[][] = (() => {
+    if (!middleZoneW || middleCols.length === 0) return [middleCols];
+    const pages: LibraryColumn[][] = [];
+    let page: LibraryColumn[] = [];
+    let pageW = 0;
+    for (const col of middleCols) {
+      const w = colW(col);
+      if (page.length === 0) { page.push(col); pageW = w; }
+      else if (pageW + w <= middleZoneW) { page.push(col); pageW += w; }
+      else { pages.push(page); page = [col]; pageW = w; }
+    }
+    if (page.length > 0) pages.push(page);
+    return pages.length > 0 ? pages : [middleCols];
+  })();
+  const safePageIdx     = Math.min(libPageIdx, Math.max(0, libPages.length - 1));
+  const pageMiddleCols  = libPages[safePageIdx] ?? middleCols;
+
   useEffect(() => {
     if (!middleHeaderRef.current || process.env.NODE_ENV !== 'development') return;
     const availW = middleHeaderRef.current.offsetWidth;
     const totalW = middleCols.reduce((sum, col) => sum + colW(col), 0);
-    if (totalW > availW) console.warn(`[LibraryPanel] middle zone overflow: ${totalW}px cols in ${availW}px — paging (Commit 2) will fix this`);
+    if (totalW > availW) console.warn(`[LibraryPanel] middle zone overflow: ${totalW}px cols in ${availW}px`);
+  }, []);
+
+  // Load persisted page index when stationId is known
+  useEffect(() => {
+    if (!stationId) return;
+    try { setLibPageIdx(parseInt(localStorage.getItem(`ether_lib_page_${stationId}`) || "0") || 0); } catch {}
+  }, [stationId]);
+
+  // Persist page index on change
+  useEffect(() => {
+    if (!stationId) return;
+    try { localStorage.setItem(`ether_lib_page_${stationId}`, String(libPageIdx)); } catch {}
+  }, [libPageIdx, stationId]);
+
+  // ResizeObserver — track available width for middle columns zone
+  useEffect(() => {
+    const el = middleHeaderRef.current;
+    if (!el) return;
+    setMiddleZoneW(el.offsetWidth);
+    const obs = new ResizeObserver(entries => { setMiddleZoneW(entries[0].contentRect.width); });
+    obs.observe(el);
+    return () => obs.disconnect();
   }, []);
 
   return (
@@ -3348,7 +3390,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
               </div>
             )}
             <div ref={middleHeaderRef} style={{ display: "flex", overflow: "hidden" }}>
-              {middleCols.map(col => {
+              {pageMiddleCols.map(col => {
                 const w = colW(col);
                 const key = col.kind === 'standard' ? col.id : `meta-${col.defId}`;
                 return (
@@ -3362,7 +3404,26 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                 );
               })}
             </div>
-            <div role="columnheader" style={{ display: "flex", alignItems: "center", padding: "0 8px", borderLeft: "1px solid var(--border-primary)" }}>
+            <div role="columnheader" style={{ display: "flex", alignItems: "center", gap: 0, padding: "0 4px", borderLeft: "1px solid var(--border-primary)" }}>
+              {libPages.length > 1 && (
+                <>
+                  <button
+                    onClick={() => setLibPageIdx(i => Math.max(0, i - 1))}
+                    disabled={safePageIdx === 0}
+                    title="Previous columns"
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 28, minHeight: 28, background: "none", border: "none", cursor: safePageIdx === 0 ? "default" : "pointer", color: safePageIdx === 0 ? "var(--text-tertiary)" : "var(--text-secondary)", opacity: safePageIdx === 0 ? 0.35 : 1, fontSize: 11, padding: "0 4px", transition: "opacity 0.15s" }}
+                  >◀</button>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap" as const, padding: "0 2px", userSelect: "none" as const }}>
+                    {safePageIdx + 1}/{libPages.length}
+                  </span>
+                  <button
+                    onClick={() => setLibPageIdx(i => Math.min(libPages.length - 1, i + 1))}
+                    disabled={safePageIdx === libPages.length - 1}
+                    title="Next columns"
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 28, minHeight: 28, background: "none", border: "none", cursor: safePageIdx === libPages.length - 1 ? "default" : "pointer", color: safePageIdx === libPages.length - 1 ? "var(--text-tertiary)" : "var(--text-secondary)", opacity: safePageIdx === libPages.length - 1 ? 0.35 : 1, fontSize: 11, padding: "0 4px", transition: "opacity 0.15s" }}
+                  >▶</button>
+                </>
+              )}
               <button onClick={() => setColumnsPanelOpen(true)} title="Choose columns" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-tertiary)", padding: "2px 4px", fontSize: 14 }}>⚙</button>
             </div>
           </div>
@@ -3404,9 +3465,9 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                   </div>
                 );
               })()}
-              {/* Middle zone — all other columns, clipped to 1fr */}
+              {/* Middle zone — current page of columns, clipped to 1fr */}
               <div style={{ display: "flex", overflow: "hidden" }}>
-                {middleCols.map(col => {
+                {pageMiddleCols.map(col => {
                   const w = colW(col);
                   if (col.kind === 'standard') {
                     const id = col.id;
