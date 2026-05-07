@@ -887,19 +887,34 @@ export default function App() {
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
 
   const loadA = useCallback(async (s: SongRow) => {
-    if (!s.file_path) return;
-    await engine.loadToDeck("A", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("A", s.gain_db);
+    console.log('[loadA] called', { id: s.id, title: s.title, file_path: s.file_path });
+    if (!s.file_path) { console.warn('[loadA] no file_path, returning early'); return; }
+    console.log('[loadA] calling engine.loadToDeck("A")');
+    try {
+      const result = await engine.loadToDeck("A", s.file_path, s.title, s.artist_name || "");
+      console.log('[loadA] engine.loadToDeck resolved:', result);
+      if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("A", s.gain_db);
+    } catch (err) { console.error('[loadA] engine.loadToDeck threw:', err); }
   }, []);
   const loadB = useCallback(async (s: SongRow) => {
-    if (!s.file_path) return;
-    await engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("B", s.gain_db);
+    console.log('[loadB] called', { id: s.id, title: s.title, file_path: s.file_path });
+    if (!s.file_path) { console.warn('[loadB] no file_path, returning early'); return; }
+    console.log('[loadB] calling engine.loadToDeck("B")');
+    try {
+      const result = await engine.loadToDeck("B", s.file_path, s.title, s.artist_name || "");
+      console.log('[loadB] engine.loadToDeck resolved:', result);
+      if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("B", s.gain_db);
+    } catch (err) { console.error('[loadB] engine.loadToDeck threw:', err); }
   }, []);
   const loadC = useCallback(async (s: SongRow) => {
-    if (!s.file_path) return;
-    await engine.loadToDeck("C", s.file_path, s.title, s.artist_name || "");
-    if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("C", s.gain_db);
+    console.log('[loadC] called', { id: s.id, title: s.title, file_path: s.file_path });
+    if (!s.file_path) { console.warn('[loadC] no file_path, returning early'); return; }
+    console.log('[loadC] calling engine.loadToDeck("C")');
+    try {
+      const result = await engine.loadToDeck("C", s.file_path, s.title, s.artist_name || "");
+      console.log('[loadC] engine.loadToDeck resolved:', result);
+      if (s.gain_db && s.gain_db !== 0) (engine as any).setDeckGain?.("C", s.gain_db);
+    } catch (err) { console.error('[loadC] engine.loadToDeck threw:', err); }
   }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }

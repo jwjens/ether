@@ -333,12 +333,21 @@ export class AudioEngine {
   }
 
   async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number) {
+    console.log('[engine.loadToDeck] entry', { id, filePath, title });
     this.init();
-    await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
+    console.log('[engine.loadToDeck] calling IPC audio_load via window.ether.audio.load');
+    let ipcResult: any;
+    try {
+      ipcResult = await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
+      console.log('[engine.loadToDeck] IPC audio_load returned:', ipcResult);
+    } catch (err) {
+      console.error('[engine.loadToDeck] IPC audio_load threw:', err);
+      throw err;
+    }
     const newState = { title, artist, filePath, positionSec: 0, durationSec: 0, status: "idle" as DeckStatus, volume: 1, peaks: [] };
-    if (id === "A") this.stateA = { ...this.stateA, ...newState, id: "A" };
-    if (id === "B") this.stateB = { ...this.stateB, ...newState, id: "B" };
-    if (id === "C") this.stateC = { ...this.stateC, ...newState, id: "C" };
+    if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; console.log('[engine.loadToDeck] new stateA:', this.stateA); }
+    if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; console.log('[engine.loadToDeck] new stateB:', this.stateB); }
+    if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; console.log('[engine.loadToDeck] new stateC:', this.stateC); }
     this.endTriggered.delete(id as DeckId);
     invoke("get_file_duration", { filePath }).then((dur: number) => {
       if (id === "A") this.stateA = { ...this.stateA, durationSec: dur };
