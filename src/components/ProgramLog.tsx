@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { query, execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ export default function ProgramLog({ onClose }: Props) {
   const [hourModal, setHourModal] = useState<{ hour: number; block: HourBlock } | null>(null);
   const [assignModal, setAssignModal] = useState<{ hour: number; showName: string | null } | null>(null);
   const rundownRef = useRef<HTMLDivElement>(null);
+  const { stationId } = useActiveStation();
 
   // ── Load ─────────────────────────────────────────────────────
 
@@ -278,7 +280,7 @@ export default function ProgramLog({ onClose }: Props) {
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             [crypto.randomUUID(),date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,picked.id,picked.title,picked.artist_name,picked.duration_ms||Math.round(slot.duration_min*60000),picked.title,"scheduled",0,0,8000]
           );
-          await execute("UPDATE songs SET last_played_at=? WHERE id=?", [hourStartTs+slot.position, picked.id]);
+          await (window as any).ether.songs['update-by-id'](picked.id, { last_played_at: hourStartTs + slot.position });
         } else {
           console.warn(`[schedule] UNFILLED: slot ${slot.position} (cat: ${slot.category_code}) — no eligible songs remain after all rotation rules`);
           await execute(
@@ -331,7 +333,7 @@ export default function ProgramLog({ onClose }: Props) {
                overflowSong.duration_ms, overflowSong.title,
                "overflow", 1, remainMs, fadeDurationMs]
             );
-            await execute("UPDATE songs SET last_played_at=? WHERE id=?", [hourStartTs + 3600, overflowSong.id]);
+            await (window as any).ether.songs['update-by-id'](overflowSong.id, { last_played_at: hourStartTs + 3600 });
           }
         }
       }
@@ -1143,6 +1145,7 @@ export default function ProgramLog({ onClose }: Props) {
       {assignModal && (
         <ShowsDaypartsModal
           hour={assignModal.hour}
+          stationId={stationId}
           onClose={() => setAssignModal(null)}
           onDone={async () => {
             setAssignModal(null);
@@ -1436,11 +1439,12 @@ function fmtHourLocal(h: number): string {
 
 interface ShowsDaypartsModalProps {
   hour: number;
+  stationId: number;
   onClose: () => void;
   onDone: () => void;
 }
 
-function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) {
+function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsModalProps) {
   const [modalShows, setModalShows] = useState<Show[]>([]);
   const [modalClocks, setModalClocks] = useState<{id:number;name:string}[]>([]);
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
@@ -1457,22 +1461,33 @@ function ShowsDaypartsModal({ hour, onClose, onDone }: ShowsDaypartsModalProps) 
   const save = async () => {
     if (!editing || !editing.name) return;
     if (editing.id) {
-      await execute("UPDATE shows SET name=?, start_hour=?, end_hour=?, color=?, description=? WHERE id=?",
-        [editing.name, editing.start_hour||0, editing.end_hour||0, editing.color||null, editing.description||null, editing.id]);
+      await (window as any).ether.shows['update-by-id'](editing.id, {
+        name: editing.name,
+        start_hour: editing.start_hour ?? 0,
+        end_hour: editing.end_hour ?? 0,
+        color: editing.color ?? null,
+        description: editing.description ?? null,
+      });
     } else {
-      await execute("INSERT INTO shows (name, start_hour, end_hour, color, description) VALUES (?,?,?,?,?)",
-        [editing.name, editing.start_hour||0, editing.end_hour||0, editing.color||null, editing.description||null]);
+      await (window as any).ether.shows.create({
+        name: editing.name,
+        start_hour: editing.start_hour ?? 0,
+        end_hour: editing.end_hour ?? 0,
+        color: editing.color ?? null,
+        description: editing.description ?? null,
+        station_id: stationId,
+      });
     }
     setEditing(null); loadModal();
   };
 
   const assignClock = async (showId: number, clockId: number | null) => {
-    await execute("UPDATE shows SET clock_id=? WHERE id=?", [clockId, showId]);
+    await (window as any).ether.shows['update-by-id'](showId, { clock_id: clockId });
     loadModal();
   };
 
   const removeShow = async (id: number) => {
-    await execute("DELETE FROM shows WHERE id=?", [id]); loadModal();
+    await (window as any).ether.shows['delete-by-id'](id); loadModal();
   };
 
   // Check if the target hour now has a clock assigned
