@@ -14,7 +14,8 @@
         "build": "vite build",
         "electron:build:win": "electron-builder --win",
         "electron:build:mac": "electron-builder --mac",
-        "electron:build:linux": "electron-builder --linux"
+        "electron:build:linux": "electron-builder --linux",
+        "verify:schema": "node scripts/verify-main-schema.js"
     },
     "dependencies": {
         "@aws-sdk/client-s3": "^3.1032.0",
