@@ -160,6 +160,7 @@ function scheduledLogBatchInsert(db, stationId, rows) {
       const title  = row.title  ?? row.song_title  ?? null;
       const artist = row.artist ?? row.song_artist ?? null;
       const newRow = {
+        // synced columns (written to payload via serializePayload)
         log_date:         row.log_date         ?? null,
         hour:             row.hour             ?? null,
         position:         row.position         ?? null,
@@ -169,8 +170,8 @@ function scheduledLogBatchInsert(db, stationId, rows) {
         category_id:      row.category_id      ?? null,
         duration_ms:      row.duration_ms      ?? null,
         clock_id:         row.clock_id         ?? null,
-        overflow:         row.overflow         ?? null,
-        fade_out_at_ms:   row.fade_out_at_ms   ?? null,
+        overflow:         row.overflow         ?? 0,
+        fade_out_at_ms:   row.fade_out_at_ms   ?? 0,
         fade_duration_ms: row.fade_duration_ms ?? null,
         chain_type:       row.chain_type       ?? null,
         station_id:       stationId,
@@ -178,11 +179,19 @@ function scheduledLogBatchInsert(db, stationId, rows) {
         created_at:       now,
         updated_at:       now,
         deleted_at:       null,
+        // display-only columns (written to DB row but excluded from mutation payload)
+        slot_type:        row.slot_type        ?? null,
+        category_code:    row.category_code    ?? null,
+        category_color:   row.category_color   ?? null,
+        song_title:       row.song_title       ?? title ?? null,
+        song_artist:      row.song_artist      ?? artist ?? null,
+        label:            row.label            ?? null,
+        status:           row.status           ?? null,
       };
       const payloadAfter = serializePayload(newRow, TABLE);
       db.prepare(
-        `INSERT INTO ${TABLE} (log_date, hour, position, song_id, title, artist, category_id, duration_ms, clock_id, created_at, overflow, fade_out_at_ms, fade_duration_ms, chain_type, station_id, uuid, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(newRow.log_date, newRow.hour, newRow.position, newRow.song_id, newRow.title, newRow.artist, newRow.category_id, newRow.duration_ms, newRow.clock_id, newRow.created_at, newRow.overflow, newRow.fade_out_at_ms, newRow.fade_duration_ms, newRow.chain_type, newRow.station_id, newRow.uuid, newRow.updated_at, newRow.deleted_at);
+        `INSERT INTO ${TABLE} (log_date, hour, position, song_id, title, artist, category_id, duration_ms, clock_id, overflow, fade_out_at_ms, fade_duration_ms, chain_type, station_id, uuid, created_at, updated_at, deleted_at, slot_type, category_code, category_color, song_title, song_artist, label, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(newRow.log_date, newRow.hour, newRow.position, newRow.song_id, newRow.title, newRow.artist, newRow.category_id, newRow.duration_ms, newRow.clock_id, newRow.overflow, newRow.fade_out_at_ms, newRow.fade_duration_ms, newRow.chain_type, newRow.station_id, newRow.uuid, newRow.created_at, newRow.updated_at, newRow.deleted_at, newRow.slot_type, newRow.category_code, newRow.category_color, newRow.song_title, newRow.song_artist, newRow.label, newRow.status);
       logMutation(db, {
         table_name:     TABLE,
         row_id:         uuid,
@@ -263,6 +272,37 @@ function scheduledLogClearByHour(db, stationId, logDate, hour) {
 }
 
 
+function scheduledLogBatchUpdatePosition(db, items) {
+  if (!Array.isArray(items) || items.length === 0) return { ok: true, updated: 0 };
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const item of items) {
+      const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(item.id);
+      if (!existing) continue;
+      let uuid = existing.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, existing.id);
+      }
+      const rowWithUuid = { ...existing, uuid };
+      const before = serializePayload(rowWithUuid, TABLE);
+      db.prepare(`UPDATE ${TABLE} SET position = ?, updated_at = ? WHERE id = ?`).run(item.position, now, item.id);
+      const after = serializePayload({ ...rowWithUuid, position: item.position, updated_at: now }, TABLE);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         uuid,
+        op:             'update',
+        payload_before: before,
+        payload_after:  after,
+        station_id:     existing.station_id,
+        actor_id:       null,
+      });
+    }
+  })();
+  return { ok: true, updated: items.length };
+}
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installScheduledLog(ipcMain, db) {
@@ -311,6 +351,11 @@ function installScheduledLog(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('scheduled_log:batch-update-position', (_, items) => {
+    try { return { ok: true, ...scheduledLogBatchUpdatePosition(db, items) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   console.log('[scheduled_log] handlers installed');
 }
 
@@ -326,4 +371,5 @@ module.exports = {
   scheduledLogBatchInsert,
   scheduledLogClearByDate,
   scheduledLogClearByHour,
+  scheduledLogBatchUpdatePosition,
 };

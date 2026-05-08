@@ -204,15 +204,20 @@ export default function ProgramLog({ onClose }: Props) {
 
       console.log(`[schedule] Scheduling ${date} hour=${hour} | blockExplicit=${blockExplicit} | artistSep=${rules.artist_sep_min}min | songRepeat=${rules.song_repeat_min}min`);
 
-      await execute("DELETE FROM scheduled_log WHERE log_date=? AND hour=?", [date, hour]);
+      await (window as any).ether.scheduledLog.clearByHour(stationId, date, hour);
+
+      const pendingRows: any[] = [];
 
       for (const slot of clockSlots) {
         if (slot.slot_type !== "music" || !slot.category_id) {
-          await execute(
-            `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [crypto.randomUUID(),date,hour,slot.position,slot.slot_type,slot.category_id,slot.category_code,slot.category_color,null,null,null,Math.round(slot.duration_min*60000),slot.label,"scheduled"]
-          );
+          pendingRows.push({
+            log_date: date, hour, position: slot.position,
+            slot_type: slot.slot_type, category_id: slot.category_id,
+            category_code: slot.category_code, category_color: slot.category_color,
+            song_id: null, title: null, artist: null, song_title: null, song_artist: null,
+            duration_ms: Math.round(slot.duration_min * 60000), label: slot.label, status: "scheduled",
+            overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
+          });
           continue;
         }
 
@@ -275,29 +280,33 @@ export default function ProgramLog({ onClose }: Props) {
           usedSongIds.add(picked.id);
           if (picked.artist_id) usedArtistIds.add(picked.artist_id);
           console.log(`[schedule] QUEUED: "${picked.title}" by "${picked.artist_name}" → slot ${slot.position} (cat: ${slot.category_code})`);
-          await execute(
-            `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [crypto.randomUUID(),date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,picked.id,picked.title,picked.artist_name,picked.duration_ms||Math.round(slot.duration_min*60000),picked.title,"scheduled",0,0,8000]
-          );
+          pendingRows.push({
+            log_date: date, hour, position: slot.position,
+            slot_type: "music", category_id: slot.category_id,
+            category_code: slot.category_code, category_color: slot.category_color,
+            song_id: picked.id, title: picked.title, artist: picked.artist_name,
+            song_title: picked.title, song_artist: picked.artist_name,
+            duration_ms: picked.duration_ms || Math.round(slot.duration_min * 60000),
+            label: picked.title, status: "scheduled",
+            overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
+          });
           await (window as any).ether.songs['update-by-id'](picked.id, { last_played_at: hourStartTs + slot.position });
         } else {
           console.warn(`[schedule] UNFILLED: slot ${slot.position} (cat: ${slot.category_code}) — no eligible songs remain after all rotation rules`);
-          await execute(
-            `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [crypto.randomUUID(),date,hour,slot.position,"music",slot.category_id,slot.category_code,slot.category_color,null,null,null,Math.round(slot.duration_min*60000),"UNFILLED","unfilled",0,0,8000]
-          );
+          pendingRows.push({
+            log_date: date, hour, position: slot.position,
+            slot_type: "music", category_id: slot.category_id,
+            category_code: slot.category_code, category_color: slot.category_color,
+            song_id: null, title: null, artist: null, song_title: null, song_artist: null,
+            duration_ms: Math.round(slot.duration_min * 60000), label: "UNFILLED", status: "unfilled",
+            overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
+          });
         }
       }
 
       // ── Overflow song — fills remaining time, fades into next hour ──
-      // Calculate how much time the hour has used
-      const usedEntries = await query<{ total_ms: number }>(
-        "SELECT SUM(duration_ms) as total_ms FROM scheduled_log WHERE log_date=? AND hour=?",
-        [date, hour]
-      );
-      const usedMs   = usedEntries[0]?.total_ms || 0;
+      // Calculate remaining time from in-memory rows (batch not yet written to DB)
+      const usedMs   = pendingRows.reduce((sum: number, r: any) => sum + (r.duration_ms || 0), 0);
       const hourMs   = 60 * 60 * 1000;
       const remainMs = hourMs - usedMs;
 
@@ -324,19 +333,25 @@ export default function ProgramLog({ onClose }: Props) {
 
           if (overflowSong) {
             const fadeDurationMs = 8000; // 8-second crossfade
-            await execute(
-              `INSERT INTO scheduled_log (uuid,log_date,hour,position,slot_type,category_id,category_code,category_color,song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-              [crypto.randomUUID(), date, hour, clockSlots.length, "music",
-               lastMusicSlot.category_id, lastMusicSlot.category_code, lastMusicSlot.category_color,
-               overflowSong.id, overflowSong.title, overflowSong.artist_name,
-               overflowSong.duration_ms, overflowSong.title,
-               "overflow", 1, remainMs, fadeDurationMs]
-            );
+            pendingRows.push({
+              log_date: date, hour, position: clockSlots.length,
+              slot_type: "music",
+              category_id: lastMusicSlot.category_id,
+              category_code: lastMusicSlot.category_code,
+              category_color: lastMusicSlot.category_color,
+              song_id: overflowSong.id,
+              title: overflowSong.title, artist: overflowSong.artist_name,
+              song_title: overflowSong.title, song_artist: overflowSong.artist_name,
+              duration_ms: overflowSong.duration_ms,
+              label: overflowSong.title, status: "overflow",
+              overflow: 1, fade_out_at_ms: remainMs, fade_duration_ms: fadeDurationMs,
+            });
             await (window as any).ether.songs['update-by-id'](overflowSong.id, { last_played_at: hourStartTs + 3600 });
           }
         }
       }
+
+      await (window as any).ether.scheduledLog.batchInsert(stationId, pendingRows);
 
       return true;
     } catch { return false; }
@@ -372,15 +387,13 @@ export default function ProgramLog({ onClose }: Props) {
   };
 
   const clearHour = async (hour: number) => {
-    // DEFERRED: scheduled_log write — see docs/phase-3.5-programlog-deferred.md
-    await execute("DELETE FROM scheduled_log WHERE log_date=? AND hour=?", [selectedDate, hour]);
+    await (window as any).ether.scheduledLog.clearByHour(stationId, selectedDate, hour);
     loadDayData(selectedDate);
     loadScheduledDates();
   };
 
   const clearDay = async () => {
-    // DEFERRED: scheduled_log write — see docs/phase-3.5-programlog-deferred.md
-    await execute("DELETE FROM scheduled_log WHERE log_date=?", [selectedDate]);
+    await (window as any).ether.scheduledLog.clearByDate(stationId, selectedDate);
     loadDayData(selectedDate);
     loadScheduledDates();
     setGlobalStatus("Day cleared");
@@ -1227,10 +1240,9 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
     const reordered = [...entries];
     const [moved] = reordered.splice(fromIdx, 1);
     reordered.splice(toIdx, 0, moved);
-    // DEFERRED: scheduled_log UPDATE — see docs/phase-3.5-programlog-deferred.md
-    await Promise.all(reordered.map((e, i) =>
-      execute("UPDATE scheduled_log SET position=? WHERE id=?", [i, e.id])
-    ));
+    await (window as any).ether.scheduledLog.batchUpdatePosition(
+      reordered.map((e, i) => ({ id: e.id, position: i }))
+    );
     setEntries(reordered);
   };
 
