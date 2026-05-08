@@ -2762,37 +2762,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   // ── Session Version Control ───────────────────────────────────
 
-  // DB schema init (idempotent)
+  // Seed default session row
   useEffect(() => {
     (async () => {
       try {
-        await execute(`CREATE TABLE IF NOT EXISTS studio_sessions (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          updated_at INTEGER NOT NULL
-        )`);
-        await execute(`CREATE TABLE IF NOT EXISTS studio_session_versions (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL,
-          version_number INTEGER NOT NULL,
-          label TEXT,
-          snapshot TEXT NOT NULL,
-          created_at INTEGER NOT NULL,
-          FOREIGN KEY (session_id) REFERENCES studio_sessions(id)
-        )`);
-        await execute(`CREATE TABLE IF NOT EXISTS studio_notes (
-          id TEXT PRIMARY KEY,
-          session_id TEXT NOT NULL,
-          position_ms INTEGER NOT NULL,
-          track_id TEXT,
-          author TEXT NOT NULL,
-          text TEXT NOT NULL,
-          color TEXT DEFAULT '#f59e0b',
-          resolved INTEGER DEFAULT 0,
-          created_at INTEGER NOT NULL
-        )`);
-        // Create a default session row for this sessionId
         const now = Date.now();
         await execute(
           `INSERT OR IGNORE INTO studio_sessions (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`,

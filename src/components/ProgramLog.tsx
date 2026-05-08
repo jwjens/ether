@@ -81,26 +81,6 @@ export default function ProgramLog({ onClose }: Props) {
   const [assignModal, setAssignModal] = useState<{ hour: number; showName: string | null } | null>(null);
   const rundownRef = useRef<HTMLDivElement>(null);
 
-  // ── Init DB ──────────────────────────────────────────────────
-  useEffect(() => {
-    execute(`CREATE TABLE IF NOT EXISTS scheduled_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      log_date TEXT NOT NULL, hour INTEGER NOT NULL, position INTEGER NOT NULL,
-      slot_type TEXT NOT NULL DEFAULT 'music', category_id INTEGER,
-      category_code TEXT, category_color TEXT, song_id INTEGER,
-      song_title TEXT, song_artist TEXT, duration_ms INTEGER DEFAULT 0,
-      label TEXT, status TEXT NOT NULL DEFAULT 'scheduled',
-      overflow INTEGER DEFAULT 0,
-      fade_out_at_ms INTEGER DEFAULT 0,
-      fade_duration_ms INTEGER DEFAULT 8000,
-      created_at INTEGER DEFAULT (strftime('%s','now'))
-    )`).catch(() => {});
-    // Add columns if table already exists
-    execute("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0").catch(() => {});
-    execute("ALTER TABLE scheduled_log ADD COLUMN fade_out_at_ms INTEGER DEFAULT 0").catch(() => {});
-    execute("ALTER TABLE scheduled_log ADD COLUMN fade_duration_ms INTEGER DEFAULT 8000").catch(() => {});
-  }, []);
-
   // ── Load ─────────────────────────────────────────────────────
 
   const loadScheduledDates = useCallback(async () => {

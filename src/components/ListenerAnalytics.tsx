@@ -11,7 +11,6 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -161,13 +160,6 @@ export default function ListenerAnalytics({ onClose }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Ensure play_log exists
-      await execute(`CREATE TABLE IF NOT EXISTS play_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL, artist TEXT,
-        deck_id TEXT, played_at INTEGER DEFAULT (strftime('%s','now'))
-      )`).catch(() => {});
-
       const days = rangeDays[range];
       const since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
       // station_id scoping: Strategy C — station_id is the base condition in all dynamic builders

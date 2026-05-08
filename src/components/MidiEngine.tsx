@@ -115,12 +115,6 @@ export function MidiProvider({ children }: { children: React.ReactNode }) {
   // Load mappings from DB
   const loadMappings = useCallback(async () => {
     try {
-      await execute(`CREATE TABLE IF NOT EXISTS midi_mappings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        device_name TEXT, channel INTEGER DEFAULT 0, type TEXT DEFAULT 'cc',
-        number INTEGER DEFAULT 0, action TEXT NOT NULL, label TEXT,
-        is_fader INTEGER DEFAULT 0
-      )`).catch(() => {});
       const rows = await query<MidiMapping>("SELECT * FROM midi_mappings");
       mappingsRef.current = rows || [];
     } catch { mappingsRef.current = []; }

@@ -340,9 +340,6 @@ export default function LibraryImport({ onClose }: Props) {
     setStep("importing");
     setProgress({ done: 0, total: parseResult.rows.length });
 
-    // Ensure raw_metadata column exists
-    try { await execute("ALTER TABLE songs ADD COLUMN raw_metadata TEXT"); } catch {}
-
     // Pre-load category map
     const cats = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories", [], stationId);
     const catMap: Record<string, number> = {};
