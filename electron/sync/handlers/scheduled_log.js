@@ -9,7 +9,7 @@
 // mutations table for future sync.
 
 const crypto = require('crypto');
-const { withMutation, serializePayload } = require('../mutation-writer');
+const { withMutation, logMutation, serializePayload } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'scheduled_log';
@@ -142,6 +142,127 @@ function scheduledLogDelete(db, uuid, stationId) {
 
 
 
+function scheduledLogGetByDate(db, stationId, logDate) {
+  return db.prepare(
+    `SELECT * FROM ${TABLE} WHERE log_date = ? AND station_id = ? AND deleted_at IS NULL ORDER BY hour, position`
+  ).all(logDate, stationId);
+}
+
+function scheduledLogBatchInsert(db, stationId, rows) {
+  validateScope();
+  if (stationId == null) throw new Error(`[scheduled_log] station_id is required for station-scoped batch insert`);
+  if (!Array.isArray(rows) || rows.length === 0) return { ok: true, inserted: 0 };
+
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const row of rows) {
+      const uuid   = row.uuid ?? crypto.randomUUID();
+      const title  = row.title  ?? row.song_title  ?? null;
+      const artist = row.artist ?? row.song_artist ?? null;
+      const newRow = {
+        log_date:         row.log_date         ?? null,
+        hour:             row.hour             ?? null,
+        position:         row.position         ?? null,
+        song_id:          row.song_id          ?? null,
+        title,
+        artist,
+        category_id:      row.category_id      ?? null,
+        duration_ms:      row.duration_ms      ?? null,
+        clock_id:         row.clock_id         ?? null,
+        overflow:         row.overflow         ?? null,
+        fade_out_at_ms:   row.fade_out_at_ms   ?? null,
+        fade_duration_ms: row.fade_duration_ms ?? null,
+        chain_type:       row.chain_type       ?? null,
+        station_id:       stationId,
+        uuid,
+        created_at:       now,
+        updated_at:       now,
+        deleted_at:       null,
+      };
+      const payloadAfter = serializePayload(newRow, TABLE);
+      db.prepare(
+        `INSERT INTO ${TABLE} (log_date, hour, position, song_id, title, artist, category_id, duration_ms, clock_id, created_at, overflow, fade_out_at_ms, fade_duration_ms, chain_type, station_id, uuid, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(newRow.log_date, newRow.hour, newRow.position, newRow.song_id, newRow.title, newRow.artist, newRow.category_id, newRow.duration_ms, newRow.clock_id, newRow.created_at, newRow.overflow, newRow.fade_out_at_ms, newRow.fade_duration_ms, newRow.chain_type, newRow.station_id, newRow.uuid, newRow.updated_at, newRow.deleted_at);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         uuid,
+        op:             'insert',
+        payload_before: null,
+        payload_after:  payloadAfter,
+        station_id:     stationId,
+        actor_id:       row.actor_id ?? null,
+      });
+    }
+  })();
+  return { ok: true, inserted: rows.length };
+}
+
+function scheduledLogClearByDate(db, stationId, logDate) {
+  validateScope();
+  if (stationId == null) throw new Error(`[scheduled_log] station_id is required`);
+  if (!logDate)          throw new Error(`[scheduled_log] logDate is required`);
+
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE log_date = ? AND station_id = ? AND deleted_at IS NULL`
+  ).all(logDate, stationId);
+
+  db.transaction(() => {
+    for (const row of rows) {
+      let uuid = row.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+      }
+      const before = serializePayload({ ...row, uuid }, TABLE);
+      db.prepare(`DELETE FROM ${TABLE} WHERE id = ?`).run(row.id);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         uuid,
+        op:             'delete',
+        payload_before: before,
+        payload_after:  null,
+        station_id:     stationId,
+        actor_id:       null,
+      });
+    }
+  })();
+  return { ok: true, cleared: rows.length };
+}
+
+function scheduledLogClearByHour(db, stationId, logDate, hour) {
+  validateScope();
+  if (stationId == null) throw new Error(`[scheduled_log] station_id is required`);
+  if (!logDate)          throw new Error(`[scheduled_log] logDate is required`);
+  if (hour == null)      throw new Error(`[scheduled_log] hour is required`);
+
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE log_date = ? AND hour = ? AND station_id = ? AND deleted_at IS NULL`
+  ).all(logDate, hour, stationId);
+
+  db.transaction(() => {
+    for (const row of rows) {
+      let uuid = row.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+      }
+      const before = serializePayload({ ...row, uuid }, TABLE);
+      db.prepare(`DELETE FROM ${TABLE} WHERE id = ?`).run(row.id);
+      logMutation(db, {
+        table_name:     TABLE,
+        row_id:         uuid,
+        op:             'delete',
+        payload_before: before,
+        payload_after:  null,
+        station_id:     stationId,
+        actor_id:       null,
+      });
+    }
+  })();
+  return { ok: true, cleared: rows.length };
+}
+
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installScheduledLog(ipcMain, db) {
@@ -170,6 +291,25 @@ function installScheduledLog(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('scheduled_log:get-by-date', (_, stationId, logDate) => {
+    try { return { ok: true, rows: scheduledLogGetByDate(db, stationId, logDate) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('scheduled_log:batch-insert', (_, stationId, rows) => {
+    try { return { ok: true, ...scheduledLogBatchInsert(db, stationId, rows) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('scheduled_log:clear-by-date', (_, stationId, logDate) => {
+    try { return { ok: true, ...scheduledLogClearByDate(db, stationId, logDate) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('scheduled_log:clear-by-hour', (_, stationId, logDate, hour) => {
+    try { return { ok: true, ...scheduledLogClearByHour(db, stationId, logDate, hour) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[scheduled_log] handlers installed');
 }
@@ -182,5 +322,8 @@ module.exports = {
   scheduledLogCreate,
   scheduledLogUpdate,
   scheduledLogDelete,
-
+  scheduledLogGetByDate,
+  scheduledLogBatchInsert,
+  scheduledLogClearByDate,
+  scheduledLogClearByHour,
 };
