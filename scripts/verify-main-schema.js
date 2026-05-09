@@ -388,6 +388,7 @@ try {
 
     CREATE TABLE IF NOT EXISTS macros (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      station_id  INTEGER NOT NULL DEFAULT 1,
       name        TEXT NOT NULL,
       description TEXT,
       trigger_type TEXT NOT NULL DEFAULT 'manual',
@@ -397,6 +398,22 @@ try {
       is_active   INTEGER DEFAULT 1,
       color       TEXT DEFAULT '#38bdf8',
       created_at  INTEGER DEFAULT (unixepoch())
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_macros_station_trigger ON macros(station_id, trigger_type, is_active);
+    CREATE INDEX IF NOT EXISTS idx_macros_station_hotkey ON macros(station_id, hotkey, is_active) WHERE hotkey IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS scheduling_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      station_id INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      rule_type TEXT NOT NULL,
+      rule_data TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      uuid TEXT,
+      created_at INTEGER,
+      updated_at INTEGER,
+      deleted_at INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS generated_schedule (

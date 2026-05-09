@@ -61,7 +61,7 @@ import HelpPanel from "./components/HelpPanel";
 import NowPlaying from "./components/NowPlaying";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
 import Spots from "./components/Spots";
-import MacrosPanel, { useMacroHotkeys, startMacroClockWatcher } from "./components/MacroEngine";
+import MacrosPanel, { useMacroHotkeys, useMacroClock } from "./components/MacroEngine";
 import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
 import ConsoleStrip from "./components/ConsoleStrip";
 import RulesEditor from "./components/RulesEditor";
@@ -382,9 +382,9 @@ function useViewport() {
 export default function App() {
   const { stationId, isReady: stationReady } = useActiveStation();
   const viewport = useViewport();
-  // Macro automation: listen for hotkey-triggered macros + start clock watcher
+  // Macro automation: listen for hotkey-triggered macros + clock-based triggers
   useMacroHotkeys();
-  useEffect(() => { startMacroClockWatcher(); }, []);
+  useMacroClock(stationId);
   const [splashDone, setSplashDone] = useState(false);
   const [wizardDone, setWizardDone] = useState(false);
   const [firstRunChecked, setFirstRunChecked] = useState(false);

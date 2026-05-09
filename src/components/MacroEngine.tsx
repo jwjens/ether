@@ -122,32 +122,46 @@ export async function executeMacro(macro: Macro, dispatch?: (cmd: string) => voi
 }
 
 // ── Clock Trigger Watcher ─────────────────────────────────────
-// Checks every second if any clock-triggered macros should fire.
+// Hook that loads clock macros once (and on ether:macros-changed), then
+// checks every second in pure JS — no DB hit on each tick.
 
-let clockWatcherActive = false;
-let lastFiredMinute = -1;
+export function useMacroClock(stationId: number, dispatch?: (cmd: string) => void) {
+  const clockMacrosRef = useRef<Macro[]>([]);
 
-export function startMacroClockWatcher(dispatch?: (cmd: string) => void) {
-  if (clockWatcherActive) return;
-  clockWatcherActive = true;
-  const check = async () => {
-    const now = new Date();
-    const currentMinute = now.getHours() * 60 + now.getMinutes();
-    if (currentMinute === lastFiredMinute) return; // already fired this minute
+  useEffect(() => {
+    let lastFiredMinute = -1;
 
-    const macros = await queryScoped<any>("SELECT * FROM macros WHERE trigger_type = 'clock' AND is_active = 1", [], getActiveStationIdSync());
-    for (const row of (macros || [])) {
-      const m: Macro = { ...row, actions: JSON.parse(row.actions || "[]") };
-      if (!m.trigger_value) continue;
-      const [hStr, mStr] = m.trigger_value.split(":");
-      const targetMinute = (parseInt(hStr) || 0) * 60 + (parseInt(mStr) || 0);
-      if (currentMinute === targetMinute) {
-        lastFiredMinute = currentMinute;
-        executeMacro(m, dispatch).catch(e => console.error("[MACRO] clock trigger error:", e));
+    const loadClockMacros = async () => {
+      const rows = await queryScoped<any>(
+        "SELECT * FROM macros WHERE trigger_type = 'clock' AND is_active = 1",
+        [], stationId
+      );
+      clockMacrosRef.current = (rows || []).map((r: any) => ({ ...r, actions: JSON.parse(r.actions || "[]") }));
+    };
+
+    const check = () => {
+      const now = new Date();
+      const currentMinute = now.getHours() * 60 + now.getMinutes();
+      if (currentMinute === lastFiredMinute) return;
+      for (const m of clockMacrosRef.current) {
+        if (!m.trigger_value) continue;
+        const [hStr, mStr] = m.trigger_value.split(":");
+        const targetMinute = (parseInt(hStr) || 0) * 60 + (parseInt(mStr) || 0);
+        if (currentMinute === targetMinute) {
+          lastFiredMinute = currentMinute;
+          executeMacro(m, dispatch).catch(e => console.error("[MACRO] clock trigger error:", e));
+        }
       }
-    }
-  };
-  setInterval(check, 1000);
+    };
+
+    loadClockMacros();
+    window.addEventListener("ether:macros-changed", loadClockMacros);
+    const interval = setInterval(check, 1000);
+    return () => {
+      window.removeEventListener("ether:macros-changed", loadClockMacros);
+      clearInterval(interval);
+    };
+  }, [stationId, dispatch]);
 }
 
 // ── Hotkey Listener ───────────────────────────────────────────
@@ -161,8 +175,8 @@ export function useMacroHotkeys(dispatch?: (cmd: string) => void) {
       macrosRef.current = (rows || []).map((r: any) => ({ ...r, actions: JSON.parse(r.actions || "[]") }));
     };
     loadMacros();
-    const id = setInterval(loadMacros, 5000); // refresh every 5s
-    return () => clearInterval(id);
+    window.addEventListener("ether:macros-changed", loadMacros);
+    return () => window.removeEventListener("ether:macros-changed", loadMacros);
   }, []);
 
   useEffect(() => {
@@ -209,12 +223,14 @@ export default function MacrosPanel() {
       await (window as any).ether.macros.create({ station_id: stationId, name: m.name, description: m.description || null, trigger_type: m.trigger_type, trigger_value: m.trigger_value || null, actions: actionsJson, hotkey: m.hotkey || null, is_active: 1, color: m.color });
     }
     setEditing(null); load();
+    window.dispatchEvent(new CustomEvent("ether:macros-changed"));
   };
 
   const deleteMacro = async (id: number) => {
     if (!confirm("Delete this macro?")) return;
     await (window as any).ether.macros.deleteById(id);
     load();
+    window.dispatchEvent(new CustomEvent("ether:macros-changed"));
   };
 
   const newMacro = (): Macro => ({
