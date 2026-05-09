@@ -54,13 +54,16 @@ function parseTLEN(buf) {
 // In Electron main-process context we can require the native module directly.
 let nativeGetDuration = null;
 try {
-  // Try to load the Rust addon that the main process uses
-  const addonPath = path.join(__dirname, "../src-tauri/target/release/ether_native.node");
+  const addonPath = path.join(__dirname, "../native/ether-audio.node");
   if (fs.existsSync(addonPath)) {
     const native = require(addonPath);
-    nativeGetDuration = native.getFileDuration;
+    if (typeof native.getFileDuration === "function") {
+      nativeGetDuration = native.getFileDuration.bind(native);
+    }
   }
-} catch {}
+} catch (e) {
+  console.warn("[backfill] native addon unavailable:", e.message);
+}
 
 // ── main ─────────────────────────────────────────────────────────────────────
 
