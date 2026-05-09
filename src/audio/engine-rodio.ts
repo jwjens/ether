@@ -344,6 +344,7 @@ export class AudioEngine {
   }
 
   async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number) {
+    console.log('[ENGINE] loadToDeck', id, 'durationMs:', durationMs);
     this.init();
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
     const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
@@ -367,7 +368,10 @@ export class AudioEngine {
     this.playStartCallbacks.forEach(fn => fn(deckId, title, artist, filePath));
   }
 
-  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) { this.queue.push(...songs); }
+  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
+    if (songs[0]) console.log('[ENGINE] addToQueue first item durationMs:', songs[0].durationMs);
+    this.queue.push(...songs);
+  }
   clearQueue() { this.queue = []; }
   getQueue() { return [...this.queue]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
