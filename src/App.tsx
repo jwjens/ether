@@ -3632,19 +3632,76 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
   const [deckAPos, setDeckAPos]       = useState(0);
   const [deckADur, setDeckADur]       = useState(0);
   const [deckAStatus, setDeckAStatus] = useState("");
+  const fillRef       = useRef<HTMLDivElement>(null);
+  const fillTrackRef  = useRef<string>("");
+  const nextTitleRef  = useRef<HTMLSpanElement>(null);
+  const afterTitleRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const pull = () => {
       const q = engine.getQueue();
       setSlots([q[0] ?? null, q[1] ?? null, q[2] ?? null]);
       const da = engine.getDeck("A")?.getState?.();
-      if (da) { setDeckAPos(da.positionSec ?? 0); setDeckADur(da.durationSec ?? 0); setDeckAStatus(da.status ?? ""); }
+      if (da) {
+        setDeckAPos(da.positionSec ?? 0);
+        setDeckADur(da.durationSec ?? 0);
+        setDeckAStatus(da.status ?? "");
+        const el = fillRef.current;
+        if (el) {
+          if (da.status === "playing" && da.durationSec > 0) {
+            const fp    = da.filePath || da.title || "";
+            const ratio = (da.positionSec ?? 0) / da.durationSec;
+            if (fp !== fillTrackRef.current) {
+              fillTrackRef.current = fp;
+              const rem = Math.max(0.5, da.durationSec - (da.positionSec ?? 0));
+              el.style.transition = "none";
+              el.style.width = `${ratio * 100}%`;
+              requestAnimationFrame(() => {
+                el.style.transition = `width ${rem}s linear`;
+                el.style.width = "100%";
+              });
+            }
+            el.style.animationName = ratio >= 0.95 ? "y3-fill-pulse" : "none";
+            el.style.background    = ratio >= 0.95
+              ? "rgba(239,68,68,0.30)"
+              : ratio >= 0.80
+              ? "rgba(245,158,11,0.22)"
+              : "rgba(56,189,248,0.22)";
+          } else if (fillTrackRef.current !== "") {
+            fillTrackRef.current = "";
+            el.style.transition    = "none";
+            el.style.width         = "0%";
+            el.style.background    = "transparent";
+            el.style.animationName = "none";
+          }
+        }
+      }
     };
     pull();
     const unsub = engine.on(pull);
     const tick  = setInterval(pull, 1000);
     return () => { unsub(); clearInterval(tick); };
   }, [queueLen]);
+
+  useEffect(() => {
+    ([
+      { ref: nextTitleRef,  title: slots[1]?.title },
+      { ref: afterTitleRef, title: slots[2]?.title },
+    ] as { ref: React.RefObject<HTMLSpanElement | null>; title: string | undefined }[]).forEach(({ ref }) => {
+      const span = ref.current;
+      if (!span) return;
+      const container = span.parentElement;
+      if (!container) return;
+      const overflow = span.scrollWidth - container.clientWidth;
+      if (overflow > 4) {
+        span.style.setProperty("--mq-offset", `-${overflow}px`);
+        span.style.animation = "y3-marquee 10s ease-in-out infinite";
+      } else {
+        span.style.animation = "none";
+        span.style.transform = "translateX(0)";
+      }
+    });
+  }, [slots[1]?.title, slots[2]?.title]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60), sec = Math.floor(s % 60);
@@ -3669,61 +3726,99 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
   ] as const;
 
   return (
-    <div style={{
-      flex: 1, minWidth: 0, marginLeft: 8, height: 34,
-      display: "flex",
-      border: "1px solid var(--border-primary)",
-      background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
-      overflow: "hidden",
-    }}>
-      {COLS.map(({ label, color, glow }, idx) => {
-        const item = slots[idx];
-        const timeStr = idx === 0 ? slot0Time : getDur(item);
-        const active  = !!item;
-        return (
-          <div key={label} style={{
-            flex: 1, minWidth: 0,
-            borderRight: idx < 2 ? "1px solid var(--border-primary)" : "none",
-            padding: "2px 10px",
-            display: "flex", flexDirection: "column", justifyContent: "center", gap: 1,
-          }}>
-            {/* Row 1: dot · label · time */}
-            <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
-              <span style={{
-                width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                background: active ? color : "var(--text-tertiary)",
-                boxShadow: active && idx === 0 ? glow : "none",
-                transition: "background 0.3s",
-              }} />
-              <span style={{
-                fontSize: 9, fontWeight: 800, letterSpacing: "0.12em",
-                color: active ? color : "var(--text-tertiary)",
-                textTransform: "uppercase" as const, flexShrink: 0,
-                transition: "color 0.3s",
-              }}>{label}</span>
-              {timeStr && (
+    <>
+      <style>{`
+        @keyframes y3-fill-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
+        @keyframes y3-marquee {
+          0%,15%  { transform: translateX(0); }
+          70%,85% { transform: translateX(var(--mq-offset)); }
+          100%    { transform: translateX(0); }
+        }
+      `}</style>
+      <div style={{
+        flex: 1, minWidth: 0, marginLeft: 8, height: 34,
+        display: "flex",
+        border: "1px solid var(--border-primary)",
+        background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
+        overflow: "hidden",
+      }}>
+        {COLS.map(({ label, color, glow }, idx) => {
+          const item = slots[idx];
+          const timeStr = idx === 0 ? slot0Time : getDur(item);
+          const active  = !!item;
+          return (
+            <div key={label} style={{
+              flex: 1, minWidth: 0,
+              borderRight: idx < 2 ? "1px solid var(--border-primary)" : "none",
+              padding: "2px 10px",
+              display: "flex", flexDirection: "column", justifyContent: "center", gap: 1,
+              ...(idx === 0 ? { position: "relative" as const, overflow: "hidden" as const } : {}),
+            }}>
+              {/* Fill layer — ON AIR slot only, managed imperatively */}
+              {idx === 0 && (
+                <div ref={fillRef} style={{
+                  position: "absolute" as const, top: 0, right: 0, bottom: 0, left: 0,
+                  width: "0%", zIndex: 0, pointerEvents: "none" as const,
+                  animationDuration: "1s", animationTimingFunction: "ease-in-out",
+                  animationIterationCount: "infinite",
+                }} />
+              )}
+              {/* Row 1: dot · label · time */}
+              <div style={{
+                display: "flex", alignItems: "center", gap: 4, minWidth: 0,
+                ...(idx === 0 ? { position: "relative" as const, zIndex: 1 } : {}),
+              }}>
                 <span style={{
-                  fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                  color: isEndingSoon && idx === 0 ? "#fbbf24" : "var(--text-tertiary)",
-                  fontWeight: isEndingSoon && idx === 0 ? 700 : 400,
-                  marginLeft: "auto", flexShrink: 0,
+                  width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
+                  background: active ? color : "var(--text-tertiary)",
+                  boxShadow: active && idx === 0 ? glow : "none",
+                  transition: "background 0.3s",
+                }} />
+                <span style={{
+                  fontSize: 9, fontWeight: 800, letterSpacing: "0.12em",
+                  color: active ? color : "var(--text-tertiary)",
+                  textTransform: "uppercase" as const, flexShrink: 0,
                   transition: "color 0.3s",
-                }}>{timeStr}</span>
+                }}>{label}</span>
+                {timeStr && (
+                  <span style={{
+                    fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                    color: isEndingSoon && idx === 0 ? "#fbbf24" : "var(--text-tertiary)",
+                    fontWeight: isEndingSoon && idx === 0 ? 700 : 400,
+                    marginLeft: "auto", flexShrink: 0,
+                    transition: "color 0.3s",
+                  }}>{timeStr}</span>
+                )}
+              </div>
+              {/* Row 2: title — ON AIR gets ellipsis+zIndex; NEXT/AFTER get marquee span */}
+              {idx === 0 ? (
+                <div style={{
+                  fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
+                  color: active ? "var(--text-primary)" : "var(--text-tertiary)",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                  fontStyle: active ? "normal" : "italic",
+                  position: "relative" as const, zIndex: 1,
+                }}>
+                  {item?.title || "—"}
+                </div>
+              ) : (
+                <div style={{
+                  fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
+                  color: active ? "var(--text-primary)" : "var(--text-tertiary)",
+                  overflow: "hidden",
+                  fontStyle: active ? "normal" : "italic",
+                }}>
+                  <span ref={idx === 1 ? nextTitleRef : afterTitleRef}
+                    style={{ display: "inline-block", whiteSpace: "nowrap" as const }}>
+                    {item?.title || "—"}
+                  </span>
+                </div>
               )}
             </div>
-            {/* Row 2: title */}
-            <div style={{
-              fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
-              color: active ? "var(--text-primary)" : "var(--text-tertiary)",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-              fontStyle: active ? "normal" : "italic",
-            }}>
-              {item?.title || "—"}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 
