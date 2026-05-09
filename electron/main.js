@@ -76,6 +76,7 @@ const fs = require("fs");
 const Database = require("better-sqlite3");
 const { SYNCED_TABLES } = require('./sync/synced-tables');
 const SYNCED_TABLES_SET = new Set(SYNCED_TABLES);
+console.log(`[db:execute guard] active — ${SYNCED_TABLES.length} synced tables locked from direct writes`);
 
 // ── App identity ──────────────────────────────────────────────
 app.setAppUserModelId("ether");
@@ -1348,27 +1349,60 @@ ipcMain.handle("db:query", (_, sql, params) => {
   }
 });
 
+function detectSyncedWrite(sql) {
+  // Strip leading whitespace then leading SQL comments (-- line and /* */ block).
+  let s = sql.trimStart();
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (s.startsWith('--')) {
+      const nl = s.indexOf('\n');
+      s = nl === -1 ? '' : s.slice(nl + 1).trimStart();
+    } else if (s.startsWith('/*')) {
+      const end = s.indexOf('*/');
+      s = end === -1 ? '' : s.slice(end + 2).trimStart();
+    } else {
+      break;
+    }
+  }
+
+  const insertMatch  = s.match(/^INSERT\s+(?:OR\s+\w+\s+)?INTO\s+([`"]?[\w.]+[`"]?)/i);
+  const replaceMatch = s.match(/^REPLACE\s+INTO\s+([`"]?[\w.]+[`"]?)/i);
+  const updateMatch  = s.match(/^UPDATE\s+(?:OR\s+\w+\s+)?([`"]?[\w.]+[`"]?)\s+SET/i);
+  const deleteMatch  = s.match(/^DELETE\s+FROM\s+([`"]?[\w.]+[`"]?)/i);
+
+  const m = insertMatch || replaceMatch || updateMatch || deleteMatch;
+  if (!m) return null;
+
+  const verb = insertMatch ? 'INSERT' : replaceMatch ? 'REPLACE' : updateMatch ? 'UPDATE' : 'DELETE';
+
+  // Strip surrounding quotes and schema prefix (e.g. "songs", `songs`, main.songs → songs)
+  let table = m[1];
+  if ((table.startsWith('"') && table.endsWith('"')) ||
+      (table.startsWith('`') && table.endsWith('`'))) {
+    table = table.slice(1, -1);
+  }
+  if (table.includes('.')) {
+    table = table.split('.').pop();
+  }
+
+  return { verb, table: table.toLowerCase() };
+}
+
 ipcMain.handle("db:execute", (_, sql, params) => {
   try {
-    // Synced-table write guard (Phase 3.5 Commit 2). SELECTs are read-only — skip.
+    // Synced-table write guard (Phase 3.5). SELECTs bypass detection entirely.
     if (!/^\s*SELECT/i.test(sql)) {
-      const insertMatch = sql.match(/^\s*INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)/i);
-      const updateMatch = sql.match(/^\s*UPDATE\s+(\w+)\s+SET/i);
-      const deleteMatch = sql.match(/^\s*DELETE\s+FROM\s+(\w+)/i);
-      const tableMatch  = insertMatch || updateMatch || deleteMatch;
-      const verb        = insertMatch ? 'INSERT' : updateMatch ? 'UPDATE' : deleteMatch ? 'DELETE' : null;
-      const tableName   = tableMatch ? tableMatch[1].toLowerCase() : null;
-
-      if (tableName && SYNCED_TABLES_SET.has(tableName)) {
-        const msg = `ERR_SYNCED_TABLE_WRITE: table '${tableName}' has a typed handler ` +
-          `(window.ether.${tableName}.*); db:execute is locked against direct writes to ` +
+      const detection = detectSyncedWrite(sql);
+      if (detection && SYNCED_TABLES_SET.has(detection.table)) {
+        const msg = `ERR_SYNCED_TABLE_WRITE: table '${detection.table}' has a typed handler ` +
+          `(window.ether.${detection.table}.*); db:execute is locked against direct writes to ` +
           `synced tables. See docs/phase-3.5-status-audit.md for migration guidance.`;
-        console.error("[db:execute LOCKED]", verb, tableName, "— SQL:", sql.slice(0, 120));
+        console.error("[db:execute LOCKED]", detection.verb, detection.table, "— SQL:", sql.slice(0, 120));
         return { data: null, error: msg };
       }
-      // No table name parsed (unusual SQL form) — warn and allow through (degraded-mode safety).
-      if (!tableName && verb) {
-        console.warn("[db:execute] could not parse table name from non-SELECT SQL:", sql.slice(0, 120));
+      // No write op parsed — warn and allow (handles PRAGMA, DDL, unusual forms).
+      if (!detection) {
+        console.warn("[db:execute] could not parse write op from non-SELECT SQL:", sql.slice(0, 120));
       }
     }
 
