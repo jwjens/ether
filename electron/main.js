@@ -1803,7 +1803,27 @@ ipcMain.handle("stream_stop", async () => {
 
 ipcMain.handle("analyze_lufs", (_, args) => {
   const filePath = args?.filePath ?? args;
-  try { return audio.analyzeFile(filePath); } catch { return -14; }
+  try { return audio.analyzeLufs(filePath); } catch { return -14; }
+});
+
+ipcMain.handle("analyze_song", (_, args) => {
+  const filePath = args?.filePath ?? args;
+  try { return JSON.parse(audio.analyzeSong(filePath)); } catch { return null; }
+});
+
+ipcMain.handle("measure_song_loudness", (_, args) => {
+  const filePath = args?.filePath ?? args;
+  try { return JSON.parse(audio.measureSongLoudness(filePath)); } catch { return null; }
+});
+
+ipcMain.handle("detect_song_bpm", (_, args) => {
+  const filePath = args?.filePath ?? args;
+  try { return JSON.parse(audio.detectSongBpm(filePath)); } catch { return null; }
+});
+
+ipcMain.handle("detect_song_cue_points", (_, args) => {
+  const filePath = args?.filePath ?? args;
+  try { return JSON.parse(audio.detectSongCuePoints(filePath)); } catch { return null; }
 });
 
 ipcMain.handle("open_url", (_, args) => {
