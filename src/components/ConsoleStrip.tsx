@@ -87,6 +87,13 @@ export default function ConsoleStrip({
       const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
       const fill = fillRef.current;
       if (!fill) return;
+      fill.dataset.status   = String(da.status);
+      fill.dataset.position = String(Math.round(da.positionSec ?? 0));
+      fill.dataset.duration = String(Math.round(da.durationSec ?? 0));
+      fill.dataset.deckId   = String(deckId);
+      fill.dataset.trackKey = String(trackKey);
+      fill.dataset.lastKey  = String(fillTrackRef.current);
+      fill.dataset.armCount = String((parseInt(fill.dataset.armCount || "0") + 1));
       if (da.status === "playing" && trackKey !== fillTrackRef.current) {
         fillTrackRef.current = trackKey;
         const startPct  = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
