@@ -290,7 +290,7 @@ export default function ProgramLog({ onClose }: Props) {
             label: picked.title, status: "scheduled",
             overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
           });
-          await (window as any).ether.songs['update-by-id'](picked.id, { last_played_at: hourStartTs + slot.position });
+          await (window as any).ether.songs.updateById(picked.id, { last_played_at: hourStartTs + slot.position });
         } else {
           console.warn(`[schedule] UNFILLED: slot ${slot.position} (cat: ${slot.category_code}) — no eligible songs remain after all rotation rules`);
           pendingRows.push({
@@ -346,7 +346,7 @@ export default function ProgramLog({ onClose }: Props) {
               label: overflowSong.title, status: "overflow",
               overflow: 1, fade_out_at_ms: remainMs, fade_duration_ms: fadeDurationMs,
             });
-            await (window as any).ether.songs['update-by-id'](overflowSong.id, { last_played_at: hourStartTs + 3600 });
+            await (window as any).ether.songs.updateById(overflowSong.id, { last_played_at: hourStartTs + 3600 });
           }
         }
       }
@@ -354,7 +354,7 @@ export default function ProgramLog({ onClose }: Props) {
       await (window as any).ether.scheduledLog.batchInsert(stationId, pendingRows);
 
       return true;
-    } catch { return false; }
+    } catch (e) { console.error('[schedule] scheduleOneHour error:', e); return false; }
   };
 
   const generateHour = async (hour: number) => {
@@ -1473,7 +1473,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
   const save = async () => {
     if (!editing || !editing.name) return;
     if (editing.id) {
-      await (window as any).ether.shows['update-by-id'](editing.id, {
+      await (window as any).ether.shows.updateById(editing.id, {
         name: editing.name,
         start_hour: editing.start_hour ?? 0,
         end_hour: editing.end_hour ?? 0,
@@ -1494,7 +1494,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
   };
 
   const assignClock = async (showId: number, clockId: number | null) => {
-    await (window as any).ether.shows['update-by-id'](showId, { clock_id: clockId });
+    await (window as any).ether.shows.updateById(showId, { clock_id: clockId });
     loadModal();
   };
 
