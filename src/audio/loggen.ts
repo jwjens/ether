@@ -390,6 +390,7 @@ interface ScheduledTrack {
   intro_end: number | null;
   outro_start: number | null;
   scheduled_at: number;
+  duration_ms?: number | null;
 }
 
 interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
@@ -398,7 +399,7 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
   const nowTs = Math.floor(Date.now() / 1000);
   const rows = await query<ScheduledTrackRow>(
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
-            s.file_path, s.intro_end, s.outro_start
+            s.file_path, s.intro_end, s.outro_start, s.duration_ms
      FROM generated_schedule gs
      LEFT JOIN songs s ON s.id = gs.song_id AND s.station_id = ?
      WHERE gs.id > ? AND gs.station_id = ?
@@ -448,6 +449,7 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
           artist:     s.artist || '',
           introEnd:   s.intro_end ?? undefined,
           outroStart: s.outro_start ?? undefined,
+          durationMs: s.duration_ms ?? 0,
         } : null;
       }));
       const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string }[];
@@ -506,6 +508,7 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
       artist:      s.artist_name || "",
       introEnd:    s.intro_end ?? undefined,
       outroStart:  s.outro_start ?? undefined,
+      durationMs:  s.duration_ms ?? 0,
     }));
 
     engine.addToQueue(items);

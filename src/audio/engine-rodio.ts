@@ -65,7 +65,7 @@ export class AudioEngine {
   private lastPollTime = Date.now();
   private lastFiredState: { A?: DeckState; B?: DeckState; C?: DeckState } = {};
 
-  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[] = [];
+  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[] = [];
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   // Per-deck chain type: what happens when THIS deck finishes.
   // Loaded from the queue item at deck-load time.
@@ -247,7 +247,7 @@ export class AudioEngine {
         if (this.queue.length === 0) { console.log('[ENGINE] CtoA: BAIL queue empty'); return; }
         const next = this.dequeue();
         this.deckChainType["A"] = next.chainType || "segue";
-        await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
+        await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
         await invoke("audio_play", { deck: "A" });
         this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
         this.endTriggered.delete("A");
@@ -270,7 +270,7 @@ export class AudioEngine {
         if (this.queue.length === 0) return;
         const next = this.dequeue();
         this.deckChainType[deckId] = next.chainType || "segue";
-        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
+        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
         await invoke("audio_play", { deck: deckId });
         if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
         if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
@@ -287,7 +287,7 @@ export class AudioEngine {
     const next = this.queue[queueIndex];
     try {
       this.deckChainType[deckId] = next.chainType || "segue";
-      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb);
+      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
       console.log(`[ENGINE] Preloaded ${deckId} (queue[${queueIndex}]):`, next.title);
     } catch (e) { console.error(`[ENGINE] Preload ${deckId} failed:`, e); }
   }
@@ -343,18 +343,20 @@ export class AudioEngine {
     };
   }
 
-  async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number) {
+  async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number) {
     this.init();
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
-    const newState = { title, artist, filePath, positionSec: 0, durationSec: 0, status: "idle" as DeckStatus, volume: 1, peaks: [] };
+    const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
     if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
     if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
     if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; this.listeners.forEach(l => l("C", this.stateC)); }
     this.endTriggered.delete(id as DeckId);
     invoke("get_file_duration", { filePath }).then((dur: number) => {
-      if (id === "A") { this.stateA = { ...this.stateA, durationSec: dur }; this.listeners.forEach(l => l("A", this.stateA)); }
-      if (id === "B") { this.stateB = { ...this.stateB, durationSec: dur }; this.listeners.forEach(l => l("B", this.stateB)); }
-      if (id === "C") { this.stateC = { ...this.stateC, durationSec: dur }; this.listeners.forEach(l => l("C", this.stateC)); }
+      if (dur > 0) {
+        if (id === "A") { this.stateA = { ...this.stateA, durationSec: dur }; this.listeners.forEach(l => l("A", this.stateA)); }
+        if (id === "B") { this.stateB = { ...this.stateB, durationSec: dur }; this.listeners.forEach(l => l("B", this.stateB)); }
+        if (id === "C") { this.stateC = { ...this.stateC, durationSec: dur }; this.listeners.forEach(l => l("C", this.stateC)); }
+      }
     }).catch((e: unknown) => { console.warn('[ENGINE] get_file_duration failed', id, filePath, e); });
     // NOTE: playStartCallbacks are NOT fired here — loadToDeck is also used for
     // preloading standby decks. Callers that actually start playback must call
@@ -365,11 +367,11 @@ export class AudioEngine {
     this.playStartCallbacks.forEach(fn => fn(deckId, title, artist, filePath));
   }
 
-  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[]) { this.queue.push(...songs); }
+  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) { this.queue.push(...songs); }
   clearQueue() { this.queue = []; }
   getQueue() { return [...this.queue]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
-  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop" }[]) { this.queue = [...songs]; }
+  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) { this.queue = [...songs]; }
 
   /** Toggle chain type for a queue item by index */
   setQueueItemChainType(idx: number, chainType: "segue" | "stop") {
@@ -389,7 +391,7 @@ export class AudioEngine {
     this.advancePromise = Promise.resolve();
     const next = this.dequeue();
     try {
-      await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
+      await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
       await invoke("audio_play", { deck: "A" });
       this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
       this.endTriggered.delete("A");

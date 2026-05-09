@@ -880,7 +880,7 @@ export default function App() {
         await fillQueueFromSchedule().then(async (count) => {
           if (count === 0) {
             const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
-            engine.addToQueue(rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" })));
+            engine.addToQueue(rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 })));
           }
           const q2 = engine.getQueue();
           if (q2.length > 0) {
@@ -912,10 +912,10 @@ export default function App() {
         if (count === 0) {
           engine.setRefillCallback(async () => {
             const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 500", [stationId], stationId, { skipScoping: true });
-            return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }));
+            return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 }));
           });
           const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
-          const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
+          const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }));
           engine.addToQueue(items); setQueueLen(items.length);
           window.dispatchEvent(new CustomEvent('ether:queue-changed'));
         }
@@ -935,7 +935,7 @@ export default function App() {
 
   const loadA = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
+    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any;
     const q = engine.getQueue(); q.splice(0, 0, item); engine.replaceQueue(q);
     setQueueLen(engine.getQueue().length);
     engine.triggerPreload();
@@ -944,7 +944,7 @@ export default function App() {
   }, []);
   const loadB = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
+    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any;
     const q = engine.getQueue(); q.splice(1, 0, item); engine.replaceQueue(q);
     setQueueLen(engine.getQueue().length);
     engine.triggerPreload();
@@ -953,7 +953,7 @@ export default function App() {
   }, []);
   const loadC = useCallback((s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any;
+    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any;
     const q = engine.getQueue(); q.splice(2, 0, item); engine.replaceQueue(q);
     setQueueLen(engine.getQueue().length);
     engine.triggerPreload();
@@ -965,7 +965,7 @@ export default function App() {
   });
   const addToQueue = useCallback((s: SongRow) => {
     if (s.file_path) {
-      engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any]);
+      engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any]);
       setQueueLen(engine.getQueue().length);
       window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       // Auto-detect cue points in background if not set
