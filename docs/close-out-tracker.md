@@ -1,6 +1,6 @@
 # Ether — Close-Out Tracker
 
-> **Last updated:** 2026-05-08 (v4.1.0 — Phase 3.5 close-out)
+> **Last updated:** 2026-05-09 (PlayLog arc — Item 1 closed)
 >
 > Canonical list of every open arc, parked item, and known issue. Update this file at the start of each new arc, not at the end.
 
@@ -61,7 +61,9 @@
 
 | # | Item | Notes |
 |---|------|-------|
-| PL1 | **PlayLog typed handler migration** | play_log schema aligned in v4.1.0. Renderer writes not yet audited for remaining db:execute calls. |
+| ~~PL1~~ | ~~**Manual plays silently unlogged**~~ | ~~All music-deck plays (manual + auto) now log via engine state-transition hook.~~ ✓ ba1cbfd |
+| PL2 | **PlayLog typed handler migration** | play_log schema aligned in v4.1.0. Any remaining db:execute writes to play_log not yet audited. |
+| PL3 | **`notifyPlayStart` / `onPlayStart` dead code** | Removed from all call sites in ba1cbfd. The `notifyPlayStart()`, `onPlayStart()`, and `playStartCallbacks` members in engine-rodio.ts are now unused. Remove in a cleanup commit. |
 
 ---
 
@@ -78,6 +80,7 @@
 | Arc | Description |
 |-----|-------------|
 | **Phase F — CRDT sync** | Full multi-client CRDT-based sync using mutation log. Foundation locked in Phase 3.5. Implementation arc is its own project. |
+| **AUX / Live DJ deck** | Slot D (or configurable) set to type="music" and enabled. Infrastructure identical to A/B/C — no schema or engine changes needed. Play logging, sync, and PRO reporting all inherit automatically via deckConfig.type filter. UI work: deck-order display, crossfade behavior for live DJ handoff. |
 | **AoIP console** | Dante / AES67 audio-over-IP integration. No spec. |
 | **Multi-station operator tier** | Multiple simultaneous stations per install. Schema partially supports it (station_id everywhere). |
 | **PD dashboard** | Program director analytics view over play_log / scheduled_log data. |
