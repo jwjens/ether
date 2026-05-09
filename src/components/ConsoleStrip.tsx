@@ -5,7 +5,7 @@
 // 0 dB has a wider tick + a bright notch on the rail surface for tactile reference.
 // VU meter: full height, right side, same color coding as before.
 
-import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
 import { engine } from "../audio/engine-rodio";
 
@@ -87,13 +87,10 @@ export default function ConsoleStrip({
       const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
       const fill = fillRef.current;
       if (!fill) return;
-      const beforeKey = fillTrackRef.current;
-      console.log('[Y3 fill key]', { deckId, beforeKey, trackKey, matched: beforeKey === trackKey, status: da.status });
       if (da.status === "playing" && trackKey !== fillTrackRef.current) {
         fillTrackRef.current = trackKey;
         const startPct  = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
         const remaining = Math.max(0, (da.durationSec ?? 0) - (da.positionSec ?? 0));
-        console.log('[Y3 fill arm]', { deckId, status: da.status, positionSec: da.positionSec, durationSec: da.durationSec, startPct, remaining });
         fill.style.transition = "none";
         fill.style.width = `${startPct}%`;
         void fill.offsetWidth;
@@ -109,10 +106,6 @@ export default function ConsoleStrip({
     });
     return () => unsub();
   }, [deckId]);
-
-  useLayoutEffect(() => {
-    console.log('[Y3 fill mount]', deckId, fillRef.current);
-  });
 
   // Direct DOM VU update when deckId is provided — bypasses React state
   // so the parent (App.tsx) doesn't re-render the library table on each tick.
