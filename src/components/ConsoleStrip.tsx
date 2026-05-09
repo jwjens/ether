@@ -94,7 +94,7 @@ export default function ConsoleStrip({
       fill.dataset.trackKey = String(trackKey);
       fill.dataset.lastKey  = String(fillTrackRef.current);
       fill.dataset.armCount = String((parseInt(fill.dataset.armCount || "0") + 1));
-      if (da.status === "playing" && trackKey !== fillTrackRef.current) {
+      if (da.status === "playing" && da.durationSec > 0 && trackKey !== fillTrackRef.current) {
         fillTrackRef.current = trackKey;
         const startPct  = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
         const remaining = Math.max(0, (da.durationSec ?? 0) - (da.positionSec ?? 0));
@@ -107,7 +107,7 @@ export default function ConsoleStrip({
       if (da.status !== "playing") {
         fill.style.transition = "none";
         const pct = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
-        fill.style.width = `${pct}%`;
+        fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
         fillTrackRef.current = "";
       }
     });
