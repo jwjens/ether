@@ -1,6 +1,6 @@
 # Ether — Close-Out Tracker
 
-> **Last updated:** 2026-05-09 (PlayLog arc — Item 1 closed)
+> **Last updated:** 2026-05-09 (P2 MacroEngine performance — closed)
 >
 > Canonical list of every open arc, parked item, and known issue. Update this file at the start of each new arc, not at the end.
 
@@ -23,7 +23,7 @@
 | # | Item | Measured cost | Notes |
 |---|------|---------------|-------|
 | P1 | **`detect_song_cue_points` IPC handler missing** | ~200 ms stall per autoCue click | Handler not registered in main.js. AutoCueSong calls fail silently. |
-| P2 | **MacroEngine clock-trigger polling unindexed** | ~150–565 ms DB hit per poll | Add composite index on `macros(station_id, trigger_type)` or similar. |
+| ~~P2~~ | ~~**MacroEngine clock-trigger polling unindexed**~~ | ~~~150–565 ms DB hit per poll~~ | ~~Add composite index on `macros(station_id, trigger_type)` or similar.~~ ✓ 5532bc2 — indexes added, clock watcher converted to `useMacroClock` hook (pure-JS check, no DB hit per tick), hotkey watcher event-driven via `ether:macros-changed` |
 | P3 | **`crash_recovery` saveQueue writes unthrottled** | ~370 ms, fires on every queue change | Debounce or throttle write; currently blocks UI thread. |
 | P4 | **RemoteCmd polling** | 2 s poll / 4 s timeout | SSE migration planned. |
 
