@@ -87,14 +87,15 @@ export default function ConsoleStrip({
       const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
       const fill = fillRef.current;
       if (!fill) return;
-      if (trackKey !== fillTrackRef.current) {
+      if (da.status === "playing" && trackKey !== fillTrackRef.current) {
         fillTrackRef.current = trackKey;
+        const startPct  = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
+        const remaining = Math.max(0, (da.durationSec ?? 0) - (da.positionSec ?? 0));
         fill.style.transition = "none";
-        fill.style.width = "0%";
-        requestAnimationFrame(() => {
-          fill.style.transition = `width ${da.durationSec ?? 0}s linear`;
-          fill.style.width = "100%";
-        });
+        fill.style.width = `${startPct}%`;
+        void fill.offsetWidth;
+        fill.style.transition = `width ${remaining}s linear`;
+        fill.style.width = "100%";
       }
       if (da.status !== "playing") {
         fill.style.transition = "none";
