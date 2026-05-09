@@ -119,6 +119,7 @@ export default function ImportDialog({ onDone }: Props) {
           artist_id:   artist?.id || null,
           category_id: selectedCat,
           genre:       tags.genre || null,
+          duration_ms: tags.durationSec != null ? Math.round(tags.durationSec * 1000) : undefined,
         });
 
         // Auto-analyze: BPM, LUFS, energy, cue points — runs in Rust background thread.

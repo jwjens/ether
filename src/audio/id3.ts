@@ -100,6 +100,13 @@ export async function readID3(filePath: string): Promise<ID3Tags> {
     result.album = v2.album || v1.album || null;
     result.year = v2.year || v1.year || null;
     result.genre = v2.genre || v1.genre || null;
+    try {
+      const ctx = new AudioContext();
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const decoded = await ctx.decodeAudioData(buf);
+      result.durationSec = decoded.duration;
+      await ctx.close();
+    } catch {}
   } catch (e) {
     console.error("ID3 read error:", e);
   }
