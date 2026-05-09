@@ -404,6 +404,7 @@ export default function App() {
   const [currentPlan, setCurrentPlan] = useState<PlanTier>("free");
   const [panel, setPanel] = useState<Panel>("live");
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
+  const apiKeyRef = useRef<string>("");
   const panelRef = useRef<Panel>("live");
   useEffect(() => {
     panelRef.current = panel;
@@ -522,6 +523,8 @@ export default function App() {
         if (name) setStationName(name);
         const p = get('plan_tier') as PlanTier | undefined;
         if (p) { setCurrentPlan(p); setPlanGlobally(p); }
+        const apiKey = get('license_key');
+        if (apiKey) apiKeyRef.current = apiKey;
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
       } catch {}
@@ -529,6 +532,18 @@ export default function App() {
       consoleLog("system", "ether started — engine ready");
     })();
   }, [stationId, stationReady]);
+
+  // Keep apiKeyRef live if user enters license mid-session
+  useEffect(() => {
+    const reload = async () => {
+      const result = await (window as any).ether.stationConfigKv.list(stationId);
+      const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+      const key = rows.find((r: any) => r.key === 'license_key')?.value;
+      if (key) apiKeyRef.current = key;
+    };
+    window.addEventListener('ether:license-changed', reload);
+    return () => window.removeEventListener('ether:license-changed', reload);
+  }, [stationId]);
 
   // Native menu IPC handler
   useEffect(() => {
@@ -609,7 +624,10 @@ export default function App() {
 
     const poll = async () => {
       try {
-        const res  = await fetch(POLL_URL, { signal: AbortSignal.timeout(4000) });
+        const res  = await fetch(POLL_URL, {
+          signal: AbortSignal.timeout(4000),
+          headers: apiKeyRef.current ? { "x-license-key": apiKeyRef.current } : {},
+        });
         if (!res.ok) return;
         const cmds: Array<{ cmd: string; data: any; ts: number }> = await res.json();
         for (const c of cmds) await execCmd(c.cmd, c.data || {});
@@ -1030,7 +1048,10 @@ export default function App() {
     // Push to Railway backend so /api/now-playing and /dashboard serve it
     fetch("https://ether-backend-production.up.railway.app/api/now-playing", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKeyRef.current ? { "x-license-key": apiKeyRef.current } : {}),
+      },
       body: JSON.stringify(payload),
     }).catch(() => {});
 

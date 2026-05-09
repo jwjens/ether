@@ -102,6 +102,7 @@ export default function SubscriptionPanel() {
       setLoading(true);
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', tier);
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', trimmedKey);
+      window.dispatchEvent(new CustomEvent('ether:license-changed'));
       if (licenseEmail.trim()) {
         await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
       }
@@ -132,6 +133,7 @@ export default function SubscriptionPanel() {
       }
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', data.plan);
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', licenseKey.trim());
+      window.dispatchEvent(new CustomEvent('ether:license-changed'));
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
       setCurrentPlan(data.plan as PlanTier);
       setLicenseSuccess(true);
