@@ -101,7 +101,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -1270,9 +1270,10 @@ export default function App() {
                 )}
                 {([
                   { key: "library",    emoji: "🎵", label: "Library",     action: () => setPanel("library"),     active: panel === "library"     },
-                  { key: "schedule",   emoji: "📋", label: "Schedule",    action: () => setPanel("clocks"),      active: panel === "clocks"      },
-                  { key: "calendar",   emoji: "📅", label: "Calendar",    action: () => setPanel("calendar"),    active: panel === "calendar"    },
-                  { key: "programlog", emoji: "📜", label: "Program Log", action: () => setPanel("programlog"), active: panel === "programlog"  },
+                  { key: "schedule",       emoji: "📋", label: "Schedule",     action: () => setPanel("clocks"),          active: panel === "clocks"          },
+                  { key: "schedulebuilder", emoji: "🗓", label: "Program Log",  action: () => setPanel("schedulebuilder"), active: panel === "schedulebuilder" },
+                  { key: "calendar",       emoji: "📅", label: "Calendar",     action: () => setPanel("calendar"),        active: panel === "calendar"        },
+                  { key: "programlog",     emoji: "📜", label: "Play History", action: () => setPanel("programlog"),      active: panel === "programlog"      },
                   { key: "cartwall",   emoji: "🎛️", label: "Carts",       action: () => setPanel("cartwall"),    active: panel === "cartwall"    },
                 ] as const).map(item => (
                   <button
@@ -1418,6 +1419,7 @@ export default function App() {
               {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
+              {panel === "schedulebuilder" && <ProgramLog onClose={() => setPanel("live")} />}
               {panel === "studio" && (
                 <EtherErrorBoundary>
                   <StudioPro
@@ -1851,7 +1853,8 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item label="Shows & Dayparts" onClick={() => set("clocks")} />
         <Item label="Music Categories" onClick={() => set("clocks")} />
         <Item separator />
-        <Item label="Program Log"      onClick={() => set("programlog")} />
+        <Item label="Program Log"      onClick={() => set("schedulebuilder")} />
+        <Item label="Play History"     onClick={() => set("programlog")} />
         <Item label={L.logs}           onClick={() => set("logs")} />
       </Menu>
     ),
