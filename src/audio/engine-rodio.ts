@@ -217,8 +217,6 @@ export class AudioEngine {
         if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
         if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
         if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
-        const toState2 = toId === "A" ? this.stateA : toId === "B" ? this.stateB : this.stateC;
-        this.notifyPlayStart(toId, toState2.title, toState2.artist, toState2.filePath);
         // Only clear the destination deck's end-trigger — we want to allow toId to end
         // naturally later. Do NOT clear fromId here: the native backend may still report
         // fromId as "playing" for a tick or two while the OS drains the audio buffer.
@@ -252,7 +250,6 @@ export class AudioEngine {
         await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
         await invoke("audio_play", { deck: "A" });
         this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
-        this.notifyPlayStart("A", next.title, next.artist, next.filePath);
         this.endTriggered.delete("A");
         // Do NOT delete "C" — it's still physically playing (fired 300ms early); loadToDeck clears it when preloadDeck("C") runs.
         setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800);
@@ -278,7 +275,6 @@ export class AudioEngine {
         if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
         if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
         if (deckId === "C") { this.stateC = { ...this.stateC, status: "playing", positionSec: 0 }; this.endTriggered.delete("C"); }
-        this.notifyPlayStart(deckId, next.title, next.artist, next.filePath);
       } catch (e) { console.error("[ENGINE] handleLoadNextToDeck error:", e); }
     });
   }
@@ -396,7 +392,6 @@ export class AudioEngine {
       await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb);
       await invoke("audio_play", { deck: "A" });
       this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
-      this.notifyPlayStart("A", next.title, next.artist, next.filePath);
       this.endTriggered.delete("A");
       // Preload next two songs into B and C so rotation is seamless
       setTimeout(async () => {

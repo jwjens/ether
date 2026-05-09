@@ -414,6 +414,8 @@ export default function App() {
   const onAirOverrideRef = useRef(false); // ref avoids stale closure in engine.on
   const { goLive, stopLive } = useStreaming();
   const prevDeckStatus = useRef<Record<string, string>>({}); // track status transitions for console logging
+  const lastLoggedStatus = useRef<Record<string, string>>({});
+  const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
   const [deckA, setDeckA] = useState<DeckState | null>(null);
@@ -492,6 +494,7 @@ export default function App() {
     setDrawerOpen(false);
   };
   const { configs: deckConfigs, save: saveDeckConfigs, enabled: enabledDecks } = useDeckConfig();
+  useEffect(() => { deckConfigsRef.current = deckConfigs; }, [deckConfigs]);
 
   // Experience mode — controls deck visibility
   const [shiftStarted, setShiftStarted] = useState(false);
@@ -624,24 +627,6 @@ export default function App() {
   useEffect(() => {
     (globalThis as any).__etherEngine = engine;
     (globalThis as any).__resetScheduleCursor = resetScheduleCursor;
-    // Column additions now handled by db/client.ts migration system
-    return engine.onPlayStart(async (deckId, title, artist, filePath) => {
-      try { await logPlay(title, artist, deckId, undefined, stationId); }
-      catch (e) { console.error('Log write error:', e); }
-      consoleLog("audio", `[DECK ${deckId}] Playing: ${title}${artist ? ` — ${artist}` : ""}`);
-      // Keep Iris informed about what's on air
-      try { (window as any).ether.emit("iris:nowplaying", { title, artist }); }
-      catch {}
-      // Notify main process a new track started — used for live streaming
-      try {
-        const file_key = filePath ? filePath.replace(/\\/g, '/').split('/').pop() : '';
-        if (file_key) {
-          (window as any).ether.emit("playout:track-started", {
-            file_key, filePath: filePath || '', title, artist: artist || '', start_at: Date.now(),
-          });
-        }
-      } catch {}
-    });
   }, []);
 
   useEffect(() => {
@@ -782,6 +767,21 @@ export default function App() {
           || engine.getDeck("C")?.getState().status === "playing";
         if (!anyPlaying) setOnAir(false);
       }
+
+      // Play logging — fires on every transition into "playing" on a music deck
+      const prevStatus = lastLoggedStatus.current[id];
+      if (st.status === 'playing' && prevStatus !== 'playing') {
+        const cfg = deckConfigsRef.current.find(c => c.slot === id);
+        if (cfg?.type === 'music' && st.title) {
+          logPlay(st.title, st.artist || '', id, undefined, stationId).catch(e => console.error('Log write error:', e));
+          try { (window as any).ether.emit("iris:nowplaying", { title: st.title, artist: st.artist || '' }); } catch {}
+          try {
+            const file_key = st.filePath ? st.filePath.replace(/\\/g, '/').split('/').pop() : '';
+            if (file_key) (window as any).ether.emit("playout:track-started", { file_key, filePath: st.filePath || '', title: st.title, artist: st.artist || '', start_at: Date.now() });
+          } catch {}
+        }
+      }
+      lastLoggedStatus.current[id] = st.status;
     });
   }, []);
 
