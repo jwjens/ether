@@ -456,6 +456,7 @@ export default function App() {
         engine.clearQueue();
         engine.addToQueue(q.slice(1));
         await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist);
+        window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       }
     }, 2200);
     setXfadeActive(true);
@@ -639,6 +640,7 @@ export default function App() {
         artist: track.artist || "",
       }]);
       setQueueLen(engine.getQueue().length);
+      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     });
     return () => { unlisten.then(f => f()); };
   }, []);
@@ -786,16 +788,39 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const saveQueue = async () => {
-      try {
-        const queue = engine.getQueue();
-        const dA = engine.getDeck('A')?.getState();
-        await execute("UPDATE crash_recovery SET queue_json=?, deck_a_path=?, deck_a_title=?, deck_a_artist=?, deck_a_position=?, was_playing=?, saved_at=unixepoch() WHERE id=1",
-          [JSON.stringify(queue), dA?.filePath || null, dA?.title || null, dA?.artist || null, dA?.positionSec || 0, dA?.status === 'playing' ? 1 : 0]);
-      } catch (e) { console.error('Autosave failed:', e); }
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const lastDeckStatus: Record<string, string> = {};
+
+    const requestSave = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        try {
+          const queue = engine.getQueue();
+          const dA = engine.getDeck('A')?.getState();
+          await execute("UPDATE crash_recovery SET queue_json=?, deck_a_path=?, deck_a_title=?, deck_a_artist=?, deck_a_position=?, was_playing=?, saved_at=unixepoch() WHERE id=1",
+            [JSON.stringify(queue), dA?.filePath || null, dA?.title || null, dA?.artist || null, dA?.positionSec || 0, dA?.status === 'playing' ? 1 : 0]);
+        } catch (e) { console.error('[crash_recovery] autosave failed:', e); }
+        timer = null;
+      }, 250);
     };
-    const id = setInterval(saveQueue, 30000);
-    return () => clearInterval(id);
+
+    window.addEventListener('ether:queue-changed', requestSave);
+
+    const unsub = engine.on((id, st) => {
+      if (lastDeckStatus[id] !== st.status) {
+        lastDeckStatus[id] = st.status;
+        requestSave();
+      }
+    });
+
+    const fallback = setInterval(requestSave, 30000);
+
+    return () => {
+      window.removeEventListener('ether:queue-changed', requestSave);
+      unsub?.();
+      clearInterval(fallback);
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -832,6 +857,7 @@ export default function App() {
         await engine.loadToDeck('A', next.filePath, next.title, next.artist);
         engine.getDeck('A')?.play();
         setTimeout(() => engine.triggerPreload(), 1000);
+        window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       } else if (autoAdv) {
         await fillQueueFromSchedule().then(async (count) => {
           if (count === 0) {
@@ -844,6 +870,7 @@ export default function App() {
             await engine.loadToDeck('A', next.filePath, next.title, next.artist);
             engine.getDeck('A')?.play();
             setTimeout(() => engine.triggerPreload(), 1000);
+            window.dispatchEvent(new CustomEvent('ether:queue-changed'));
           }
         });
       }
@@ -872,6 +899,7 @@ export default function App() {
           const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
           const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }));
           engine.addToQueue(items); setQueueLen(items.length);
+          window.dispatchEvent(new CustomEvent('ether:queue-changed'));
         }
       }
       const q = engine.getQueue();
@@ -880,6 +908,7 @@ export default function App() {
         await engine.loadToDeck('A', first.filePath, first.title, first.artist);
         engine.getDeck('A')?.play();
         setTimeout(() => engine.triggerPreload(), 800);
+        window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       }
     } else { engine.continuous = false; setContinuous(false); }
   };
@@ -892,6 +921,7 @@ export default function App() {
     const q = engine.getQueue(); q.splice(0, 0, item); engine.replaceQueue(q);
     setQueueLen(engine.getQueue().length);
     engine.triggerPreload();
+    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const loadB = useCallback((s: SongRow) => {
@@ -900,6 +930,7 @@ export default function App() {
     const q = engine.getQueue(); q.splice(1, 0, item); engine.replaceQueue(q);
     setQueueLen(engine.getQueue().length);
     engine.triggerPreload();
+    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const loadC = useCallback((s: SongRow) => {
@@ -908,6 +939,7 @@ export default function App() {
     const q = engine.getQueue(); q.splice(2, 0, item); engine.replaceQueue(q);
     setQueueLen(engine.getQueue().length);
     engine.triggerPreload();
+    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
@@ -917,6 +949,7 @@ export default function App() {
     if (s.file_path) {
       engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined } as any]);
       setQueueLen(engine.getQueue().length);
+      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       // Auto-detect cue points in background if not set
       if (autoSilenceTrim && s.id && !s.intro_end) {
         autoCueSong(s.id, s.file_path).catch(() => {});
@@ -959,6 +992,7 @@ export default function App() {
       if (!confirm("Switching stations will stop playback and clear all decks. Continue?")) return false;
       engine.getDeck("A")?.stop(); engine.getDeck("B")?.stop(); engine.getDeck("C")?.stop();
       engine.clearQueue(); setQueueLen(0);
+      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     }
     const r = await (window as any).ether.stations.switch(id);
     if (!r?.ok) return false;
@@ -2546,7 +2580,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           >{collapseChevron}</button>
           {/* ── Queue ── */}
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-            <UpNext queueLen={queueLen} onQueueChange={() => {}} />
+            <UpNext queueLen={queueLen} onQueueChange={() => window.dispatchEvent(new CustomEvent('ether:queue-changed'))} />
           </div>
         </>
       )}
@@ -3117,7 +3151,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     }
     setStatus("Relocated " + fixed + " songs"); setTimeout(() => setStatus(""), 4000); load();
   };
-  const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }))); };
+  const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }))); window.dispatchEvent(new CustomEvent('ether:queue-changed')); };
   const filtered = songs.filter(s => {
     const matchSearch = !search ||
       (s.title||"").toLowerCase().includes(search.toLowerCase()) ||
