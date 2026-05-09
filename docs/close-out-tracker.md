@@ -24,7 +24,7 @@
 |---|------|---------------|-------|
 | P1 | **`detect_song_cue_points` IPC handler missing** | ~200 ms stall per autoCue click | Handler not registered in main.js. AutoCueSong calls fail silently. |
 | ~~P2~~ | ~~**MacroEngine clock-trigger polling unindexed**~~ | ~~~150–565 ms DB hit per poll~~ | ~~Add composite index on `macros(station_id, trigger_type)` or similar.~~ ✓ 5532bc2 — indexes added, clock watcher converted to `useMacroClock` hook (pure-JS check, no DB hit per tick), hotkey watcher event-driven via `ether:macros-changed` |
-| P3 | **`crash_recovery` saveQueue writes unthrottled** | ~370 ms, fires on every queue change | Debounce or throttle write; currently blocks UI thread. |
+| P3 | **`crash_recovery` saveQueue writes** | ~55 ms, one-shot on startup | Tracker description was wrong — `onQueueChange` is a no-op; writes fire every 30s via interval (benign) + one clear after crash restore. Real improvement is event-driven debounce via `ether:queue-changed` + 30s fallback. Parked — not actively broken, good engineering but not urgent. |
 | P4 | **RemoteCmd polling** | 2 s poll / 4 s timeout | SSE migration planned. |
 
 ---
