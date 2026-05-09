@@ -7,6 +7,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
+import { engine } from "../audio/engine-rodio";
 
 interface Props {
   label: string;
@@ -57,6 +58,8 @@ export default function ConsoleStrip({
   const isOnRef     = useRef(isOn);
   const isPlayingRef = useRef(isPlaying);
   const colorRef    = useRef(color);
+  const fillRef      = useRef<HTMLDivElement>(null);
+  const fillTrackRef = useRef<string>("");
   const [faderH, setFaderH] = useState(220);
 
   // Measure actual rendered height so knob position math stays accurate
@@ -74,6 +77,34 @@ export default function ConsoleStrip({
   useEffect(() => { isOnRef.current = isOn; },       [isOn]);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
   useEffect(() => { colorRef.current = color; },     [color]);
+
+  // Progress fill — imperative DOM, no React state, same pattern as VU
+  useEffect(() => {
+    if (!deckId) return;
+    const unsub = engine.on(() => {
+      const da = engine.getDeck(deckId.toUpperCase() as "A" | "B" | "C")?.getState?.();
+      if (!da) return;
+      const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
+      const fill = fillRef.current;
+      if (!fill) return;
+      if (trackKey !== fillTrackRef.current) {
+        fillTrackRef.current = trackKey;
+        fill.style.transition = "none";
+        fill.style.width = "0%";
+        requestAnimationFrame(() => {
+          fill.style.transition = `width ${da.durationSec ?? 0}s linear`;
+          fill.style.width = "100%";
+        });
+      }
+      if (da.status !== "playing") {
+        fill.style.transition = "none";
+        const pct = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
+        fill.style.width = `${pct}%`;
+        fillTrackRef.current = "";
+      }
+    });
+    return () => unsub();
+  }, [deckId]);
 
   // Direct DOM VU update when deckId is provided — bypasses React state
   // so the parent (App.tsx) doesn't re-render the library table on each tick.
@@ -185,11 +216,22 @@ export default function ConsoleStrip({
         flex: 1, width: "100%", display: "flex", gap: 0,
         padding: "10px 8px 8px",
         minHeight: 180, overflow: "hidden",
+        position: "relative",
       }}>
+
+        {/* Progress fill — covers full main area, managed imperatively */}
+        {deckId && (
+          <div ref={fillRef} style={{
+            position: "absolute", top: 0, left: 0, bottom: 0,
+            width: "0%",
+            background: `${color}1c`,
+            zIndex: 0, pointerEvents: "none",
+          }} />
+        )}
 
         {/* ── Fader column: rail, scale, and knob cap ── */}
         <div style={{
-          width: 72, flexShrink: 0, height: "100%", position: "relative",
+          width: 72, flexShrink: 0, height: "100%", position: "relative", zIndex: 1,
         }}>
 
           {/* Mouse / touch capture — covers full column, sits above all visuals */}
@@ -328,7 +370,7 @@ export default function ConsoleStrip({
           background: "var(--vu-meter-bg, #0a0a0f)",
           border: "1px solid var(--strip-divider, #303040)",
           boxShadow: "inset 0 2px 6px rgba(0,0,0,0.4)",
-          position: "relative", overflow: "hidden",
+          position: "relative", overflow: "hidden", zIndex: 1,
         }}>
           {/* Meter fill — ref-updated at 30Hz when deckId is set, JSX-driven otherwise */}
           <div ref={deckId ? vuFillRef : undefined} style={{

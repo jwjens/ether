@@ -3632,8 +3632,6 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
   const [deckAPos, setDeckAPos]       = useState(0);
   const [deckADur, setDeckADur]       = useState(0);
   const [deckAStatus, setDeckAStatus] = useState("");
-  const fillRef       = useRef<HTMLDivElement>(null);
-  const fillTrackRef  = useRef<string>("");
   const nextTitleRef  = useRef<HTMLSpanElement>(null);
   const afterTitleRef = useRef<HTMLSpanElement>(null);
 
@@ -3646,35 +3644,6 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         setDeckAPos(da.positionSec ?? 0);
         setDeckADur(da.durationSec ?? 0);
         setDeckAStatus(da.status ?? "");
-        const el = fillRef.current;
-        if (el) {
-          if (da.status === "playing" && da.durationSec > 0) {
-            const fp    = da.filePath || da.title || "";
-            const ratio = (da.positionSec ?? 0) / da.durationSec;
-            if (fp !== fillTrackRef.current) {
-              fillTrackRef.current = fp;
-              const rem = Math.max(0.5, da.durationSec - (da.positionSec ?? 0));
-              el.style.transition = "none";
-              el.style.width = `${ratio * 100}%`;
-              requestAnimationFrame(() => {
-                el.style.transition = `width ${rem}s linear`;
-                el.style.width = "100%";
-              });
-            }
-            el.style.animationName = ratio >= 0.95 ? "y3-fill-pulse" : "none";
-            el.style.background    = ratio >= 0.95
-              ? "rgba(239,68,68,0.30)"
-              : ratio >= 0.80
-              ? "rgba(245,158,11,0.22)"
-              : "rgba(56,189,248,0.22)";
-          } else if (fillTrackRef.current !== "") {
-            fillTrackRef.current = "";
-            el.style.transition    = "none";
-            el.style.width         = "0%";
-            el.style.background    = "transparent";
-            el.style.animationName = "none";
-          }
-        }
       }
     };
     pull();
@@ -3728,7 +3697,6 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
   return (
     <>
       <style>{`
-        @keyframes y3-fill-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
         @keyframes y3-marquee {
           0%,15%  { transform: translateX(0); }
           70%,85% { transform: translateX(var(--mq-offset)); }
@@ -3752,21 +3720,10 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
               borderRight: idx < 2 ? "1px solid var(--border-primary)" : "none",
               padding: "2px 10px",
               display: "flex", flexDirection: "column", justifyContent: "center", gap: 1,
-              ...(idx === 0 ? { position: "relative" as const, overflow: "hidden" as const } : {}),
             }}>
-              {/* Fill layer — ON AIR slot only, managed imperatively */}
-              {idx === 0 && (
-                <div ref={fillRef} style={{
-                  position: "absolute" as const, top: 0, right: 0, bottom: 0, left: 0,
-                  width: "0%", zIndex: 0, pointerEvents: "none" as const,
-                  animationDuration: "1s", animationTimingFunction: "ease-in-out",
-                  animationIterationCount: "infinite",
-                }} />
-              )}
               {/* Row 1: dot · label · time */}
               <div style={{
                 display: "flex", alignItems: "center", gap: 4, minWidth: 0,
-                ...(idx === 0 ? { position: "relative" as const, zIndex: 1 } : {}),
               }}>
                 <span style={{
                   width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
@@ -3797,7 +3754,6 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
                   color: active ? "var(--text-primary)" : "var(--text-tertiary)",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                   fontStyle: active ? "normal" : "italic",
-                  position: "relative" as const, zIndex: 1,
                 }}>
                   {item?.title || "—"}
                 </div>
