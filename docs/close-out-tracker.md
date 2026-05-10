@@ -1,6 +1,6 @@
 # Ether — Close-Out Tracker
 
-> **Last updated:** 2026-05-10 (Item 7 — Schedule/Clocks UX — closed)
+> **Last updated:** 2026-05-10 (Item 8 — songs.station_id drop, schema v12 — closed)
 >
 > Canonical list of every open arc, parked item, and known issue. Update this file at the start of each new arc, not at the end.
 
@@ -10,6 +10,7 @@
 
 | # | Item | Notes |
 |---|------|-------|
+| ~~S0~~ | ~~**`songs.station_id` drop (Item 8)**~~ | ~~16 renderer SQL filters + 4 JOIN conditions removed. songs.js INSERT + Spotify import INSERT cleaned. `stationTables` alterSafe loop updated. Registry entry removed. Migration script v12 shipped. Live DB migrated (381 songs). schema_version = [1..12].~~ ✓ 8270bdc. Note: v11 schema_version row was missing (DDL ran via main.js startup but INSERT was never written); fixed via one-off script before v12 ran. Future DDL-only migrations must explicitly INSERT their version. |
 | S1 | **Group 4 — `published_episodes` typed handler** | Feature not yet built. Belongs to Show+ podcast publishing arc. Write handler when feature ships. |
 | S2 | **Group 8 — `smart_schedule_rules` typed handler** | Schema audit needed first. SmartScheduler writes go through guard but not mutation log yet. |
 | S3 | **Group 9 — CloudBackup restore protocol** | Privileged batch restore needs dedicated IPC channel (not db:execute). Own arc. |
