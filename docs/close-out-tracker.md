@@ -1,6 +1,6 @@
 # Ether — Close-Out Tracker
 
-> **Last updated:** 2026-05-09 (P2 MacroEngine performance — closed)
+> **Last updated:** 2026-05-10 (Item 7 — Schedule/Clocks UX — closed)
 >
 > Canonical list of every open arc, parked item, and known issue. Update this file at the start of each new arc, not at the end.
 
@@ -42,7 +42,7 @@
 | # | Item | Notes |
 |---|------|-------|
 | Y1 | **Deck-direct loads with on-air lock (Y1-take-2)** | Proper discovery needed before implementation. Parked. |
-| Y3 | **ON AIR slot polish** | Progress fill on ON AIR slot; marquee scroll on long titles in NEXT/AFTER slots. |
+| ~~Y3~~ | ~~**ON AIR slot polish — progress fill**~~ | ~~Deck label bars (Deck A/B/C) animate left→right in deck color as song plays, representing duration. Rust backend survival case handled via `durQueried` + `setDeckDuration()`.~~ ✓ 9c70558. Marquee scroll on long titles deferred. |
 | X1.2 | **Library panel refinements** | Minor UX polish items identified during v4.0.0 build. |
 
 ---
@@ -53,7 +53,7 @@
 |---|------|-------|
 | U1 | **Schedule generation UI buttons** | "Generate Hour / Day / Week" buttons not rendered in Shows & Dayparts. Backend `scheduleOneHour`/`fillDay` functions intact and verified via DevTools. UI restoration is its own focused commit. |
 | U2 | **MIDI mapping UI** | MIDI mappings table exists; UI review needed. |
-| U3 | **Menu / nav rename pass** | MenuBar in App.tsx is dead code. Native Electron menu + inline header buttons drive nav. Review naming consistency. |
+| ~~U3~~ | ~~**Menu / nav rename pass (Item 7)**~~ | ~~Schedule submenu: "Format Clock"→"Clocks", "Music Categories"→"Categories" (Zetta-style). ✓ 5aecebe. ClocksTab v1 upgraded with TYPE/CATEGORY/CHAIN inline editing, 10-column grid, `chain_type` schema column. ✓ 51ffe7d. ClocksV2 beta deleted, v1 canonical. ✓ 9ec5a7e.~~ |
 
 ---
 
