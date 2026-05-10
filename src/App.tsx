@@ -380,6 +380,28 @@ function useViewport() {
   };
 }
 
+// ── Swipe gesture hook ────────────────────────────────────────────────────────
+// Detects intentional horizontal pointer swipes on a container.
+// Ignores gestures that start on interactive children (buttons, inputs, etc.)
+// and gestures that are more vertical than horizontal (scroll protection).
+function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
+  const start = useRef<{ x: number; y: number; t: number } | null>(null);
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if ((e.target as Element).closest('button, input, a, select, [role="button"], [data-swipe-ignore]')) return;
+    start.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+  }, []);
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!start.current) return;
+    const dx = e.clientX - start.current.x;
+    const dy = e.clientY - start.current.y;
+    const dt = Date.now() - start.current.t;
+    start.current = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500)
+      onSwipe(dx < 0 ? 'left' : 'right');
+  }, [onSwipe]);
+  return { onPointerDown, onPointerUp };
+}
+
 export default function App() {
   const { stationId, isReady: stationReady } = useActiveStation();
   const viewport = useViewport();
@@ -2789,6 +2811,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 
   const panels: Record<string, JSX.Element> = { queue: showQueue ? queuePanel : <></>, decks: decksPanel };
 
+  const livePanelSwipe = useSwipe(useCallback(() => {
+    setQueueCollapsed(c => !c);
+  }, []));
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
 
@@ -2821,6 +2847,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       {/* Main layout — drag-reorderable + resizable */}
       <div
         ref={containerRef}
+        {...livePanelSwipe}
         style={{
           display: "flex", gap: 0, flex: 1, minHeight: 0, overflow: "hidden",
           cursor: dragging ? "grabbing" : resizingRef.current ? "col-resize" : "auto",
@@ -2831,6 +2858,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             {panels[p]}
             {i < panelOrder.length - 1 && (
               <div
+                data-swipe-ignore
                 onMouseDown={startResizeQueue}
                 style={{
                   width: 10, flexShrink: 0, cursor: "col-resize",

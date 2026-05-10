@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import CreateShowWizard from "./CreateShowWizard";
@@ -28,6 +28,25 @@ interface ClockSlot {
   song_title?: string | null; song_artist?: string | null;
 }
 
+// ── Swipe gesture hook ────────────────────────────────────────────────────────
+function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
+  const start = useRef<{ x: number; y: number; t: number } | null>(null);
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if ((e.target as Element).closest('button, input, a, select, [role="button"]')) return;
+    start.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+  }, []);
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    if (!start.current) return;
+    const dx = e.clientX - start.current.x;
+    const dy = e.clientY - start.current.y;
+    const dt = Date.now() - start.current.t;
+    start.current = null;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500)
+      onSwipe(dx < 0 ? 'left' : 'right');
+  }, [onSwipe]);
+  return { onPointerDown, onPointerUp };
+}
+
 const HOURS = Array.from({length: 24}, (_, i) => i);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SLOT_TYPES = ["music", "spot_break", "liner", "sweeper", "news", "talkset", "jingle"];
@@ -49,6 +68,8 @@ interface SchedulerProps {
   defaultTab?: "shows" | "categories" | "clocks";
 }
 
+const SCHEDULER_TABS: ("shows" | "categories" | "clocks")[] = ["shows", "categories", "clocks"];
+
 export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
   const [tab, setTab] = useState<"shows" | "categories" | "clocks">(defaultTab);
   const [showWizard, setShowWizard] = useState(false);
@@ -57,8 +78,16 @@ export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
   // Sync when parent navigation changes the requested tab
   useEffect(() => { setTab(defaultTab); }, [defaultTab]);
 
+  const swipe = useSwipe(useCallback((dir: 'left' | 'right') => {
+    setTab(cur => {
+      const idx = SCHEDULER_TABS.indexOf(cur);
+      const next = dir === 'left' ? Math.min(idx + 1, SCHEDULER_TABS.length - 1) : Math.max(idx - 1, 0);
+      return SCHEDULER_TABS[next];
+    });
+  }, []));
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-3" {...swipe}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <h1 className="text-lg font-bold" style={{ margin: 0 }}>Schedule</h1>
         <button
