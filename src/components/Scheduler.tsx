@@ -68,7 +68,7 @@ export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
         {(["shows", "categories", "clocks"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={tab === t ? "px-3 py-1.5 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1.5 rounded text-xs font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}
-          >{t === "shows" ? "Shows & Dayparts" : t === "categories" ? "Music Categories" : "Format Clocks"}</button>
+          >{t === "shows" ? "Shows & Dayparts" : t === "categories" ? "Categories" : "Clocks"}</button>
         ))}
       </div>
       {tab === "shows" && <ShowsTab key={wizardKey} />}
@@ -884,7 +884,7 @@ function ClocksTab() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 800, color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif", letterSpacing: "-0.03em" }}>
-            Format Clocks
+            Clocks
           </h2>
           <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "3px 0 0" }}>
             Build your hour — positions update live as you add segments

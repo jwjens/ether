@@ -1041,9 +1041,9 @@ function buildMenu() {
       { label: "Cue Editor", click: () => send("nav:trackedit") },
     ]},
     { label: "Schedule", submenu: [
-      { label: "Format Clock",     click: () => { send("nav:clocks"); send("nav:scheduler-tab:clocks"); } },
+      { label: "Clocks",           click: () => { send("nav:clocks"); send("nav:scheduler-tab:clocks"); } },
       { label: "Shows & Dayparts", click: () => { send("nav:clocks"); send("nav:scheduler-tab:shows"); } },
-      { label: "Music Categories", click: () => { send("nav:clocks"); send("nav:scheduler-tab:categories"); } },
+      { label: "Categories",       click: () => { send("nav:clocks"); send("nav:scheduler-tab:categories"); } },
       { type: "separator" },
       { label: "Program Log",      click: () => send("nav:programlog") },
       { label: "Play Log",         click: () => send("nav:logs") },

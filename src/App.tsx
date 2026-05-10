@@ -1819,7 +1819,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
 
   // Full persona-aware labels for all 5 venue types
   const personaLabels: Record<string, Record<string, string>> = {
-    radio:   { library: "Song Library",    spots: "Spots & Promos",   clocks: "Format Clocks",     logs: "Play Log",      voicetrack: "Voice Tracker", live: "Live Assist",  tools: "Tools" },
+    radio:   { library: "Song Library",    spots: "Spots & Promos",   clocks: "Clocks",            logs: "Play Log",      voicetrack: "Voice Tracker", live: "Live Assist",  tools: "Tools" },
     venue:   { library: "Music Library",   spots: "Announcements",    clocks: "Event Schedule",    logs: "Activity Log",  voicetrack: "Voice Track",   live: "Live Assist",  tools: "Tools" },
     retail:  { library: "Music Library",   spots: "Store Messages",   clocks: "Playlist Schedule", logs: "Playback Log",  voicetrack: "Voice Track",   live: "Live Assist",  tools: "Tools" },
     worship: { library: "Worship Library", spots: "Ministry Audio",   clocks: "Service Schedule",  logs: "Service Log",   voicetrack: "Voice Track",   live: "Worship Mode", tools: "Tools" },
@@ -1937,7 +1937,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
       <Menu>
         <Item label={L.clocks}         onClick={() => set("clocks")} />
         <Item label="Shows & Dayparts" onClick={() => set("clocks")} />
-        <Item label="Music Categories" onClick={() => set("clocks")} />
+        <Item label="Categories" onClick={() => set("clocks")} />
         <Item separator />
         <Item label="Program Log"      onClick={() => set("schedulebuilder")} />
         <Item label="Play History"     onClick={() => set("programlog")} />

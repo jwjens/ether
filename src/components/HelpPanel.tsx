@@ -32,7 +32,7 @@ Ether is a complete broadcast automation suite — think RCS Zetta or Wide Orbit
 
 # What to explore next
 
-- Format Clocks (Schedule → Format Clocks) — build your rotation hour by hour
+- Clocks (Schedule → Clocks) — build your rotation hour by hour
 - Pair Mobile App (Settings → Pair Mobile App) — voice-track from your phone
 - AI Voice Studio (Tools → AI Voice Studio) — generate station IDs and weather from text
 - Stream Metadata (Settings → Stream Metadata Outputs) — push now-playing to Icecast/Shoutcast/TuneIn/RDS

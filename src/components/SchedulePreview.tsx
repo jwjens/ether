@@ -310,7 +310,7 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
                     {/* Slots row */}
                     {h.slots.length === 0 && h.pins.length === 0 && h.scheduled.length === 0 ? (
                       <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>
-                        {h.show ? "Format clock has no slots — assign categories in Format Clocks" : "Will run filtered random rotation"}
+                        {h.show ? "Format clock has no slots — assign categories in Clocks" : "Will run filtered random rotation"}
                       </div>
                     ) : (
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as any }}>
