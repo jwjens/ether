@@ -370,6 +370,7 @@ function useViewport() {
   // doesn't look empty/unfinished at the narrowest window sizes.
   return {
     width: w,
+    isTablet:   w >= 768 && w < 1024, // 768–1023px: tablet portrait/landscape
     veryNarrow: w < 900,   // hide WARN text, Go Live → ▶ icon, search icon-only
     narrow:     w < 1050,  // collapse Admin to icon-only
     medium:     w < 1200,  // collapse Pro to icon-only
@@ -1139,7 +1140,7 @@ export default function App() {
       <KeyboardHelp />
 
       {/* ── Header ── */}
-      <header style={{ height: 96, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      <header style={{ height: viewport.isTablet ? 64 : 96, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
         {/* Logo — click to return to Mixer */}
         <div
@@ -3230,7 +3231,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   ];
 
   const hasTitleCol = visibleCols.has('title');
-  const ACTION_ZONE_W = 240;
+  const ACTION_ZONE_W = 252; // 6 buttons × 36px min-width + 5 gaps × 3px + 12px h-padding
   const titleW = colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'];
   const middleCols = visibleLibraryCols.filter(c => !(c.kind === 'standard' && c.id === 'title'));
   const colW = (col: LibraryColumn): number =>
