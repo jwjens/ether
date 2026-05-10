@@ -178,19 +178,15 @@ export class AudioEngine {
 
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
-        console.log('[ENGINE] A end: dur=', dur, 'pos=', pos, 'backendEnded=', backendEnded, 'stateB.fp=', !!this.stateB.filePath);
         if (this.stateB.filePath) { this.handleRotate("A", "B"); }
         else if (this.autoAdvance) { this.handleLoadNextToDeck("A"); }
       } else if (deckId === "B") {
         this.stateB = { ...this.stateB, status: "ended" };
-        console.log('[ENGINE] B end: dur=', dur, 'pos=', pos, 'backendEnded=', backendEnded, 'stateC.fp=', !!this.stateC.filePath);
         if (this.stateC.filePath) { this.handleRotate("B", "C"); }
         else if (this.autoAdvance) { this.handleLoadNextToDeck("B"); }
       } else if (deckId === "C") {
         this.stateC = { ...this.stateC, status: "ended" };
-        console.log('[ENGINE] C end: dur=', dur, 'pos=', pos, 'backendEnded=', backendEnded, 'autoAdv=', this.autoAdvance, 'queue=', this.queue.length);
         if (this.autoAdvance || this.queue.length > 0) { this.handleRotateCtoA(); }
-        else { console.log('[ENGINE] C end: NO handleRotateCtoA — autoAdv false AND queue empty'); }
       }
     }
   }
@@ -239,12 +235,11 @@ export class AudioEngine {
         // Check the Rust backend: if deck A (the destination) is already playing, bail.
         // C may still be playing when this fires (300ms before end), so we only check A.
         const liveState = await invoke("audio_get_state");
-        console.log('[ENGINE] CtoA: deckA=', liveState?.deckA?.status, 'queue=', this.queue.length);
         if (liveState) {
-          if (liveState.deckA?.status === "playing") { console.log('[ENGINE] CtoA: BAIL deckA playing'); return; }
+          if (liveState.deckA?.status === "playing") { return; }
         }
         await this.refillIfNeeded();
-        if (this.queue.length === 0) { console.log('[ENGINE] CtoA: BAIL queue empty'); return; }
+        if (this.queue.length === 0) { return; }
         const next = this.dequeue();
         this.deckChainType["A"] = next.chainType || "segue";
         await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
@@ -288,7 +283,7 @@ export class AudioEngine {
     try {
       this.deckChainType[deckId] = next.chainType || "segue";
       await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
-      console.log(`[ENGINE] Preloaded ${deckId} (queue[${queueIndex}]):`, next.title);
+      console.log(`[ENGINE] preloaded ${deckId}: ${next.title}`);
     } catch (e) { console.error(`[ENGINE] Preload ${deckId} failed:`, e); }
   }
 
@@ -309,6 +304,12 @@ export class AudioEngine {
   }
 
   on(fn: Listener): () => void { this.listeners.add(fn); return () => this.listeners.delete(fn); }
+
+  setDeckDuration(id: DeckId, durationSec: number) {
+    if (id === "A") { this.stateA = { ...this.stateA, durationSec }; this.listeners.forEach(l => l("A", this.stateA)); }
+    if (id === "B") { this.stateB = { ...this.stateB, durationSec }; this.listeners.forEach(l => l("B", this.stateB)); }
+    if (id === "C") { this.stateC = { ...this.stateC, durationSec }; this.listeners.forEach(l => l("C", this.stateC)); }
+  }
   onPlayStart(fn: (deckId: DeckId, title: string, artist: string, filePath: string) => void): () => void {
     this.playStartCallbacks.add(fn); return () => this.playStartCallbacks.delete(fn);
   }
@@ -344,7 +345,6 @@ export class AudioEngine {
   }
 
   async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number) {
-    console.log('[ENGINE] loadToDeck', id, 'durationMs:', durationMs);
     this.init();
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
     const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
@@ -369,7 +369,6 @@ export class AudioEngine {
   }
 
   addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
-    if (songs[0]) console.log('[ENGINE] addToQueue first item durationMs:', songs[0].durationMs);
     this.queue.push(...songs);
   }
   clearQueue() { this.queue = []; }

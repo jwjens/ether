@@ -416,6 +416,7 @@ export default function App() {
   const { goLive, stopLive } = useStreaming();
   const prevDeckStatus = useRef<Record<string, string>>({}); // track status transitions for console logging
   const lastLoggedStatus = useRef<Record<string, string>>({});
+  const durQueried = useRef(new Set<string>());
   const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
@@ -456,7 +457,7 @@ export default function App() {
         const next = q[0];
         engine.clearQueue();
         engine.addToQueue(q.slice(1));
-        await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist);
+        await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
         window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       }
     }, 2200);
@@ -746,6 +747,17 @@ export default function App() {
       else if (id === "B") setDeckB({...st});
       else if (id === "C") setDeckC({...st});
 
+      // If a deck is playing but has no duration (e.g. Rust backend survived a JS reload),
+      // look up duration_ms from the DB by filePath — fires at most once per filePath.
+      if (st.durationSec === 0 && st.filePath && !durQueried.current.has(st.filePath)) {
+        durQueried.current.add(st.filePath);
+        queryOne<{ duration_ms: number | null }>(
+          "SELECT duration_ms FROM songs WHERE file_path = ?", [st.filePath]
+        ).then(row => {
+          if (row?.duration_ms) engine.setDeckDuration(id as "A" | "B" | "C", row.duration_ms / 1000);
+        }).catch(() => {});
+      }
+
       // Console logging — status transitions
       const prev = prevDeckStatus.current[id];
       if (prev !== st.status) {
@@ -848,10 +860,28 @@ export default function App() {
         const row = await queryOne<{queue_json: string, deck_a_path: string | null, deck_a_title: string | null, deck_a_artist: string | null, deck_a_position: number | null, was_playing: number, saved_at: number}>("SELECT * FROM crash_recovery WHERE id=1");
         if (!row || !row.saved_at) return;
         if (Date.now() / 1000 - row.saved_at > 3600) return;
-        const queue = JSON.parse(row.queue_json || '[]');
-        if (queue.length > 0) { engine.addToQueue(queue); setQueueLen(queue.length); console.log('Restored', queue.length, 'items from crash recovery'); }
+        const queue: { filePath: string; title: string; artist: string; durationMs?: number }[] = JSON.parse(row.queue_json || '[]');
+        if (queue.length > 0) {
+          // Enrich any queue items missing durationMs from the songs table
+          const paths = queue.filter(i => !i.durationMs).map(i => i.filePath);
+          if (paths.length > 0) {
+            const placeholders = paths.map(() => '?').join(',');
+            const rows = await query<{ file_path: string; duration_ms: number | null }>(
+              `SELECT file_path, duration_ms FROM songs WHERE file_path IN (${placeholders})`, paths
+            );
+            const durMap = new Map(rows.map(r => [r.file_path, r.duration_ms ?? 0]));
+            for (const item of queue) {
+              if (!item.durationMs) item.durationMs = durMap.get(item.filePath) ?? 0;
+            }
+          }
+          engine.addToQueue(queue); setQueueLen(queue.length); console.log('Restored', queue.length, 'items from crash recovery');
+        }
         if (row.deck_a_path && row.deck_a_title) {
-          await engine.loadToDeck('A', row.deck_a_path, row.deck_a_title, row.deck_a_artist || '');
+          const deckASong = await queryOne<{ duration_ms: number | null }>(
+            "SELECT duration_ms FROM songs WHERE file_path = ?", [row.deck_a_path]
+          );
+          const deckADurationMs = deckASong?.duration_ms ?? 0;
+          await engine.loadToDeck('A', row.deck_a_path, row.deck_a_title, row.deck_a_artist || '', undefined, deckADurationMs);
           console.log('Restored deck A:', row.deck_a_title);
           setTimeout(() => engine.triggerPreload(), 1000);
           // Show restore toast
@@ -873,7 +903,7 @@ export default function App() {
       const q = engine.getQueue();
       if (q.length > 0) {
         const next = q[0]; engine.clearQueue(); engine.addToQueue(q.slice(1));
-        await engine.loadToDeck('A', next.filePath, next.title, next.artist);
+        await engine.loadToDeck('A', next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
         engine.getDeck('A')?.play();
         setTimeout(() => engine.triggerPreload(), 1000);
         window.dispatchEvent(new CustomEvent('ether:queue-changed'));
@@ -886,7 +916,7 @@ export default function App() {
           const q2 = engine.getQueue();
           if (q2.length > 0) {
             const next = q2[0]; engine.clearQueue(); engine.addToQueue(q2.slice(1));
-            await engine.loadToDeck('A', next.filePath, next.title, next.artist);
+            await engine.loadToDeck('A', next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
             engine.getDeck('A')?.play();
             setTimeout(() => engine.triggerPreload(), 1000);
             window.dispatchEvent(new CustomEvent('ether:queue-changed'));
@@ -924,7 +954,7 @@ export default function App() {
       const q = engine.getQueue();
       if (q.length > 0 && engine.getDeck('A')?.getState().status !== 'playing') {
         const first = q[0]; engine.clearQueue(); engine.addToQueue(q.slice(1)); setQueueLen(engine.getQueue().length);
-        await engine.loadToDeck('A', first.filePath, first.title, first.artist);
+        await engine.loadToDeck('A', first.filePath, first.title, first.artist, first.gainDb, first.durationMs);
         engine.getDeck('A')?.play();
         setTimeout(() => engine.triggerPreload(), 800);
         window.dispatchEvent(new CustomEvent('ether:queue-changed'));
@@ -2178,7 +2208,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   const playIdx = async (idx: number) => {
     const t = tracks[idx]; if (!t) return;
     try {
-      await engine.loadToDeck(deckSlot, t.filePath, t.title, t.artist);
+      await engine.loadToDeck(deckSlot, t.filePath, t.title, t.artist, undefined, t.durationMs);
       engine.getDeck(deckSlot)?.play();
       setCurrentIdx(idx); setPlaying(true);
     } catch {}

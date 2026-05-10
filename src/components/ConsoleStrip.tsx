@@ -91,13 +91,6 @@ export default function ConsoleStrip({
       const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
       const fill = fillRef.current;
       if (!fill) return;
-      fill.dataset.status   = String(da.status);
-      fill.dataset.position = String(Math.round(da.positionSec ?? 0));
-      fill.dataset.duration = String(Math.round(da.durationSec ?? 0));
-      fill.dataset.deckId   = String(deckId);
-      fill.dataset.trackKey = String(trackKey);
-      fill.dataset.lastKey  = String(fillTrackRef.current);
-      fill.dataset.armCount = String((parseInt(fill.dataset.armCount || "0") + 1));
       if (da.status === "playing" && da.durationSec > 0 && trackKey !== fillTrackRef.current) {
         fillTrackRef.current = trackKey;
         const startPct  = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
@@ -210,17 +203,29 @@ export default function ConsoleStrip({
       userSelect: "none", overflow: "hidden",
     }}>
 
-      {/* ── Channel label ── */}
+      {/* ── Channel label — progress fill lives here, sweeps left→right as song plays ── */}
       <div style={{
         width: "100%", padding: "8px 0",
-        background: isOn && isPlaying ? color : "var(--strip-label-bg, transparent)",
+        background: isOn && isPlaying ? `${color}28` : "var(--strip-label-bg, transparent)",
         borderBottom: "1px solid var(--strip-divider, #303040)",
         textAlign: "center",
         fontSize: 11, fontWeight: 800, letterSpacing: "0.14em",
-        color: isOn && isPlaying ? "#000" : (isOn ? color : "var(--strip-label-text, #555)"),
-        transition: "all 0.2s",
+        position: "relative", overflow: "hidden",
+        transition: "background 0.3s",
       }}>
-        {label}
+        {deckId && (
+          <div ref={fillRef} style={{
+            position: "absolute", top: 0, left: 0, bottom: 0,
+            background: color,
+            zIndex: 0, pointerEvents: "none",
+          }} />
+        )}
+        <span style={{
+          position: "relative", zIndex: 1,
+          color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #555)"),
+          textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
+          transition: "color 0.2s",
+        }}>{label}</span>
       </div>
 
       {/* ── Main area: fader column + VU meter ── */}
@@ -230,15 +235,6 @@ export default function ConsoleStrip({
         minHeight: 180, overflow: "hidden",
         position: "relative",
       }}>
-
-        {/* Progress fill — covers full main area, managed imperatively */}
-        {deckId && (
-          <div ref={fillRef} style={{
-            position: "absolute", top: 0, left: 0, bottom: 0,
-            background: `${color}1c`,
-            zIndex: 0, pointerEvents: "none",
-          }} />
-        )}
 
         {/* ── Fader column: rail, scale, and knob cap ── */}
         <div style={{
