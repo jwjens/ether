@@ -676,7 +676,6 @@ const REGISTRY = {
       updated_at:          'scalar',
       raw_metadata:        'json-text',
       spotify_uri:         'scalar',
-      station_id:          'scalar',
       uuid:                'scalar',
       deleted_at:          'scalar',
     },

@@ -688,9 +688,9 @@ function runMigrations() {
     alterSafe(`ALTER TABLE ${tbl} ADD COLUMN deleted_at TEXT`);
   }
 
-  // Add station_id to all station-scoped tables
+  // Add station_id to all station-scoped tables (songs excluded — install-scoped, column dropped in v12)
   const stationTables = [
-    'artists', 'albums', 'categories', 'songs', 'separation_rules',
+    'artists', 'albums', 'categories', 'separation_rules',
     'clocks', 'clock_slots', 'shows', 'play_log', 'scheduled_log',
     'spots', 'cart_slots', 'announcements', 'voice_tracks',
     'smart_schedule_rules', 'liner_cards', 'prep_notes',
@@ -3123,9 +3123,9 @@ ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spo
     if (existing) return { ok: true, id: existing.id, skipped: true };
 
     const result = db.prepare(`
-      INSERT INTO songs (station_id, title, artist_id, album_id, duration_ms, is_explicit, spotify_uri, rotation_status, daypart_mask)
-      VALUES (?, ?, ?, ?, ?, 0, ?, 'active', 16777215)
-    `).run(getActiveStationId(), title, artistId, albumId, durationMs || 0, spotifyUri || null);
+      INSERT INTO songs (title, artist_id, album_id, duration_ms, is_explicit, spotify_uri, rotation_status, daypart_mask)
+      VALUES (?, ?, ?, ?, 0, ?, 'active', 16777215)
+    `).run(title, artistId, albumId, durationMs || 0, spotifyUri || null);
     return { ok: true, id: result.lastInsertRowid, skipped: false };
   } catch (e) { return { ok: false, error: e.message }; }
 });

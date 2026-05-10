@@ -95,9 +95,9 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
     const rows = await query<{ file_path: string; title: string; artist_name: string }>(
       `SELECT s.file_path, s.title, a.name AS artist_name
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive' AND s.station_id = ?
+       WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
        ORDER BY RANDOM() LIMIT 20`,
-      [stationId]
+      []
     );
     engine.addToQueue(rows.map(r => ({
       filePath: r.file_path,

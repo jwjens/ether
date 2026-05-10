@@ -418,15 +418,14 @@ export function OneClickExport() {
 
     // Fetch all tracks from session
     try {
-      // station_id scoping: manual JOIN — play_log + songs both scoped
       const tracks = await queryScoped<{ title: string; artist: string; file_path: string; played_at: number }>(
         `SELECT pl.title, pl.artist, s.file_path, pl.played_at
          FROM play_log pl
-         LEFT JOIN songs s ON s.title = pl.title AND s.station_id = ?
+         LEFT JOIN songs s ON s.title = pl.title
          WHERE pl.station_id = ? AND date(datetime(pl.played_at, 'unixepoch'), 'localtime') = ?
          AND s.file_path IS NOT NULL
          ORDER BY pl.played_at ASC`,
-        [stationId, stationId, selectedSession],
+        [stationId, selectedSession],
         stationId,
         { skipScoping: true }
       );

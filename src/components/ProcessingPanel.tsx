@@ -20,12 +20,11 @@ export default function ProcessingPanel() {
 
   const load = async () => {
     setStats(await getProcessingStats());
-    // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
     setSongs(await queryScoped<SongLevel>(
       "SELECT s.id, s.title, a.name as artist_name, s.lufs_measured, s.peak_db, s.gain_db " +
       "FROM songs s LEFT JOIN artists a ON a.id = s.artist_id " +
-      "WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY s.lufs_measured ASC NULLS LAST LIMIT 100",
-      [stationId],
+      "WHERE s.file_path IS NOT NULL ORDER BY s.lufs_measured ASC NULLS LAST LIMIT 100",
+      [],
       stationId,
       { skipScoping: true }
     ));

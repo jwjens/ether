@@ -133,13 +133,12 @@ export default function CueEditorWindow() {
       try {
         const stationId = getActiveStationIdSync();
         const rows = await Promise.race([
-          // station_id scoping: manual JOIN — both tables are scoped but artists joined by FK
           queryScoped<Song>(
             `SELECT s.id, s.title, a.name as artist_name, s.file_path,
                     s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start
              FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.file_path = ? AND s.station_id = ? LIMIT 1`,
-            [decoded, stationId],
+             WHERE s.file_path = ? LIMIT 1`,
+            [decoded],
             stationId,
             { skipScoping: true }
           ),

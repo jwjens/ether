@@ -270,10 +270,9 @@ function CategoriesTab() {
 
   const load = async () => {
     if (!isReady) return;
-    // station_id scoping: manual — subquery in SELECT; outer scoped by categories.station_id, inner by songs.station_id
     const rows = await queryScoped<Category & { song_count: number }>(
-      "SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id AND station_id = ?) as song_count FROM categories c WHERE c.station_id = ? ORDER BY c.code",
-      [stationId, stationId], stationId, { skipScoping: true }
+      "SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c WHERE c.station_id = ? ORDER BY c.code",
+      [stationId], stationId, { skipScoping: true }
     );
     setCats(rows);
   };
@@ -742,12 +741,11 @@ function ClocksTab() {
     const enriched = await Promise.all(raw.map(async s => {
       if (s.slot_type === "music" && s.category_id) {
         try {
-          // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
           const songs = await queryScoped<{ id: number; title: string; artist_name: string | null; duration_ms: number; file_path: string }>(
             `SELECT s.id, s.title, a.name as artist_name, s.duration_ms, s.file_path
              FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.category_id = ? AND s.station_id = ? ORDER BY RANDOM() LIMIT 1`,
-            [s.category_id, stationId],
+             WHERE s.category_id = ? ORDER BY RANDOM() LIMIT 1`,
+            [s.category_id],
             stationId,
             { skipScoping: true }
           );

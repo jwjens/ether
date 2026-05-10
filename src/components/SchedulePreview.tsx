@@ -135,15 +135,14 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
       // 3. Load pinned songs (recurring + upcoming one-shots)
       const now = Math.floor(Date.now() / 1000);
       const windowEnd = now + windowHours * 3600;
-      // station_id scoping: pinned_songs is not a scoped table; filter via songs.station_id
       const pinnedRows = await queryScoped<PinnedRow>(
         `SELECT p.*, s.title, a.name as artist_name
          FROM pinned_songs p
-         JOIN songs s ON s.id = p.song_id AND s.station_id = ?
+         JOIN songs s ON s.id = p.song_id
          LEFT JOIN artists a ON a.id = s.artist_id
          WHERE (p.recur_dow != 0)
             OR (p.recur_dow = 0 AND p.play_at_unix >= ? AND p.play_at_unix <= ? AND p.consumed_at = 0)`,
-        [stationId, now, windowEnd],
+        [now, windowEnd],
         stationId,
         { skipScoping: true }
       ).catch(() => []);
@@ -176,15 +175,14 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
         dates.add(d.toISOString().slice(0, 10));
       }
       const dateList = Array.from(dates);
-      // station_id scoping: manual JOIN — scheduled_log.station_id + songs.station_id both filtered
       const scheduledRows = await queryScoped<ScheduledRow>(
         `SELECT sl.*, s.title, a.name as artist_name
          FROM scheduled_log sl
-         LEFT JOIN songs s ON s.id = sl.song_id AND s.station_id = ?
+         LEFT JOIN songs s ON s.id = sl.song_id
          LEFT JOIN artists a ON a.id = s.artist_id
          WHERE sl.log_date IN (${dateList.map(() => "?").join(",")}) AND sl.station_id = ?
          ORDER BY sl.log_date, sl.hour, sl.id`,
-        [stationId, ...dateList, stationId],
+        [...dateList, stationId],
         stationId,
         { skipScoping: true }
       ).catch(() => []);

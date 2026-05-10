@@ -687,7 +687,7 @@ export default function App() {
   useEffect(() => {
     if (!stationId) return;
     engine.setRefillCallback(async () => {
-      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 500", [stationId], stationId, { skipScoping: true });
+      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500", [], stationId, { skipScoping: true });
       return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }));
     });
   }, [stationId]);
@@ -910,7 +910,7 @@ export default function App() {
       } else if (autoAdv) {
         await fillQueueFromSchedule().then(async (count) => {
           if (count === 0) {
-            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
+            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", [], stationId, { skipScoping: true });
             engine.addToQueue(rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 })));
           }
           const q2 = engine.getQueue();
@@ -942,10 +942,10 @@ export default function App() {
         const count = await fillQueueFromSchedule();
         if (count === 0) {
           engine.setRefillCallback(async () => {
-            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 500", [stationId], stationId, { skipScoping: true });
+            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500", [], stationId, { skipScoping: true });
             return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 }));
           });
-          const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY RANDOM() LIMIT 100", [stationId], stationId, { skipScoping: true });
+          const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", [], stationId, { skipScoping: true });
           const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }));
           engine.addToQueue(items); setQueueLen(items.length);
           window.dispatchEvent(new CustomEvent('ether:queue-changed'));
@@ -3093,8 +3093,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 
   const load = async () => {
     try {
-      // station_id scoping: manual JOIN — songs.station_id filters all 4 tables (artists/albums/categories joined by FK)
-      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.title LIMIT 500", [stationId], stationId, { skipScoping: true });
+      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.deleted_at IS NULL ORDER BY s.title LIMIT 500", [], stationId, { skipScoping: true });
       setSongs(rows);
       // station_id scoping: Strategy B — single table
       const [r] = await queryScoped<{ c: number }>("SELECT COUNT(*) as c FROM songs", [], stationId);

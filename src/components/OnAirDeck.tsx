@@ -53,13 +53,12 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
   // Look up category color when track changes
   useEffect(() => {
     if (!title) { setCategoryColor(null); setCategoryName(null); return; }
-    // station_id scoping: manual JOIN — songs.station_id sufficient; categories joined by FK
     queryScoped<{ color: string; name: string; code: string }>(
       `SELECT c.color, c.name, c.code FROM songs s
        LEFT JOIN categories c ON c.id = s.category_id
-       WHERE s.title = ? AND s.file_path IS NOT NULL AND s.station_id = ?
+       WHERE s.title = ? AND s.file_path IS NOT NULL
        LIMIT 1`,
-      [title, stationId],
+      [title],
       stationId,
       { skipScoping: true }
     ).then(rows => {

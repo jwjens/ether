@@ -90,10 +90,9 @@ function ImportPanel({ onImported }: ImportPanelProps) {
       if (!existingByPath?.data?.length) {
         await (window as any).ether.songs.create({ title, artist_id: artistId, file_path: filePath, duration_ms: durationMs });
       }
-      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
       const [songRow] = await queryScoped<Song>(
-        "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? AND s.station_id = ?",
-        [filePath, stationId],
+        "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ?",
+        [filePath],
         stationId,
         { skipScoping: true }
       ) ?? [];
@@ -315,11 +314,10 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
   useEffect(() => {
     if (filePathProp && !songProp) {
       const fallback: Song = { id: 0, title: filePathProp.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Unknown", artist_name: "", file_path: filePathProp, duration_ms: 0 };
-      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
       Promise.race([
         queryScoped<Song>(
-          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? AND s.station_id = ? LIMIT 1",
-          [filePathProp, stationId],
+          "SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path = ? LIMIT 1",
+          [filePathProp],
           stationId,
           { skipScoping: true }
         ),
@@ -817,8 +815,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
 
   if (!song) return (
     <ImportPanel onImported={(s) => {
-      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
-      queryScoped<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.station_id = ?`, [s.id, stationId], stationId, { skipScoping: true })
+      queryScoped<Song>(`SELECT s.id, s.title, a.name as artist_name, s.file_path, s.duration_ms, s.cue_in, s.cue_out, s.intro_end, s.outro_start, s.is_explicit FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`, [s.id], stationId, { skipScoping: true })
         .then(([full]) => { if (full && onSaved) onSaved(full); })
         .catch(() => {});
     }} />

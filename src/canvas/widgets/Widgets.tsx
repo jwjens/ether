@@ -148,10 +148,9 @@ export function LibraryWidget({ instance, engine }: EngineProps) {
 
   const load = async () => {
     try {
-      // station_id scoping: manual JOIN — songs.station_id filters scope; artists joined by FK
       const rows = await queryScoped<any>(
-        "SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL AND s.station_id = ? ORDER BY s.title LIMIT 200",
-        [stationId], stationId, { skipScoping: true }
+        "SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY s.title LIMIT 200",
+        [], stationId, { skipScoping: true }
       );
       setSongs(rows);
     } catch {}

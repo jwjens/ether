@@ -149,10 +149,6 @@ function buildBaseConditions(
   // Never auto-play songs marked inactive in rotation
   cond += " AND s.rotation_status != 'inactive'";
 
-  // Station scope
-  cond += " AND s.station_id = ?";
-  params.push(stationId);
-
   // Daypart mask: bit N of daypart_mask must be 1 for the current hour N.
   // Default mask is 16777215 (all 24 bits set = unrestricted).
   cond += " AND ((s.daypart_mask >> ?) & 1) = 1";
@@ -401,12 +397,12 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
             s.file_path, s.intro_end, s.outro_start, s.duration_ms
      FROM generated_schedule gs
-     LEFT JOIN songs s ON s.id = gs.song_id AND s.station_id = ?
+     LEFT JOIN songs s ON s.id = gs.song_id
      WHERE gs.id > ? AND gs.station_id = ?
        AND gs.scheduled_at >= ? - 300
      ORDER BY gs.scheduled_at
      LIMIT ?`,
-    [stationId, _schedCursor, stationId, nowTs, count]
+    [_schedCursor, stationId, nowTs, count]
   );
   if (rows.length > 0) {
     _schedCursor = rows[rows.length - 1].row_id;
