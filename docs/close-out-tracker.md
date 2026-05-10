@@ -1,6 +1,6 @@
 # Ether — Close-Out Tracker
 
-> **Last updated:** 2026-05-10 (Item 8 — songs.station_id drop, schema v12 — closed)
+> **Last updated:** 2026-05-10 (Item 10 — Tablet Polish arc — closed)
 >
 > Canonical list of every open arc, parked item, and known issue. Update this file at the start of each new arc, not at the end.
 
@@ -14,7 +14,7 @@
 | S1 | **Group 4 — `published_episodes` typed handler** | Feature not yet built. Belongs to Show+ podcast publishing arc. Write handler when feature ships. |
 | S2 | **Group 8 — `smart_schedule_rules` typed handler** | Schema audit needed first. SmartScheduler writes go through guard but not mutation log yet. |
 | S3 | **Group 9 — CloudBackup restore protocol** | Privileged batch restore needs dedicated IPC channel (not db:execute). Own arc. |
-| S4 | **main.js mutation log integration** | 9 synced tables written directly from main.js (`db.prepare().run()`) bypass the mutation log. Affected code paths: bootstrap, station config, metadata editor, RTMP destinations, Spotify import. Logging for future "main.js mutation log" arc. |
+| ~~S4~~ | ~~**main.js mutation log integration**~~ | ~~All direct `db.prepare().run()` writes in main.js routed through typed handlers with `withMutation`/`logMutation`. Commit A: bootstrap + deck-configs reset + RTMP + playout server (4247b4d). Commit B: discogs + library track writes (486b861). Commit C: stations CRUD (6989985). Commit D: schedule:generate bulk clear + bulk insert (3f1280a).~~ ✓ |
 | S5 | **Lazy UUID backfill** | Rows that existed before sync was added retain integer-only state. Untouched rows generate no mutations so acceptable for sync, but worth a one-time bulk backfill before any audit-heavy use case. |
 
 ---
@@ -72,7 +72,7 @@
 
 | # | Item | Notes |
 |---|------|-------|
-| T1 | **Responsive layout pass** | Touch targets, column layout at narrow widths. No spec yet. |
+| ~~T1~~ | ~~**Responsive layout pass (Item 10)**~~ | ~~5-phase arc: P1 pointer events (f890ce2) → P2+P3 touch targets + global touch CSS (818e94d) → P4 tablet layout breakpoint / isTablet / header 96→64px (26bd017) → P5 swipe gestures, Scheduler tab swipe + queue toggle swipe (0cf8932).~~ ✓ |
 
 ---
 
