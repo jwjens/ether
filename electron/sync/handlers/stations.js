@@ -140,6 +140,17 @@ function stationsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
+function stationsDeleteById(db, intId) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[stations] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return stationsDelete(db, existing.uuid, null);
+}
+
 function stationsUpdateById(db, intId, patch) {
   let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
   if (!existing) throw new Error(`[stations] row not found by id: ${intId}`);
@@ -192,4 +203,5 @@ module.exports = {
   stationsUpdate,
   stationsUpdateById,
   stationsDelete,
+  stationsDeleteById,
 };

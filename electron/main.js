@@ -3780,9 +3780,13 @@ ipcMain.handle('stations:get-active', () =>
 );
 
 ipcMain.handle('stations:switch', (_, id) => {
-  db.exec("UPDATE stations SET is_active=0");
-  db.prepare("UPDATE stations SET is_active=1 WHERE id=?").run(id);
-  return { ok: true };
+  try {
+    const { stationsUpdateById } = require('./sync/handlers/stations');
+    const others = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL AND id != ?").all(id);
+    for (const s of others) stationsUpdateById(db, s.id, { is_active: 0 });
+    stationsUpdateById(db, id, { is_active: 1 });
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 ipcMain.handle('stations:create', (_, data) => {
@@ -3801,18 +3805,20 @@ ipcMain.handle('stations:create', (_, data) => {
       };
     }
   }
-  const info = db.prepare(
-    `INSERT INTO stations (name, callsign, frequency, city, state, country, website,
-       icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format,
-       is_active)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)`
-  ).run(
-    data.name || 'New Station', data.callsign || '', data.frequency || '',
-    data.city || '', data.state || '', data.country || 'US', data.website || '',
-    data.icecast_server_url || '127.0.0.1', data.icecast_mount || '/live',
-    data.icecast_password || 'hackme', data.icecast_bitrate || 128, data.icecast_format || 'mp3'
-  );
-  return { ok: true, id: info.lastInsertRowid };
+  try {
+    const { stationsCreate } = require('./sync/handlers/stations');
+    const row = stationsCreate(db, {
+      name: data.name || 'New Station', callsign: data.callsign || '',
+      frequency: data.frequency || '', city: data.city || '',
+      state: data.state || '', country: data.country || 'US', website: data.website || '',
+      icecast_server_url: data.icecast_server_url || '127.0.0.1',
+      icecast_mount: data.icecast_mount || '/live',
+      icecast_password: data.icecast_password || 'hackme',
+      icecast_bitrate: data.icecast_bitrate || 128, icecast_format: data.icecast_format || 'mp3',
+      is_active: 0,
+    });
+    return { ok: true, id: row.id };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 ipcMain.handle('stations:update', (_, id, data) => {
@@ -3820,16 +3826,22 @@ ipcMain.handle('stations:update', (_, id, data) => {
     'name','callsign','frequency','city','state','country','website','is_active',
     'icecast_server_url','icecast_mount','icecast_password','icecast_bitrate','icecast_format',
   ];
-  const fields = Object.keys(data).filter(k => allowed.includes(k));
-  if (fields.length === 0) return { ok: false, error: 'no valid fields' };
-  const sets = fields.map(k => `${k}=?`).join(', ');
-  db.prepare(`UPDATE stations SET ${sets} WHERE id=?`).run(...fields.map(k => data[k]), id);
-  return { ok: true };
+  const patch = {};
+  for (const k of allowed) { if (k in data) patch[k] = data[k]; }
+  if (Object.keys(patch).length === 0) return { ok: false, error: 'no valid fields' };
+  try {
+    const { stationsUpdateById } = require('./sync/handlers/stations');
+    stationsUpdateById(db, id, patch);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 ipcMain.handle('stations:delete', (_, id) => {
-  db.prepare("DELETE FROM stations WHERE id=?").run(id);
-  return { ok: true };
+  try {
+    const { stationsDeleteById } = require('./sync/handlers/stations');
+    stationsDeleteById(db, id);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 let _libSyncAbort = false;
