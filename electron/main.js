@@ -1132,13 +1132,14 @@ function processInviteFile() {
     }
 
     // Create operator
+    const { operatorsEnsureByName } = require('./sync/handlers/operators');
+    const { operatorNotesUpsertByOperatorId } = require('./sync/handlers/operator_notes');
     const name = invite.operator_name || "Operator";
     const initials = invite.operator_initials || name.charAt(0);
-    db.prepare("INSERT OR IGNORE INTO operators (name, initials) VALUES (?, ?)").run(name, initials);
-    const op = db.prepare("SELECT id FROM operators WHERE name = ?").get(name);
+    const op = operatorsEnsureByName(db, inviteStationId, name, initials);
 
     if (op && invite.personal_note) {
-      db.prepare("INSERT OR REPLACE INTO operator_notes (operator_id, note, updated_at) VALUES (?, ?, unixepoch())").run(op.id, invite.personal_note);
+      operatorNotesUpsertByOperatorId(db, op.id, inviteStationId, invite.personal_note);
     }
 
     // Set experience mode + mark first run complete + store invite metadata
@@ -1619,7 +1620,8 @@ ipcMain.handle("invite:generate", async (_, { name, initials, note, mode, invite
 // Reset deck configs to factory defaults and return fresh rows
 ipcMain.handle("deck-configs:reset", () => {
   try {
-    db.exec("DELETE FROM deck_configs");
+    const { deckConfigsClearAll } = require('./sync/handlers/deck_configs');
+    deckConfigsClearAll(db, getActiveStationId());
     seedDeckConfigs();
     return { data: db.prepare("SELECT * FROM deck_configs ORDER BY slot").all(), error: null };
   } catch (e) { return { data: null, error: e.message }; }
@@ -2179,17 +2181,19 @@ ipcMain.handle("studio:rtmp:list", () => {
 });
 
 ipcMain.handle("studio:rtmp:save", (_, { id, name, url, key }) => {
+  const { rtmpDestinationsCreate, rtmpDestinationsUpdateById } = require('./sync/handlers/rtmp_destinations');
   if (id) {
-    db.prepare("UPDATE rtmp_destinations SET name=?, url=?, stream_key=? WHERE id=?").run(name, url, key || "", id);
+    rtmpDestinationsUpdateById(db, id, { name, url, stream_key: key || "" });
     return { id };
   } else {
-    const r = db.prepare("INSERT INTO rtmp_destinations (station_id, name, url, stream_key) VALUES (?,?,?,?)").run(getActiveStationId(), name, url, key || "");
-    return { id: r.lastInsertRowid };
+    const row = rtmpDestinationsCreate(db, { station_id: getActiveStationId(), name, url, stream_key: key || "", is_active: 1 });
+    return { id: row.id };
   }
 });
 
 ipcMain.handle("studio:rtmp:delete", (_, id) => {
-  db.prepare("UPDATE rtmp_destinations SET is_active=0 WHERE id=?").run(id);
+  const { rtmpDestinationsUpdateById } = require('./sync/handlers/rtmp_destinations');
+  rtmpDestinationsUpdateById(db, id, { is_active: 0 });
   return { ok: true };
 });
 
@@ -3298,9 +3302,11 @@ ipcMain.handle('playout:get-server', () => {
 ipcMain.handle('playout:set-server', (_, ip) => {
   try {
     const trimmed = String(ip).trim();
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('playout_server', ?)").run(trimmed);
+    const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
+    stationConfigKvUpsertByKey(db, getActiveStationId(), 'playout_server', trimmed);
     // Keep stations table in sync so stream:go-live reads the updated value
-    db.prepare("UPDATE stations SET icecast_server_url=? WHERE id=?").run(trimmed, getActiveStationId());
+    const { stationsUpdateById } = require('./sync/handlers/stations');
+    stationsUpdateById(db, getActiveStationId(), { icecast_server_url: trimmed });
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });

@@ -156,6 +156,21 @@ function deckConfigsUpdateBySlot(db, stationId, slot, patch) {
   return deckConfigsUpdate(db, existing.uuid, patch);
 }
 
+function deckConfigsClearAll(db, stationId) {
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND deleted_at IS NULL`
+  ).all(stationId);
+  for (const row of rows) {
+    let uuid = row.uuid;
+    if (!uuid) {
+      uuid = crypto.randomUUID();
+      db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+    }
+    deckConfigsDelete(db, uuid, stationId);
+  }
+  return { ok: true, cleared: rows.length };
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installDeckConfigs(ipcMain, db) {
@@ -201,4 +216,5 @@ module.exports = {
   deckConfigsUpdate,
   deckConfigsUpdateBySlot,
   deckConfigsDelete,
+  deckConfigsClearAll,
 };

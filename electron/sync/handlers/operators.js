@@ -142,6 +142,14 @@ function operatorsDelete(db, uuid, stationId) {
 
 
 
+function operatorsEnsureByName(db, stationId, name, initials) {
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE name = ? AND station_id = ? AND deleted_at IS NULL`
+  ).get(name, stationId);
+  if (existing) return existing;
+  return operatorsCreate(db, { name, initials, station_id: stationId });
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installOperators(ipcMain, db) {
@@ -182,5 +190,5 @@ module.exports = {
   operatorsCreate,
   operatorsUpdate,
   operatorsDelete,
-
+  operatorsEnsureByName,
 };

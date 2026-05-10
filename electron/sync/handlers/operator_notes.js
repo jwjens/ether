@@ -142,6 +142,21 @@ function operatorNotesDelete(db, uuid, stationId) {
 
 
 
+function operatorNotesUpsertByOperatorId(db, operatorId, stationId, note) {
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE operator_id = ? AND station_id = ? AND deleted_at IS NULL`
+  ).get(operatorId, stationId);
+  if (existing) {
+    if (!existing.uuid) {
+      const newUuid = crypto.randomUUID();
+      db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, existing.id);
+      existing.uuid = newUuid;
+    }
+    return operatorNotesUpdate(db, existing.uuid, { note });
+  }
+  return operatorNotesCreate(db, { operator_id: operatorId, note, station_id: stationId });
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installOperatorNotes(ipcMain, db) {
@@ -182,5 +197,5 @@ module.exports = {
   operatorNotesCreate,
   operatorNotesUpdate,
   operatorNotesDelete,
-
+  operatorNotesUpsertByOperatorId,
 };

@@ -140,7 +140,16 @@ function stationsDelete(db, uuid, stationId) {
   return { ok: true };
 }
 
-
+function stationsUpdateById(db, intId, patch) {
+  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  if (!existing) throw new Error(`[stations] row not found by id: ${intId}`);
+  if (!existing.uuid) {
+    const newUuid = crypto.randomUUID();
+    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    existing = { ...existing, uuid: newUuid };
+  }
+  return stationsUpdate(db, existing.uuid, patch);
+}
 
 // ── IPC installation ──────────────────────────────────────────────────────────
 
@@ -181,6 +190,6 @@ module.exports = {
   stationsGet,
   stationsCreate,
   stationsUpdate,
+  stationsUpdateById,
   stationsDelete,
-
 };
