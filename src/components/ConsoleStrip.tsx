@@ -80,6 +80,10 @@ export default function ConsoleStrip({
 
   // Progress fill — imperative DOM, no React state, same pattern as VU
   useEffect(() => {
+    if (fillRef.current) fillRef.current.style.width = "0%";
+  }, []);
+
+  useEffect(() => {
     if (!deckId) return;
     const unsub = engine.on(() => {
       const da = engine.getDeck(deckId.toUpperCase() as "A" | "B" | "C")?.getState?.();
@@ -231,7 +235,6 @@ export default function ConsoleStrip({
         {deckId && (
           <div ref={fillRef} style={{
             position: "absolute", top: 0, left: 0, bottom: 0,
-            width: "0%",
             background: `${color}1c`,
             zIndex: 0, pointerEvents: "none",
           }} />
