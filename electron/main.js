@@ -3325,8 +3325,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
       if (sr) songRepeatMin = sr.value;
     } catch {}
 
+    const { generatedScheduleClearAll, generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+    const activeStationId = getActiveStationId();
+
     // Wipe previous run
-    db.prepare("DELETE FROM generated_schedule").run();
+    generatedScheduleClearAll(db, activeStationId);
 
     // Prepared statements (compiled once, reused in the loop)
     const stmtShows = db.prepare(
@@ -3354,12 +3357,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
          AND ((s.daypart_mask >> ?) & 1) = 1
        ORDER BY COALESCE(s.last_played_at, 0) ASC`
     );
-    const activeStationId = getActiveStationId();
-    const stmtInsert = db.prepare(
-      `INSERT INTO generated_schedule
-         (station_id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
+    const generatedRows = [];
 
     // Per-generation tracking maps (survive across hours/days)
     const songLastTs   = new Map(); // songId   → unix ts last queued this run
@@ -3367,7 +3365,6 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
 
     const now = new Date();
     now.setMinutes(0, 0, 0);
-    let totalInserted = 0;
 
     for (let d = 0; d < days; d++) {
       for (let h = 0; h < 24; h++) {
@@ -3440,12 +3437,13 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
               ? Math.round(picked.duration_ms / 1000)
               : slotDurationS;
 
-            stmtInsert.run(
-              activeStationId, currentTs, picked.id, picked.title, picked.artist_name || '',
-              picked.file_path ? path.basename(picked.file_path) : '', durationS, slot.category_id, show.clock_id
-            );
+            generatedRows.push({
+              scheduled_at: currentTs, song_id: picked.id,
+              title: picked.title, artist: picked.artist_name || '',
+              file_key: picked.file_path ? path.basename(picked.file_path) : '',
+              duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id,
+            });
             currentTs += durationS;
-            totalInserted++;
           } else {
             currentTs += slotDurationS;
           }
@@ -3453,8 +3451,9 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
       }
     }
 
-    console.log(`[schedule:generate] Generated ${totalInserted} tracks over ${days} days`);
-    return { ok: true, count: totalInserted };
+    generatedScheduleBulkCreate(db, activeStationId, generatedRows);
+    console.log(`[schedule:generate] Generated ${generatedRows.length} tracks over ${days} days`);
+    return { ok: true, count: generatedRows.length };
   } catch (e) {
     console.error('[schedule:generate]', e.message);
     return { ok: false, error: e.message };

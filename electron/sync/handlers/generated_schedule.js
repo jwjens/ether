@@ -9,7 +9,7 @@
 // mutations table for future sync.
 
 const crypto = require('crypto');
-const { withMutation, serializePayload } = require('../mutation-writer');
+const { withMutation, logMutation, serializePayload } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'generated_schedule';
@@ -142,6 +142,56 @@ function generatedScheduleDelete(db, uuid, stationId) {
 
 
 
+function generatedScheduleClearAll(db, stationId) {
+  const rows = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND deleted_at IS NULL`
+  ).all(stationId);
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const row of rows) {
+      let uuid = row.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+      }
+      const before = serializePayload({ ...row, uuid }, TABLE);
+      db.prepare(`UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`).run(now, now, uuid);
+      logMutation(db, {
+        table_name: TABLE, row_id: uuid, op: 'delete',
+        payload_before: before, payload_after: null,
+        station_id: stationId, actor_id: null,
+      });
+    }
+  })();
+  return { ok: true, cleared: rows.length };
+}
+
+function generatedScheduleBulkCreate(db, stationId, rows) {
+  validateScope();
+  if (!rows.length) return { ok: true, inserted: 0 };
+  const now = new Date().toISOString();
+  const stmtInsert = db.prepare(
+    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  db.transaction(() => {
+    for (const r of rows) {
+      const uuid = crypto.randomUUID();
+      const row  = { ...r, station_id: stationId, uuid, created_at: now, updated_at: now, deleted_at: null };
+      stmtInsert.run(
+        row.scheduled_at, row.song_id, row.title, row.artist, row.file_key,
+        row.duration_s, row.category_id, row.clock_id, row.generated_at ?? null,
+        row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at
+      );
+      logMutation(db, {
+        table_name: TABLE, row_id: uuid, op: 'insert',
+        payload_before: null, payload_after: serializePayload(row, TABLE),
+        station_id: stationId, actor_id: null,
+      });
+    }
+  })();
+  return { ok: true, inserted: rows.length };
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installGeneratedSchedule(ipcMain, db) {
@@ -182,5 +232,6 @@ module.exports = {
   generatedScheduleCreate,
   generatedScheduleUpdate,
   generatedScheduleDelete,
-
+  generatedScheduleClearAll,
+  generatedScheduleBulkCreate,
 };
