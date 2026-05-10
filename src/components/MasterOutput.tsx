@@ -217,18 +217,20 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
     onChange(ratio);
   }, [onChange]);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragging(true);
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
     updateFromClientX(e.clientX);
-    const onMove = (ev: MouseEvent) => updateFromClientX(ev.clientX);
+    const onMove = (ev: PointerEvent) => updateFromClientX(ev.clientX);
     const onUp = () => {
       setDragging(false);
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
   }, [updateFromClientX]);
 
   return (
@@ -240,7 +242,7 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
 
       <div
         ref={trackRef}
-        onMouseDown={handleMouseDown}
+        onPointerDown={handlePointerDown}
         style={{
           position: "relative",
           width: "100%", height: 12,

@@ -163,28 +163,30 @@ export default function ConsoleStrip({
   const volDb = volume > 0.001 ? 20 * Math.log10(volume) : -DB_FLOOR;
   const knobY = (Math.max(-DB_FLOOR, Math.min(0, volDb)) / -DB_FLOOR) * (faderH - KNOB_H);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     setDragging(true);
     const track = trackRef.current;
     if (!track) return;
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
     const posToVol = (clientY: number, rect: DOMRect) => {
       const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
       if (ratio >= 0.999) return 0;
       const db = -ratio * DB_FLOOR;
       return Math.pow(10, db / 20);
     };
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
       const rect = track.getBoundingClientRect();
       onVolumeChange(posToVol(ev.clientY, rect));
     };
     const onUp = () => {
       setDragging(false);
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
     };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
     const rect = track.getBoundingClientRect();
     onVolumeChange(posToVol(e.clientY, rect));
   }, [onVolumeChange]);
@@ -244,7 +246,7 @@ export default function ConsoleStrip({
           {/* Mouse / touch capture — covers full column, sits above all visuals */}
           <div
             ref={trackRef}
-            onMouseDown={handleMouseDown}
+            onPointerDown={handlePointerDown}
             style={{
               position: "absolute", inset: 0,
               cursor: dragging ? "grabbing" : "ns-resize",

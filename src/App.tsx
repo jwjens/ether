@@ -2013,10 +2013,10 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
 // ── Live Panel ───────────────────────────────────────────────
 
 // ── Drag handle icon ────────────────────────────────────────
-function DragHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+function DragHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void }) {
   return (
     <div
-      onMouseDown={onMouseDown}
+      onPointerDown={onPointerDown}
       title="Drag to reorder panels"
       style={{
         cursor: "grab", padding: "4px 6px", borderRadius: 0, flexShrink: 0,
@@ -2486,28 +2486,30 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const [dropDeck, setDropDeck] = useState<DeckSlot | null>(null);
   const deckRowRef = useRef<HTMLDivElement>(null);
 
-  const startDeckDrag = (slot: DeckSlot) => (e: React.MouseEvent) => {
+  const startDeckDrag = (slot: DeckSlot) => (e: React.PointerEvent<HTMLElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
     setDraggingDeck(slot);
 
-    const onMouseMove = (ev: MouseEvent) => {
+    const onPointerMove = (ev: PointerEvent) => {
       if (!deckRowRef.current) return;
       const items = Array.from(deckRowRef.current.querySelectorAll("[data-deck-slot]"));
       let target: DeckSlot | null = null;
-      for (const el of items) {
-        const rect = el.getBoundingClientRect();
+      for (const item of items) {
+        const rect = item.getBoundingClientRect();
         if (ev.clientX >= rect.left && ev.clientX <= rect.right) {
-          target = (el as HTMLElement).dataset.deckSlot as DeckSlot;
+          target = (item as HTMLElement).dataset.deckSlot as DeckSlot;
           break;
         }
       }
       setDropDeck(target && target !== slot ? target : null);
     };
 
-    const onMouseUp = () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+    const onPointerUp = () => {
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
       setDraggingDeck(null);
       setDropDeck(cur => {
         if (cur && cur !== slot) {
@@ -2524,17 +2526,19 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       });
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
   };
 
 
-  const startDrag = (panel: "queue" | "decks") => (e: React.MouseEvent) => {
+  const startDrag = (panel: "queue" | "decks") => (e: React.PointerEvent<HTMLElement>) => {
     e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
     dragStartXRef.current = e.clientX;
     setDragging(panel);
 
-    const onMouseMove = (ev: MouseEvent) => {
+    const onPointerMove = (ev: PointerEvent) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const mid = rect.left + rect.width / 2;
@@ -2543,9 +2547,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       setDropTarget(hovering !== panel ? hovering : null);
     };
 
-    const onMouseUp = () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+    const onPointerUp = () => {
+      el.removeEventListener("pointermove", onPointerMove);
+      el.removeEventListener("pointerup", onPointerUp);
       setDragging(null);
       setDropTarget(dt => {
         if (dt && dt !== panel) {
@@ -2555,8 +2559,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       });
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    el.addEventListener("pointermove", onPointerMove);
+    el.addEventListener("pointerup", onPointerUp);
   };
 
   const showQueue = vp.queue !== false;
