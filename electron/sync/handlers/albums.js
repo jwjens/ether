@@ -133,6 +133,25 @@ function albumsDelete(db, uuid) {
   return { ok: true };
 }
 
+function albumsFindOrCreate(db, { title, artistId, year }) {
+  validateScope();
+  const existing = artistId != null
+    ? db.prepare(`SELECT * FROM ${TABLE} WHERE title = ? AND artist_id = ? AND deleted_at IS NULL`).get(title, artistId)
+    : db.prepare(`SELECT * FROM ${TABLE} WHERE title = ? AND deleted_at IS NULL`).get(title);
+  if (existing) {
+    if (year != null) {
+      let uuid = existing.uuid;
+      if (!uuid) {
+        uuid = crypto.randomUUID();
+        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, existing.id);
+      }
+      return albumsUpdate(db, uuid, { year });
+    }
+    return existing;
+  }
+  return albumsCreate(db, { title, artist_id: artistId ?? null, year: year ?? null });
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installAlbums(ipcMain, db) {
@@ -172,4 +191,5 @@ module.exports = {
   albumsCreate,
   albumsUpdate,
   albumsDelete,
+  albumsFindOrCreate,
 };

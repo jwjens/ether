@@ -3069,56 +3069,48 @@ ipcMain.handle("discogs:search", async (_, { title, artist }) => {
 
 ipcMain.handle("discogs:updateTrack", (_, { id, title, artist, album, year, genre, bpm }) => {
   try {
+    const { artistsFindOrCreateByName } = require('./sync/handlers/artists');
+    const { albumsFindOrCreate } = require('./sync/handlers/albums');
+    const { songsUpdateById } = require('./sync/handlers/songs');
+
     // Upsert artist
-    if (artist) {
-      db.prepare("INSERT OR IGNORE INTO artists (name) VALUES (?)").run(artist);
-    }
-    const artistRow = artist ? db.prepare("SELECT id FROM artists WHERE name = ?").get(artist) : null;
+    const artistRow = artist ? artistsFindOrCreateByName(db, artist) : null;
     const artistId = artistRow?.id ?? null;
 
     // Upsert album + year
     let albumId = null;
     if (album) {
-      if (artistId) {
-        db.prepare("INSERT OR IGNORE INTO albums (title, artist_id, year) VALUES (?, ?, ?)").run(album, artistId, year ?? null);
-        const existing = db.prepare("SELECT id FROM albums WHERE title = ? AND artist_id = ?").get(album, artistId);
-        albumId = existing?.id ?? null;
-        if (albumId && year != null) db.prepare("UPDATE albums SET year = ? WHERE id = ?").run(year, albumId);
-      } else {
-        db.prepare("INSERT OR IGNORE INTO albums (title, year) VALUES (?, ?)").run(album, year ?? null);
-        const existing = db.prepare("SELECT id FROM albums WHERE title = ?").get(album);
-        albumId = existing?.id ?? null;
-      }
+      const albumRow = albumsFindOrCreate(db, { title: album, artistId, year: year ?? null });
+      albumId = albumRow?.id ?? null;
     }
 
-    const updates = [];
-    const vals = [];
-    if (title  !== undefined) { updates.push("title = ?");    vals.push(title); }
-    if (artistId !== undefined) { updates.push("artist_id = ?"); vals.push(artistId); }
-    if (albumId  !== undefined) { updates.push("album_id = ?");  vals.push(albumId); }
-    if (genre  !== undefined) { updates.push("genre = ?");    vals.push(genre); }
-    if (bpm    !== undefined) { updates.push("bpm = ?");      vals.push(bpm); }
-    if (updates.length === 0) return { ok: true };
-    vals.push(id);
-    db.prepare(`UPDATE songs SET ${updates.join(", ")} WHERE id = ?`).run(...vals);
+    const patch = {};
+    if (title    !== undefined) patch.title     = title;
+    if (artistId !== undefined) patch.artist_id = artistId;
+    if (albumId  !== undefined) patch.album_id  = albumId;
+    if (genre    !== undefined) patch.genre     = genre;
+    if (bpm      !== undefined) patch.bpm       = bpm;
+    if (Object.keys(patch).length === 0) return { ok: true };
+    songsUpdateById(db, id, patch);
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
 // Write a Spotify-imported track to the songs table
-// TODO(phase-3.5-D): migrate these raw songs writes to the typed handler (songs:create).
 ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spotifyUri }) => {
   try {
+    const { artistsFindOrCreateByName } = require('./sync/handlers/artists');
+    const { albumsFindOrCreate } = require('./sync/handlers/albums');
+    const { songsCreate } = require('./sync/handlers/songs');
+
     // Upsert artist
-    db.prepare("INSERT OR IGNORE INTO artists (name) VALUES (?)").run(artist || "Unknown");
-    const artistRow = db.prepare("SELECT id FROM artists WHERE name = ?").get(artist || "Unknown");
+    const artistRow = artistsFindOrCreateByName(db, artist || "Unknown");
     const artistId = artistRow?.id || null;
 
     // Upsert album
     let albumId = null;
     if (album && artistId) {
-      db.prepare("INSERT OR IGNORE INTO albums (title, artist_id) VALUES (?, ?)").run(album, artistId);
-      const albumRow = db.prepare("SELECT id FROM albums WHERE title = ? AND artist_id = ?").get(album, artistId);
+      const albumRow = albumsFindOrCreate(db, { title: album, artistId });
       albumId = albumRow?.id || null;
     }
 
@@ -3126,11 +3118,12 @@ ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spo
     const existing = db.prepare("SELECT id FROM songs WHERE title = ? AND artist_id = ?").get(title, artistId);
     if (existing) return { ok: true, id: existing.id, skipped: true };
 
-    const result = db.prepare(`
-      INSERT INTO songs (title, artist_id, album_id, duration_ms, is_explicit, spotify_uri, rotation_status, daypart_mask)
-      VALUES (?, ?, ?, ?, 0, ?, 'active', 16777215)
-    `).run(title, artistId, albumId, durationMs || 0, spotifyUri || null);
-    return { ok: true, id: result.lastInsertRowid, skipped: false };
+    const row = songsCreate(db, {
+      title, artist_id: artistId, album_id: albumId,
+      duration_ms: durationMs || 0, is_explicit: 0,
+      spotify_uri: spotifyUri || null, rotation_status: 'active', daypart_mask: 16777215,
+    });
+    return { ok: true, id: row.id, skipped: false };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
