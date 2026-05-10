@@ -414,9 +414,9 @@ export function HealthStatusDot({ onClick, compact = false }: { onClick: () => v
       onClick={onClick}
       title={`System Health: ${label}`}
       style={{
-        display: "flex", alignItems: "center", gap: 4,
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
         background: "none", border: "none", cursor: "pointer",
-        padding: "0 4px",
+        padding: "0 4px", minWidth: 44, minHeight: 44,
       }}
     >
       <div style={{

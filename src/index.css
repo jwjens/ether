@@ -904,8 +904,34 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
 }
 
 /* ── Library panel action buttons (A / B / C / Q / Cue / ×) ─── */
+.ether-action-btn {
+  min-height: 44px;
+  min-width: 36px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
 .ether-action-btn:hover  { filter: brightness(1.25); }
 .ether-action-btn:active { transform: scale(0.91); filter: brightness(0.80); }
+
+/* ── Touch / tablet — Phase 2 ─────────────────────────────────── */
+button, a, [role="button"], select,
+input[type="checkbox"], input[type="radio"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* :active mirrors — give taps the same feedback as hover */
+button:active:not(:disabled):not(.menu-btn):not(.menu-item) { filter: brightness(0.88); }
+.queue-row:active  { background: var(--bg-active); }
+.icon-btn:active   { background: var(--bg-active); color: var(--text-primary); }
+.queue-item:active { background: var(--bg-hover); }
+
+/* Touch-friendly scrollbar — slim on touch devices */
+@media (pointer: coarse) {
+  ::-webkit-scrollbar { width: 3px; height: 3px; }
+  ::-webkit-scrollbar-thumb { border-width: 0; border-radius: 2px; }
+}
 
 /* ── NEXT UP heading glow ────────────────────────────────────── */
 @keyframes next-up-glow {

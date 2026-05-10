@@ -67,6 +67,7 @@ export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
             padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
             background: "var(--accent-blue)", color: "#fff", border: "none",
             boxShadow: "0 2px 8px rgba(56,189,248,0.3)",
+            minHeight: 44, display: "inline-flex", alignItems: "center",
           }}
         >
           + Create Show
@@ -74,7 +75,7 @@ export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
       </div>
       <div className="flex gap-1">
         {(["shows", "categories", "clocks"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)}
+          <button key={t} onClick={() => setTab(t)} style={{ minHeight: 44 }}
             className={tab === t ? "px-3 py-1.5 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1.5 rounded text-xs font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}
           >{t === "shows" ? "Shows & Dayparts" : t === "categories" ? "Categories" : "Clocks"}</button>
         ))}
@@ -156,7 +157,7 @@ function ShowsTab() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-bold text-zinc-300">Shows & Dayparts</h2>
-        <button onClick={() => setEditing({ name: "", start_hour: 0, end_hour: 6, color: "#3b82f6" })} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">+ New Show</button>
+        <button onClick={() => setEditing({ name: "", start_hour: 0, end_hour: 6, color: "#3b82f6" })} style={{ minHeight: 44, display: "inline-flex", alignItems: "center" }} className="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded text-xs font-bold text-white">+ New Show</button>
       </div>
 
       {/* Timeline */}
@@ -204,7 +205,7 @@ function ShowsTab() {
                   const cur = editing.days ?? "0123456";
                   const next = active ? cur.replace(dayStr, "") : (cur + dayStr).split("").sort().join("");
                   setEditing({...editing, days: next});
-                }} className={`px-2 py-0.5 rounded text-[10px] font-bold ${active ? "bg-blue-600 text-white" : "bg-zinc-700 text-zinc-400"}`}>{d}</button>
+                }} style={{ minWidth: 44, minHeight: 44, display: "inline-flex", alignItems: "center", justifyContent: "center" }} className={`rounded text-[10px] font-bold ${active ? "bg-blue-600 text-white" : "bg-zinc-700 text-zinc-400"}`}>{d}</button>
               );
             })}
             <label className="ml-3 flex items-center gap-1 text-[10px] text-zinc-400 cursor-pointer">
@@ -234,8 +235,8 @@ function ShowsTab() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => setEditing(s)} className="px-2 py-1 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button>
-                <button onClick={() => remove(s.id, s.name)} className="px-2 py-1 bg-zinc-800 hover:bg-red-900 rounded text-[10px] text-zinc-500 hover:text-red-400">Del</button>
+                <button onClick={() => setEditing(s)} style={{ minHeight: 44, minWidth: 52, display: "inline-flex", alignItems: "center", justifyContent: "center" }} className="px-2 bg-zinc-700 hover:bg-zinc-600 rounded text-[10px] text-zinc-300">Edit</button>
+                <button onClick={() => remove(s.id, s.name)} style={{ minHeight: 44, minWidth: 44, display: "inline-flex", alignItems: "center", justifyContent: "center" }} className="px-2 bg-zinc-800 hover:bg-red-900 rounded text-[10px] text-zinc-500 hover:text-red-400">Del</button>
               </div>
             </div>
             <div className="mt-2 flex items-center gap-2">
