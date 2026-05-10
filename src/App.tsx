@@ -656,6 +656,7 @@ export default function App() {
         filePath: track.filePath || "",
         title: track.title,
         artist: track.artist || "",
+        durationMs: 0,
       }]);
       setQueueLen(engine.getQueue().length);
       window.dispatchEvent(new CustomEvent('ether:queue-changed'));
@@ -3172,7 +3173,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     }
     setStatus("Relocated " + fixed + " songs"); setTimeout(() => setStatus(""), 4000); load();
   };
-  const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "" }))); window.dispatchEvent(new CustomEvent('ether:queue-changed')); };
+  const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }))); window.dispatchEvent(new CustomEvent('ether:queue-changed')); };
   const filtered = songs.filter(s => {
     const matchSearch = !search ||
       (s.title||"").toLowerCase().includes(search.toLowerCase()) ||
