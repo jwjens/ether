@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import CreateShowWizard from "./CreateShowWizard";
+import ClocksV2 from "./ClocksV2";
 
 interface Show {
   id: number; name: string; start_hour: number; end_hour: number;
@@ -42,7 +43,7 @@ interface SchedulerProps {
 }
 
 export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
-  const [tab, setTab] = useState<"shows" | "categories" | "clocks">(defaultTab);
+  const [tab, setTab] = useState<"shows" | "categories" | "clocks" | "clocksv2">(defaultTab);
   const [showWizard, setShowWizard] = useState(false);
   const [wizardKey, setWizardKey] = useState(0); // force ShowsTab reload after wizard
 
@@ -65,15 +66,22 @@ export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
         </button>
       </div>
       <div className="flex gap-1">
-        {(["shows", "categories", "clocks"] as const).map(t => (
+        {(["shows", "categories", "clocks", "clocksv2"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={tab === t ? "px-3 py-1.5 rounded text-xs font-bold bg-blue-600 text-white" : "px-3 py-1.5 rounded text-xs font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700"}
-          >{t === "shows" ? "Shows & Dayparts" : t === "categories" ? "Categories" : "Clocks"}</button>
+          >
+            {t === "shows" ? "Shows & Dayparts"
+              : t === "categories" ? "Categories"
+              : t === "clocks" ? "Clocks"
+              : <span>Clocks v2 <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 2, background: "rgba(251,191,36,0.2)", color: "#fbbf24", verticalAlign: "middle", letterSpacing: "0.08em" }}>BETA</span></span>
+            }
+          </button>
         ))}
       </div>
       {tab === "shows" && <ShowsTab key={wizardKey} />}
       {tab === "categories" && <CategoriesTab />}
       {tab === "clocks" && <ClocksTab />}
+      {tab === "clocksv2" && <ClocksV2 />}
       {showWizard && (
         <CreateShowWizard
           onClose={() => setShowWizard(false)}
