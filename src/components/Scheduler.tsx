@@ -24,6 +24,7 @@ interface ClockSlot {
   id: number; clock_id: number; position: number;
   slot_type: string; category_id: number | null;
   label: string | null; duration_min: number;
+  chain_type?: string;
   category_code?: string; category_color?: string;
   song_title?: string | null; song_artist?: string | null;
 }
@@ -31,6 +32,13 @@ interface ClockSlot {
 const HOURS = Array.from({length: 24}, (_, i) => i);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SLOT_TYPES = ["music", "spot_break", "liner", "sweeper", "news", "talkset", "jingle"];
+const CLOCK_SLOT_TYPE_OPTIONS = [
+  { value: "music",      label: "Song",    color: "#38bdf8" },
+  { value: "spot_break", label: "Spot",    color: "#ef4444" },
+  { value: "talk_break", label: "Talk",    color: "#a78bfa" },
+  { value: "liner",      label: "Liner",   color: "#34d399" },
+  { value: "sweeper",    label: "Sweeper", color: "#f59e0b" },
+];
 
 function fmtHour(h: number): string {
   if (h === 0) return "12 AM";
@@ -718,6 +726,7 @@ function ClocksTab() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [copiedSlot, setCopiedSlot] = useState<ClockSlot | null>(null);
+  const [editCell, setEditCell] = useState<{ slotId: number; field: "type" | "cat" } | null>(null);
 
   // ── Fix: reload cats every time the tab is active ────────────
   const loadAll = async () => {
@@ -830,6 +839,24 @@ function ClocksTab() {
     loadSlots(selected);
   };
 
+  const changeSlotType = async (id: number, type: string) => {
+    await (window as any).ether.clockSlots.updateById(id, { slot_type: type });
+    setEditCell(null);
+    if (selected) loadSlots(selected);
+  };
+
+  const changeSlotCat = async (id: number, catId: number | null) => {
+    await (window as any).ether.clockSlots.updateById(id, { category_id: catId });
+    setEditCell(null);
+    if (selected) loadSlots(selected);
+  };
+
+  const toggleChain = async (id: number, current: string) => {
+    const next = current === "stop" ? "segue" : "stop";
+    await (window as any).ether.clockSlots.updateById(id, { chain_type: next });
+    if (selected) loadSlots(selected);
+  };
+
   // ── Keyboard copy/paste ───────────────────────────────────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -852,6 +879,15 @@ function ClocksTab() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedSlotId, copiedSlot, slots, selected]);
 
+  // Close inline cell editor when clicking outside an editable cell
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as Element).closest("[data-v1cell]")) setEditCell(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
   const handleDrop = async (toIdx: number) => {
     if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setDragOverIdx(null); return; }
     const reordered = [...slots];
@@ -873,17 +909,11 @@ function ClocksTab() {
   // Color per slot type
   const slotColor = (s: ClockSlot) => {
     if (s.slot_type === "music") return s.category_color || "#38bdf8";
-    if (s.slot_type === "spot_break") return "#ef4444";
-    if (s.slot_type === "talk_break") return "#a78bfa";
-    return "#94a3b8";
+    return CLOCK_SLOT_TYPE_OPTIONS.find(o => o.value === s.slot_type)?.color ?? "#94a3b8";
   };
 
-  const typeLabel = (s: ClockSlot) => {
-    if (s.slot_type === "music") return s.category_code || "SONG";
-    if (s.slot_type === "spot_break") return "BREAK";
-    if (s.slot_type === "talk_break") return "TALK";
-    return s.slot_type.toUpperCase();
-  };
+  const typeLabel = (s: ClockSlot) =>
+    CLOCK_SLOT_TYPE_OPTIONS.find(o => o.value === s.slot_type)?.label ?? s.slot_type.toUpperCase().slice(0, 5);
 
   return (
     <div style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -973,7 +1003,7 @@ function ClocksTab() {
 
               {/* Column headers */}
               <div style={{
-                display: "grid", gridTemplateColumns: "28px 52px 36px 1fr 1fr 52px 52px 64px",
+                display: "grid", gridTemplateColumns: "24px 52px 28px 68px 88px 1fr 1fr 60px 52px 52px",
                 padding: "5px 10px", background: "var(--bg-tertiary)",
                 borderBottom: "1px solid var(--border-primary)",
                 fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-secondary)",
@@ -982,9 +1012,11 @@ function ClocksTab() {
                 <span></span>
                 <span>POSITION</span>
                 <span>#</span>
+                <span>TYPE</span>
+                <span>CATEGORY</span>
                 <span>TITLE</span>
                 <span>ARTIST</span>
-                <span>TYPE</span>
+                <span>CHAIN</span>
                 <span style={{ textAlign: "right" as const }}>DURATION</span>
                 <span></span>
               </div>
@@ -992,7 +1024,10 @@ function ClocksTab() {
               {/* Rows */}
               <div style={{ maxHeight: 480, overflowY: "auto" as const }}>
                 {slots.map((s, i) => {
-                  const isSelected = selectedSlotId === s.id;
+                  const isSelected  = selectedSlotId === s.id;
+                  const isEditType  = editCell?.slotId === s.id && editCell.field === "type";
+                  const isEditCat   = editCell?.slotId === s.id && editCell.field === "cat";
+                  const chainType   = s.chain_type || "segue";
                   return (
                   <div
                     key={s.id}
@@ -1005,7 +1040,7 @@ function ClocksTab() {
                     onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "28px 52px 36px 1fr 1fr 52px 52px 64px",
+                      gridTemplateColumns: "24px 52px 28px 68px 88px 1fr 1fr 60px 52px 52px",
                       padding: "0 10px",
                       minHeight: 32,
                       alignItems: "center",
@@ -1037,6 +1072,64 @@ function ClocksTab() {
                     {/* Row number */}
                     <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600 }}>{i + 1}</span>
 
+                    {/* TYPE — double-click to edit */}
+                    <div data-v1cell="1" style={{ paddingRight: 6 }}>
+                      {isEditType ? (
+                        <select
+                          autoFocus
+                          value={s.slot_type}
+                          onChange={e => changeSlotType(s.id, e.target.value)}
+                          onBlur={() => setEditCell(null)}
+                          onClick={e => e.stopPropagation()}
+                          style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
+                        >
+                          {CLOCK_SLOT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      ) : (
+                        <span
+                          onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "type" }); }}
+                          title="Double-click to change type"
+                          style={{
+                            display: "inline-block", fontSize: 9, fontWeight: 800, letterSpacing: "0.07em",
+                            padding: "2px 5px", borderRadius: 0, whiteSpace: "nowrap" as const,
+                            background: slotColor(s) + "20", color: slotColor(s),
+                            cursor: "text", userSelect: "none" as const,
+                          }}
+                        >{typeLabel(s)}</span>
+                      )}
+                    </div>
+
+                    {/* CATEGORY — double-click to edit (music rows only) */}
+                    <div data-v1cell="1" style={{ paddingRight: 6, overflow: "hidden" }}>
+                      {s.slot_type === "music" ? (
+                        isEditCat ? (
+                          <select
+                            autoFocus
+                            value={s.category_id ?? ""}
+                            onChange={e => changeSlotCat(s.id, e.target.value ? Number(e.target.value) : null)}
+                            onBlur={() => setEditCell(null)}
+                            onClick={e => e.stopPropagation()}
+                            style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
+                          >
+                            <option value="">— none —</option>
+                            {cats.map(c => <option key={c.id} value={c.id}>{c.code}{c.name ? ` — ${c.name}` : ""}</option>)}
+                          </select>
+                        ) : (
+                          <span
+                            onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "cat" }); }}
+                            title="Double-click to change category"
+                            style={{
+                              fontSize: 11, fontWeight: 700, cursor: "text", userSelect: "none" as const,
+                              color: s.category_color || "var(--text-secondary)",
+                              display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                            }}
+                          >{s.category_code || "—"}</span>
+                        )
+                      ) : (
+                        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>—</span>
+                      )}
+                    </div>
+
                     {/* Title */}
                     <span style={{ fontSize: 12, fontWeight: 600,
                       color: s.slot_type === "music" ? "var(--text-primary)" : slotColor(s),
@@ -1051,15 +1144,22 @@ function ClocksTab() {
                       {s.song_artist || ""}
                     </span>
 
-                    {/* Type badge */}
-                    <span style={{
-                      fontSize: 9, fontWeight: 800, letterSpacing: "0.07em",
-                      padding: "2px 5px", borderRadius: 0,
-                      background: slotColor(s) + "20", color: slotColor(s),
-                      whiteSpace: "nowrap" as const,
-                    }}>
-                      {typeLabel(s)}
-                    </span>
+                    {/* Chain type — click to toggle segue/stop */}
+                    <button
+                      onClick={async e => { e.stopPropagation(); await toggleChain(s.id, chainType); }}
+                      title={chainType === "stop" ? "Stop — click to set Segue" : "Segue — click to set Stop"}
+                      style={{
+                        fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", padding: "2px 5px",
+                        borderRadius: 0, cursor: "pointer", border: "none",
+                        background: chainType === "stop" ? "rgba(239,68,68,0.15)" : "rgba(56,189,248,0.08)",
+                        color: chainType === "stop" ? "#ef4444" : "#64748b",
+                        fontFamily: "'DM Mono', monospace",
+                      }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "0.7"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+                    >
+                      {chainType === "stop" ? "STP" : "SEG"}
+                    </button>
 
                     {/* Duration — editable when selected */}
                     {isSelected ? (
@@ -1117,7 +1217,7 @@ function ClocksTab() {
               {/* Footer row — end of hour */}
               {slots.length > 0 && (
                 <div style={{
-                  display: "grid", gridTemplateColumns: "28px 52px 36px 1fr 1fr 52px 52px 64px",
+                  display: "grid", gridTemplateColumns: "24px 52px 28px 68px 88px 1fr 1fr 60px 52px 52px",
                   padding: "5px 10px", background: "var(--bg-tertiary)",
                   borderTop: "1px solid var(--border-primary)",
                   fontSize: 9, color: overrun ? "#ef4444" : "#34d399",
@@ -1125,7 +1225,7 @@ function ClocksTab() {
                 }}>
                   <span></span>
                   <span>{fmtClockPos(totalMin)}</span>
-                  <span></span>
+                  <span></span><span></span><span></span>
                   <span style={{ color: "var(--text-tertiary)", fontFamily: "'Inter', sans-serif", fontWeight: 400 }}>
                     {overrun ? `⚠ ${(totalMin-60).toFixed(1)}m over — remove segments` : remaining < 0.1 ? "✓ Hour complete" : `${remaining.toFixed(1)} min remaining`}
                   </span>

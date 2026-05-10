@@ -570,6 +570,7 @@ function runMigrations() {
   alterSafe("ALTER TABLE songs ADD COLUMN has_intro INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
+  alterSafe("ALTER TABLE clock_slots ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_out_at_ms INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_duration_ms INTEGER DEFAULT 8000");

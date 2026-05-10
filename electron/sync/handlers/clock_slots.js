@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'clock_slots';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["clock_id","position","slot_type","category_id","label","duration_min","updated_at"];
+const PATCHABLE          = ["clock_id","position","slot_type","category_id","label","duration_min","chain_type","updated_at"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
