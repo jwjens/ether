@@ -601,10 +601,12 @@ export default function App() {
     return () => window.removeEventListener("ether:open-subscription", handler);
   }, []);
 
-  // ── Remote command polling (emergency override + companion) ──
+  // ── Remote command stream (emergency override + companion) ──
+  // Replaced polling with SSE — instant delivery, zero idle traffic.
   useEffect(() => {
-    const POLL_URL = "https://ether-backend-production.up.railway.app/api/pending-cmds";
-    const execCmd  = async (cmd: string, data: any) => {
+    const STREAM_BASE = "https://ether-backend-production.up.railway.app/api/cmd-stream";
+
+    const execCmd = async (cmd: string, data: any) => {
       try {
         switch (cmd) {
           case "stop_all":
@@ -646,21 +648,48 @@ export default function App() {
       }
     };
 
-    const poll = async () => {
-      try {
-        const res  = await fetch(POLL_URL, {
-          signal: AbortSignal.timeout(4000),
-          headers: apiKeyRef.current ? { "x-license-key": apiKeyRef.current } : {},
-        });
-        if (!res.ok) return;
-        const cmds: Array<{ cmd: string; data: any; ts: number }> = await res.json();
-        for (const c of cmds) await execCmd(c.cmd, c.data || {});
-      } catch {}
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
+    let backoffMs = 1000;
+
+    const connect = () => {
+      if (destroyed) return;
+      const key = apiKeyRef.current;
+      if (!key) return;   // no license key yet — skip until key is available
+
+      const url = `${STREAM_BASE}?key=${encodeURIComponent(key)}`;
+      es = new EventSource(url);
+
+      es.addEventListener("cmd", (e: MessageEvent) => {
+        try {
+          const { cmd, data } = JSON.parse(e.data);
+          execCmd(cmd, data || {});
+        } catch {}
+      });
+
+      es.onopen = () => { backoffMs = 1000; };   // reset backoff on successful connect
+
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        if (!destroyed) {
+          reconnectTimer = setTimeout(() => {
+            backoffMs = Math.min(backoffMs * 2, 30_000);
+            connect();
+          }, backoffMs);
+        }
+      };
     };
 
-    const timer = setInterval(poll, 2000);
-    return () => clearInterval(timer);
-  }, [deckA, deckB, deckC]);
+    connect();
+
+    return () => {
+      destroyed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      es?.close();
+    };
+  }, []);
 
   const handleWizardComplete = (profile: VenueProfile) => {
     setStationName(profile.name);
