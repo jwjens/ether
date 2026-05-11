@@ -57,7 +57,7 @@ try { require("dotenv").config(); } catch (e) { /* dotenv optional in packaged b
 // all flags are stripped in the packaged build automatically).
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage, powerMonitor } = require("electron");
 
 // ── Sentry (main process) ─────────────────────────────────────
 try {
@@ -1222,6 +1222,32 @@ app.whenReady().then(() => {
     console.error(e.stack);
   }
 
+  // ── Sync scheduler — Phase F Stage 4 ──────────────────────────
+  // Off by default. Users opt in via Settings → System → Multi-Device Sync.
+  try {
+    const enabledRow = db.prepare(
+      "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' LIMIT 1"
+    ).get();
+    if (enabledRow?.value !== 'true') {
+      console.log('[SYNC] disabled (set sync_enabled=true in station_config_kv to activate)');
+    } else {
+      const { HttpTransport }   = require('./sync/transport-http');
+      const { SyncScheduler }   = require('./sync/sync-scheduler');
+      const transport = new HttpTransport(db);
+      const scheduler = new SyncScheduler(db, transport);
+      scheduler.start();
+      app._syncScheduler = scheduler;
+
+      powerMonitor.on('suspend',       () => scheduler.pause());
+      powerMonitor.on('lock-screen',   () => scheduler.pause());
+      powerMonitor.on('resume',        () => scheduler.resume());
+      powerMonitor.on('unlock-screen', () => scheduler.resume());
+    }
+  } catch (e) {
+    console.error('[SYNC] scheduler init failed:', e.message);
+    console.error(e.stack);
+  }
+
   // Show native splash first; main window stays hidden behind it
   createSplash();
   createWindow();
@@ -1320,11 +1346,25 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   if (levelPushId) { clearInterval(levelPushId); levelPushId = null; }
+  if (app._syncScheduler) { app._syncScheduler.stop(); app._syncScheduler = null; }
   app.isQuitting = true;
 });
 
 // ── IPC Handlers ──────────────────────────────────────────────
 // These replace all Tauri invoke() calls
+
+// Sync
+ipcMain.handle('sync:getStats', () => {
+  const scheduler = app._syncScheduler ?? null;
+  const enabledRow = db.prepare(
+    "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' LIMIT 1"
+  ).get();
+  const enabled = enabledRow?.value === 'true';
+  if (scheduler) {
+    return { enabled, running: true, ...scheduler.getStats() };
+  }
+  return { enabled, running: false, lastSyncAt: null, pushedToday: 0, pulledToday: 0 };
+});
 
 // Audio
 ipcMain.handle("audio:load", (_, deck, filePath, title, artist, gainDb, stationId) =>

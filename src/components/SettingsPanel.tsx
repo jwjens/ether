@@ -833,6 +833,106 @@ function DiscogsCredentialForm() {
   );
 }
 
+// ── Multi-Device Sync ─────────────────────────────────────────
+
+function SyncSection() {
+  const { stationId } = useActiveStation();
+  const [enabled, setEnabled]   = useState(false);
+  const [dirty, setDirty]       = useState(false);
+  const [stats, setStats]       = useState<{
+    running: boolean;
+    lastSyncAt: string | null;
+    pushedToday: number;
+    pulledToday: number;
+  }>({ running: false, lastSyncAt: null, pushedToday: 0, pulledToday: 0 });
+
+  useEffect(() => {
+    (window as any).ether.invoke('sync:getStats').then((s: any) => {
+      setEnabled(!!s?.enabled);
+      setStats({
+        running:     !!s?.running,
+        lastSyncAt:  s?.lastSyncAt ?? null,
+        pulledToday: s?.pulledToday ?? 0,
+        pushedToday: s?.pushedToday ?? 0,
+      });
+    }).catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    const next = !enabled;
+    setEnabled(next);
+    setDirty(true);
+    if (stationId != null) {
+      await (window as any).ether.stationConfigKv.upsertByKey(
+        stationId, 'sync_enabled', next ? 'true' : 'false'
+      ).catch(() => {});
+    }
+  };
+
+  const fmtTime = (iso: string | null) => {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    } catch (_) { return iso; }
+  };
+
+  const shouldRender = useShouldRender('Multi-Device Sync', 'Keep multiple Ether installs in sync via the cloud backend', 'system');
+  if (!shouldRender) return null;
+
+  return (
+    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden", marginBottom: 12 }}>
+      <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid var(--border-primary)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 1l4 4-4 4"/>
+              <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+              <path d="M7 23l-4-4 4-4"/>
+              <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+            </svg>
+          </span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", fontFamily: "'Inter', sans-serif" }}>Multi-Device Sync</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>Keep multiple Ether installs in sync via the cloud backend</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: "16px 20px" }}>
+        <SettingRow label="Enable sync" hint="Pushes and pulls mutations every 5 seconds. Requires an active Pro or Station license.">
+          <Toggle value={enabled} onChange={toggle} label="" />
+        </SettingRow>
+
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Status</span>
+            <span style={{ color: stats.running ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+              {stats.running ? "Running" : enabled ? "Starts on next launch" : "Disabled"}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Last sync</span>
+            <span style={{ color: "var(--text-secondary)" }}>{fmtTime(stats.lastSyncAt)}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Pushed today</span>
+            <span style={{ color: "var(--text-secondary)" }}>{stats.pushedToday}</span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+            <span style={{ color: "var(--text-tertiary)" }}>Pulled today</span>
+            <span style={{ color: "var(--text-secondary)" }}>{stats.pulledToday}</span>
+          </div>
+        </div>
+
+        {dirty && (
+          <div style={{ marginTop: 14, padding: "8px 12px", background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 12, color: "var(--accent-amber)" }}>
+            Restart Ether to apply this change
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
@@ -2016,6 +2116,8 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       >
         <DiscogsCredentialForm />
       </Section>
+
+      <SyncSection />
 
       <UserManagement />
 
