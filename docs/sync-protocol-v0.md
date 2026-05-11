@@ -1,12 +1,12 @@
 # Ether sync protocol v0
 
-**Status:** Locked. Decisions enumerated here are committed. Open questions are called out explicitly in [§13](#open-questions).
+**Status:** Locked. All architectural decisions are committed. All prior open questions (Q-01..Q-15) are closed in [§13](#closed-questions). New rules added in Stage 1 (Phase F) begin at [N-91].
 **Owner:** Jeff
-**Scope:** Defines the mutation log schema, wire format, clock strategy, payload conventions, schema-version compatibility rules, and migration requirements for Ether's custom CRDT sync engine. This document is the source of truth for sync-ready principle #3 (mutations event log) and is the specification that every piece of sync-related code must conform to.
+**Scope:** Defines the mutation log schema, wire format, clock strategy, payload conventions, schema-version compatibility rules, migration requirements, push/pull/merge algorithm, transport interface contract, tombstone semantics, idempotency rules, and local retention policy for Ether's custom CRDT sync engine. This document is the source of truth for every piece of sync-related code.
 
 Normative statements are numbered `[N-nn]`. When a code review or bug report references a rule, use that number. Example: *"this violates [N-12]"* is unambiguous.
 
-**Numbering stability.** Rule numbers are permanent. Once this document is committed, a rule that is superseded or removed is replaced with a placeholder of the form *"[N-NN] Deleted — reason. Number reserved, do not reuse."* New rules always get the next unused number; numbers are never shifted to close gaps. This convention takes effect at commit; the initial numbering is sequential without gaps.
+**Numbering stability.** Rule numbers are permanent. Once this document is committed, a rule that is superseded or removed is replaced with a placeholder of the form *"[N-NN] Deleted — reason. Number reserved, do not reuse."* New rules always get the next unused number; numbers are never shifted to close gaps.
 
 ---
 
@@ -24,9 +24,17 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 10. [Migration requirements](#migration-requirements)
 11. [Client identity](#client-identity)
 12. [Compaction intent](#compaction)
-13. [Open questions](#open-questions)
+13. [Closed questions](#closed-questions)
 14. [Appendix A — worked HLC examples](#hlc-examples)
 15. [Appendix B — field quick-reference table](#field-table)
+16. [Phase 5 amendment — install-scoped mutations](#phase5)
+17. [Push protocol](#push)
+18. [Pull and sync cursor](#pull)
+19. [Merge: apply remote mutations](#merge)
+20. [Tombstone semantics](#tombstone)
+21. [Transport interface contract](#transport)
+22. [Local retention policy](#retention)
+23. [Appendix C — Stage 2 test plan](#test-plan)
 
 ---
 
@@ -36,10 +44,10 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 
 **Non-goals (explicitly out of scope for v0).**
 
-- `[N-01]` This document does not specify peer discovery, transport, authentication, or authorization between peers. Those are separate concerns addressed in later protocol versions.
-- `[N-02]` This document does not specify conflict detection or resolution semantics beyond the structural hooks (`parent_mutation_id`, `conflict_resolution`) needed to support future resolution strategies.
+- `[N-01]` This document does not specify peer discovery. Transport is a pluggable interface ([§21](#transport)); peer discovery is hidden inside each transport implementation.
+- `[N-02]` This document does not specify conflict detection or resolution beyond LWW by HLC ([§19](#merge)). The mutation log is the audit trail.
 - `[N-03]` This document does not specify how blobs (audio files, images, waveform caches) are replicated between peers. It specifies only how mutations *refer* to blobs. A separate blob-sync protocol is anticipated.
-- `[N-04]` This document does not specify sync cursors, batching, or delivery guarantees. The mutation log schema supports these; the sync engine adds them.
+- `[N-04]` This document does not specify authentication or authorization between peers. Auth is the transport layer's responsibility ([N-116]).
 
 **What v0 does specify.** Everything required so that when the sync engine is written, the mutation log it reads from and writes to is already correct, complete, and stable.
 
@@ -48,16 +56,19 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 ## 2. Terminology <a id="terminology"></a>
 
 - **Mutation.** A single INSERT, UPDATE, or DELETE operation against a row in a synced table. Each mutation is recorded as one row in the `mutations` table.
-- **Synced table.** One of the 27 tables enumerated in `electron/sync/synced-tables.js`. Mutations on non-synced tables are not logged and do not participate in sync.
+- **Synced table.** One of the 37 tables enumerated in `electron/sync/synced-tables.js`. Mutations on non-synced tables are not logged and do not participate in sync.
 - **Infrastructure table.** A table that supports the sync mechanism itself: `mutations`, `client_identity`, `system_state`. See [N-05](#schema).
 - **Client.** One install of Ether on one machine, identified by a `client_id` UUID generated at migration time. A single person may have multiple clients (studio workstation, laptop, backup rig). Each is a distinct peer.
-- **Station.** A tenant scope within Ether (see Phase 3 work). Mutations are always station-scoped; sync is always station-scoped.
+- **Station.** A tenant scope within Ether (see Phase 3 work). Mutations are always station-scoped or install-scoped; sync is scoped accordingly.
 - **Actor.** The operator (user) who initiated the mutation, identified by `operator_id`. Distinct from `client_id`: one operator may work on multiple clients; one client may be used by multiple operators over time.
 - **HLC (Hybrid Logical Clock).** A timestamp combining wall-clock time with a logical counter, used to causally order mutations across clients. See [§6](#hlc).
 - **Wire format.** The subset of mutation fields that is serialized and transmitted between peers. See [§7](#wire-format).
 - **Payload.** The JSON representation of a row's state, stored in `payload_before` and `payload_after`. See [§4](#payload-categories) and [§5](#payload-conventions).
 - **Transformer.** A function associated with a schema migration that converts a payload from one schema version to the next. See [§10](#migration-requirements).
 - **Quarantine.** A store (outside the mutations table) for mutations that cannot be applied at the current schema_version. See [N-64](#schema-compat).
+- **Sync cursor.** A per-peer map of the highest HLC received and successfully processed from each known peer. See [N-96](#pull).
+- **Causal hold queue.** An in-memory (or lightweight table) store for received mutations whose `parent_mutation_id` has not yet been applied locally. See [N-103](#merge).
+- **LWW (last-write-wins).** The universal conflict resolution strategy: when two mutations target the same row, the one with the higher HLC wins and its `payload_after` is applied to the live table. The losing mutation is still logged.
 
 ---
 
@@ -71,17 +82,17 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 |---|---|---|---|---|---|
 | 1 | `id` | TEXT PRIMARY KEY | No | Yes | UUID v4 identifying this mutation globally. |
 | 2 | `client_id` | TEXT | No | Yes | UUID of the client that created this mutation. |
-| 3 | `station_id` | TEXT | No | Yes | Tenant scope; matches Phase 3 `station_id` on the target row. |
+| 3 | `station_id` | TEXT | Yes | Yes | Tenant scope; NULL for install-scoped mutations ([N-89]). |
 | 4 | `actor_id` | TEXT | Yes | Yes | Operator UUID if known; NULL for `origin='system'` or `'migration'`. |
-| 5 | `table_name` | TEXT | No | Yes | One of the 27 synced table names. |
+| 5 | `table_name` | TEXT | No | Yes | One of the 37 synced table names. |
 | 6 | `row_id` | TEXT | No | Yes | UUID of the target row (not the integer `id` PK — the `uuid` column added in sync-ready 1/7). |
 | 7 | `op` | TEXT | No | Yes | One of `'insert'`, `'update'`, `'delete'`, or reserved `'checkpoint'`. See [N-10]. |
 | 8 | `payload_before` | TEXT | Yes | Yes | JSON of row state before mutation. NULL for `op='insert'`. See [§5](#payload-conventions). |
 | 9 | `payload_after` | TEXT | Yes | Yes | JSON of row state after mutation. NULL for `op='delete'`. See [§5](#payload-conventions). |
 | 10 | `created_at` | TEXT | No | Yes | ISO 8601 UTC wall-clock time at originating client. For display and audit only — do not use for ordering. |
-| 11 | `applied_at` | TEXT | No | **No** | ISO 8601 UTC wall-clock time the mutation was applied to the local DB. For local mutations equals `created_at`. For remote mutations (future) equals arrival time. |
+| 11 | `applied_at` | TEXT | No | **No** | ISO 8601 UTC wall-clock time the mutation was applied to the local DB. For local mutations equals `created_at`. For remote mutations equals arrival time. |
 | 12 | `hlc` | TEXT | No | Yes | Hybrid logical clock value. Primary ordering key across clients. Format in [§6](#hlc). |
-| 13 | `parent_mutation_id` | TEXT | Yes | Yes | UUID of the mutation this one causally depends on, or NULL if none. Used for causality chains and undo graphs. |
+| 13 | `parent_mutation_id` | TEXT | Yes | Yes | UUID of the mutation this one causally depends on, or NULL if none. See [N-103]. |
 | 14 | `schema_version` | INTEGER | No | Yes | The schema version of the originating client at creation time. Used by receivers to interpret the payload. See [§9](#schema-compat). |
 | 15 | `origin` | TEXT | No | **No** | One of `'local'`, `'remote'`, `'system'`, `'migration'`. Each receiving peer sets this for itself. |
 | 16 | `sync_status` | TEXT | No | **No** | One of `'pending'`, `'syncing'`, `'synced'`, `'conflicted'`. Per-peer state; each peer tracks its own. |
@@ -92,7 +103,7 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 - `[N-10]` `op` SHALL be enforced by a CHECK constraint: `CHECK (op IN ('insert', 'update', 'delete', 'checkpoint'))`. The `'checkpoint'` value is RESERVED for future compaction use (see [§12](#compaction)) and SHALL NOT be written by v0 code. Including it in the CHECK constraint now avoids a schema bump when compaction lands.
 - `[N-11]` `origin` SHALL be enforced by a CHECK constraint: `CHECK (origin IN ('local', 'remote', 'system', 'migration'))`.
 - `[N-12]` `sync_status` SHALL be enforced by a CHECK constraint: `CHECK (sync_status IN ('pending', 'syncing', 'synced', 'conflicted'))`.
-  - **Cross-reference:** Quarantine-forward state ([N-64]) is NOT a `sync_status` value. Quarantined-forward mutations live in a separate store (structure defined by the sync-engine spec, out of scope for v0). Do not conflate quarantine with `sync_status`.
+  - **Cross-reference:** Quarantine-forward state ([N-64]) is NOT a `sync_status` value. Quarantined-forward mutations live in a separate store (structure defined by the sync-engine spec). Do not conflate quarantine with `sync_status`.
 
 ### 3.1 Required indexes
 
@@ -106,7 +117,7 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 
 ### 3.2 Row count and retention notes
 
-- `[N-14]` v0 implementations SHALL NOT delete from the mutations table. All deletions are reserved for future compaction ([§12](#compaction)).
+- `[N-14]` v0 implementations SHALL NOT delete from the mutations table outside of the retention policy defined in [§22](#retention).
 
 ---
 
@@ -143,16 +154,17 @@ Every column on a synced table falls into exactly one of four categories. The wr
 
 ### 4.4 Local-only
 
-`[N-24]` **Local-only columns** are columns whose value is not meaningful outside this client and SHALL be excluded from payloads entirely. Examples: cache timestamps, UI state flags specific to a client, computed fields that each peer recomputes from other data.
+`[N-24]` **Local-only columns** are columns whose value is not meaningful outside this client and SHALL be excluded from payloads entirely. Examples: cache timestamps, UI state flags specific to a client, computed fields that each peer recomputes from other data, per-machine credentials.
 
 - `[N-25]` Local-only columns SHALL be declared in the per-table registry. The writer SHALL omit them from both `payload_before` and `payload_after`.
 
 ### 4.5 Per-table column category registry <a id="per-table-registry"></a>
 
-- `[N-26]` `electron/sync/synced-tables.js` SHALL export, for each of the 27 synced tables, a declaration that categorizes every column as scalar, json-text, blob-ref, or local-only. Example shape:
+- `[N-26]` `electron/sync/synced-tables.js` SHALL export, for each of the 37 synced tables, a declaration that categorizes every column as scalar, json-text, blob-ref, or local-only. Example shape:
   ```js
   {
     tableName: 'songs',
+    scope: 'install',
     columns: {
       id: 'scalar',
       uuid: 'scalar',
@@ -260,13 +272,13 @@ Worked examples are in [Appendix A](#hlc-examples).
 
 - `[N-54]` The writer module SHALL expose a function `toWireFormat(mutationRow)` that accepts a full 17-field row (as read from the mutations table) and returns a 14-field wire-format object. In v0, this function is used primarily by tests and by future sync code; production code paths do not invoke it yet.
 
-### 7.4 Receiver obligations (forward reference)
+### 7.4 Receiver obligations
 
-- `[N-55]` The v0 wire format is defined; v0 does not specify a receiver. When the sync engine is added in a future version, receivers SHALL:
+- `[N-55]` Receivers SHALL:
   - Set `origin = 'remote'` on received mutations.
   - Set `applied_at` to the receiver's current wall-clock time at application.
-  - Set `sync_status = 'pending'` initially, advancing through states per the receiver's own sync state machine.
-  - Preserve all other fields byte-exact.
+  - Set `sync_status = 'synced'` after successful application per [§19](#merge).
+  - Preserve all other fields byte-exact from the wire format.
 
 ---
 
@@ -314,9 +326,9 @@ When two peers with different schema versions exchange a mutation, the receiver 
 - `[N-64]` When a peer at schema_version M receives a mutation tagged with schema_version N where `N > M`, the receiver SHALL:
   1. NOT apply the mutation to local tables.
   2. NOT record the mutation in the local mutations log as applied.
-  3. Preserve the raw wire-format bytes in a quarantine store (structure defined by the sync-engine spec, out of scope for v0).
-  4. Expose a count of quarantined-forward mutations via the operator-facing sync status (UI defined by operator-UI spec, out of scope for v0).
-  5. When the receiver is later upgraded to schema_version ≥ N, it SHALL drain the quarantine, replay each quarantined mutation through the backward-compat path ([N-62]) if applicable, and apply. Successful drain mutations enter the mutations log with `origin='remote'` at that point.
+  3. Preserve the raw wire-format bytes in a quarantine store (a separate SQLite table outside `mutations`; structure defined by Stage 2 implementation).
+  4. Expose a count of quarantined-forward mutations via the application error log.
+  5. When the receiver is later upgraded to schema_version ≥ N, drain the quarantine, replay each quarantined mutation through the backward-compat path ([N-62]) if applicable, and apply. Successful drain mutations enter the mutations log with `origin='remote'` at that point.
 - `[N-65]` Rationale: an older peer cannot correctly apply a payload written for a newer schema without speculative logic. Rejecting-and-quarantining is safer than guessing, AND preserves offline-tolerance: a laptop that has been offline for a month and comes back with mutations tagged at an unupgraded schema version does not lose those mutations — they drain after upgrade.
 
 ### 9.3 Same version
@@ -333,9 +345,10 @@ When two peers with different schema versions exchange a mutation, the receiver 
 
 ### 10.1 Every migration includes a payload transformer
 
-- `[N-68]` Every schema migration script (under `scripts/` with the naming convention `migrate-*-phase-sync-N.js` or equivalent) SHALL export a function `payloadTransformer(payload, fromVersion)` where:
+- `[N-68]` Every schema migration script (under `scripts/` with the naming convention `migrate-*-phase-sync-N.js` or equivalent) SHALL export a function `payloadTransformer(payload, fromVersion, mutationEnvelope)` where:
   - `payload` is a JSON object representing a `payload_before` or `payload_after` at schema_version `fromVersion`.
   - `fromVersion` is the schema_version the payload is currently at; the function transforms it to `fromVersion + 1`.
+  - `mutationEnvelope` is the full wire-format mutation object (14 fields), passed for cases where the transformer needs the HLC or other mutation metadata to produce correct defaults (see [Q-15] in [§13](#closed-questions)).
   - The function returns the transformed payload object. It SHALL NOT mutate the input.
 - `[N-69]` For migrations that do not require payload transformation (index additions, non-synced-table changes, or no-op schema bumps), `payloadTransformer` SHALL be the identity function. An identity transformer SHALL still be explicitly exported; its presence is mandatory. Absence is treated as a bug.
 - `[N-70]` A payload transformer handles the full payload for any synced table affected by its migration. If a migration adds a column `foo` to table `bar`, the transformer for that migration SHALL, when transforming a payload from table `bar`, add `foo` with its default value. Transformers on payloads from tables not touched by the migration SHALL return the payload unchanged.
@@ -416,31 +429,60 @@ Compaction is not implemented in v0. This section documents what it will eventua
 
 ### 12.2 Implications for v0
 
-- `[N-86]` v0 SHALL NOT delete from the mutations table ([N-14]).
+- `[N-86]` v0 SHALL NOT delete from the mutations table except via the retention policy in [§22](#retention).
 - `[N-87]` v0 SHALL NOT add foreign keys from other tables pointing into mutations. Any such FK would block future compaction.
 - `[N-88]` The writer module SHALL export a `compactMutations()` function stub that throws `"compaction not implemented in v0"`. Its presence reserves the API and prompts future-Claude to implement it rather than invent a new one.
 
 ---
 
-## 13. Open questions <a id="open-questions"></a>
+## 13. Closed questions <a id="closed-questions"></a>
 
-These are questions deliberately deferred. None are v0 blockers. Each SHALL be resolved before the sync engine itself is implemented.
+All questions from the original open-questions section are now resolved. Decisions are locked. The Q-numbers are preserved for cross-reference stability.
 
-- `[Q-01]` **Blob store layout.** Where do binary blobs physically live, and how are they addressed (content hash, UUID, path)? Decision needed before the first real `__blob_ref` value is used in production.
-- `[Q-02]` **Peer discovery and transport.** How do peers find each other, and over what protocol do they exchange mutations? LAN-only? Via a coordinator? Via a Tailscale-style overlay? User choice?
-- `[Q-03]` **Authentication and authorization.** How are peers authenticated? Can a peer refuse mutations from another peer? Per-operator or per-client authorization?
-- `[Q-04]` **Conflict detection semantics.** What constitutes a conflict? Two concurrent updates to the same row? Two updates to the same field? Define formally when conflict-resolution strategies are designed.
-- `[Q-05]` **Conflict resolution strategies.** Last-write-wins by HLC? Per-field merges? Operator prompt? Likely a per-table-or-per-column policy; v0 defers entirely.
-- `[Q-06]` **Sync cursor format.** How does a peer express "I have all mutations up to point X from every other peer"? Vector of HLCs? Per-peer `hlc_last` map? Design with peer discovery.
-- `[Q-07]` **Delivery guarantees.** At-least-once? Exactly-once via idempotent application? Ether's target is exactly-once via `id` idempotency, but spell this out when the sync engine is written.
-- `[Q-08]` **Mutation log size pressure.** At what log size does compaction become urgent? Benchmark once a realistic corpus exists.
-- `[Q-09]` **JSON1 extension availability.** Confirm better-sqlite3's bundled SQLite has JSON1 enabled on all target platforms (Windows, macOS, Linux). Resolve before any code path uses JSON1-specific functions (`json_extract`, `json_tree`, etc.). The nested-JSON payload format in [§4.2](#payload-categories) does NOT require JSON1; it uses plain `JSON.parse`/`JSON.stringify`. v0 does not depend on JSON1.
-- `[Q-10]` **Operator UI for sync state.** Where and how does the operator see sync progress, conflicts, pending mutations? UX design, post-v0.
-- `[Q-11]` **64-bit integer payload handling.** SQLite INTEGER can hold 64-bit values; JavaScript's Number type loses precision above 2^53 - 1. No synced column in Ether currently exceeds this range. If a future column does (e.g. nanosecond timestamps), payloads SHALL store it as a string, and the column registry in [§4.5](#per-table-registry) SHALL mark such columns with a `'big-int'` sub-category. Deferred until a real case appears.
-- `[Q-12]` **Quarantine store structure.** The forward-compat rule ([N-64]) requires a quarantine store for mutations tagged at an unupgraded schema version. Its structure, location, and drain mechanism are defined by the sync-engine spec, not v0. Quarantine is deliberately outside the mutations table and does not use `sync_status` values ([N-12]).
-- `[Q-13]` **Sensitive-column handling.** Some columns hold credentials or secrets (e.g. streaming keys, broadcast passwords). v0 handles this by marking known-sensitive columns as `local-only` in the per-table registry (§4.5), which excludes them from both `payload_before` and `payload_after` and therefore from the wire format. This is conservative: secrets don't propagate, each device configures its own. A future protocol version may support cross-device secret propagation via payload-level encryption, a dedicated secrets channel, or operator-gated approval flow. Deferred until a real use case appears that can't be served by per-device config.
-- `[Q-14]` **Cross-DB station_id resolution.** v0 stringifies the integer `station_id` from the target row into the mutation's `station_id` field. This works within a single DB but breaks if two independent DBs ever sync directly (integer `station_id` values will almost certainly collide — every fresh DB starts station ids at 1). The sync engine may require mapping `station_id` to the station's `uuid` at the wire-format layer (stations are themselves synced, so their uuid is portable). Not a v0 blocker — single-DB operation is unambiguous. Resolve before any cross-DB sync is enabled.
-- `[Q-15]` **Payload transformer default semantics for added columns.** When a migration adds a NOT NULL column to a synced table, [N-70] requires the transformer to add that column with a default when transforming a payload from an older peer that predates the column. v0 does not specify which default. Three candidates: **(α) wall-clock at receive time** — simple but mislabels older rows as "just arrived"; **(β) the mutation's own HLC wall-ms component** — honest about origin time but requires the transformer to access the mutation envelope rather than just the payload; **(γ) null and rely on a SQL DEFAULT or downstream handler** — punts the problem but risks NOT NULL violations and silent app bugs. Resolve in A2.4 when the first non-identity transformer is written. Until then, all transformers are identity (per [N-69]); safe only because no v1 peers exist in the wild. Real bug before any second client is onboarded against a v2+ schema.
+**[Q-01] Blob store layout — CLOSED**
+Decision: blob-sync is a separate arc, out of scope for Phase F. v1 sync transports blob-ref metadata only (path + size per [N-22]/[N-23]). Binary replication is explicitly deferred until a blob-sync protocol is defined. No action required before Stage 2.
+
+**[Q-02] Peer discovery and transport — CLOSED**
+Decision: pluggable transport interface, defined in [§21](#transport). HTTP is the first implementation; P2P is deferred. The sync engine calls only the transport interface; discovery is hidden inside each transport implementation.
+
+**[Q-03] Authentication and authorization — CLOSED**
+Decision: auth is the transport layer's responsibility per [N-116]. The sync protocol is auth-agnostic. SEC1 (unauthenticated backend endpoints) is a hard gate before any sync endpoint is exposed in production. Phase F development proceeds locally without auth enforcement.
+
+**[Q-04] Conflict detection semantics — CLOSED**
+Decision: LWW (last-write-wins) by HLC is universal. There is no explicit conflict detection step. A concurrent write to the same row produces a winner (higher HLC, whose `payload_after` is applied) and a loser (lower HLC, whose mutation is logged but not applied to the live table). Both are in the mutation log. The mutation log is the full audit trail.
+
+**[Q-05] Conflict resolution strategies — CLOSED**
+Decision: LWW by HLC, no per-table policies, no per-field merge, no operator prompt. See [§19](#merge) Step 5 ([N-105]/[N-106]). Concurrent-write coordination is a staff workflow concern, not an engine concern.
+
+**[Q-06] Sync cursor format — CLOSED**
+Decision: a per-peer HLC map. Format: `{ "<client_id>": "<hlc_string>", ... }`. Persisted in `system_state` under key `sync_cursor` as a JSON string. Full specification in [§18](#pull) ([N-96]).
+
+**[Q-07] Delivery guarantees — CLOSED**
+Decision: exactly-once via UUID idempotency. A mutation received twice is a no-op at the live table — the second receive is caught by the idempotency check ([N-100]) and the cursor is advanced without re-applying.
+
+**[Q-08] Mutation log size pressure — CLOSED**
+Decision: local 90-day rolling window per [§22](#retention). Backend retains forever. No pressure benchmark is planned; the 90-day window is the policy.
+
+**[Q-09] JSON1 extension availability — CLOSED**
+Decision: JSON1 is not required by this protocol. All payload construction and reading uses `JSON.parse`/`JSON.stringify`. If JSON1 functions are used in future code, confirm availability at that time. No action required now.
+
+**[Q-10] Operator UI for sync state — CLOSED**
+Decision: none in v1. The mutation log is the audit trail. A sync-status UI is deferred to a future arc after the engine is stable.
+
+**[Q-11] 64-bit integer payload handling — CLOSED**
+Decision: deferred. No current synced column exceeds 2^53. If a future column does, the registry SHALL mark it with a `'big-int'` sub-category and the payload SHALL store it as a string. No action required now.
+
+**[Q-12] Quarantine store structure — CLOSED**
+Decision: deferred to Stage 2 implementation. When built, use a separate SQLite table (outside `mutations`) with columns for raw wire-format bytes, foreign_schema_version, received_at, and a retry-after timestamp for drain scheduling.
+
+**[Q-13] Sensitive-column handling — CLOSED**
+Decision: two mechanisms enforced in the registry. (a) `install_secrets_kv` has `syncExcluded: true` — the entire table is excluded from all push payloads at [N-92a]. (b) Individual credential columns (`stream_key` on `rtmp_destinations`, `icecast_password` on `stations`, `mount_pending_provision` on `stations`) are marked `local-only` in the registry — excluded from `payload_before` and `payload_after` per [N-24]/[N-25]. Each device configures these independently.
+
+**[Q-14] Cross-DB station_id resolution — CLOSED**
+Decision: deferred. Single-DB operation is currently unambiguous (integer station_ids start at 1 per DB and don't conflict within one DB). Resolution required before any cross-DB multi-operator sync is enabled. Not a Stage 2 blocker.
+
+**[Q-15] Payload transformer default semantics — CLOSED**
+Decision: option (β). The transformer function signature now includes the full mutation envelope as its third argument (`mutationEnvelope`) per [N-68]. When a migration adds a NOT NULL column, the transformer SHOULD use the HLC wall-ms component of the mutation (`mutationEnvelope.hlc.split(':')[0]`) as the default value for timestamp-style columns. For non-timestamp columns, the transformer SHALL use a table-specific documented default that is stated in the migration script's comment. The transformer MUST NOT emit null for a NOT NULL column, and MUST NOT use receive time (option α) as it mislabels historical rows.
 
 ---
 
@@ -482,7 +524,7 @@ Given a client with `client_id = 8b2c4d1e-6f3a-4e5b-9c1d-2e7f8a4b3c5d`, and an i
 - Client A mutation: `'1713801600000:5:aaaa-...-aaaa'`.
 - Client B mutation: `'1713801600000:5:bbbb-...-bbbb'`.
 - These have equal `wall_ms` and equal `logical`. They are *concurrent* in causality terms.
-- For deterministic tie-breaking (ordering in a list, for example), compare `client_id` lexicographically: A < B, so A's mutation sorts first. But a sync engine SHALL NOT infer that A *caused* B or vice versa; they happened in parallel.
+- For deterministic tie-breaking (ordering in a list, for example), compare `client_id` lexicographically: A < B, so B's mutation sorts later and wins LWW. But a sync engine SHALL NOT infer that A *caused* B or vice versa; they happened in parallel.
 
 ---
 
@@ -514,13 +556,338 @@ Wire = 14. Local-only = 3 (`applied_at`, `origin`, `sync_status`).
 
 ---
 
-## 16. Phase 5 amendment — install-scoped mutations [N-89]/[N-90]
+## 16. Phase 5 amendment — install-scoped mutations <a id="phase5"></a>
 
 **[N-89] — `station_id` is NULL for install-scoped table writes.**
-Mutations for install-scoped tables (`songs`, `artists`, `albums`, `mood_tags`) store NULL in `station_id`. These tables carry no station affiliation — the same row is shared across all stations on the install. Callers MUST pass `null` explicitly; `undefined` remains a programmer error and the writer rejects it. The `String()` coercion in `[Q-14]` applies only when `station_id` is non-null; null passes through to SQL as NULL. Schema change: `migrations.station_id` was `TEXT NOT NULL` in v3; relaxed to `TEXT` (nullable) in v5 migration `migrate-mutations-null-station-phase-sync-5.js`.
+Mutations for install-scoped tables (`songs`, `artists`, `albums`, `mood_tags`, `install_config_kv`, `install_secrets_kv`) store NULL in `station_id`. These tables carry no station affiliation — the same row is shared across all stations on the install. Callers MUST pass `null` explicitly; `undefined` remains a programmer error and the writer rejects it. The `String()` coercion in [Q-14] applies only when `station_id` is non-null; null passes through to SQL as NULL. Schema change: `mutations.station_id` was `TEXT NOT NULL` in v3; relaxed to `TEXT` (nullable) in v5 migration `migrate-mutations-null-station-phase-sync-5.js`.
 
 **[N-90] — Receiver semantics for install-scoped mutations (station_id = NULL).**
 A sync receiver that receives a mutation with `station_id = NULL` applies it to the install-scoped table without any station filtering. The receiver MUST NOT substitute its own `station_id` into the row or the mutation record. Idempotency checks for install-scoped mutations use `(table_name, row_id, hlc)` only, ignoring `station_id`. Station-scoped mutations continue to use `(station_id, table_name, row_id, hlc)` for idempotency as before.
+
+---
+
+## 17. Push protocol <a id="push"></a>
+
+- `[N-91]` **Push trigger.** The sync scheduler initiates a push after any successful local write that sets a mutation to `sync_status='pending'`, and on a configurable periodic interval as a fallback. The scheduler is defined in Stage 2; this section specifies only what it sends and the rules governing a valid push.
+
+- `[N-92]` **Push filter.** Before building the outbound batch, the engine SHALL exclude:
+  - **(a)** All mutations where `table_name` maps to a REGISTRY entry with `syncExcluded: true`. This unconditionally excludes `install_secrets_kv`.
+  - **(b)** All mutations where `table_name` maps to a REGISTRY entry with `scope: 'local-only'`. This unconditionally excludes `monitor_routing`.
+  - **(c)** All mutations with `sync_status != 'pending'`. Already-synced mutations are not resent.
+  
+  The filter is applied at the point of batch construction, not at write time. All mutations, including excluded ones, are still written to the local `mutations` table for audit purposes.
+
+- `[N-93]` **Push batch format.** A push request body is a JSON object:
+  ```json
+  {
+    "client_id": "<UUID of this client>",
+    "station_id": "<station UUID or null for install-scoped>",
+    "batch": [ <wire-format mutation>, ... ]
+  }
+  ```
+  `batch` contains 14-field wire-format objects produced by `toWireFormat()` ([N-54]). The batch SHALL be limited to 500 mutations per request. Larger backlogs are chunked across sequential requests in HLC ascending order (oldest pending mutations push first).
+
+- `[N-94]` **Push response.** On success the backend returns HTTP 200:
+  ```json
+  {
+    "accepted": ["<mutation-id>", ...],
+    "rejected": [{ "id": "<mutation-id>", "reason": "<string>" }, ...]
+  }
+  ```
+  For each accepted ID the engine sets `sync_status = 'synced'`. For each rejected ID the engine logs the reason; `sync_status` remains `'pending'` for retry on the next cycle.
+
+- `[N-95]` **Push failure handling.** On HTTP 5xx or network error, the engine SHALL retry with exponential backoff: initial 5 s, doubling each retry, cap 5 min, retry indefinitely. On HTTP 4xx the engine SHALL NOT retry automatically; it logs the error at ERROR level. On HTTP 401/403 specifically, the engine halts the sync cycle and sets its sync state to `auth_error` ([N-116]).
+
+---
+
+## 18. Pull and sync cursor <a id="pull"></a>
+
+- `[N-96]` **Sync cursor.** The local engine maintains a *sync cursor*: a JSON object mapping every known peer's `client_id` to the highest HLC from that peer that has been successfully processed (either applied to the live table, logged as an LWW loser, confirmed as an idempotency duplicate, or quarantined for schema mismatch). The cursor does NOT advance past mutations that are in the causal hold queue ([N-103]).
+  ```json
+  { "<client_id_A>": "<hlc_string>", "<client_id_B>": "<hlc_string>" }
+  ```
+  The cursor is persisted in `system_state` under key `sync_cursor` as a JSON text value. It is updated atomically (inside a SQLite transaction) after each successful batch apply.
+
+- `[N-97]` **Pull request.** A pull request sends the current sync cursor to the backend:
+  ```json
+  {
+    "client_id": "<this client's UUID>",
+    "station_id": "<station UUID or null>",
+    "cursor": { "<peer_client_id>": "<hlc_string>", ... }
+  }
+  ```
+  The backend returns all mutations it holds that the requesting client has not yet seen. For each `client_id` in the cursor, the backend returns only mutations from that client with `hlc` lexicographically greater than `cursor[client_id]`. For any `client_id` not present in the cursor, the backend returns all mutations from that client.
+
+- `[N-98]` **Pull response.** The backend returns HTTP 200:
+  ```json
+  {
+    "mutations": [ <wire-format mutation>, ... ],
+    "server_hlc": "<current server HLC>"
+  }
+  ```
+  Mutations are ordered by HLC ascending. `server_hlc` is informational; in v1 the engine logs it but takes no action on it.
+
+- `[N-99]` **Empty pull.** If there are no new mutations, the backend returns `{ "mutations": [], "server_hlc": "..." }`. The engine takes no action and schedules the next poll at the normal interval.
+
+---
+
+## 19. Merge: apply remote mutations <a id="merge"></a>
+
+Applying a remote mutation is the most critical operation in the sync engine. The steps below execute in order, inside a single SQLite transaction per mutation. If any step throws, the transaction rolls back and the mutation remains unprocessed; the engine logs the error and continues with the next mutation in the batch.
+
+### Step 1 — Idempotency check
+
+- `[N-100]` Before any other processing, the engine SHALL query:
+  ```sql
+  SELECT 1 FROM mutations WHERE id = ? LIMIT 1
+  ```
+  If a row is found: this mutation has already been processed. Skip all remaining steps. Advance the sync cursor ([N-96]) past this mutation's HLC. Log at DEBUG level. Do NOT apply the mutation again. Do NOT write another row.
+
+### Step 2 — Filter check
+
+- `[N-101]` Apply the same filter rules as push ([N-92]): if `table_name` resolves to `syncExcluded: true` or `scope: 'local-only'` in the REGISTRY, this is a protocol violation — a well-behaved remote client should never send such a mutation. Log at ERROR level. Do not apply. Do not advance the cursor (to allow investigation). Discard after logging.
+
+### Step 3 — Schema version check
+
+- `[N-102]` Compare the mutation's `schema_version` to the local schema version:
+  - **Equal:** proceed to Step 4.
+  - **Mutation version is older (local is newer):** apply payload transformers forward per [N-62]. If transformation succeeds, proceed to Step 4. If transformation fails, log at ERROR, set `sync_status = 'conflicted'`, write the raw mutation to the mutations table without applying to the live table, advance cursor.
+  - **Mutation version is newer (local is older):** move the raw wire bytes to the quarantine store per [N-64]. Advance cursor past this mutation only if quarantine write succeeds. Do not apply to live table.
+
+### Step 4 — Causal ordering check
+
+- `[N-103]` If `parent_mutation_id` is non-null, query:
+  ```sql
+  SELECT 1 FROM mutations WHERE id = ? LIMIT 1
+  ```
+  If the parent is NOT found in the local mutations table: the current mutation cannot yet be applied. Place it in the *causal hold queue* along with its full wire-format bytes. Do NOT write it to the mutations table yet. Do NOT advance the cursor past this mutation. The sync scheduler revisits the causal hold queue after each successful apply batch, retrying every held mutation whose parent is now present. A mutation that has been held for more than 30 minutes generates a WARNING log entry. A mutation held for more than 24 hours generates an ERROR log entry. There is no automatic discard; held mutations remain in the queue until their parent arrives or the operator intervenes.
+
+- `[N-104]` If `parent_mutation_id` is null, or if the parent IS found in the local mutations table, proceed to Step 5.
+
+### Step 5 — LWW resolution
+
+- `[N-105]` Query the local mutations table for the most recent mutation on this `(table_name, row_id)` pair:
+  ```sql
+  SELECT hlc, op FROM mutations
+  WHERE table_name = ? AND row_id = ?
+  ORDER BY hlc DESC LIMIT 1
+  ```
+  This query considers ALL prior mutations on the row regardless of `origin` (local or remote). If no rows are found (the row has no prior history locally), the incoming mutation wins unconditionally — skip the comparison and proceed to Step 6.
+
+  If a prior mutation exists, compare `local_latest_hlc` to the incoming `hlc` using [N-46]:
+  - **Incoming HLC is higher (incoming wins):** proceed to Step 6 to apply the incoming mutation's `payload_after` to the live table.
+  - **Local HLC is higher (local wins):** the incoming mutation loses. Write the incoming mutation to the local mutations table with `origin='remote'`, `sync_status='synced'`, `applied_at=now()`, and all other fields byte-exact from the wire format — but do NOT apply `payload_after` to the live table. Advance cursor. The losing mutation is permanently in the log for audit and causality; the live row is not changed.
+  - **Equal HLC** (same `wall_ms` and `logical`, different `client_id`): break deterministically by `client_id` lexicographic order per [N-46]. The mutation with the lexicographically higher `client_id` wins. Apply winner/loser logic as above.
+
+- `[N-106]` The LWW loser's `payload_after` is NOT applied to the live table. It IS written to the mutations table. No special marker is needed beyond the existing `sync_status='synced'` and `origin='remote'`; an audit query can always reconstruct the winner/loser story by sorting `(table_name, row_id)` history by HLC and observing which mutation's `payload_after` matches the live row's current state.
+
+### Step 6 — Apply to live table
+
+- `[N-107]` The engine reconstructs and executes SQL from the winning mutation's payload. The engine does NOT route remote applies through the typed handlers; it uses the payload directly, since the originating client already validated the data.
+  - `op='insert'`: `INSERT OR REPLACE INTO <table> (...) VALUES (...)` using all non-local-only fields from `payload_after`. Local-only columns are omitted; the receiving DB either has its own values for them or they remain at their SQLite default.
+  - `op='update'`: `UPDATE <table> SET <non-local-only fields> WHERE uuid = ?`. If the row does not exist locally (install history gap), treat as `INSERT OR REPLACE` using `payload_after`.
+  - `op='delete'`: `UPDATE <table> SET deleted_at = <value from payload_before.deleted_at>, updated_at = <value from payload_before.updated_at> WHERE uuid = ?`. This is the tombstone write ([§20](#tombstone)). If the target row does not exist locally, this is a no-op — the tombstone is already satisfied.
+
+### Step 7 — Log and advance cursor
+
+- `[N-108]` Write the incoming mutation to the local mutations table:
+  - `origin = 'remote'`
+  - `applied_at` = current ISO 8601 UTC timestamp
+  - `sync_status = 'synced'`
+  - All other fields byte-exact from the wire format.
+
+  Then update the sync cursor: `cursor[incoming.client_id] = max(cursor[incoming.client_id], incoming.hlc)` using HLC comparison [N-46]. Persist the updated cursor to `system_state` within the same transaction as the mutations table write.
+
+  **Cursor advance summary:** The cursor advances after: idempotency duplicate (Step 1), filter reject (Step 2, only on success), schema transform success or quarantine success (Step 3), LWW winner applied (Steps 6–7), LWW loser logged (Step 5–7). The cursor does NOT advance when a mutation is placed in the causal hold queue (Step 4 hold path).
+
+---
+
+## 20. Tombstone semantics <a id="tombstone"></a>
+
+- `[N-109]` **Tombstone model.** Ether uses soft-deletes throughout. Typed handlers for `op='delete'` set `deleted_at` to the current UTC timestamp and leave the row in the table. No row in a synced table is physically removed in normal operation. The delete mutation's `payload_before` captures the full row state including `deleted_at`; `payload_after` is NULL.
+
+- `[N-110]` **Remote tombstone propagation.** When a remote `op='delete'` wins LWW (Step 5), the apply step (Step 6) writes `deleted_at` to the live row. Application code that reads synced tables MUST filter `WHERE deleted_at IS NULL`; tombstone propagation is transparent to the UI.
+
+- `[N-111]` **Tombstone precedence under LWW.** A delete mutation wins or loses purely by HLC. There is no "delete wins" or "delete loses" override. If a remote delete arrives with a lower HLC than the most recent local update, the local update wins and the row survives. If the remote delete has a higher HLC, the row is soft-deleted, even if a local update also exists with a lower HLC.
+
+- `[N-112]` **Re-insert after tombstone.** If a row is re-inserted (same `uuid`) after being tombstoned, the `op='insert'` mutation's `payload_after` carries `deleted_at = null`. The `INSERT OR REPLACE` in Step 6 writes this, clearing the tombstone. For the re-insert to succeed under LWW, it must have a higher HLC than the delete mutation.
+
+---
+
+## 21. Transport interface contract <a id="transport"></a>
+
+- `[N-113]` **Pluggable transport.** The sync engine does not call HTTP directly. It calls a transport object conforming to the interface defined in this section. The HTTP transport is the first implementation; a P2P transport is anticipated. Swapping transports requires only changing which transport object is constructed at startup — no changes to the engine or protocol.
+
+- `[N-114]` **Required methods.** A conforming transport MUST implement exactly the following three async methods:
+  ```
+  push(batch: PushBatch): Promise<PushResult>
+  pull(cursor: SyncCursor): Promise<PullResult>
+  healthCheck(): Promise<HealthResult>
+  ```
+  No other methods are required by the engine. Transports MAY expose additional methods for their own management (e.g. `connect()`, `disconnect()`) but the engine does not call them.
+
+- `[N-115]` **Type shapes** (TypeScript notation, normative):
+  ```typescript
+  type PushBatch = {
+    client_id: string;           // UUID of this client
+    station_id: string | null;   // Station UUID or null for install-scoped
+    batch: WireMutation[];       // 1..500 wire-format objects per [N-93]
+  };
+
+  type PushResult = {
+    accepted: string[];          // mutation UUIDs accepted by the backend
+    rejected: Array<{ id: string; reason: string }>;
+  };
+
+  type SyncCursor = {
+    client_id: string;           // UUID of this client
+    station_id: string | null;
+    cursor: Record<string, string>; // { peer_client_id → hlc_string }
+  };
+
+  type PullResult = {
+    mutations: WireMutation[];   // 0..n mutations, HLC ascending
+    server_hlc: string;          // backend's current HLC (informational)
+  };
+
+  type HealthResult = {
+    ok: boolean;
+    latencyMs: number;
+  };
+
+  type WireMutation = {          // the 14 wire fields per [N-48]
+    id: string;                  // required
+    client_id: string;           // required
+    station_id: string | null;   // required (null for install-scoped)
+    actor_id: string | null;
+    table_name: string;          // required
+    row_id: string;              // required
+    op: 'insert' | 'update' | 'delete' | 'checkpoint'; // required
+    payload_before: object | null; // null for insert
+    payload_after: object | null;  // null for delete
+    created_at: string;          // ISO 8601, required
+    hlc: string;                 // required
+    parent_mutation_id: string | null;
+    schema_version: number;      // required
+    conflict_resolution: object | null;
+  };
+  ```
+
+- `[N-116]` **Authentication at the transport layer.** Auth is the transport's responsibility. The HTTP transport implementation MUST:
+  1. Read the auth token from `install_secrets_kv` under key `sync_auth_token` at initialization.
+  2. Send it as `Authorization: Bearer <token>` on every request.
+  3. On HTTP 401 or 403: halt sync, set sync state to `auth_error`, surface a message prompting the operator to re-authenticate. Do NOT retry 401/403.
+  4. The sync engine never sees the token; it receives only `PushResult`, `PullResult`, or a thrown error.
+
+- `[N-117]` **Transport error contract.** Transport methods SHALL throw on errors that require engine-level attention (network failure, unrecoverable backend error). They SHALL resolve with the result type on partial success (some rejected IDs, empty pull). The engine's retry logic sits above the transport and operates on thrown errors; do not swallow errors inside the transport.
+
+- `[N-118]` **Transport instantiation.** The sync scheduler creates exactly one transport instance at startup and holds it for the process lifetime. The transport MAY maintain a persistent connection internally (WebSocket, SSE); the engine does not manage connection state.
+
+---
+
+## 22. Local retention policy <a id="retention"></a>
+
+- `[N-119]` **90-day rolling window.** The sync scheduler SHALL run a retention job on a weekly interval. The job deletes rows from the local `mutations` table that satisfy ALL of:
+  - `created_at < (current UTC − 90 days)`
+  - `sync_status = 'synced'`
+  - No other row in the local `mutations` table references this row's `id` via `parent_mutation_id`
+
+  Rows are evaluated in HLC ascending order. For each candidate, the parent-reference check is re-evaluated after prior deletions in the same job run (so that parent deletion can unlock child deletion in the same pass).
+
+- `[N-120]` **Pending mutations are never deleted.** Any mutation with `sync_status = 'pending'` or `'syncing'` is excluded from retention regardless of age. A mutation that has been pending for more than 90 days indicates a sync problem; the engine logs it at ERROR level on the weekly retention run but does not delete it.
+
+- `[N-121]` **Referenced mutations are never deleted before their children.** A mutation that is referenced by another mutation's `parent_mutation_id` is retained until the child mutation is itself eligible for deletion. The retention job processes children before parents within the same run where possible; if a child is not yet eligible (e.g. still pending), the parent is skipped for that run.
+
+- `[N-122]` **Backend retention.** The backend retains all mutations forever. The 90-day window is local only. A client that comes online after a long absence pulls from the backend and receives mutations older than its local window. These arrive as remote mutations and are applied normally via [§19](#merge); after successful apply they enter the local mutations table. If the applied mutations are already older than 90 days, they are eligible for deletion on the next weekly retention run.
+
+---
+
+## 23. Appendix C — Stage 2 test plan <a id="test-plan"></a>
+
+Every scenario below MUST pass before Stage 3 (transport) begins. Test IDs are permanent; do not renumber. Prefix: T-nn.
+
+### A. HLC unit tests (no DB)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-01 | Clock advances between two calls | `nextClock` returns a higher HLC on the second call |
+| T-02 | Clock skew: `Date.now()` returns value < `hlc_last.wall_ms` | HLC wall component stays at `hlc_last.wall_ms`; logical increments |
+| T-03 | Same-millisecond batch of N=100 calls | All HLCs unique; logical counter = 0..99; wall component identical |
+| T-04 | HLC comparison: equal wall, equal logical, different client_id | Higher client_id (lexicographic) sorts later; both are flagged concurrent |
+
+### B. Writer unit tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-05 | `toWireFormat()` on a 17-field row | Returns exactly 14 fields; `applied_at`, `origin`, `sync_status` absent |
+| T-06 | `serializePayload` / `deserializePayload` round-trip for scalar column | Value survives round-trip unchanged |
+| T-07 | `serializePayload` / `deserializePayload` round-trip for json-text column | Nested object; not a double-encoded string |
+| T-08 | `serializePayload` on blob-ref column | Result is `{ __blob_ref, __blob_size, __blob_origin }` object |
+| T-09 | `withMutation` — `dataOpFn` throws | No mutation row written; DB state unchanged |
+| T-10 | `withMutation` — `payload_before` read after row deleted by concurrent txn | Writer throws `ERR_PAYLOAD_BEFORE_MISSING`; no mutation row written |
+
+### C. LWW apply tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-11 | Remote mutation HLC > local latest | `payload_after` applied to live table; remote mutation logged `origin='remote', sync_status='synced'` |
+| T-12 | Remote mutation HLC < local latest | Live table unchanged; remote mutation logged but NOT applied |
+| T-13 | Equal HLC, remote `client_id` lexicographically higher | Remote wins; `payload_after` applied to live table |
+| T-14 | Equal HLC, remote `client_id` lexicographically lower | Local wins; remote logged but not applied |
+| T-15 | No prior mutations for `(table_name, row_id)` | Incoming mutation wins unconditionally; applied to live table |
+
+### D. Causal ordering tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-16 | Child mutation arrives before parent | Child placed in causal hold queue; cursor does NOT advance past child |
+| T-17 | Parent arrives after child is held | Child unblocked on next scheduler tick; applied in correct order; cursor advances past both |
+| T-18 | Three-mutation chain C→B→A; C arrives first, then B, then A | All held until A arrives; applied in order A, B, C; cursor advances past all three |
+| T-19 | Child held >30 min (simulated by fast-forwarding the hold timestamp) | WARNING log entry generated |
+| T-20 | `parent_mutation_id = null` | No causal check; mutation applied immediately in Step 5 |
+
+### E. Tombstone tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-21 | Remote `op='delete'` with higher HLC than local latest | `deleted_at` set on live row; row queryable via `WHERE deleted_at IS NULL` = 0 rows |
+| T-22 | Remote `op='delete'` with lower HLC than local update | Live row survives; `deleted_at` remains null; delete mutation logged but not applied |
+| T-23 | Re-insert mutation (same `uuid`) with HLC > prior delete HLC | `deleted_at` cleared on live row; row visible again |
+| T-24 | Remote delete on row that does not exist locally | No-op; mutation logged; no error |
+
+### F. Security and filter tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-25 | Build push batch from a DB containing `install_secrets_kv` mutations | `install_secrets_kv` mutations absent from batch; all other pending mutations present |
+| T-26 | Build push batch from a DB containing `monitor_routing` mutations | `monitor_routing` mutations absent from batch |
+| T-27 | `rtmp_destinations` mutation payload | `stream_key` absent from both `payload_before` and `payload_after` |
+| T-28 | `stations` mutation payload | `icecast_password` and `mount_pending_provision` absent from both payloads |
+| T-29 | Remote push containing `install_secrets_kv` table_name | Engine logs ERROR; mutation discarded; cursor does not advance |
+
+### G. Idempotency tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-30 | Apply the same mutation UUID twice | Live table state after second apply == state after first apply; only one row in mutations table |
+| T-31 | Apply same mutation UUID after it was logged as an LWW loser | Second apply is a no-op; cursor advances; live table still reflects the winner |
+
+### H. Retention tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-32 | Synced mutation created >90 days ago, no children | Deleted by retention job |
+| T-33 | Pending mutation created >90 days ago | NOT deleted; ERROR logged by retention job |
+| T-34 | Synced mutation >90 days old referenced as parent by a pending child | NOT deleted; retention skips it because child is not eligible |
+| T-35 | Synced parent and synced child, both >90 days, no further references | Both deleted in the same retention run; parent after child |
+
+### I. Schema compatibility tests (real SQLite, no network)
+
+| ID | Scenario | Expected |
+|---|---|---|
+| T-36 | Receive mutation at schema_version N-1 (local is at N) | Transformer chain applied; result applied to live table at schema N |
+| T-37 | Receive mutation at schema_version N+1 (local is at N) | Mutation quarantined; not applied to live table; cursor advances |
+| T-38 | Transformer throws during backward-compat replay | Mutation written with `sync_status='conflicted'`; live table unchanged; error logged |
 
 ---
 
