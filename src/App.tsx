@@ -758,7 +758,26 @@ export default function App() {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
       const dA = engine.getDeck("A"); const dB = engine.getDeck("B");
       switch(e.code) {
-        case "Space": e.preventDefault(); if (panelRef.current === "trackedit") break; if (dA) { if (dA.getState().status === "playing") dA.pause(); else if (dA.getState().status === "paused") dA.resume(); else dA.play(); } break;
+        case "Space": {
+          e.preventDefault();
+          if (panelRef.current === "trackedit") break;
+          const decks = ["A", "B", "C"] as const;
+          let onAirSlot: "A" | "B" | "C" | null = null;
+          for (const slot of decks) {
+            const d = engine.getDeck(slot);
+            if (!d) continue;
+            const status = d.getState().status;
+            if (status === "playing" || status === "paused") { onAirSlot = slot; break; }
+          }
+          if (onAirSlot) {
+            const d = engine.getDeck(onAirSlot)!;
+            if (d.getState().status === "playing") d.pause();
+            else d.resume();
+          } else if (!autoAdv) {
+            engine.getDeck("A")?.play();
+          }
+          break;
+        }
         case "KeyB": if (dB) { if (dB.getState().status === "playing") dB.pause(); else if (dB.getState().status === "paused") dB.resume(); else dB.play(); } break;
         case "KeyX":
           const xPlaying = deckA?.status === "playing" ? "A" : deckB?.status === "playing" ? "B" : deckC?.status === "playing" ? "C" : null;
@@ -778,7 +797,7 @@ export default function App() {
         case "KeyG": setPanel("logs"); break;
         case "KeyA": e.preventDefault(); toggleAuto(); break;
         case "Slash": if (e.shiftKey) { e.preventDefault(); setShowShortcuts(s => !s); } break;
-        case "Escape": dA?.stop(); dB?.stop(); setShowShortcuts(false); setDrawerOpen(false); break;
+        case "Escape": setShowShortcuts(false); setDrawerOpen(false); break;
       }
     };
     window.addEventListener("keydown", handleKey);

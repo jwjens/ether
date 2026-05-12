@@ -562,6 +562,35 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::Play(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 finished_clone.clear(&deck);
+                                // If source was cleared (e.g. by Stop) but path is known,
+                                // reload before playing — file I/O outside the lock.
+                                let reload_path = bus_cmd.lock().ok().and_then(|b| {
+                                    if b.decks[idx].source.is_none() && !b.decks[idx].path.is_empty() {
+                                        Some(b.decks[idx].path.clone())
+                                    } else {
+                                        None
+                                    }
+                                });
+                                // source=None AND path empty → fake play would produce silence
+                                // with a live level meter; skip entirely.
+                                let skip = reload_path.is_none()
+                                    && bus_cmd.lock().ok()
+                                        .map(|b| b.decks[idx].source.is_none())
+                                        .unwrap_or(false);
+                                if skip {
+                                    eprintln!("[RUST] Play deck {}: source=None, path empty — skipping", deck);
+                                    continue;
+                                }
+                                if let Some(ref path) = reload_path {
+                                    let src = build_source(path, sr);
+                                    if src.is_none() {
+                                        eprintln!("[RUST] Play deck {}: reload failed for {} — skipping", deck, path);
+                                        continue;
+                                    }
+                                    if let Ok(mut bus) = bus_cmd.lock() {
+                                        bus.decks[idx].source = src;
+                                    }
+                                }
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     bus.decks[idx].paused = false;
                                     bus.decks[idx].active = true;
