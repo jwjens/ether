@@ -3764,25 +3764,52 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 // ── Three-Slot Bar — replaces NowPlayingPill in the LivePanel toolbar ──
 // Shows ON AIR / NEXT / AFTER reading queue[0..2] and deck A state.
 function ThreeSlotBar({ queueLen }: { queueLen: number }) {
-  const [slots, setSlots] = useState<[any, any, any]>([null, null, null]);
-  const [deckAPos, setDeckAPos]       = useState(0);
-  const [deckADur, setDeckADur]       = useState(0);
-  const [deckAStatus, setDeckAStatus] = useState("");
-  const [deckATitle, setDeckATitle]   = useState("");
+  // onAir: state of the deck that is actually playing/paused in Rust
+  // nextItem / afterItem: what follows — preloaded idle decks first, then queue
+  const [onAir,     setOnAir]     = useState<{ title: string; positionSec: number; durationSec: number; status: string } | null>(null);
+  const [nextItem,  setNextItem]  = useState<{ title: string; durationMs?: number } | null>(null);
+  const [afterItem, setAfterItem] = useState<{ title: string; durationMs?: number } | null>(null);
   const nextTitleRef  = useRef<HTMLSpanElement>(null);
   const afterTitleRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const pull = () => {
-      const q = engine.getQueue();
-      setSlots([q[0] ?? null, q[1] ?? null, q[2] ?? null]);
-      const da = engine.getDeck("A")?.getState?.();
-      if (da) {
-        setDeckAPos(da.positionSec ?? 0);
-        setDeckADur(da.durationSec ?? 0);
-        setDeckAStatus(da.status ?? "");
-        setDeckATitle(da.title ?? "");
+      // Find the deck that is actually playing or paused — that is ON AIR.
+      const DECK_IDS = ["A", "B", "C"] as const;
+      let onAirIdx = -1;
+      let onAirState: ReturnType<ReturnType<typeof engine.getDeck>["getState"]> | null = null;
+      for (let i = 0; i < DECK_IDS.length; i++) {
+        const s = engine.getDeck(DECK_IDS[i])?.getState?.();
+        if (s && (s.status === "playing" || s.status === "paused")) {
+          onAirIdx = i;
+          onAirState = s;
+          break;
+        }
       }
+      setOnAir(onAirState ? {
+        title: onAirState.title ?? "",
+        positionSec: onAirState.positionSec ?? 0,
+        durationSec: onAirState.durationSec ?? 0,
+        status: onAirState.status ?? "",
+      } : null);
+
+      // Collect idle-but-loaded decks in rotation order after the ON AIR deck.
+      const idleLoaded: { title: string; durationMs?: number }[] = [];
+      for (let offset = 1; offset <= 3; offset++) {
+        const id = DECK_IDS[(onAirIdx + offset) % 3];
+        const s = engine.getDeck(id)?.getState?.();
+        if (s && s.status === "idle" && s.filePath) {
+          idleLoaded.push({ title: s.title ?? "", durationMs: (s.durationSec ?? 0) * 1000 });
+        }
+      }
+
+      // Fill remaining NEXT/AFTER slots from the queue.
+      const q = engine.getQueue();
+      let qi = 0;
+      const nextSrc  = idleLoaded[0] ?? (q[qi++] ? { title: q[qi - 1].title, durationMs: q[qi - 1].durationMs } : null);
+      const afterSrc = idleLoaded[1] ?? (q[qi++] ? { title: q[qi - 1].title, durationMs: q[qi - 1].durationMs } : null);
+      setNextItem(nextSrc ?? null);
+      setAfterItem(afterSrc ?? null);
     };
     pull();
     const unsub = engine.on(pull);
@@ -3792,8 +3819,8 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
 
   useEffect(() => {
     ([
-      { ref: nextTitleRef,  title: slots[0]?.title },
-      { ref: afterTitleRef, title: slots[1]?.title },
+      { ref: nextTitleRef,  title: nextItem?.title },
+      { ref: afterTitleRef, title: afterItem?.title },
     ] as { ref: React.RefObject<HTMLSpanElement | null>; title: string | undefined }[]).forEach(({ ref }) => {
       const span = ref.current;
       if (!span) return;
@@ -3808,21 +3835,22 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         span.style.transform = "translateX(0)";
       }
     });
-  }, [slots[0]?.title, slots[1]?.title]);
+  }, [nextItem?.title, afterItem?.title]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60), sec = Math.floor(s % 60);
     return `${m}:${String(sec).padStart(2, "0")}`;
   };
 
-  const remaining    = Math.max(0, deckADur - deckAPos);
-  const isEndingSoon = deckAStatus === "playing" && remaining > 0 && remaining < 15;
+  const onAirPlaying = onAir?.status === "playing";
+  const remaining    = Math.max(0, (onAir?.durationSec ?? 0) - (onAir?.positionSec ?? 0));
+  const isEndingSoon = onAirPlaying && remaining > 0 && remaining < 15;
 
-  const slot0Time = (deckAStatus === "playing" || deckAStatus === "paused") && deckADur > 0
+  const slot0Time = (onAir?.status === "playing" || onAir?.status === "paused") && (onAir?.durationSec ?? 0) > 0
     ? `-${fmt(remaining)}`
-    : deckADur > 0 ? fmt(deckADur) : "";
-  const getDur = (item: any) => {
-    const ms = (item?.durationMs || item?.duration_ms || 0) as number;
+    : (onAir?.durationSec ?? 0) > 0 ? fmt(onAir!.durationSec) : "";
+  const getDur = (item: { durationMs?: number } | null) => {
+    const ms = (item?.durationMs ?? 0) as number;
     return ms > 0 ? fmt(ms / 1000) : "";
   };
 
@@ -3849,13 +3877,10 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         overflow: "hidden",
       }}>
         {COLS.map(({ label, color, glow }, idx) => {
-          // ON AIR (idx=0) reads from Rust engine state — the authority on what's decoding.
-          // NEXT (idx=1) and AFTER (idx=2) read from queue[0] and queue[1] respectively.
-          const item = idx === 0 ? null : slots[idx - 1];
-          const active = idx === 0
-            ? (deckAStatus === "playing" || deckAStatus === "paused" || !!deckATitle)
-            : !!item;
-          const timeStr = idx === 0 ? slot0Time : getDur(item);
+          const isOnAir = idx === 0;
+          const item    = idx === 1 ? nextItem : idx === 2 ? afterItem : null;
+          const active  = isOnAir ? !!onAir : !!item;
+          const timeStr = isOnAir ? slot0Time : getDur(item);
           return (
             <div key={label} style={{
               flex: 1, minWidth: 0,
@@ -3889,15 +3914,15 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
                   }}>{timeStr}</span>
                 )}
               </div>
-              {/* Row 2: title — ON AIR reads from Rust deck state; NEXT/AFTER from queue */}
-              {idx === 0 ? (
+              {/* Row 2: title */}
+              {isOnAir ? (
                 <div style={{
                   fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
                   color: active ? "var(--text-primary)" : "var(--text-tertiary)",
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                   fontStyle: active ? "normal" : "italic",
                 }}>
-                  {deckATitle || "—"}
+                  {onAir?.title || "—"}
                 </div>
               ) : (
                 <div style={{
