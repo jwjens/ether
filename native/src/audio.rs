@@ -624,7 +624,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     (bus_cmd.lock(), levels_clone.lock())
                                 {
                                     for i in 0..3 {
-                                        let active = bus.decks[i].active && !bus.decks[i].paused;
+                                        // Only produce non-zero levels when Rust is actually
+                                        // decoding audio — source=None means CPAL is skipping
+                                        // this deck silently; active flag alone is not enough.
+                                        let active = bus.decks[i].active
+                                            && !bus.decks[i].paused
+                                            && bus.decks[i].source.is_some();
                                         let v = if active { 0.5 + rand_level() * 0.5 } else { 0.0 };
                                         match i {
                                             0 => lvl.level_a = v,
@@ -798,7 +803,12 @@ fn mixer_callback(
 
     for (i, deck) in bus.decks.iter_mut().enumerate() {
         if !deck.active || deck.paused { continue; }
-        let Some(ref mut src) = deck.source else { continue };
+        let Some(ref mut src) = deck.source else {
+            // active=true but source=None is a stuck state — self-heal so GetLevel
+            // stops generating fake levels and CPAL stops silently skipping the deck.
+            deck.active = false;
+            continue;
+        };
         any_playing = true;
         for f in 0..prog_frames {
             // Source is always stereo (UniformSourceIterator built with 2 ch)
