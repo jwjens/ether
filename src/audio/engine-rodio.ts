@@ -1,3 +1,11 @@
+// Tee [ROT] diagnostic logs to tmp-userdata/rotation.log via the main-process IPC channel.
+// console.log fires first (DevTools), then fire-and-forget to file. Safe to call before
+// window.ether is ready — the optional chain silently drops the message.
+export function rotLog(msg: string): void {
+  console.log(msg);
+  try { (window as any).ether?.fs?.logRotation?.(msg); } catch {}
+}
+
 // Electron IPC — all audio commands go through window.ether.audio.*
 async function invoke(cmd: string, args?: any): Promise<any> {
   const e = (window as any).ether;
@@ -70,6 +78,9 @@ export class AudioEngine {
   // Per-deck chain type: what happens when THIS deck finishes.
   // Loaded from the queue item at deck-load time.
   private deckChainType: Record<DeckId, "segue" | "stop"> = { A: "segue", B: "segue", C: "segue" };
+  // Tracks which standby decks have been freshly preloaded and are ready to play.
+  // Set by preloadDeck on success; cleared by handleRotate when the deck goes live.
+  private deckReady = new Set<DeckId>();
   // Callback fired when a "stop" chain type prevents auto-advance.
   onChainStop: ((deckId: DeckId) => void) | null = null;
 
@@ -157,13 +168,12 @@ export class AudioEngine {
   }
 
   private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus, backendEnded = false) {
-    // Only one end event per poll tick — if another deck already fired this tick, skip.
     if (this.processingEnd) return;
-    // Two ways to detect end: position-based (300ms early, requires dur>5) OR Rust one-shot finished flag.
     const positionEnd = prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3;
     if ((positionEnd || backendEnded) && !this.endTriggered.has(deckId)) {
       this.processingEnd = true;
       this.endTriggered.add(deckId);
+      rotLog(`[ROT] END ${deckId} ("${deckId === "A" ? this.stateA.title : deckId === "B" ? this.stateB.title : this.stateC.title}") posEnd=${positionEnd} rustEnd=${backendEnded} | B.ready=${this.deckReady.has("B")} C.ready=${this.deckReady.has("C")}`);
 
       // Chain type check — if the CURRENT deck is "stop", halt here.
       // The DJ must manually trigger the next item.
@@ -178,15 +188,16 @@ export class AudioEngine {
 
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
-        if (this.stateB.filePath) { this.handleRotate("A", "B"); }
+        if (this.deckReady.has("B")) { this.handleRotate("A", "B"); }
         else if (this.autoAdvance) { this.handleLoadNextToDeck("A"); }
       } else if (deckId === "B") {
         this.stateB = { ...this.stateB, status: "ended" };
-        if (this.stateC.filePath) { this.handleRotate("B", "C"); }
+        if (this.deckReady.has("C")) { this.handleRotate("B", "C"); }
         else if (this.autoAdvance) { this.handleLoadNextToDeck("B"); }
       } else if (deckId === "C") {
         this.stateC = { ...this.stateC, status: "ended" };
-        if (this.autoAdvance || this.queue.length > 0) { this.handleRotateCtoA(); }
+        if (this.deckReady.has("A")) { this.handleRotate("C", "A"); }
+        else if (this.autoAdvance || this.queue.length > 0) { this.handleLoadNextToDeck("A"); }
       }
     }
   }
@@ -194,61 +205,23 @@ export class AudioEngine {
   private handleRotate(fromId: DeckId, toId: DeckId) {
     this.advancePromise = this.advancePromise.then(async () => {
       try {
-        // Check the Rust backend: if the DESTINATION deck is already playing, bail.
-        // We only check toId — fromId is expected to still be playing at this point
-        // (checkEndByPosition fires 300ms before the track ends, so the from-deck
-        // hasn't stopped yet). Checking "any deck playing" would always bail here.
         const liveState = await invoke("audio_get_state");
         const liveTo = liveState ? (toId === "A" ? liveState.deckA : toId === "B" ? liveState.deckB : liveState.deckC) : null;
-        console.log(`[ENGINE] rotate ${fromId}→${toId}: liveTo=`, liveTo?.status);
-        if (liveTo?.status === "playing") { console.log(`[ENGINE] rotate ${fromId}→${toId}: BAIL dest already playing`); return; }
+        rotLog(`[ROT] rotate ${fromId}→${toId}: liveTo=${liveTo?.status} | queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
+        if (liveTo?.status === "playing") { rotLog(`[ROT] rotate ${fromId}→${toId}: BAIL dest already playing`); return; }
         await invoke("audio_play", { deck: toId });
-        // Schedule explicit stop on the source deck after the crossfade window.
-        // Rust keeps fromId in "playing" state until either the finished flag is
-        // consumed by audio_get_state OR an explicit audio_stop is issued. The
-        // 100ms poll and handleRotateCtoA's own audio_get_state race for that flag;
-        // the loser sees stale "playing" and bails the next C→A rotation. Stopping
-        // the source deck after the tail plays out eliminates the race entirely.
         setTimeout(() => { invoke("audio_stop", { deck: fromId }).catch(() => {}); }, (this.crossfadeDuration * 1000) + 500);
         if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
         if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
         if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
-        // Only clear the destination deck's end-trigger — we want to allow toId to end
-        // naturally later. Do NOT clear fromId here: the native backend may still report
-        // fromId as "playing" for a tick or two while the OS drains the audio buffer.
-        // Clearing fromId now lets checkEndByPosition re-fire on that stale "playing"
-        // status before the deck reaches position 0 with a fresh track, causing a second
-        // spurious rotation. fromId's endTriggered entry is cleared safely by loadToDeck
-        // when preloadDeck loads the next song into it (position resets to 0 first).
+        this.deckReady.delete(toId);
         this.endTriggered.delete(toId);
         if (this.queue.length > 0) this.dequeue();
+        rotLog(`[ROT] rotate ${fromId}→${toId}: played ${toId}, queue after dequeue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
         if (toId === "B") { setTimeout(() => this.preloadDeck("C", 0), 800); }
         else if (toId === "C") { setTimeout(() => this.preloadDeck("A", 0), 800); }
-        else if (toId === "A") { setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
-      } catch (e) { console.error("[ENGINE] handleRotate error:", e); }
-    });
-  }
-
-  private handleRotateCtoA() {
-    this.advancePromise = this.advancePromise.then(async () => {
-      try {
-        // Check the Rust backend: if deck A (the destination) is already playing, bail.
-        // C may still be playing when this fires (300ms before end), so we only check A.
-        const liveState = await invoke("audio_get_state");
-        if (liveState) {
-          if (liveState.deckA?.status === "playing") { return; }
-        }
-        await this.refillIfNeeded();
-        if (this.queue.length === 0) { return; }
-        const next = this.dequeue();
-        this.deckChainType["A"] = next.chainType || "segue";
-        await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
-        await invoke("audio_play", { deck: "A" });
-        this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
-        this.endTriggered.delete("A");
-        // Do NOT delete "C" — it's still physically playing (fired 300ms early); loadToDeck clears it when preloadDeck("C") runs.
-        setTimeout(async () => { await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800);
-      } catch (e) { console.error("[ENGINE] handleRotateCtoA error:", e); }
+        else if (toId === "A") { setTimeout(async () => { await this.refillIfNeeded(); await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
+      } catch (e) { console.error("[ROT] handleRotate error:", e); }
     });
   }
 
@@ -275,31 +248,42 @@ export class AudioEngine {
   }
 
   private async preloadDeck(deckId: DeckId, queueIndex = 0) {
-    if (this.queue.length <= queueIndex) return;
-    // Never clobber a deck that is actively playing or paused — it would interrupt audio
+    if (this.queue.length <= queueIndex) {
+      rotLog(`[ROT] preload ${deckId}[${queueIndex}] SKIP — queue too short (len=${this.queue.length})`);
+      return;
+    }
     const deckState = deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
-    if (deckState?.status === "playing" || deckState?.status === "paused") return;
+    if (deckState?.status === "playing" || deckState?.status === "paused") {
+      rotLog(`[ROT] preload ${deckId}[${queueIndex}] SKIP — deck is ${deckState.status} ("${deckState.title}")`);
+      return;
+    }
     const next = this.queue[queueIndex];
+    rotLog(`[ROT] preload ${deckId}[${queueIndex}] → "${next.title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     try {
       this.deckChainType[deckId] = next.chainType || "segue";
       await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
-      console.log(`[ENGINE] preloaded ${deckId}: ${next.title}`);
-    } catch (e) { console.error(`[ENGINE] Preload ${deckId} failed:`, e); }
+      this.deckReady.add(deckId);
+    } catch (e) { console.error(`[ROT] preload ${deckId} FAILED:`, e); }
   }
 
   private async refillIfNeeded() {
     if (this.queue.length === 0 && this.continuous && this.refillCallback) {
+      rotLog(`[ROT] refill:begin — queue empty, fetching from refillCallback`);
       const songs = await this.refillCallback();
       this.queue.push(...songs);
+      rotLog(`[ROT] refill:complete — added ${songs.length} | queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
     }
   }
 
   private dequeue() {
     const idx = this.shuffle ? Math.floor(Math.random() * this.queue.length) : 0;
-    return this.queue.splice(idx, 1)[0];
+    const item = this.queue.splice(idx, 1)[0];
+    rotLog(`[ROT] dequeue → "${item?.title}" | queue after: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
+    return item;
   }
 
   triggerPreload() {
+    rotLog(`[ROT] triggerPreload — queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
     this.preloadDeck("B", 0).then(() => { setTimeout(() => this.preloadDeck("C", 1), 400); });
   }
 
@@ -345,6 +329,7 @@ export class AudioEngine {
   }
 
   async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number) {
+    rotLog(`[ROT] loadToDeck ${id}: "${title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     this.init();
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
     const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
@@ -369,12 +354,20 @@ export class AudioEngine {
   }
 
   addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
+    rotLog(`[ROT] addToQueue +${songs.length} | before: [${this.queue.map(q => `"${q.title}"`).join(", ")}] | adding: [${songs.map(s => `"${s.title}"`).join(", ")}]`);
     this.queue.push(...songs);
+    rotLog(`[ROT] addToQueue done | after: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
   }
-  clearQueue() { this.queue = []; }
+  clearQueue() {
+    rotLog(`[ROT] clearQueue — dropping ${this.queue.length} items: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
+    this.queue = [];
+  }
   getQueue() { return [...this.queue]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
-  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) { this.queue = [...songs]; }
+  replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
+    rotLog(`[ROT] replaceQueue — was [${this.queue.map(q => `"${q.title}"`).join(", ")}] | now [${songs.map(s => `"${s.title}"`).join(", ")}]`);
+    this.queue = [...songs];
+  }
 
   /** Toggle chain type for a queue item by index */
   setQueueItemChainType(idx: number, chainType: "segue" | "stop") {
