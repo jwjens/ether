@@ -801,13 +801,13 @@ export default function App() {
         if (engine.getDeck("A")?.getState().status === "playing") return;
         engine.continuous = true;
         resetScheduleCursor();
-        if (engine.getQueue().length === 0) {
-          const count = await fillQueueFromSchedule();
-          if (count === 0) {
-            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", []);
-            const items = rows.filter((s: SongRow) => s.file_path).map((s: SongRow) => ({ filePath: s.file_path!, title: s.title, artist: (s as any).artist_name || "", durationMs: s.duration_ms ?? 0 }));
-            engine.addToQueue(items);
-          }
+        // Always fill from schedule — don't reuse crash_recovery's stale queue
+        engine.clearQueue();
+        const count = await fillQueueFromSchedule();
+        if (count === 0) {
+          const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", []);
+          const items = rows.filter((s: SongRow) => s.file_path).map((s: SongRow) => ({ filePath: s.file_path!, title: s.title, artist: (s as any).artist_name || "", durationMs: s.duration_ms ?? 0 }));
+          engine.addToQueue(items);
         }
         const q = engine.getQueue();
         if (q.length > 0) {
@@ -954,7 +954,8 @@ export default function App() {
           }
           engine.addToQueue(queue); setQueueLen(queue.length); console.log('Restored', queue.length, 'items from crash recovery');
         }
-        if (row.deck_a_path && row.deck_a_title) {
+        // When AUTO is on, the startup timer loads from schedule instead — skip deck A restore
+        if (!autoAdv && row.deck_a_path && row.deck_a_title) {
           const deckASong = await queryOne<{ duration_ms: number | null }>(
             "SELECT duration_ms FROM songs WHERE file_path = ?", [row.deck_a_path]
           );
@@ -962,7 +963,6 @@ export default function App() {
           await engine.loadToDeck('A', row.deck_a_path, row.deck_a_title, row.deck_a_artist || '', undefined, deckADurationMs);
           console.log('Restored deck A:', row.deck_a_title);
           setTimeout(() => engine.triggerPreload(), 1000);
-          // Show restore toast
           setRestoreInfo({ title: row.deck_a_title, position: row.deck_a_position || 0, queueLen: queue.length, savedAt: row.saved_at });
         }
         await execute("UPDATE crash_recovery SET queue_json='[]', deck_a_path=NULL, was_playing=0, saved_at=0 WHERE id=1", []);
