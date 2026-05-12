@@ -837,9 +837,9 @@ function seedDeckConfigs() {
     { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: 1 },
     { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: 1 },
     { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: 1 },
-    { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 1 },
-    { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 1 },
-    { slot: "F", type: "music", label: "Deck F", color: "#a78bfa", enabled: 1 },
+    { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 0 },
+    { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 0 },
+    { slot: "F", type: "guest", label: "Guest 2", color: "#a78bfa", enabled: 0 },
   ];
   const insert = db.prepare(
     "INSERT OR IGNORE INTO deck_configs (slot, type, label, color, enabled) VALUES (?, ?, ?, ?, ?)"
@@ -848,6 +848,8 @@ function seedDeckConfigs() {
     for (const d of decks) insert.run(d.slot, d.type, d.label, d.color, d.enabled);
   });
   seed(defaults);
+  // Fix any D/E/F rows incorrectly seeded as enabled=1 by pre-AUX code
+  db.prepare("UPDATE deck_configs SET enabled=0 WHERE slot IN ('D','E','F') AND enabled=1").run();
   const { c } = db.prepare("SELECT COUNT(*) as c FROM deck_configs").get();
   console.log(`[DeckGuard] ✓ deck_configs: ${c}/6 slots present — A B C D E F guaranteed in database`);
 }

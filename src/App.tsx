@@ -794,7 +794,32 @@ export default function App() {
     // know about it until we sync here.
     engine.autoAdvance = autoAdv;
     if (autoAdv) engine.continuous = true;
-    return engine.on((id, st) => {
+    // If AUTO was ON when last closed, fill queue and start playing after crash_recovery (2s grace)
+    let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
+    if (autoAdv) {
+      autoStartTimer = setTimeout(async () => {
+        if (engine.getDeck("A")?.getState().status === "playing") return;
+        engine.continuous = true;
+        resetScheduleCursor();
+        if (engine.getQueue().length === 0) {
+          const count = await fillQueueFromSchedule();
+          if (count === 0) {
+            const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", []);
+            const items = rows.filter((s: SongRow) => s.file_path).map((s: SongRow) => ({ filePath: s.file_path!, title: s.title, artist: (s as any).artist_name || "", durationMs: s.duration_ms ?? 0 }));
+            engine.addToQueue(items);
+          }
+        }
+        const q = engine.getQueue();
+        if (q.length > 0) {
+          const first = q[0]; engine.clearQueue(); engine.addToQueue(q.slice(1));
+          await engine.loadToDeck("A", first.filePath, first.title, first.artist, first.gainDb, first.durationMs);
+          engine.getDeck("A")?.play();
+          setTimeout(() => engine.triggerPreload(), 800);
+          window.dispatchEvent(new CustomEvent("ether:queue-changed"));
+        }
+      }, 2000);
+    }
+    const unsub = engine.on((id, st) => {
       if (id === "A") setDeckA({...st});
       else if (id === "B") setDeckB({...st});
       else if (id === "C") setDeckC({...st});
@@ -868,6 +893,7 @@ export default function App() {
       }
       lastLoggedStatus.current[id] = st.status;
     });
+    return () => { if (autoStartTimer) clearTimeout(autoStartTimer); unsub(); };
   }, []);
 
   useEffect(() => {
@@ -1774,12 +1800,11 @@ export default function App() {
         <div style={{ display: "flex", gap: 16 }}>
           <HealthStatusDot onClick={() => setPanel("health")} />
           <span style={{ color: "var(--border-secondary)" }}>·</span>
-          {autoAdv && (
-            <button onClick={() => toggleAuto()} title="Auto-advance is ON — click to turn off"
-              style={{ background: "none", border: "none", color: "var(--accent-cyan)", cursor: "pointer", fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.06em", padding: 0 }}>
-              AUTO
-            </button>
-          )}
+          <button onClick={() => toggleAuto()}
+            title={autoAdv ? "Auto-advance is ON — click to turn off" : "Auto-advance is OFF — click to start"}
+            style={{ background: "none", border: "none", color: autoAdv ? "var(--accent-cyan)" : "var(--text-tertiary)", cursor: "pointer", fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.06em", padding: 0, opacity: autoAdv ? 1 : 0.45 }}>
+            AUTO
+          </button>
           {shuffle && <span style={{ color: "var(--accent-amber)" }}>SHUFFLE</span>}
           {continuous && <span>24/7</span>}
           <span>Queue: {queueLen}</span>
