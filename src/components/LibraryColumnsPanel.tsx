@@ -99,18 +99,19 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   const [vocabFormError, setVocabFormError]   = useState("");
   const [vocabFormPending, setVocabFormPending] = useState(false);
 
-  // ── Vocab value context menu ──────────────────────────────────
-  const [vocabCtxMenu, setVocabCtxMenu] = useState<{ x: number; y: number; def: MetadataDefinition; vocab: MetadataVocabulary } | null>(null);
-
   // ── Highlight new definition row ──────────────────────────────
   const [newDefUuid, setNewDefUuid] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const nameInputRef      = useRef<HTMLInputElement>(null);
-  const vocabInputRef     = useRef<HTMLInputElement>(null);
-  const addColorInputRef  = useRef<HTMLInputElement>(null);
-  const editColorInputRef = useRef<HTMLInputElement>(null);
-  const editColorUuidRef  = useRef<string | null>(null);
+  // ── Inline rename state ───────────────────────────────────────
+  const [vocabEditingUuid, setVocabEditingUuid] = useState<string | null>(null);
+  const [vocabEditValue, setVocabEditValue]     = useState("");
+  const [defEditingUuid, setDefEditingUuid]     = useState<string | null>(null);
+  const [defEditValue, setDefEditValue]         = useState("");
+
+  const nameInputRef     = useRef<HTMLInputElement>(null);
+  const vocabInputRef    = useRef<HTMLInputElement>(null);
+  const addColorInputRef = useRef<HTMLInputElement>(null);
 
   // ── Derived: count per definition ─────────────────────────────
   const vocabCounts: Record<number, number> = {};
@@ -169,24 +170,6 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
     highlightTimer.current = setTimeout(() => setNewDefUuid(null), 1500);
     return () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); };
   }, [newDefUuid]);
-
-  // Dismiss vocab context menu on outside click or Escape
-  useEffect(() => {
-    if (!vocabCtxMenu) return;
-    function handleDown(e: MouseEvent) {
-      const menu = document.getElementById("vocab-ctx-menu");
-      if (menu && !menu.contains(e.target as Node)) setVocabCtxMenu(null);
-    }
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setVocabCtxMenu(null);
-    }
-    document.addEventListener("mousedown", handleDown);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handleDown);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [vocabCtxMenu]);
 
   // Reset form state on panel close or station change
   useEffect(() => {
@@ -262,11 +245,60 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   }
 
   async function removeVocab(def: MetadataDefinition, vocab: MetadataVocabulary) {
-    if (!confirm(`Delete '${vocab.value}'? This cannot be undone.`)) return;
+    if (!confirm(`Delete '${vocab.value}'? Songs tagged with this value will keep their stored text but lose the colored pill. This cannot be undone.`)) return;
     try {
       const res = await (window as any).ether.metadataVocabulary.delete(vocab.uuid, stationId);
       if (!res?.ok) { alert(res?.error ?? "Failed to remove value."); return; }
       setReloadKey(k => k + 1);
+    } catch (e: any) { alert(e?.message ?? "Unexpected error."); }
+  }
+
+  async function renameVocab(vocab: MetadataVocabulary, newValue: string) {
+    const trimmed = newValue.trim();
+    setVocabEditingUuid(null);
+    if (!trimmed || trimmed === vocab.value) return;
+    setVocabByDefId(prev => {
+      const next = { ...prev };
+      for (const [defIdStr, rows] of Object.entries(next)) {
+        const idx = rows.findIndex(r => r.uuid === vocab.uuid);
+        if (idx !== -1) {
+          const newRows = [...rows];
+          newRows[idx] = { ...rows[idx], value: trimmed };
+          next[Number(defIdStr)] = newRows;
+          break;
+        }
+      }
+      return next;
+    });
+    try {
+      await (window as any).ether.metadataVocabulary.update(vocab.uuid, { value: trimmed });
+    } catch (e) {
+      console.error('[renameVocab] failed:', e);
+      setReloadKey(k => k + 1);
+    }
+  }
+
+  async function renameDefinition(def: MetadataDefinition, newName: string) {
+    const trimmed = newName.trim();
+    setDefEditingUuid(null);
+    if (!trimmed || trimmed === def.name) return;
+    setDefinitions(prev => prev.map(d => d.uuid === def.uuid ? { ...d, name: trimmed } : d));
+    try {
+      await (window as any).ether.metadataDefinitions.update(def.uuid, { name: trimmed });
+      onDefinitionsChanged?.();
+    } catch (e) {
+      console.error('[renameDefinition] failed:', e);
+      setReloadKey(k => k + 1);
+    }
+  }
+
+  async function removeDefinition(def: MetadataDefinition) {
+    if (!confirm(`Delete category '${def.name}'? Songs with this metadata keep their stored values but the column will be removed. This cannot be undone.`)) return;
+    try {
+      const res = await (window as any).ether.metadataDefinitions.delete(def.uuid, stationId);
+      if (!res?.ok) { alert(res?.error ?? "Failed to delete category."); return; }
+      setReloadKey(k => k + 1);
+      onDefinitionsChanged?.();
     } catch (e: any) { alert(e?.message ?? "Unexpected error."); }
   }
 
@@ -427,9 +459,22 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                       <div style={{ width: 14, flexShrink: 0 }}>
                         {isChoice && <Chevron open={isExpanded} />}
                       </div>
-                      <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", fontWeight: 500, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                        {def.name}
-                      </span>
+                      {defEditingUuid === def.uuid ? (
+                        <input
+                          autoFocus
+                          value={defEditValue}
+                          onChange={e => setDefEditValue(e.target.value.slice(0, 50))}
+                          onKeyDown={e => { if (e.key === "Enter") renameDefinition(def, defEditValue); if (e.key === "Escape") setDefEditingUuid(null); }}
+                          onBlur={() => renameDefinition(def, defEditValue)}
+                          onClick={e => e.stopPropagation()}
+                          style={{ flex: 1, padding: "3px 6px", fontSize: 13, background: "var(--bg-primary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", borderRadius: 2, minWidth: 0 }}
+                          maxLength={50}
+                        />
+                      ) : (
+                        <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)", fontWeight: 500, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                          {def.name}
+                        </span>
+                      )}
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                         <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 11, fontWeight: 600, ...DATA_TYPE_STYLE[def.data_type] }}>
                           {DATA_TYPE_LABELS[def.data_type]}
@@ -441,6 +486,18 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                         )}
                         {def.is_built_in === 1 && (
                           <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" as const }}>(built-in)</span>
+                        )}
+                        {def.is_built_in !== 1 && defEditingUuid !== def.uuid && (
+                          <>
+                            <button title="Rename category" onClick={e => { e.stopPropagation(); setDefEditValue(def.name); setDefEditingUuid(def.uuid); }}
+                              style={{ padding: "1px 5px", fontSize: 12, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 2 }}
+                              onMouseEnter={e => (e.currentTarget.style.color = "var(--text-secondary)")}
+                              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}>✎</button>
+                            <button title="Delete category" onClick={e => { e.stopPropagation(); removeDefinition(def); }}
+                              style={{ padding: "1px 5px", fontSize: 12, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 2 }}
+                              onMouseEnter={e => (e.currentTarget.style.color = "var(--accent-red)")}
+                              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}>✕</button>
+                          </>
                         )}
                         <div onClick={e => { e.stopPropagation(); onMetadataColumnToggle(def.id); }}>
                           <Toggle on={visibleMetadataColumns.has(def.id)} />
@@ -460,22 +517,64 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                         {vocabRows.length === 0 && vocabFormDefId !== def.id && (
                           <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" as const }}>No values yet.</div>
                         )}
-                        {vocabRows.map((v, vi) => (
-                          <div key={v.uuid}
-                            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setVocabCtxMenu({ x: e.clientX, y: e.clientY, def, vocab: v }); }}
-                            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: vi < vocabRows.length - 1 || vocabFormDefId === def.id ? "1px solid var(--border-primary)" : "none", cursor: "context-menu" }}>
-                            {/* Color swatch — click to edit */}
-                            <div
-                              title="Click to change color"
-                              style={{ width: 14, height: 14, borderRadius: 2, background: v.color ?? '#555555', border: '1px solid rgba(255,255,255,0.15)', cursor: 'pointer', flexShrink: 0 }}
-                              onMouseDown={e => e.stopPropagation()}
-                              onClick={e => { e.stopPropagation(); editColorUuidRef.current = v.uuid; if (editColorInputRef.current) { editColorInputRef.current.value = v.color ?? '#555555'; editColorInputRef.current.click(); } }}
-                            />
-                            <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 3, fontSize: 12, fontWeight: 600, background: v.color ?? '#555555', color: "#fff", whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {v.value}
-                            </span>
-                          </div>
-                        ))}
+                        {vocabRows.map((v, vi) => {
+                          const isEditingThis = vocabEditingUuid === v.uuid;
+                          const noColor = !v.color;
+                          return (
+                            <div key={v.uuid}
+                              style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: vi < vocabRows.length - 1 || vocabFormDefId === def.id ? "1px solid var(--border-primary)" : "none" }}>
+                              {/* Color swatch — transparent input overlay, native OS picker on click */}
+                              <div style={{ position: "relative", width: 20, height: 20, flexShrink: 0 }}>
+                                <div style={{
+                                  width: "100%", height: "100%", borderRadius: 2,
+                                  background: noColor
+                                    ? "repeating-linear-gradient(45deg, #555 0px, #555 3px, #888 3px, #888 6px)"
+                                    : v.color!,
+                                  border: "1px solid rgba(255,255,255,0.2)",
+                                  pointerEvents: "none",
+                                }} />
+                                <input
+                                  type="color"
+                                  title="Change color"
+                                  value={v.color ?? "#555555"}
+                                  onChange={e => { e.stopPropagation(); updateVocabColor(v.uuid, e.target.value); }}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: 0, padding: 0 }}
+                                />
+                              </div>
+                              {/* Value: pill or inline rename input */}
+                              {isEditingThis ? (
+                                <input
+                                  autoFocus
+                                  value={vocabEditValue}
+                                  onChange={e => setVocabEditValue(e.target.value.slice(0, 50))}
+                                  onKeyDown={e => { if (e.key === "Enter") renameVocab(v, vocabEditValue); if (e.key === "Escape") setVocabEditingUuid(null); }}
+                                  onBlur={() => renameVocab(v, vocabEditValue)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ flex: 1, padding: "2px 6px", fontSize: 12, background: "var(--bg-primary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", borderRadius: 2 }}
+                                  maxLength={50}
+                                />
+                              ) : (
+                                <span style={{ flex: 1, display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 3, fontSize: 12, fontWeight: 600, background: v.color ?? "#555", color: "#fff", whiteSpace: "nowrap", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>
+                                  {v.value}
+                                </span>
+                              )}
+                              {/* Action buttons */}
+                              {!isEditingThis && (
+                                <div style={{ display: "flex", gap: 2, flexShrink: 0, marginLeft: "auto" }}>
+                                  <button title="Rename" onClick={e => { e.stopPropagation(); setVocabEditValue(v.value); setVocabEditingUuid(v.uuid); }}
+                                    style={{ padding: "2px 6px", fontSize: 12, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 2 }}
+                                    onMouseEnter={e => (e.currentTarget.style.color = "var(--text-secondary)")}
+                                    onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}>✎</button>
+                                  <button title="Delete" onClick={e => { e.stopPropagation(); removeVocab(def, v); }}
+                                    style={{ padding: "2px 6px", fontSize: 12, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 2 }}
+                                    onMouseEnter={e => (e.currentTarget.style.color = "var(--accent-red)")}
+                                    onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}>✕</button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
 
                         {/* Vocab add form */}
                         {vocabFormDefId === def.id ? (
@@ -544,39 +643,6 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
         </div>
       </div>
 
-      {/* Hidden input for editing existing vocab colors — value set programmatically before .click() */}
-      <input
-        ref={editColorInputRef}
-        type="color"
-        style={{ position: "fixed", top: -999, left: -999, width: 1, height: 1, opacity: 0, pointerEvents: "none", border: 0, padding: 0 }}
-        onChange={e => {
-          const uuid = editColorUuidRef.current;
-          if (uuid) updateVocabColor(uuid, e.target.value);
-        }}
-      />
-
-      {/* Vocab value context menu */}
-      {vocabCtxMenu && (
-        <div id="vocab-ctx-menu" style={{
-          position: "fixed", left: vocabCtxMenu.x, top: vocabCtxMenu.y, zIndex: 10000,
-          background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
-          borderRadius: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.4)", minWidth: 140, overflow: "hidden",
-        }}>
-          <button
-            onMouseDown={e => { e.stopPropagation(); }}
-            onClick={() => {
-              const { def, vocab } = vocabCtxMenu;
-              setVocabCtxMenu(null);
-              removeVocab(def, vocab);
-            }}
-            style={{ display: "block", width: "100%", padding: "9px 14px", background: "none", border: "none", textAlign: "left" as const, fontSize: 13, color: "var(--accent-red)", cursor: "pointer" }}
-            onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
-            onMouseLeave={e => (e.currentTarget.style.background = "none")}
-          >
-            Delete value
-          </button>
-        </div>
-      )}
     </div>
   );
 }
