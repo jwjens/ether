@@ -3767,54 +3767,32 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 }
 
 // ── Three-Slot Bar — replaces NowPlayingPill in the LivePanel toolbar ──
-// Shows ON AIR / NEXT / AFTER reading queue[0..2] and deck A state.
+// Shows DECK A / DECK B / DECK C as fixed physical columns — titles never shift.
+// ON AIR badge floats to whichever deck is playing; preloaded decks show green.
 function ThreeSlotBar({ queueLen }: { queueLen: number }) {
-  // onAir: state of the deck that is actually playing/paused in Rust
-  // nextItem / afterItem: what follows — preloaded idle decks first, then queue
-  const [onAir,     setOnAir]     = useState<{ title: string; positionSec: number; durationSec: number; status: string } | null>(null);
-  const [nextItem,  setNextItem]  = useState<{ title: string; durationMs?: number } | null>(null);
-  const [afterItem, setAfterItem] = useState<{ title: string; durationMs?: number } | null>(null);
-  const nextTitleRef  = useRef<HTMLSpanElement>(null);
-  const afterTitleRef = useRef<HTMLSpanElement>(null);
+  interface SlotData {
+    title: string; positionSec: number; durationSec: number; status: string; ready: boolean;
+  }
+  const EMPTY: SlotData = { title: "", positionSec: 0, durationSec: 0, status: "idle", ready: false };
+  const [slots, setSlots] = useState<[SlotData, SlotData, SlotData]>([EMPTY, EMPTY, EMPTY]);
+  const titleRef0 = useRef<HTMLSpanElement>(null);
+  const titleRef1 = useRef<HTMLSpanElement>(null);
+  const titleRef2 = useRef<HTMLSpanElement>(null);
+  const titleRefs = [titleRef0, titleRef1, titleRef2];
 
   useEffect(() => {
+    const DECK_IDS = ["A", "B", "C"] as const;
     const pull = () => {
-      // Find the deck that is actually playing or paused — that is ON AIR.
-      const DECK_IDS = ["A", "B", "C"] as const;
-      let onAirIdx = -1;
-      let onAirState: ReturnType<ReturnType<typeof engine.getDeck>["getState"]> | null = null;
-      for (let i = 0; i < DECK_IDS.length; i++) {
-        const s = engine.getDeck(DECK_IDS[i])?.getState?.();
-        if (s && (s.status === "playing" || s.status === "paused")) {
-          onAirIdx = i;
-          onAirState = s;
-          break;
-        }
-      }
-      setOnAir(onAirState ? {
-        title: onAirState.title ?? "",
-        positionSec: onAirState.positionSec ?? 0,
-        durationSec: onAirState.durationSec ?? 0,
-        status: onAirState.status ?? "",
-      } : null);
-
-      // Collect freshly-preloaded standby decks in rotation order after the ON AIR deck.
-      const idleLoaded: { title: string; durationMs?: number }[] = [];
-      for (let offset = 1; offset <= 3; offset++) {
-        const id = DECK_IDS[(onAirIdx + offset) % 3];
+      setSlots(DECK_IDS.map(id => {
         const s = engine.getDeck(id)?.getState?.();
-        if (engine.isDeckReady(id) && s) {
-          idleLoaded.push({ title: s.title ?? "", durationMs: (s.durationSec ?? 0) * 1000 });
-        }
-      }
-
-      // Fill remaining NEXT/AFTER slots from the queue.
-      const q = engine.getQueue();
-      let qi = 0;
-      const nextSrc  = idleLoaded[0] ?? (q[qi++] ? { title: q[qi - 1].title, durationMs: q[qi - 1].durationMs } : null);
-      const afterSrc = idleLoaded[1] ?? (q[qi++] ? { title: q[qi - 1].title, durationMs: q[qi - 1].durationMs } : null);
-      setNextItem(nextSrc ?? null);
-      setAfterItem(afterSrc ?? null);
+        return {
+          title:       s?.title       ?? "",
+          positionSec: s?.positionSec ?? 0,
+          durationSec: s?.durationSec ?? 0,
+          status:      s?.status      ?? "idle",
+          ready:       engine.isDeckReady(id),
+        };
+      }) as [SlotData, SlotData, SlotData]);
     };
     pull();
     const unsub = engine.on(pull);
@@ -3823,10 +3801,7 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
   }, [queueLen]);
 
   useEffect(() => {
-    ([
-      { ref: nextTitleRef,  title: nextItem?.title },
-      { ref: afterTitleRef, title: afterItem?.title },
-    ] as { ref: React.RefObject<HTMLSpanElement | null>; title: string | undefined }[]).forEach(({ ref }) => {
+    titleRefs.forEach((ref, i) => {
       const span = ref.current;
       if (!span) return;
       const container = span.parentElement;
@@ -3840,30 +3815,14 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         span.style.transform = "translateX(0)";
       }
     });
-  }, [nextItem?.title, afterItem?.title]);
+  }, [slots[0].title, slots[1].title, slots[2].title]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60), sec = Math.floor(s % 60);
     return `${m}:${String(sec).padStart(2, "0")}`;
   };
 
-  const onAirPlaying = onAir?.status === "playing";
-  const remaining    = Math.max(0, (onAir?.durationSec ?? 0) - (onAir?.positionSec ?? 0));
-  const isEndingSoon = onAirPlaying && remaining > 0 && remaining < 15;
-
-  const slot0Time = (onAir?.status === "playing" || onAir?.status === "paused") && (onAir?.durationSec ?? 0) > 0
-    ? `-${fmt(remaining)}`
-    : (onAir?.durationSec ?? 0) > 0 ? fmt(onAir!.durationSec) : "";
-  const getDur = (item: { durationMs?: number } | null) => {
-    const ms = (item?.durationMs ?? 0) as number;
-    return ms > 0 ? fmt(ms / 1000) : "";
-  };
-
-  const COLS = [
-    { label: "ON AIR", color: "#38bdf8", glow: "0 0 4px rgba(56,189,248,0.7)" },
-    { label: "NEXT",   color: "#34d399", glow: "none" },
-    { label: "AFTER",  color: "#a78bfa", glow: "none" },
-  ] as const;
+  const DECK_LABELS = ["DECK A", "DECK B", "DECK C"] as const;
 
   return (
     <>
@@ -3881,67 +3840,67 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
         overflow: "hidden",
       }}>
-        {COLS.map(({ label, color, glow }, idx) => {
-          const isOnAir = idx === 0;
-          const item    = idx === 1 ? nextItem : idx === 2 ? afterItem : null;
-          const active  = isOnAir ? !!onAir : !!item;
-          const timeStr = isOnAir ? slot0Time : getDur(item);
+        {slots.map((slot, idx) => {
+          const isPlaying    = slot.status === "playing" || slot.status === "paused";
+          const isActive     = isPlaying || slot.ready;
+          const color        = isPlaying ? "#38bdf8" : slot.ready ? "#34d399" : "var(--text-tertiary)";
+          const glow         = isPlaying ? "0 0 4px rgba(56,189,248,0.7)" : "none";
+          const remaining    = Math.max(0, slot.durationSec - slot.positionSec);
+          const isEndingSoon = isPlaying && remaining > 0 && remaining < 15;
+          const timeStr      = isPlaying
+            ? `-${fmt(remaining)}`
+            : slot.ready && slot.durationSec > 0 ? fmt(slot.durationSec) : "";
           return (
-            <div key={label} style={{
+            <div key={DECK_LABELS[idx]} style={{
               flex: 1, minWidth: 0,
               borderRight: idx < 2 ? "1px solid var(--border-primary)" : "none",
               padding: "2px 10px",
               display: "flex", flexDirection: "column", justifyContent: "center", gap: 1,
             }}>
-              {/* Row 1: dot · label · time */}
-              <div style={{
-                display: "flex", alignItems: "center", gap: 4, minWidth: 0,
-              }}>
+              {/* Row 1: dot · deck label · [ON AIR chip] · time */}
+              <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
                 <span style={{
                   width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                  background: active ? color : "var(--text-tertiary)",
-                  boxShadow: active && idx === 0 ? glow : "none",
+                  background: isActive ? color : "var(--text-tertiary)",
+                  boxShadow: glow,
                   transition: "background 0.3s",
                 }} />
                 <span style={{
                   fontSize: 9, fontWeight: 800, letterSpacing: "0.12em",
-                  color: active ? color : "var(--text-tertiary)",
+                  color: isActive ? color : "var(--text-tertiary)",
                   textTransform: "uppercase" as const, flexShrink: 0,
                   transition: "color 0.3s",
-                }}>{label}</span>
+                }}>{DECK_LABELS[idx]}</span>
+                {isPlaying && (
+                  <span style={{
+                    fontSize: 8, fontWeight: 700, letterSpacing: "0.1em",
+                    color: "#38bdf8", textTransform: "uppercase" as const,
+                    background: "rgba(56,189,248,0.12)", borderRadius: 2,
+                    padding: "0 3px", marginLeft: 2, flexShrink: 0,
+                  }}>ON AIR</span>
+                )}
                 {timeStr && (
                   <span style={{
                     fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                    color: isEndingSoon && idx === 0 ? "#fbbf24" : "var(--text-tertiary)",
-                    fontWeight: isEndingSoon && idx === 0 ? 700 : 400,
+                    color: isEndingSoon ? "#fbbf24" : "var(--text-tertiary)",
+                    fontWeight: isEndingSoon ? 700 : 400,
                     marginLeft: "auto", flexShrink: 0,
                     transition: "color 0.3s",
                   }}>{timeStr}</span>
                 )}
               </div>
-              {/* Row 2: title */}
-              {isOnAir ? (
-                <div style={{
-                  fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
-                  color: active ? "var(--text-primary)" : "var(--text-tertiary)",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-                  fontStyle: active ? "normal" : "italic",
-                }}>
-                  {onAir?.title || "—"}
-                </div>
-              ) : (
-                <div style={{
-                  fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
-                  color: active ? "var(--text-primary)" : "var(--text-tertiary)",
-                  overflow: "hidden",
-                  fontStyle: active ? "normal" : "italic",
-                }}>
-                  <span ref={idx === 1 ? nextTitleRef : afterTitleRef}
-                    style={{ display: "inline-block", whiteSpace: "nowrap" as const }}>
-                    {item?.title || "—"}
-                  </span>
-                </div>
-              )}
+              {/* Row 2: title (marquee-scrolling if overflow) */}
+              <div style={{
+                fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
+                color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
+                overflow: "hidden",
+                fontStyle: isActive ? "normal" : "italic",
+              }}>
+                <span ref={titleRefs[idx]}
+                  style={{ display: "inline-block", whiteSpace: "nowrap" as const }}>
+                  {isActive ? (slot.title || "—") : "—"}
+                </span>
+              </div>
             </div>
           );
         })}

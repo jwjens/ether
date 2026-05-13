@@ -1329,6 +1329,15 @@ app.whenReady().then(() => {
         sendToAllWindows("audio:levels", levels);
       } catch {}
     }, 33);
+    // Write session header to rotation.log so every capture is clearly delimited
+    try {
+      const { execSync } = require("child_process");
+      let commit = "unknown";
+      try { commit = execSync("git rev-parse --short HEAD", { cwd: path.join(__dirname, ".."), timeout: 2000 }).toString().trim(); } catch {}
+      const ts = new Date().toISOString();
+      const sep = "========================================";
+      fs.appendFileSync(_rotationLogPath, `\n${sep}\nSESSION START ${ts}\ncommit: ${commit}\n${sep}\n`);
+    } catch {}
   });
 });
 
@@ -1500,6 +1509,15 @@ ipcMain.handle("fs:readDir", (_, dirPath) => {
       isDir: fs.statSync(path.join(dirPath, name)).isDirectory(),
     }));
   } catch { return []; }
+});
+
+// Rotation diagnostic log — renderer sends fire-and-forget, main appends to file
+const _rotationLogPath = path.join(__dirname, "..", "tmp-userdata", "rotation.log");
+ipcMain.on("log:rotation", (_, msg) => {
+  try {
+    const ts = new Date().toISOString().replace("T", " ").slice(0, 23);
+    fs.appendFileSync(_rotationLogPath, `[${ts}] ${msg}\n`);
+  } catch {}
 });
 
 // Dialog

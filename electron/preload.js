@@ -77,6 +77,7 @@ contextBridge.exposeInMainWorld("ether", {
     writeFile: (fp, d) => ipcRenderer.invoke("fs:writeFile", fp, d),
     mkdir: (dp) => ipcRenderer.invoke("fs:mkdir", dp),
     copyFile: (s, d) => ipcRenderer.invoke("fs:copyFile", s, d),
+    logRotation: (msg) => ipcRenderer.send("log:rotation", msg),
   },
   dialog: {
     openFile: (o) => ipcRenderer.invoke("dialog:openFile", o),
