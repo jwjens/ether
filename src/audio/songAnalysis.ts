@@ -12,7 +12,6 @@
 
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
 import { execute, query } from "../db/client";
-import { getActiveStationIdSync } from "../hooks/useActiveStation";
 
 // ── Types (mirror Rust structs) ───────────────────────────────
 
@@ -127,15 +126,14 @@ export async function processLibrary(
   options: { force?: boolean; batchSize?: number } = {}
 ): Promise<{ processed: number; failed: number; skipped: number }> {
   const { force = false, batchSize = 4 } = options;
-  const stationId = getActiveStationIdSync();
 
   const whereClause = force
-    ? "file_path IS NOT NULL AND station_id = ?"
-    : "file_path IS NOT NULL AND station_id = ? AND (is_processed = 0 OR bpm IS NULL OR lufs_measured IS NULL)";
+    ? "file_path IS NOT NULL"
+    : "file_path IS NOT NULL AND (is_processed = 0 OR bpm IS NULL OR lufs_measured IS NULL)";
 
   const songs = await query<{ id: number; title: string; file_path: string }>(
     `SELECT id, title, file_path FROM songs WHERE ${whereClause} ORDER BY id`,
-    [stationId]
+    []
   );
 
   let processed = 0;
@@ -177,14 +175,13 @@ export async function processLibrary(
 // ── Processing stats (same API as processor.ts getProcessingStats) ──
 
 export async function getProcessingStats() {
-  const stationId = getActiveStationIdSync();
   const [total, processed, unprocessed, avgLufs, loudest, quietest] = await Promise.all([
-    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE file_path IS NOT NULL AND station_id = ?", [stationId]),
-    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 1 AND station_id = ?", [stationId]),
-    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 0 AND file_path IS NOT NULL AND station_id = ?", [stationId]),
-    query<{ avg: number }>("SELECT AVG(lufs_measured) as avg FROM songs WHERE is_processed = 1 AND station_id = ?", [stationId]),
-    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 AND station_id = ? ORDER BY lufs_measured DESC LIMIT 1", [stationId]),
-    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 AND station_id = ? ORDER BY lufs_measured ASC LIMIT 1", [stationId]),
+    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE file_path IS NOT NULL"),
+    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 1"),
+    query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE is_processed = 0 AND file_path IS NOT NULL"),
+    query<{ avg: number }>("SELECT AVG(lufs_measured) as avg FROM songs WHERE is_processed = 1"),
+    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 ORDER BY lufs_measured DESC LIMIT 1"),
+    query<{ title: string; lufs_measured: number }>("SELECT title, lufs_measured FROM songs WHERE is_processed = 1 ORDER BY lufs_measured ASC LIMIT 1"),
   ]);
 
   return {
