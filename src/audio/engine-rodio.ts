@@ -170,7 +170,10 @@ export class AudioEngine {
   private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus, backendEnded = false) {
     if (this.processingEnd) return;
     const positionEnd = prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3;
-    if ((positionEnd || backendEnded) && !this.endTriggered.has(deckId)) {
+    // Only trust Rust's "ended" signal when position also confirms we're near the end.
+    // Rust occasionally glitches "ended" on preloaded/mid-play decks; guard against that.
+    const genuineBackendEnd = backendEnded && (dur <= 5 || (dur - pos) < 5);
+    if ((positionEnd || genuineBackendEnd) && !this.endTriggered.has(deckId)) {
       this.processingEnd = true;
       this.endTriggered.add(deckId);
       rotLog(`[ROT] END ${deckId} ("${deckId === "A" ? this.stateA.title : deckId === "B" ? this.stateB.title : this.stateC.title}") posEnd=${positionEnd} rustEnd=${backendEnded} | B.ready=${this.deckReady.has("B")} C.ready=${this.deckReady.has("C")}`);
