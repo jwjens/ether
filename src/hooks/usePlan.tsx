@@ -16,9 +16,9 @@
 import { useState, useEffect } from "react";
 import { useActiveStation } from "./useActiveStation";
 
-export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "operator";
+export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "station_lifetime" | "operator";
 
-const TIER_RANK: Record<PlanTier, number> = { free: 0, pro: 1, pro_lifetime: 1, station: 2, operator: 3 };
+const TIER_RANK: Record<PlanTier, number> = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
 /** Returns true if the user's current plan meets or exceeds the required tier */
 export function requirePlan(required: PlanTier, current: PlanTier): boolean {

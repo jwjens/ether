@@ -34,7 +34,7 @@ interface Guest {
   latencyMs?: number;      // connection latency
 }
 
-type Tab = "studio"|"guests"|"transcript"|"clips"|"shownotes"|"export"|"voiceclone";
+type Tab = "studio"|"guests"|"transcript"|"clips"|"shownotes"|"export"|"voiceclone"|"captions";
 
 const SEGMENT_COLORS: Record<Segment["type"], string> = {
   intro: "#38bdf8", segment: "#34d399", interview: "#a78bfa",

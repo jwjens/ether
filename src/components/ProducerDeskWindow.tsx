@@ -17,6 +17,7 @@ interface BoardItem {
   text?: string; color?: NoteColor;
   src?: string; caption?: string;
   url?: string; title?: string;
+  fontBold?: boolean; fontSize?: number;
 }
 
 interface Message { role: "user" | "assistant"; content: string; }

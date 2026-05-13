@@ -31,6 +31,7 @@ interface HourBlock {
 interface Show {
   id: number; name: string; start_hour: number; end_hour: number;
   clock_id: number | null; clock_name: string | null; color: string | null;
+  description?: string;
 }
 
 interface Rules {
