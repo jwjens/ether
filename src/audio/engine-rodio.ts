@@ -233,9 +233,19 @@ export class AudioEngine {
         this.endTriggered.delete(toId);
         if (this.queue.length > 0) this.dequeue();
         rotLog(`[ROT] rotate ${fromId}→${toId}: played ${toId}, queue after dequeue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
-        if (toId === "B") { setTimeout(async () => { await this.preloadDeck("C", 0); setTimeout(() => this.preloadDeck("A", 1), 400); }, 800); }
-        else if (toId === "C") { setTimeout(async () => { await this.preloadDeck("A", 0); setTimeout(() => this.preloadDeck("B", 1), 400); }, 800); }
-        else if (toId === "A") { setTimeout(async () => { await this.refillIfNeeded(); await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
+        // Far standby (stopped long ago) preloads immediately.
+        // Near standby (just played, still in crossfade) waits until after the fade stop.
+        const nearDelay = (this.crossfadeDuration * 1000) + 800;
+        if (toId === "B") {
+          setTimeout(() => this.preloadDeck("C", 0), 800);
+          setTimeout(() => this.preloadDeck("A", 1), nearDelay);
+        } else if (toId === "C") {
+          setTimeout(() => this.preloadDeck("A", 0), 800);
+          setTimeout(() => this.preloadDeck("B", 1), nearDelay);
+        } else if (toId === "A") {
+          setTimeout(async () => { await this.refillIfNeeded(); await this.preloadDeck("B", 0); }, 800);
+          setTimeout(() => this.preloadDeck("C", 1), nearDelay);
+        }
       } catch (e) { console.error("[ROT] handleRotate error:", e); }
     });
   }
