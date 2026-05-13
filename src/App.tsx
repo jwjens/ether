@@ -1297,7 +1297,6 @@ export default function App() {
               VIDEO LIVE
             </button>
           )}
-          <HealthStatusDot onClick={() => setPanel("health")} compact={viewport.veryNarrow} />
           <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
           {!viewport.veryNarrow && <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />}
           {currentPlan === "free" && (
@@ -1806,9 +1805,8 @@ export default function App() {
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 52, display: "flex", alignItems: "center", padding: "0 10px", gap: 0, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        {/* NOMINAL health indicator */}
-        <HealthStatusDot onClick={() => setPanel("health")} />
-        <div style={{ width: 1, height: 28, background: "var(--border-primary)", margin: "0 8px", flexShrink: 0 }} />
+        {/* NOMINAL health indicator — same height as tabs */}
+        <HealthStatusDot onClick={() => setPanel("health")} height={36} />
         {/* View tabs */}
         {([
           { label: "DECKS",  active: panel === "live",     fn: () => setPanel("live") },
@@ -2763,10 +2761,13 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         outline: dropTarget === "decks" ? "2px solid #38bdf8" : "none",
         outlineOffset: 2, borderRadius: 0,
         transition: "opacity 0.15s, outline 0.1s",
-      }}
+        // Dim all ConsoleStrip column dividers to near-invisible
+        ["--panel-border" as any]: "1px solid rgba(255,255,255,0.06)",
+        ["--strip-divider" as any]: "rgba(255,255,255,0.07)",
+      } as React.CSSProperties}
     >
       {/* Deck title strips — column-aligned above each ConsoleStrip */}
-      <ThreeSlotBar queueLen={queueLen} />
+      <ThreeSlotBar queueLen={queueLen} masterCollapsed={masterCollapsed} showCarts={showCarts} />
       {(
         /* ── Console channel strips — the default deck view.
            Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */
@@ -2788,6 +2789,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     color={deckColor}
                     volume={deck?.volume ?? 1}
                     deckId={slot}
+                    hideLabel={["A","B","C"].includes(slot)}
                     isPlaying={deck?.status === "playing"}
                     isOn={true}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
@@ -2870,6 +2872,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   color={deckColor}
                   volume={deck?.volume ?? 1}
                   deckId={slot}
+                  hideLabel={["A","B","C"].includes(slot)}
                   isPlaying={deck?.status === "playing"}
                   isOn={true}
                   onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
@@ -3013,6 +3016,8 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [visibleMetaCols, setVisibleMetaCols] = useState<Set<number>>(new Set());
   const [metaMap, setMetaMap] = useState<Record<number, Record<number, string>>>({});
   const [metaUuidMap, setMetaUuidMap] = useState<Record<number, Record<number, string>>>({});
+  // FK map: song_id → definition_id → value_vocabulary_id (only set for choice-type rows)
+  const [metaVocabIdMap, setMetaVocabIdMap] = useState<Record<number, Record<number, number>>>({});
   const [vocabByDef, setVocabByDef] = useState<Record<number, MetadataVocabulary[]>>({});
   const [metaEdit, setMetaEdit] = useState<{ songId: number; col: MetadataColumn; value: string } | null>(null);
 
@@ -3117,15 +3122,35 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     const existingUuid = metaUuidMap[songId]?.[col.defId];
     if (!existingUuid && value === '') return;
 
+    // For single_choice: resolve the vocab FK so we write BOTH value_text and value_vocabulary_id
+    const vocabRow = col.dataType === 'single_choice'
+      ? vocabByDef[col.defId]?.find(v => v.value === value)
+      : undefined;
+    const vocabId = vocabRow?.id ?? null;
+
+    // Build write payload — FK only for choice types
+    const writePayload: Record<string, unknown> = { value_text: value };
+    if (col.dataType === 'single_choice') writePayload.value_vocabulary_id = vocabId;
+
     // Optimistic update — show new value immediately so 30Hz re-renders don't snap the cell back
-    const prevValue = metaMap[songId]?.[col.defId];
+    const prevValue   = metaMap[songId]?.[col.defId];
+    const prevVocabId = metaVocabIdMap[songId]?.[col.defId];
     setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: value } }));
+    if (col.dataType === 'single_choice') {
+      setMetaVocabIdMap(prev => {
+        const songRow = { ...(prev[songId] ?? {}) };
+        if (vocabId != null) songRow[col.defId] = vocabId; else delete songRow[col.defId];
+        return { ...prev, [songId]: songRow };
+      });
+    }
 
     try {
       if (existingUuid) {
-        await (window as any).ether.songMetadataValues.update(existingUuid, { value_text: value });
+        await (window as any).ether.songMetadataValues.update(existingUuid, writePayload);
       } else {
-        const res = await (window as any).ether.songMetadataValues.create({ station_id: stationId, song_id: songId, definition_id: col.defId, value_text: value });
+        const res = await (window as any).ether.songMetadataValues.create({
+          station_id: stationId, song_id: songId, definition_id: col.defId, ...writePayload,
+        });
         if (res?.ok && res.row?.uuid) {
           setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: res.row.uuid } }));
         }
@@ -3137,6 +3162,13 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         if (prevValue === undefined) delete row[col.defId]; else row[col.defId] = prevValue;
         return { ...prev, [songId]: row };
       });
+      if (col.dataType === 'single_choice') {
+        setMetaVocabIdMap(prev => {
+          const row = { ...(prev[songId] ?? {}) };
+          if (prevVocabId === undefined) delete row[col.defId]; else row[col.defId] = prevVocabId;
+          return { ...prev, [songId]: row };
+        });
+      }
     }
   };
 
@@ -3222,22 +3254,28 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 
   // Fetch song_metadata_values for visible metadata columns (skip if none visible)
   useEffect(() => {
-    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaUuidMap({}); return; }
+    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaUuidMap({}); setMetaVocabIdMap({}); return; }
     (async () => {
       try {
         const res = await (window as any).ether.songMetadataValues.list(stationId, { limit: 10000 });
         const rows: any[] = res?.ok ? (res.rows ?? []) : [];
         const map: Record<number, Record<number, string>> = {};
         const uuidMap: Record<number, Record<number, string>> = {};
+        const vocabIdMap: Record<number, Record<number, number>> = {};
         for (const r of rows) {
           if (!visibleMetaCols.has(r.definition_id)) continue;
           if (!map[r.song_id]) map[r.song_id] = {};
           if (!uuidMap[r.song_id]) uuidMap[r.song_id] = {};
           map[r.song_id][r.definition_id] = r.value_text ?? '';
           uuidMap[r.song_id][r.definition_id] = r.uuid;
+          if (r.value_vocabulary_id != null) {
+            if (!vocabIdMap[r.song_id]) vocabIdMap[r.song_id] = {};
+            vocabIdMap[r.song_id][r.definition_id] = r.value_vocabulary_id;
+          }
         }
         setMetaMap(map);
         setMetaUuidMap(uuidMap);
+        setMetaVocabIdMap(vocabIdMap);
       } catch (e) { console.error('[LibraryPanel] failed to load metadata values:', e); }
     })();
   }, [stationId, songs, visibleMetaCols]);
@@ -3700,15 +3738,22 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                     // MetadataColumn
                     const rawVal = metaMap[s.id]?.[col.defId] ?? '';
                     const isMetaInline = metaEdit?.songId === s.id && metaEdit?.col.defId === col.defId;
-                    if (col.dataType === 'single_choice') return (
+                    if (col.dataType === 'single_choice') {
+                      // Resolve display via FK when available — auto-reflects vocabulary renames
+                      const vocabId = metaVocabIdMap[s.id]?.[col.defId];
+                      const displayVal = vocabId != null
+                        ? (vocabByDef[col.defId]?.find(v => v.id === vocabId)?.value ?? rawVal)
+                        : rawVal;
+                      return (
                       <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
-                        <select value={rawVal} onChange={e => commitMetaEdit(s.id, col, e.target.value)}
+                        <select value={displayVal} onChange={e => commitMetaEdit(s.id, col, e.target.value)}
                           style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
                           <option value="">—</option>
                           {vocabByDef[col.defId]?.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
                         </select>
                       </div>
                     );
+                    }
                     if (col.dataType === 'boolean') return (
                       <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "10px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
                         <input type="checkbox" checked={rawVal === 'true' || rawVal === '1'} onChange={e => commitMetaEdit(s.id, col, e.target.checked ? 'true' : 'false')} />
@@ -3754,24 +3799,37 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 // ── Three-Slot Bar — replaces NowPlayingPill in the LivePanel toolbar ──
 // Shows DECK A / DECK B / DECK C as fixed physical columns — titles never shift.
 // ON AIR badge floats to whichever deck is playing; preloaded decks show green.
-function ThreeSlotBar({ queueLen }: { queueLen: number }) {
+function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: { queueLen: number; masterCollapsed?: boolean; showCarts?: boolean }) {
   interface SlotData {
-    title: string; positionSec: number; durationSec: number; status: string; ready: boolean;
+    title: string; artist: string; positionSec: number; durationSec: number; status: string; ready: boolean;
   }
-  const EMPTY: SlotData = { title: "", positionSec: 0, durationSec: 0, status: "idle", ready: false };
+  const EMPTY: SlotData = { title: "", artist: "", positionSec: 0, durationSec: 0, status: "idle", ready: false };
   const [slots, setSlots] = useState<[SlotData, SlotData, SlotData]>([EMPTY, EMPTY, EMPTY]);
+
   const titleRef0 = useRef<HTMLSpanElement>(null);
   const titleRef1 = useRef<HTMLSpanElement>(null);
   const titleRef2 = useRef<HTMLSpanElement>(null);
   const titleRefs = [titleRef0, titleRef1, titleRef2];
 
+  const fillRef0 = useRef<HTMLDivElement>(null);
+  const fillRef1 = useRef<HTMLDivElement>(null);
+  const fillRef2 = useRef<HTMLDivElement>(null);
+  const fillRefs = [fillRef0, fillRef1, fillRef2];
+  const fillTrackRef0 = useRef<string>("");
+  const fillTrackRef1 = useRef<string>("");
+  const fillTrackRef2 = useRef<string>("");
+  const fillTrackRefs = [fillTrackRef0, fillTrackRef1, fillTrackRef2];
+
+  const DECK_COLORS = ["#38bdf8", "#34d399", "#a78bfa"] as const;
+  const DECK_IDS_ALL = ["A", "B", "C"] as const;
+
   useEffect(() => {
-    const DECK_IDS = ["A", "B", "C"] as const;
     const pull = () => {
-      setSlots(DECK_IDS.map(id => {
+      setSlots(DECK_IDS_ALL.map(id => {
         const s = engine.getDeck(id)?.getState?.();
         return {
           title:       s?.title       ?? "",
+          artist:      s?.artist      ?? "",
           positionSec: s?.positionSec ?? 0,
           durationSec: s?.durationSec ?? 0,
           status:      s?.status      ?? "idle",
@@ -3785,8 +3843,38 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
     return () => { unsub(); clearInterval(tick); };
   }, [queueLen]);
 
+  // Progress fill — imperative CSS transitions matching ConsoleStrip pattern
   useEffect(() => {
-    titleRefs.forEach((ref, i) => {
+    fillRefs.forEach(r => { if (r.current) r.current.style.width = "0%"; });
+    const unsub = engine.on(() => {
+      DECK_IDS_ALL.forEach((id, i) => {
+        const da   = engine.getDeck(id)?.getState?.();
+        const fill = fillRefs[i].current;
+        if (!fill || !da) return;
+        const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
+        if (da.status === "playing" && da.durationSec > 0 && trackKey !== fillTrackRefs[i].current) {
+          fillTrackRefs[i].current = trackKey;
+          const startPct  = (da.positionSec / da.durationSec) * 100;
+          const remaining = Math.max(0, da.durationSec - da.positionSec);
+          fill.style.transition = "none";
+          fill.style.width      = `${startPct}%`;
+          void fill.offsetWidth;
+          fill.style.transition = `width ${remaining}s linear`;
+          fill.style.width      = "100%";
+        }
+        if (da.status !== "playing") {
+          fill.style.transition = "none";
+          const pct = da.durationSec > 0 ? (da.positionSec / da.durationSec) * 100 : 0;
+          fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+          fillTrackRefs[i].current = "";
+        }
+      });
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    titleRefs.forEach((ref) => {
       const span = ref.current;
       if (!span) return;
       const container = span.parentElement;
@@ -3819,77 +3907,102 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         }
       `}</style>
       <div style={{
-        width: "100%", flexShrink: 0, height: 34,
+        width: "100%", flexShrink: 0, height: 58,
         display: "flex",
-        border: "1px solid var(--border-primary)",
-        borderLeft: "none", borderRight: "none",
-        background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
         overflow: "hidden",
       }}>
         {slots.map((slot, idx) => {
-          const isPlaying    = slot.status === "playing" || slot.status === "paused";
-          const isActive     = isPlaying || slot.ready;
-          const color        = isPlaying ? "#38bdf8" : slot.ready ? "#34d399" : "var(--text-tertiary)";
-          const glow         = isPlaying ? "0 0 4px rgba(56,189,248,0.7)" : "none";
+          const deckColor    = DECK_COLORS[idx];
+          const isPlaying    = slot.status === "playing";
+          const isPaused     = slot.status === "paused";
+          const isActive     = isPlaying || isPaused || slot.ready;
           const remaining    = Math.max(0, slot.durationSec - slot.positionSec);
           const isEndingSoon = isPlaying && remaining > 0 && remaining < 15;
-          const timeStr      = isPlaying
+          const timeStr      = (isPlaying || isPaused)
             ? `-${fmt(remaining)}`
             : slot.ready && slot.durationSec > 0 ? fmt(slot.durationSec) : "";
           return (
             <div key={DECK_LABELS[idx]} style={{
-              flex: 1, minWidth: 0,
-              borderRight: idx < 2 ? "1px solid var(--border-primary)" : "none",
-              padding: "2px 10px",
-              display: "flex", flexDirection: "column", justifyContent: "center", gap: 1,
+              flex: 1, minWidth: 0, position: "relative", overflow: "hidden",
+              borderTop: `2px solid ${deckColor}`,
+              borderRight: idx < 2 ? "1px solid rgba(255,255,255,0.06)" : "none",
+              background: isActive ? `${deckColor}12` : "var(--bg-secondary)",
+              transition: "background 0.3s",
             }}>
-              {/* Row 1: dot · deck label · [ON AIR chip] · time */}
-              <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
-                <span style={{
-                  width: 6, height: 6, borderRadius: "50%", flexShrink: 0,
-                  background: isActive ? color : "var(--text-tertiary)",
-                  boxShadow: glow,
-                  transition: "background 0.3s",
-                }} />
-                <span style={{
-                  fontSize: 9, fontWeight: 800, letterSpacing: "0.12em",
-                  color: isActive ? color : "var(--text-tertiary)",
-                  textTransform: "uppercase" as const, flexShrink: 0,
-                  transition: "color 0.3s",
-                }}>{DECK_LABELS[idx]}</span>
-                {isPlaying && (
-                  <span style={{
-                    fontSize: 8, fontWeight: 700, letterSpacing: "0.1em",
-                    color: "#38bdf8", textTransform: "uppercase" as const,
-                    background: "rgba(56,189,248,0.12)", borderRadius: 2,
-                    padding: "0 3px", marginLeft: 2, flexShrink: 0,
-                  }}>ON AIR</span>
-                )}
-                {timeStr && (
-                  <span style={{
-                    fontSize: 10, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-                    color: isEndingSoon ? "#fbbf24" : "var(--text-tertiary)",
-                    fontWeight: isEndingSoon ? 700 : 400,
-                    marginLeft: "auto", flexShrink: 0,
-                    transition: "color 0.3s",
-                  }}>{timeStr}</span>
-                )}
-              </div>
-              {/* Row 2: title (marquee-scrolling if overflow) */}
+              {/* Progress fill sweeps left→right via imperative CSS transition */}
+              <div ref={fillRefs[idx]} style={{
+                position: "absolute", top: 0, left: 0, bottom: 0,
+                background: deckColor,
+                opacity: isPlaying ? 0.28 : (isActive ? 0.08 : 0),
+                transition: "opacity 0.4s",
+                pointerEvents: "none", zIndex: 0,
+              }} />
+              {/* Text content sits above fill */}
               <div style={{
-                fontSize: 12, fontWeight: 600, letterSpacing: "-0.01em",
-                color: isActive ? "var(--text-primary)" : "var(--text-tertiary)",
-                overflow: "hidden",
-                fontStyle: isActive ? "normal" : "italic",
+                position: "relative", zIndex: 1,
+                height: "100%", padding: "6px 12px",
+                display: "flex", flexDirection: "column", justifyContent: "center", gap: 3,
               }}>
-                <span ref={titleRefs[idx]}
-                  style={{ display: "inline-block", whiteSpace: "nowrap" as const }}>
-                  {isActive ? (slot.title || "—") : "—"}
-                </span>
+                {/* Row 1: dot · DECK X · [ON AIR] · time */}
+                <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                  <span style={{
+                    width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+                    background: isActive ? deckColor : "#444",
+                    boxShadow: isPlaying
+                      ? `0 0 8px ${deckColor}, 0 0 0 1.5px rgba(255,255,255,0.5)`
+                      : isActive ? `0 0 0 1.5px rgba(255,255,255,0.25)` : "none",
+                    transition: "background 0.3s, box-shadow 0.3s",
+                  }} />
+                  <span style={{
+                    fontSize: 11, fontWeight: 800, letterSpacing: "0.12em",
+                    color: isActive ? "#fff" : "#555",
+                    textTransform: "uppercase" as const, flexShrink: 0,
+                    textShadow: isActive ? `0 1px 3px rgba(0,0,0,0.8), 0 0 10px ${deckColor}99` : "none",
+                    transition: "color 0.3s, text-shadow 0.3s",
+                  }}>{DECK_LABELS[idx]}</span>
+                  {isPlaying && (
+                    <span style={{
+                      fontSize: 9, fontWeight: 800, letterSpacing: "0.1em",
+                      color: "#000", background: deckColor,
+                      borderRadius: 2, padding: "1px 5px", marginLeft: 2, flexShrink: 0,
+                      textShadow: "none",
+                    }}>ON AIR</span>
+                  )}
+                  {timeStr && (
+                    <span style={{
+                      fontSize: 17, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
+                      color: isEndingSoon ? "#fbbf24" : (isPlaying || isPaused) ? "#fff" : "var(--text-secondary)",
+                      fontWeight: 700,
+                      marginLeft: "auto", flexShrink: 0,
+                      letterSpacing: "-0.02em",
+                      transition: "color 0.3s",
+                    }}>{timeStr}</span>
+                  )}
+                </div>
+                {/* Row 2: title */}
+                <div style={{
+                  fontSize: 14, fontWeight: 600, letterSpacing: "-0.01em",
+                  color: isActive ? "var(--text-primary)" : "#444",
+                  overflow: "hidden",
+                  fontStyle: isActive ? "normal" : "italic",
+                  lineHeight: 1.2,
+                }}>
+                  <span ref={titleRefs[idx]} style={{ display: "inline-block", whiteSpace: "nowrap" as const }}>
+                    {isActive ? (slot.title || "—") : "—"}
+                  </span>
+                </div>
               </div>
             </div>
           );
         })}
+        {/* Spacer mirrors MasterOutput width so slot boundaries align with ConsoleStrip columns */}
+        <div style={
+          masterCollapsed
+            ? { width: 36, flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.06)" }
+            : !showCarts
+              ? { flex: 1, minWidth: 280, borderLeft: "1px solid rgba(255,255,255,0.06)" }
+              : { width: 220, flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.06)" }
+        } />
       </div>
     </>
   );
