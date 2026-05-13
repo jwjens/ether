@@ -254,9 +254,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         }),
       ].join("\n");
 
-      const writeTextFile = (p: string, data: string) => (window as any).ether.fs.writeFile(p, data); const BaseDirectory = {};
+      const writeTextFile = (p: string, data: string, opts?: any) => (window as any).ether.fs.writeFile(p, data); const BaseDirectory = {};
       const filename = `ether_playlog_${new Date().toISOString().split("T")[0]}.csv`;
-      await writeTextFile(filename, lines, { baseDir: BaseDirectory.Download });
+      await writeTextFile(filename, lines);
       setExported(true);
       setTimeout(() => setExported(false), 3000);
     } catch (e) {
