@@ -3257,6 +3257,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [colWidths, setColWidths] = useState<Partial<Record<LibCol, number>>>({});
   const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
+  const [vocabReloadKey, setVocabReloadKey] = useState(0);
   const middleHeaderRef = useRef<HTMLDivElement | null>(null);
   const [libPageIdx, setLibPageIdx]   = useState(0);
   const [middleZoneW, setMiddleZoneW] = useState(0);
@@ -3654,7 +3655,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         setVocabByDef(byDef);
       } catch (e) { console.error('[LibraryPanel] failed to load vocabulary:', e); }
     })();
-  }, [stationId]);
+  }, [stationId, vocabReloadKey]);
 
   const toggleSelect = (id: number) => { setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };
@@ -3775,7 +3776,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
       {/* Library columns panel */}
       <LibraryColumnsPanel
         isOpen={columnsPanelOpen}
-        onClose={() => setColumnsPanelOpen(false)}
+        onClose={() => { setColumnsPanelOpen(false); setVocabReloadKey(k => k + 1); }}
         visibleColumns={visibleCols}
         onColumnToggle={toggleCol}
         stationId={stationId}
