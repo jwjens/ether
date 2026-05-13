@@ -65,7 +65,7 @@ import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import TrackEditor from "./TrackEditor";
 
 interface Song {
-  id: number; title: string; artist_name?: string;
+  id: number; title: string; artist_name: string | null;
   file_path: string; duration_ms: number;
   cue_in?: number; cue_out?: number;
   intro_end?: number; outro_start?: number;
