@@ -67,7 +67,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
   useEffect(() => {
     const update = () => setAnyPlaying(
-      (["A", "B", "C"] as const).some(s => engine.getDeck(s)?.status === "playing")
+      (["A", "B", "C"] as const).some(s => engine.getDeck(s)?.getState().status === "playing")
     );
     update();
     return engine.on(update);
