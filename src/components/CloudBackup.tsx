@@ -253,7 +253,7 @@ export default function CloudBackup() {
 
       setStatus({ msg: "Uploading...", type: "info" });
       const formData = new FormData();
-      formData.append("backup", new Blob([compressed], { type: "application/gzip" }), filename);
+      formData.append("backup", new Blob([compressed as Uint8Array<ArrayBuffer>], { type: "application/gzip" }), filename);
       formData.append("station_id", stationId);
       formData.append("filename", filename);
       if (description.trim()) formData.append("description", description.trim());

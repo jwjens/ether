@@ -292,7 +292,7 @@ export default function MultiOutputPanel() {
 
                 {/* Active device info */}
                 {selectedDevice && (
-                  <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 0, background: meta.color + "08", border: `1px solid ${meta.color}20`, display: "flex", align: "center", gap: 8 }}>
+                  <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 0, background: meta.color + "08", border: `1px solid ${meta.color}20`, display: "flex", alignItems: "center", gap: 8 }}>
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={meta.color} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, marginTop: 1 }}><polyline points="20 6 9 17 4 12"/></svg>
                     <span style={{ fontSize: 10, color: meta.color, fontWeight: 600 }}>
                       Routing to: {selectedDevice.name}

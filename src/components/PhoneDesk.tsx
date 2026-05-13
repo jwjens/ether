@@ -530,7 +530,7 @@ export default function PhoneDesk({ onClose }: Props) {
     previewCtxRef.current = ctx;
 
     const buf = ctx.createBuffer(1, recPCM.length, SAMPLE_RATE);
-    buf.copyToChannel(recPCM, 0);
+    buf.copyToChannel(recPCM as Float32Array<ArrayBuffer>, 0);
 
     const src = ctx.createBufferSource();
     src.buffer = buf;
