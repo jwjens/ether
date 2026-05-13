@@ -3211,8 +3211,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     try {
       const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.deleted_at IS NULL ORDER BY s.title LIMIT 500", [], stationId, { skipScoping: true });
       setSongs(rows);
-      // station_id scoping: Strategy B — single table
-      const [r] = await queryScoped<{ c: number }>("SELECT COUNT(*) as c FROM songs", [], stationId);
+      const [r] = await query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE deleted_at IS NULL");
       setCount(r ? r.c : 0);
       // station_id scoping: Strategy B — single table
       setCatList(await queryScoped<{ id: number; code: string; color: string | null }>("SELECT id, code, color FROM categories ORDER BY code", [], stationId));
