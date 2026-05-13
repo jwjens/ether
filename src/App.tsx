@@ -553,7 +553,10 @@ export default function App() {
         const name = get('station_name');
         if (name) setStationName(name);
         const p = get('plan_tier') as PlanTier | undefined;
-        if (p) { setCurrentPlan(p); setPlanGlobally(p); }
+        // plan_tier is install-level — only propagate from station 1. Switching
+        // to a station that has its own plan_tier key must not overwrite the
+        // global plan cache (which would hide the operator badge).
+        if (p) { setCurrentPlan(p); if (stationId === 1) setPlanGlobally(p); }
         const apiKey = get('license_key');
         if (apiKey) apiKeyRef.current = apiKey;
         // experience_mode key in DB is now ignored — deck visibility is

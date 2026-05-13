@@ -33,12 +33,11 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
   };
 
   useEffect(() => {
-    if (!isOperator) return;
     loadStations();
     const handler = () => loadStations();
     window.addEventListener("station-switched", handler);
     return () => window.removeEventListener("station-switched", handler);
-  }, [isOperator]);
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -49,8 +48,6 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
-
-  if (!isOperator) return null;
 
   const label = active
     ? (active.callsign || active.name.slice(0, 12).toUpperCase())
@@ -66,8 +63,14 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     <div ref={dropRef} style={{ position: "relative", flexShrink: 0 }}>
       {/* Pill trigger */}
       <button
-        onClick={() => setOpen(o => !o)}
-        title={`Active station: ${active?.name ?? "—"}. Click to switch or manage.`}
+        onClick={() => {
+          if (!isOperator) {
+            window.dispatchEvent(new CustomEvent("ether:open-subscription"));
+            return;
+          }
+          setOpen(o => !o);
+        }}
+        title={isOperator ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Operator to manage multiple stations"}
         style={{
           display: "inline-flex", alignItems: "center", gap: 5,
           height: 32, padding: "0 10px", borderRadius: 0,

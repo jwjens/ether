@@ -14,7 +14,6 @@
  */
 
 import { useState, useEffect } from "react";
-import { useActiveStation } from "./useActiveStation";
 
 export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "station_lifetime" | "operator";
 
@@ -40,37 +39,47 @@ export function setPlanGlobally(plan: PlanTier) {
   notifyAll(plan);
 }
 
+function loadFromStation1() {
+  (async () => {
+    try {
+      const result = await (window as any).ether.stationConfigKv.list(1);
+      const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+      const p = (rows.find((r: { key: string }) => r.key === 'plan_tier')?.value ?? "free") as PlanTier;
+      notifyAll(p);
+    } catch {
+      notifyAll("free");
+    }
+  })();
+}
+
 export function usePlan() {
   const [plan, setPlan] = useState<PlanTier>(_cached ?? "free");
-  const { stationId, isReady } = useActiveStation();
 
   useEffect(() => {
-    // Register listener for live updates (e.g. after license activation)
     _listeners.add(setPlan);
     return () => { _listeners.delete(setPlan); };
   }, []);
 
   useEffect(() => {
-    // Dev override always wins — must run before _cached check so a real license
-    // in the DB doesn't prevent the flag from taking effect on subsequent boots
+    // Dev override always wins
     if (import.meta.env.VITE_DEV_FORCE_OPERATOR_TIER === "true") {
       notifyAll("operator");
       return;
     }
-    if (!isReady) return;
     if (_cached) { setPlan(_cached); return; }
-    // Load from DB
-    (async () => {
-      try {
-        const result = await (window as any).ether.stationConfigKv.list(stationId);
-        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
-        const p = (rows.find((r: { key: string }) => r.key === 'plan_tier')?.value ?? "free") as PlanTier;
-        notifyAll(p);
-      } catch {
-        notifyAll("free");
-      }
-    })();
-  }, [stationId, isReady]);
+    loadFromStation1();
+  }, []); // read once on mount — station-switched listener below handles re-reads
+
+  useEffect(() => {
+    // Re-read on every station switch so any stale "free" from a non-root station
+    // is corrected back to the install-level plan immediately.
+    const handler = () => {
+      if (import.meta.env.VITE_DEV_FORCE_OPERATOR_TIER === "true") return;
+      loadFromStation1();
+    };
+    window.addEventListener("station-switched", handler);
+    return () => window.removeEventListener("station-switched", handler);
+  }, []); // read once on mount — use setPlanGlobally for live updates (e.g. license activation)
 
   return {
     plan,
