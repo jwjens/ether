@@ -78,6 +78,7 @@ import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
+import BulkAssignModal from "./components/BulkAssignModal";
 import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
@@ -3247,6 +3248,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [showBulkAssign, setShowBulkAssign] = useState(false);
   const { isStation } = usePlan();
 
   // ── Column visibility & widths ─────────────────────────────
@@ -3836,10 +3838,19 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}
         </select>
         <button onClick={queueAll} style={S.btn("var(--accent-green)", "#000")}>Queue All</button>
+        {selectedIds.size >= 2 && <button onClick={() => setShowBulkAssign(true)} style={S.btn("var(--accent-purple)")}>Bulk assign metadata</button>}
         {selectedIds.size > 0 && <button onClick={deleteSelected} style={S.btn("var(--accent-red)")}>Delete {selectedIds.size}</button>}
         <button onClick={deleteAll} style={{ ...S.btnOutline, color: "var(--accent-red)" as any }}>Delete All</button>
       </div>
 
+      {showBulkAssign && stationId != null && (
+        <BulkAssignModal
+          songIds={[...selectedIds]}
+          stationId={stationId}
+          onClose={() => setShowBulkAssign(false)}
+          onApplied={() => { setShowBulkAssign(false); setSmvReloadKey(k => k + 1); }}
+        />
+      )}
       {status && <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
       {showCreateCat && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, marginBottom: 8 }}>

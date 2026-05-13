@@ -142,6 +142,97 @@ function songMetadataValuesDelete(db, uuid, stationId) {
 
 
 
+// ── Bulk apply ────────────────────────────────────────────────────────────────
+//
+// Atomically applies a batch of per-definition changes across a set of songs.
+// Each BulkChange maps to one parent mutation; each per-song smv operation
+// creates a child mutation that inherits the parent via _mutationContextStack.
+//
+// change.action semantics:
+//   'set'   — delete all existing smv rows for song+definition, then insert one
+//             new row (value_text or value_vocabulary_id).
+//   'add'   — additive for multi_choice: insert vocab rows not already present.
+//             Existing tags are preserved; duplicates are silently skipped.
+//   'clear' — soft-delete all smv rows for song+definition (any value).
+
+function metadataValuesBulkApply(db, { song_ids, changes, station_id }) {
+  validateScope();
+  if (!Array.isArray(song_ids) || song_ids.length === 0) throw new Error('[bulk_apply] song_ids must be a non-empty array');
+  if (!Array.isArray(changes) || changes.length === 0)   throw new Error('[bulk_apply] changes must be a non-empty array');
+  if (station_id == null) throw new Error('[bulk_apply] station_id is required');
+
+  let songsAffected = 0;
+  let smvOperations = 0;
+
+  // Single outer transaction — any inner failure rolls back everything.
+  db.transaction(() => {
+    for (const change of changes) {
+      const { definition_id, action } = change;
+      if (!definition_id || !action) throw new Error(`[bulk_apply] invalid change: ${JSON.stringify(change)}`);
+
+      withMutation(db, {
+        table_name:     TABLE,
+        row_id:         `bulk:${definition_id}:${action}`,
+        op:             'bulk_apply',
+        payload_before: null,
+        payload_after:  null,
+        station_id:     String(station_id),
+      }, () => {
+        // _mutationContextStack now has this mutation's id; nested
+        // songMetadataValuesCreate/Delete calls inherit it as parent.
+        for (const songId of song_ids) {
+          if (action === 'clear') {
+            const rows = db.prepare(
+              `SELECT uuid FROM ${TABLE} WHERE song_id = ? AND definition_id = ? AND deleted_at IS NULL`
+            ).all(songId, definition_id);
+            for (const row of rows) {
+              songMetadataValuesDelete(db, row.uuid, station_id);
+              smvOperations++;
+            }
+          } else if (action === 'set') {
+            const rows = db.prepare(
+              `SELECT uuid FROM ${TABLE} WHERE song_id = ? AND definition_id = ? AND deleted_at IS NULL`
+            ).all(songId, definition_id);
+            for (const row of rows) {
+              songMetadataValuesDelete(db, row.uuid, station_id);
+              smvOperations++;
+            }
+            songMetadataValuesCreate(db, {
+              song_id:             songId,
+              definition_id,
+              value_text:          change.value_text          ?? null,
+              value_vocabulary_id: change.value_vocabulary_id ?? null,
+              station_id,
+            });
+            smvOperations++;
+          } else if (action === 'add') {
+            for (const vocabId of (change.value_vocabulary_ids ?? [])) {
+              const exists = db.prepare(
+                `SELECT id FROM ${TABLE} WHERE song_id = ? AND definition_id = ? AND value_vocabulary_id = ? AND deleted_at IS NULL`
+              ).get(songId, definition_id, vocabId);
+              if (!exists) {
+                songMetadataValuesCreate(db, {
+                  song_id:             songId,
+                  definition_id,
+                  value_text:          null,
+                  value_vocabulary_id: vocabId,
+                  station_id,
+                });
+                smvOperations++;
+              }
+            }
+          } else {
+            throw new Error(`[bulk_apply] unknown action: ${action}`);
+          }
+          songsAffected++;
+        }
+      });
+    }
+  })();
+
+  return { ok: true, songsAffected, smvOperations };
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSongMetadataValues(ipcMain, db) {
@@ -170,6 +261,10 @@ function installSongMetadataValues(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('song_metadata_values:bulk-apply', (_, payload) => {
+    try { return metadataValuesBulkApply(db, payload); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[song_metadata_values] handlers installed');
 }
@@ -182,5 +277,5 @@ module.exports = {
   songMetadataValuesCreate,
   songMetadataValuesUpdate,
   songMetadataValuesDelete,
-
+  metadataValuesBulkApply,
 };

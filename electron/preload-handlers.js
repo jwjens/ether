@@ -223,11 +223,12 @@ module.exports = function buildHandlers(ipcRenderer) {
     delete:  (uuid, stationId) => ipcRenderer.invoke('smart_schedule_rules:delete',    uuid, stationId),
   },
   songMetadataValues: {
-    list:    (stationId, opts) => ipcRenderer.invoke('song_metadata_values:list',      stationId, opts),
-    getById: (uuid)            => ipcRenderer.invoke('song_metadata_values:get-by-id', uuid),
-    create:  (payload)         => ipcRenderer.invoke('song_metadata_values:create',    payload),
-    update:  (uuid, patch)     => ipcRenderer.invoke('song_metadata_values:update',    uuid, patch),
-    delete:  (uuid, stationId) => ipcRenderer.invoke('song_metadata_values:delete',    uuid, stationId),
+    list:       (stationId, opts) => ipcRenderer.invoke('song_metadata_values:list',        stationId, opts),
+    getById:    (uuid)            => ipcRenderer.invoke('song_metadata_values:get-by-id',   uuid),
+    create:     (payload)         => ipcRenderer.invoke('song_metadata_values:create',      payload),
+    update:     (uuid, patch)     => ipcRenderer.invoke('song_metadata_values:update',      uuid, patch),
+    delete:     (uuid, stationId) => ipcRenderer.invoke('song_metadata_values:delete',      uuid, stationId),
+    bulkApply:  (payload)         => ipcRenderer.invoke('song_metadata_values:bulk-apply',  payload),
   },
   songs: {
     list:                   (opts)           => ipcRenderer.invoke('songs:list',                       opts),

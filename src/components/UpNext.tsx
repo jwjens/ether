@@ -88,8 +88,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   }, [queueLen]);
 
   useEffect(() => {
+    setTopScrollPx(0); // ensure title div has overflow:hidden when scrollWidth is sampled
     const el = topTitleRef.current;
-    if (!el) { setTopScrollPx(0); return; }
+    if (!el) return;
     const id = requestAnimationFrame(() => {
       const overflow = el.scrollWidth - el.offsetWidth;
       setTopScrollPx(overflow > 4 ? overflow + 8 : 0);
@@ -304,12 +305,20 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 )}
 
                 {/* Title + artist */}
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  flex: 1, minWidth: 0,
+                  ...(i === 0 && topScrollPx > 0 ? {
+                    overflow: "hidden",
+                    WebkitMaskImage: "linear-gradient(to right, transparent 0px, black 20px)",
+                    maskImage: "linear-gradient(to right, transparent 0px, black 20px)",
+                  } : {}),
+                } as React.CSSProperties}>
                   <div
                     ref={i === 0 ? topTitleRef : undefined}
                     style={{
                       fontSize: i === 0 ? 16 : 11, fontWeight: 600, color: "var(--text-primary)",
-                      overflow: "hidden", textOverflow: i === 0 && topScrollPx > 0 ? "clip" : "ellipsis",
+                      overflow: i === 0 && topScrollPx > 0 ? "visible" : "hidden",
+                      textOverflow: i === 0 && topScrollPx > 0 ? undefined : "ellipsis",
                       whiteSpace: "nowrap" as any, letterSpacing: "-0.01em",
                       ...(i === 0 && topScrollPx > 0 ? { animation: "nextup-title-scroll 9s ease-in-out infinite", "--scroll-x": `-${topScrollPx}px` } : {}),
                     } as React.CSSProperties}
