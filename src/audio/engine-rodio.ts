@@ -451,9 +451,12 @@ export class AudioEngine {
 
 // SCAFFOLDING: hardcoded 1 matches current Rust default behavior
 // (station_id: None → unwrap_or(1) in native/src/lib.rs).
-// Replaced in Commit 2 by the AudioEngine registry that creates
-// per-station instances dynamically based on which station the
-// dashboard is viewing or which station code is operating on.
-// Do not "fix" this hardcoded 1 until Commit 2 lands — it is
-// intentional transitional state, not a bug.
+// Commit 2 adds the AudioEngine registry (src/audio/engine-registry.ts)
+// and AudioEngineProvider (src/audio/AudioEngineContext.tsx) alongside
+// this singleton. Commits 3–5 progressively migrate consumers off the
+// singleton using getEngine() or useAudioEngine(). Once the last
+// consumer is migrated (planned for Commit 5), this singleton and this
+// comment can be removed.
+// Do not "fix" this hardcoded 1 independently — the migration is
+// ordered and tracked.
 export const engine = new AudioEngine(1);

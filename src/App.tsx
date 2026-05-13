@@ -39,6 +39,7 @@ import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
+import { AudioEngineProvider } from "./audio/AudioEngineContext";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
 import StreamStatusToast from "./components/StreamStatusToast";
@@ -1242,6 +1243,7 @@ export default function App() {
   return (
     <StreamStatusProvider>
     <MidiProvider>
+    <AudioEngineProvider>
     <EtherErrorBoundary>
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
@@ -1892,6 +1894,7 @@ export default function App() {
         </>
       )}
     </EtherErrorBoundary>
+    </AudioEngineProvider>
     </MidiProvider>
     <StreamStatusToast />
     </StreamStatusProvider>
