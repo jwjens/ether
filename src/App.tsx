@@ -1805,40 +1805,45 @@ export default function App() {
       )}
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
-      <footer style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0, letterSpacing: "0.02em", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ color: onAir ? "var(--accent-green)" : "var(--text-tertiary)" }}>
-            {onAir ? "● On Air" : "○ Off Air"}
-          </span>
-          {panel !== "live" && (
-            <button
-              onClick={() => setPanel("live")}
-              title="Back to Live Dashboard"
-              style={{
-                padding: "2px 8px", borderRadius: 0,
-                background: "var(--accent-cyan)", border: "none",
-                color: "#000", fontSize: 13, fontWeight: 700, letterSpacing: "0.06em",
-                cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
-              }}
-            >
-              <svg width="7" height="8" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
-              LIVE
-            </button>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 16 }}>
-          <HealthStatusDot onClick={() => setPanel("health")} />
-          <span style={{ color: "var(--border-secondary)" }}>·</span>
-          <button onClick={() => toggleAuto()}
-            title={autoAdv ? "Auto-advance is ON — click to turn off" : "Auto-advance is OFF — click to start"}
-            style={{ background: "none", border: "none", color: autoAdv ? "var(--accent-cyan)" : "var(--text-tertiary)", cursor: "pointer", fontSize: 12, fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.06em", padding: 0, opacity: autoAdv ? 1 : 0.45 }}>
-            AUTO
+      <footer style={{ height: 52, display: "flex", alignItems: "center", padding: "0 10px", gap: 0, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        {/* NOMINAL health indicator */}
+        <HealthStatusDot onClick={() => setPanel("health")} />
+        <div style={{ width: 1, height: 28, background: "var(--border-primary)", margin: "0 8px", flexShrink: 0 }} />
+        {/* View tabs */}
+        {([
+          { label: "DECKS",  active: panel === "live",     fn: () => setPanel("live") },
+          { label: "CARTS",  active: panel === "cartwall", fn: () => setPanel("cartwall") },
+        ] as const).map(({ label, active, fn }) => (
+          <button key={label} onClick={fn} style={{
+            height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
+            border: `1px solid ${active ? "#38bdf8" : "var(--border-primary)"}`,
+            background: active ? "rgba(56,189,248,0.12)" : "transparent",
+            color: active ? "#38bdf8" : "var(--text-secondary)",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer",
+          }}>{label}</button>
+        ))}
+        <div style={{ flex: 1 }} />
+        {/* LIVE nav — only when not on live panel */}
+        {panel !== "live" && (
+          <button onClick={() => setPanel("live")} title="Back to Live" style={{
+            height: 36, padding: "0 10px", marginRight: 8, borderRadius: 0,
+            background: "var(--accent-cyan)", border: "none",
+            color: "#000", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
+            cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+          }}>
+            <svg width="7" height="8" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
+            LIVE
           </button>
-          {shuffle && <span style={{ color: "var(--accent-amber)" }}>SHUFFLE</span>}
-          {continuous && <span>24/7</span>}
-          <span>Queue: {queueLen}</span>
-          <span style={{ color: "var(--border-secondary)" }}>Space · B · X · Esc</span>
-        </div>
+        )}
+        {/* XFADE — far right, red fill */}
+        <button onClick={handleXfade} style={{
+          height: 36, padding: "0 18px", borderRadius: 0,
+          background: xfadeActive ? "#ef4444" : "#7f1d1d",
+          border: `1px solid ${xfadeActive ? "#ef4444" : "#991b1b"}`,
+          color: "#fff", fontSize: 12, fontWeight: 900, letterSpacing: "0.1em",
+          cursor: "pointer", transition: "background 0.12s, box-shadow 0.12s",
+          boxShadow: xfadeActive ? "0 0 14px rgba(239,68,68,0.55)" : "none",
+        }}>XFADE</button>
       </footer>
     </div>
       {showProducerDesk && (
@@ -2753,13 +2758,15 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     <div
       key="decks"
       style={{
-        flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", gap: 10,
+        flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", gap: 0,
         opacity: dragging === "decks" ? 0.55 : 1,
         outline: dropTarget === "decks" ? "2px solid #38bdf8" : "none",
         outlineOffset: 2, borderRadius: 0,
         transition: "opacity 0.15s, outline 0.1s",
       }}
     >
+      {/* Deck title strips — column-aligned above each ConsoleStrip */}
+      <ThreeSlotBar queueLen={queueLen} />
       {(
         /* ── Console channel strips — the default deck view.
            Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */
@@ -2900,32 +2907,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", gap: 0 }}>
-
-      {/* Persistent top toolbar */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 6,
-        padding: "6px 10px", flexShrink: 0,
-        background: "var(--bg-secondary)",
-        borderBottom: "1px solid var(--border-primary)",
-      }}>
-        {[
-          { label: "XFADE",  active: xfadeActive, onClick: handleXfade,                    color: "#a78bfa" },
-          { label: "DECKS",  active: false,       onClick: () => onConfigureDecks?.(),     color: "#38bdf8" },
-          { label: "CARTS",  active: false,       onClick: onOpenCarts,                    color: "#f97316" },
-        ].map(({ label, active, onClick, color }) => (
-          <button key={label} onClick={onClick} style={{
-            padding: "6px 14px", borderRadius: 0,
-            border: `1px solid ${active ? color : "var(--border-primary)"}`,
-            background: active ? `${color}22` : "var(--bg-tertiary)",
-            color:      active ? color : "var(--text-secondary)",
-            fontSize: 12, fontWeight: 800, letterSpacing: "0.08em",
-            cursor: "pointer", transition: "all 0.15s",
-          }}>{label}</button>
-        ))}
-
-        {/* ON AIR / NEXT / AFTER — three-slot queue display */}
-        <ThreeSlotBar queueLen={queueLen} />
-      </div>
 
       {/* Main layout — drag-reorderable + resizable */}
       <div
@@ -3838,9 +3819,10 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         }
       `}</style>
       <div style={{
-        flex: 1, minWidth: 0, marginLeft: 8, height: 34,
+        width: "100%", flexShrink: 0, height: 34,
         display: "flex",
         border: "1px solid var(--border-primary)",
+        borderLeft: "none", borderRight: "none",
         background: "linear-gradient(90deg, var(--bg-tertiary), var(--bg-secondary))",
         overflow: "hidden",
       }}>
