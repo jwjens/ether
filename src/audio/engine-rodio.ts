@@ -62,6 +62,12 @@ function makeState(id: DeckId, s: any): DeckState {
 }
 
 export class AudioEngine {
+  private readonly stationId: number;
+
+  constructor(stationId: number) {
+    this.stationId = stationId;
+  }
+
   private listeners = new Set<Listener>();
   private playStartCallbacks = new Set<(deckId: DeckId, title: string, artist: string, filePath: string) => void>();
 
@@ -111,7 +117,7 @@ export class AudioEngine {
 
   private async poll() {
     try {
-      const s = await invoke("audio_get_state");
+      const s = await invoke("audio_get_state", { stationId: this.stationId });
       const now = Date.now();
       const elapsed = (now - this.lastPollTime) / 1000;
       this.lastPollTime = now;
@@ -214,7 +220,7 @@ export class AudioEngine {
   private handleRotate(fromId: DeckId, toId: DeckId) {
     this.advancePromise = this.advancePromise.then(async () => {
       try {
-        const liveState = await invoke("audio_get_state");
+        const liveState = await invoke("audio_get_state", { stationId: this.stationId });
         const liveTo = liveState ? (toId === "A" ? liveState.deckA : toId === "B" ? liveState.deckB : liveState.deckC) : null;
         const otherPlaying = liveState ? (
           (fromId !== "A" && liveState.deckA?.status === "playing") ||
@@ -224,8 +230,8 @@ export class AudioEngine {
         rotLog(`[ROT] rotate ${fromId}→${toId}: liveTo=${liveTo?.status} otherPlaying=${otherPlaying} | queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
         if (liveTo?.status === "playing") { rotLog(`[ROT] rotate ${fromId}→${toId}: BAIL dest already playing`); return; }
         if (otherPlaying) { rotLog(`[ROT] rotate ${fromId}→${toId}: BAIL another deck is playing (spurious end guard)`); return; }
-        await invoke("audio_play", { deck: toId });
-        setTimeout(() => { invoke("audio_stop", { deck: fromId }).catch(() => {}); }, (this.crossfadeDuration * 1000) + 500);
+        await invoke("audio_play", { deck: toId, stationId: this.stationId });
+        setTimeout(() => { invoke("audio_stop", { deck: fromId, stationId: this.stationId }).catch(() => {}); }, (this.crossfadeDuration * 1000) + 500);
         if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
         if (toId === "B") this.stateB = { ...this.stateB, status: "playing", positionSec: 0 };
         if (toId === "C") this.stateC = { ...this.stateC, status: "playing", positionSec: 0 };
@@ -254,7 +260,7 @@ export class AudioEngine {
     this.advancePromise = this.advancePromise.then(async () => {
       try {
         // Check the Rust backend: if the destination deck is already playing, bail.
-        const liveState = await invoke("audio_get_state");
+        const liveState = await invoke("audio_get_state", { stationId: this.stationId });
         if (liveState) {
           const liveDeck = deckId === "A" ? liveState.deckA : deckId === "B" ? liveState.deckB : liveState.deckC;
           if (liveDeck?.status === "playing") return;  // already playing — skip
@@ -264,7 +270,7 @@ export class AudioEngine {
         const next = this.dequeue();
         this.deckChainType[deckId] = next.chainType || "segue";
         await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
-        await invoke("audio_play", { deck: deckId });
+        await invoke("audio_play", { deck: deckId, stationId: this.stationId });
         if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
         if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
         if (deckId === "C") { this.stateC = { ...this.stateC, status: "playing", positionSec: 0 }; this.endTriggered.delete("C"); }
@@ -333,12 +339,12 @@ export class AudioEngine {
         if (deckId === "B") this.stateB = { ...this.stateB, status: "playing" };
         if (deckId === "C") this.stateC = { ...this.stateC, status: "playing" };
         this.endTriggered.delete(deckId);
-        return invoke("audio_play", { deck: deckId });
+        return invoke("audio_play", { deck: deckId, stationId: this.stationId });
       },
-      pause: () => invoke("audio_pause", { deck: deckId }),
-      resume: () => invoke("audio_play", { deck: deckId }),
-      stop: () => { this.endTriggered.delete(deckId); return invoke("audio_stop", { deck: deckId }); },
-      setVolume: (v: number) => invoke("audio_set_volume", { deck: deckId, volume: v }),
+      pause: () => invoke("audio_pause", { deck: deckId, stationId: this.stationId }),
+      resume: () => invoke("audio_play", { deck: deckId, stationId: this.stationId }),
+      stop: () => { this.endTriggered.delete(deckId); return invoke("audio_stop", { deck: deckId, stationId: this.stationId }); },
+      setVolume: (v: number) => invoke("audio_set_volume", { deck: deckId, volume: v, stationId: this.stationId }),
       fadeTo: (vol: number, sec: number) => {
         const steps = 20;
         const current = getState().volume;
@@ -346,7 +352,7 @@ export class AudioEngine {
         let step = 0;
         const interval = setInterval(() => {
           step++;
-          invoke("audio_set_volume", { deck: deckId, volume: current + (diff * step / steps) });
+          invoke("audio_set_volume", { deck: deckId, volume: current + (diff * step / steps), stationId: this.stationId });
           if (step >= steps) clearInterval(interval);
         }, (sec * 1000) / steps);
       },
@@ -356,7 +362,7 @@ export class AudioEngine {
   async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number) {
     rotLog(`[ROT] loadToDeck ${id}: "${title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     this.init();
-    await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0 });
+    await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0, stationId: this.stationId });
     const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
     if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
     if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
@@ -416,7 +422,7 @@ export class AudioEngine {
     const next = this.dequeue();
     try {
       await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
-      await invoke("audio_play", { deck: "A" });
+      await invoke("audio_play", { deck: "A", stationId: this.stationId });
       this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
       this.endTriggered.delete("A");
       // Preload next two songs into B and C so rotation is seamless
@@ -435,12 +441,19 @@ export class AudioEngine {
     const from = this.getDeck(fromId);
     const to = this.getDeck(toId);
     to.setVolume(1);
-    invoke("audio_play", { deck: toId });
+    invoke("audio_play", { deck: toId, stationId: this.stationId });
     from.fadeTo(0, ms / 1000);
-    setTimeout(() => invoke("audio_stop", { deck: fromId }), ms + 100);
+    setTimeout(() => invoke("audio_stop", { deck: fromId, stationId: this.stationId }), ms + 100);
   }
 
   checkOutroCrossfade() {}
 }
 
-export const engine = new AudioEngine();
+// SCAFFOLDING: hardcoded 1 matches current Rust default behavior
+// (station_id: None → unwrap_or(1) in native/src/lib.rs).
+// Replaced in Commit 2 by the AudioEngine registry that creates
+// per-station instances dynamically based on which station the
+// dashboard is viewing or which station code is operating on.
+// Do not "fix" this hardcoded 1 until Commit 2 lands — it is
+// intentional transitional state, not a bug.
+export const engine = new AudioEngine(1);
