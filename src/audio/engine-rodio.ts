@@ -213,8 +213,14 @@ export class AudioEngine {
       try {
         const liveState = await invoke("audio_get_state");
         const liveTo = liveState ? (toId === "A" ? liveState.deckA : toId === "B" ? liveState.deckB : liveState.deckC) : null;
-        rotLog(`[ROT] rotate ${fromId}→${toId}: liveTo=${liveTo?.status} | queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
+        const otherPlaying = liveState ? (
+          (fromId !== "A" && liveState.deckA?.status === "playing") ||
+          (fromId !== "B" && liveState.deckB?.status === "playing") ||
+          (fromId !== "C" && liveState.deckC?.status === "playing")
+        ) : false;
+        rotLog(`[ROT] rotate ${fromId}→${toId}: liveTo=${liveTo?.status} otherPlaying=${otherPlaying} | queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
         if (liveTo?.status === "playing") { rotLog(`[ROT] rotate ${fromId}→${toId}: BAIL dest already playing`); return; }
+        if (otherPlaying) { rotLog(`[ROT] rotate ${fromId}→${toId}: BAIL another deck is playing (spurious end guard)`); return; }
         await invoke("audio_play", { deck: toId });
         setTimeout(() => { invoke("audio_stop", { deck: fromId }).catch(() => {}); }, (this.crossfadeDuration * 1000) + 500);
         if (toId === "A") this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
@@ -224,8 +230,8 @@ export class AudioEngine {
         this.endTriggered.delete(toId);
         if (this.queue.length > 0) this.dequeue();
         rotLog(`[ROT] rotate ${fromId}→${toId}: played ${toId}, queue after dequeue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
-        if (toId === "B") { setTimeout(() => this.preloadDeck("C", 0), 800); }
-        else if (toId === "C") { setTimeout(() => this.preloadDeck("A", 0), 800); }
+        if (toId === "B") { setTimeout(async () => { await this.preloadDeck("C", 0); setTimeout(() => this.preloadDeck("A", 1), 400); }, 800); }
+        else if (toId === "C") { setTimeout(async () => { await this.preloadDeck("A", 0); setTimeout(() => this.preloadDeck("B", 1), 400); }, 800); }
         else if (toId === "A") { setTimeout(async () => { await this.refillIfNeeded(); await this.preloadDeck("B", 0); setTimeout(() => this.preloadDeck("C", 1), 400); }, 800); }
       } catch (e) { console.error("[ROT] handleRotate error:", e); }
     });
