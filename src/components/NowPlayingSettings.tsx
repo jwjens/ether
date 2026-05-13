@@ -34,7 +34,7 @@ export default function NowPlayingSettings() {
   const [weatherLon, setWeatherLon] = useState("-115.1398");
 
   React.useEffect(() => {
-    const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+    const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
     invoke<string>("get_local_ip").then(ip => setDashboardUrl("http://" + ip + ":4242")).catch(() => setDashboardUrl("http://localhost:4242"));
   }, []);
 

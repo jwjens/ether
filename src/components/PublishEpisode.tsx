@@ -24,7 +24,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 import { query, execute, queryOne } from "../db/client";

@@ -12,7 +12,7 @@
 //   <SelfHealingClock logRemainingMs={queueTotalMs} />
 
 import { useEffect, useRef, useState } from "react";
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 
 interface ClockState {
   wall_time: string;

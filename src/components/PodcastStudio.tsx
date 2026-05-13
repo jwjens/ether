@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { query } from "../db/client";
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { LiveCaptionEngine, toSRT, toVTT, toPlainText, transcriptToCaptions, downloadCaption } from "../audio/CaptionEngine";
 const captionEngine = new LiveCaptionEngine();
 
