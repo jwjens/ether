@@ -189,15 +189,21 @@ export class AudioEngine {
       if (deckId === "A") {
         this.stateA = { ...this.stateA, status: "ended" };
         if (this.deckReady.has("B")) { this.handleRotate("A", "B"); }
-        else if (this.autoAdvance) { this.handleLoadNextToDeck("A"); }
+        else if (this.autoAdvance && this.stateB.status !== "playing" && this.stateC.status !== "playing") {
+          this.handleLoadNextToDeck("A");
+        }
       } else if (deckId === "B") {
         this.stateB = { ...this.stateB, status: "ended" };
         if (this.deckReady.has("C")) { this.handleRotate("B", "C"); }
-        else if (this.autoAdvance) { this.handleLoadNextToDeck("B"); }
+        else if (this.autoAdvance && this.stateA.status !== "playing" && this.stateC.status !== "playing") {
+          this.handleLoadNextToDeck("B");
+        }
       } else if (deckId === "C") {
         this.stateC = { ...this.stateC, status: "ended" };
         if (this.deckReady.has("A")) { this.handleRotate("C", "A"); }
-        else if (this.autoAdvance || this.queue.length > 0) { this.handleLoadNextToDeck("A"); }
+        else if ((this.autoAdvance || this.queue.length > 0) && this.stateA.status !== "playing" && this.stateB.status !== "playing") {
+          this.handleLoadNextToDeck("A");
+        }
       }
     }
   }
@@ -374,8 +380,9 @@ export class AudioEngine {
     if (idx >= 0 && idx < this.queue.length) this.queue[idx].chainType = chainType;
   }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
-  isDeckReady(id: DeckId): boolean { return this.deckReady.has(id); }
-  markDeckReady(id: DeckId): void   { this.deckReady.add(id); }
+  isDeckReady(id: DeckId): boolean    { return this.deckReady.has(id); }
+  markDeckReady(id: DeckId): void     { this.deckReady.add(id); }
+  clearDeckReady(id: DeckId): void    { this.deckReady.delete(id); }
   async setOutputDevice(_id: string) {}
 
   /**

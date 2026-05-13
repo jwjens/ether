@@ -474,15 +474,19 @@ export default function App() {
     engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
     setTimeout(async () => {
       engine.getDeck(playingDeck)?.stop();
+      // crossfade() played targetDeck by bypassing handleRotate, so its q[0] was never
+      // dequeued. Count all currently-ready decks (targetDeck is still in deckReady since
+      // crossfade() doesn't clean it up) to determine how many queue slots are occupied:
+      //   q[0] = targetDeck's song  |  q[1..N-1] = other preloaded decks  |  q[N] = next for playingDeck
+      const readyCount = (["A","B","C"] as const).filter(id => engine.isDeckReady(id)).length;
+      engine.clearDeckReady(targetDeck as "A"|"B"|"C");
       const q = engine.getQueue();
-      if (q.length > 0) {
-        const next = q[0];
-        engine.clearQueue();
-        engine.addToQueue(q.slice(1));
+      if (q.length > readyCount) {
+        const next = q[readyCount];
         await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
         engine.markDeckReady(playingDeck as "A" | "B" | "C");
-        window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       }
+      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     }, 2200);
     setXfadeActive(true);
     setTimeout(() => setXfadeActive(false), 2200);
