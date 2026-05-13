@@ -374,6 +374,8 @@ export class AudioEngine {
     if (idx >= 0 && idx < this.queue.length) this.queue[idx].chainType = chainType;
   }
   setRefillCallback(fn: () => Promise<{ filePath: string; title: string; artist: string }[]>) { this.refillCallback = fn; }
+  isDeckReady(id: DeckId): boolean { return this.deckReady.has(id); }
+  markDeckReady(id: DeckId): void   { this.deckReady.add(id); }
   async setOutputDevice(_id: string) {}
 
   /**

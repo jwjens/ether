@@ -22,7 +22,7 @@ import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from ".
 import { queryScoped } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
-import { engine, DeckState } from "./audio/engine-rodio";
+import { engine, DeckState, rotLog } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
@@ -468,8 +468,7 @@ export default function App() {
     let targetDeck: "A"|"B"|"C" | null = null;
     for (let i = 1; i <= 2; i++) {
       const candidate = order[(currentIdx + i) % 3];
-      const state = candidate === "A" ? deckA : candidate === "B" ? deckB : deckC;
-      if (state?.filePath) { targetDeck = candidate; break; }
+      if (engine.isDeckReady(candidate)) { targetDeck = candidate; break; }
     }
     if (!targetDeck) return;
     engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
@@ -481,6 +480,7 @@ export default function App() {
         engine.clearQueue();
         engine.addToQueue(q.slice(1));
         await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
+        engine.markDeckReady(playingDeck as "A" | "B" | "C");
         window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       }
     }, 2200);
@@ -818,6 +818,7 @@ export default function App() {
     if (autoAdv) {
       autoStartTimer = setTimeout(async () => {
         if (engine.getDeck("A")?.getState().status === "playing") return;
+        rotLog(`[ROT] STARTUP autofill begin — queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
         engine.continuous = true;
         resetScheduleCursor();
         // Always fill from schedule — don't reuse crash_recovery's stale queue
@@ -833,6 +834,10 @@ export default function App() {
           const first = q[0]; engine.clearQueue(); engine.addToQueue(q.slice(1));
           await engine.loadToDeck("A", first.filePath, first.title, first.artist, first.gainDb, first.durationMs);
           engine.getDeck("A")?.play();
+          const dA = engine.getDeck("A")?.getState();
+          const dB = engine.getDeck("B")?.getState();
+          const dC = engine.getDeck("C")?.getState();
+          rotLog(`[ROT] STARTUP autofill complete — A="${dA?.title}"(${dA?.status}) B="${dB?.title}"(${dB?.status}) C="${dC?.title}"(${dC?.status}) | queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
           setTimeout(() => engine.triggerPreload(), 800);
           window.dispatchEvent(new CustomEvent("ether:queue-changed"));
         }
@@ -3793,12 +3798,12 @@ function ThreeSlotBar({ queueLen }: { queueLen: number }) {
         status: onAirState.status ?? "",
       } : null);
 
-      // Collect idle-but-loaded decks in rotation order after the ON AIR deck.
+      // Collect freshly-preloaded standby decks in rotation order after the ON AIR deck.
       const idleLoaded: { title: string; durationMs?: number }[] = [];
       for (let offset = 1; offset <= 3; offset++) {
         const id = DECK_IDS[(onAirIdx + offset) % 3];
         const s = engine.getDeck(id)?.getState?.();
-        if (s && s.status === "idle" && s.filePath) {
+        if (engine.isDeckReady(id) && s) {
           idleLoaded.push({ title: s.title ?? "", durationMs: (s.durationSec ?? 0) * 1000 });
         }
       }
