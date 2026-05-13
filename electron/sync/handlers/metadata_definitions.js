@@ -122,6 +122,7 @@ function metadataDefinitionsDelete(db, uuid, stationId) {
   if (!existing) throw new Error(`[metadata_definitions] row not found: ${uuid}`);
 
   const before = serializePayload(existing, TABLE);
+  let cascadeCount = 0;
 
   withMutation(db, {
     table_name:     TABLE,
@@ -133,11 +134,54 @@ function metadataDefinitionsDelete(db, uuid, stationId) {
     actor_id:       null,
   }, () => {
     const now = new Date().toISOString();
-    db.prepare(
-      `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
-    ).run(now, now, uuid);
+    // CASCADE level 1: vocab rows for this definition (query inside txn — Correction 1)
+    const vocabRows = db.prepare(
+      `SELECT * FROM metadata_vocabulary WHERE definition_id = ? AND deleted_at IS NULL`
+    ).all(existing.id);
+
+    for (const v of vocabRows) {
+      const vocabBefore = serializePayload(v, 'metadata_vocabulary');
+      withMutation(db, {
+        table_name:     'metadata_vocabulary',
+        row_id:         v.uuid,
+        op:             'delete',
+        payload_before: vocabBefore,
+        payload_after:  null,
+        station_id:     v.station_id,
+        actor_id:       null,
+      }, () => {
+        // CASCADE level 2: SMV rows for this vocab value
+        const smvRows = db.prepare(
+          `SELECT * FROM song_metadata_values WHERE value_vocabulary_id = ? AND deleted_at IS NULL`
+        ).all(v.uuid);
+
+        for (const smv of smvRows) {
+          const smvBefore = serializePayload(smv, 'song_metadata_values');
+          withMutation(db, {
+            table_name:     'song_metadata_values',
+            row_id:         smv.uuid,
+            op:             'delete',
+            payload_before: smvBefore,
+            payload_after:  null,
+            station_id:     smv.station_id,
+            actor_id:       null,
+          }, () => {
+            db.prepare(`UPDATE song_metadata_values SET deleted_at = ?, updated_at = ? WHERE uuid = ?`)
+              .run(now, now, smv.uuid);
+          });
+          cascadeCount++;
+        }
+
+        db.prepare(`UPDATE metadata_vocabulary SET deleted_at = ?, updated_at = ? WHERE uuid = ?`)
+          .run(now, now, v.uuid);
+      });
+    }
+
+    db.prepare(`UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`)
+      .run(now, now, uuid);
   });
-  return { ok: true };
+
+  return { ok: true, cascadeCount };
 }
 
 

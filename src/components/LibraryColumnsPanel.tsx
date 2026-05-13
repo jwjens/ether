@@ -10,6 +10,7 @@ interface Props {
   visibleMetadataColumns: Set<number>;
   onMetadataColumnToggle: (defId: number) => void;
   onDefinitionsChanged?: () => void;
+  onCascadeDelete?: () => void;
 }
 
 type DataType = MetadataDefinition["data_type"];
@@ -74,7 +75,7 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, onColumnToggle, stationId, visibleMetadataColumns, onMetadataColumnToggle, onDefinitionsChanged }: Props) {
+export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, onColumnToggle, stationId, visibleMetadataColumns, onMetadataColumnToggle, onDefinitionsChanged, onCascadeDelete }: Props) {
   // ── Data ──────────────────────────────────────────────────────
   const [definitions, setDefinitions]   = useState<MetadataDefinition[]>([]);
   const [vocabByDefId, setVocabByDefId] = useState<Record<number, MetadataVocabulary[]>>({});
@@ -245,11 +246,12 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   }
 
   async function removeVocab(def: MetadataDefinition, vocab: MetadataVocabulary) {
-    if (!confirm(`Delete '${vocab.value}'? Songs tagged with this value will keep their stored text but lose the colored pill. This cannot be undone.`)) return;
+    if (!confirm(`Delete '${vocab.value}'? This cannot be undone.`)) return;
     try {
       const res = await (window as any).ether.metadataVocabulary.delete(vocab.uuid, stationId);
       if (!res?.ok) { alert(res?.error ?? "Failed to remove value."); return; }
       setReloadKey(k => k + 1);
+      onCascadeDelete?.();
     } catch (e: any) { alert(e?.message ?? "Unexpected error."); }
   }
 
@@ -293,12 +295,13 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   }
 
   async function removeDefinition(def: MetadataDefinition) {
-    if (!confirm(`Delete category '${def.name}'? Songs with this metadata keep their stored values but the column will be removed. This cannot be undone.`)) return;
+    if (!confirm(`Delete '${def.name}'? This cannot be undone.`)) return;
     try {
       const res = await (window as any).ether.metadataDefinitions.delete(def.uuid, stationId);
       if (!res?.ok) { alert(res?.error ?? "Failed to delete category."); return; }
       setReloadKey(k => k + 1);
       onDefinitionsChanged?.();
+      onCascadeDelete?.();
     } catch (e: any) { alert(e?.message ?? "Unexpected error."); }
   }
 

@@ -146,6 +146,7 @@ function metadataVocabularyDelete(db, uuid, stationId) {
   if (!existing) throw new Error(`[metadata_vocabulary] row not found: ${uuid}`);
 
   const before = serializePayload(existing, TABLE);
+  let cascadeCount = 0;
 
   withMutation(db, {
     table_name:     TABLE,
@@ -157,11 +158,33 @@ function metadataVocabularyDelete(db, uuid, stationId) {
     actor_id:       null,
   }, () => {
     const now = new Date().toISOString();
-    db.prepare(
-      `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
-    ).run(now, now, uuid);
+    // Query inside the transaction so the snapshot is atomic with the writes (Correction 1)
+    const smvRows = db.prepare(
+      `SELECT * FROM song_metadata_values WHERE value_vocabulary_id = ? AND deleted_at IS NULL`
+    ).all(uuid);
+
+    for (const smv of smvRows) {
+      const smvBefore = serializePayload(smv, 'song_metadata_values');
+      withMutation(db, {
+        table_name:     'song_metadata_values',
+        row_id:         smv.uuid,
+        op:             'delete',
+        payload_before: smvBefore,
+        payload_after:  null,
+        station_id:     smv.station_id,
+        actor_id:       null,
+      }, () => {
+        db.prepare(`UPDATE song_metadata_values SET deleted_at = ?, updated_at = ? WHERE uuid = ?`)
+          .run(now, now, smv.uuid);
+      });
+    }
+    cascadeCount = smvRows.length;
+
+    db.prepare(`UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`)
+      .run(now, now, uuid);
   });
-  return { ok: true };
+
+  return { ok: true, cascadeCount };
 }
 
 

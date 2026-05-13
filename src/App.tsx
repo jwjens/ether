@@ -3258,6 +3258,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [metaColWidths, setMetaColWidths] = useState<Record<number, number>>({});
   const [columnsPanelOpen, setColumnsPanelOpen] = useState(false);
   const [vocabReloadKey, setVocabReloadKey] = useState(0);
+  const [smvReloadKey, setSmvReloadKey] = useState(0);
   const middleHeaderRef = useRef<HTMLDivElement | null>(null);
   const [libPageIdx, setLibPageIdx]   = useState(0);
   const [middleZoneW, setMiddleZoneW] = useState(0);
@@ -3638,7 +3639,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         setMetaMultiMap(multiMap);
       } catch (e) { console.error('[LibraryPanel] failed to load metadata values:', e); }
     })();
-  }, [stationId, songs, visibleMetaCols]);
+  }, [stationId, songs, visibleMetaCols, smvReloadKey]);
 
   // Load vocabulary for all definitions in this station (needed for choice-type cell editors)
   useEffect(() => {
@@ -3783,6 +3784,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         visibleMetadataColumns={visibleMetaCols}
         onMetadataColumnToggle={toggleMetaCol}
         onDefinitionsChanged={reloadDefs}
+        onCascadeDelete={() => setSmvReloadKey(k => k + 1)}
       />
 
       {/* Header */}
