@@ -3080,7 +3080,7 @@ function MultiChoicePopover({
   }, [onClose]);
 
   const isSelected = (id: number) => selectedItems.some(r => r.vocabId === id);
-  const isInflight = (id: number) => inFlightCreates.current.has(`${songId}:${defId}:${id}`);
+  const isInflight = (_id: number) => inFlightCreates.current.has(`${songId}:${defId}`);
 
   return (
     <div ref={popRef} style={{
@@ -3287,7 +3287,6 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [defs, setDefs] = useState<MetadataDefinition[]>([]);
   const [visibleMetaCols, setVisibleMetaCols] = useState<Set<number>>(new Set());
   const [metaMap, setMetaMap] = useState<Record<number, Record<number, string>>>({});
-  const [metaUuidMap, setMetaUuidMap] = useState<Record<number, Record<number, string>>>({});
   // FK map: song_id → definition_id → value_vocabulary_id (only set for choice-type rows)
   const [metaVocabIdMap, setMetaVocabIdMap] = useState<Record<number, Record<number, number>>>({});
   // multi_choice: song_id → definition_id → [{uuid, vocabId, value}]
@@ -3296,7 +3295,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [multiPopover, setMultiPopover] = useState<{ songId: number; defId: number; rect: DOMRect } | null>(null);
   // anchor for the single_choice popover picker
   const [singlePopover, setSinglePopover] = useState<{ songId: number; defId: number; rect: DOMRect } | null>(null);
-  // in-flight create guard: prevents unchecking before the real uuid returns from DB
+  // in-flight upsert guard: key = `${songId}:${defId}` — locks entire definition row during upsert
   const inFlightCreates = useRef<Set<string>>(new Set());
   const [vocabByDef, setVocabByDef] = useState<Record<number, MetadataVocabulary[]>>({});
   const [metaEdit, setMetaEdit] = useState<{ songId: number; col: MetadataColumn; value: string } | null>(null);
@@ -3399,18 +3398,13 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 
   const commitMetaEdit = async (songId: number, col: MetadataColumn, value: string) => {
     if (col.dataType === 'number' && value !== '' && isNaN(Number(value))) return;
-    const existingUuid = metaUuidMap[songId]?.[col.defId];
-    if (!existingUuid && value === '') return;
+    if (value === '') return;
 
     // For single_choice: resolve the vocab FK so we write BOTH value_text and value_vocabulary_id
     const vocabRow = col.dataType === 'single_choice'
-      ? vocabByDef[col.defId]?.find(v => v.value === value)
+      ? vocabByDef[col.defId]?.find((v: any) => v.value === value)
       : undefined;
     const vocabId = vocabRow?.id ?? null;
-
-    // Build write payload — FK only for choice types
-    const writePayload: Record<string, unknown> = { value_text: value };
-    if (col.dataType === 'single_choice') writePayload.value_vocabulary_id = vocabId;
 
     // Optimistic update — show new value immediately so 30Hz re-renders don't snap the cell back
     const prevValue   = metaMap[songId]?.[col.defId];
@@ -3425,16 +3419,13 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     }
 
     try {
-      if (existingUuid) {
-        await (window as any).ether.songMetadataValues.update(existingUuid, writePayload);
-      } else {
-        const res = await (window as any).ether.songMetadataValues.create({
-          station_id: stationId, song_id: songId, definition_id: col.defId, ...writePayload,
-        });
-        if (res?.ok && res.row?.uuid) {
-          setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [col.defId]: res.row.uuid } }));
-        }
-      }
+      await (window as any).ether.songMetadataValues.upsert({
+        station_id:          stationId,
+        song_id:             songId,
+        definition_id:       col.defId,
+        value_text:          value || null,
+        value_vocabulary_id: vocabId,
+      });
     } catch (e) {
       console.error('[commitMetaEdit] IPC failed, reverting:', e);
       setMetaMap(prev => {
@@ -3454,72 +3445,62 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 
   // ── Multi-choice toggle ───────────────────────────────────
   const toggleMultiChoice = async (songId: number, defId: number, vocab: MetadataVocabulary) => {
-    const current  = metaMultiMap[songId]?.[defId] ?? [];
-    const existing = current.find(r => r.vocabId === vocab.id);
-    const key      = `${songId}:${defId}:${vocab.id}`;
+    const current   = metaMultiMap[songId]?.[defId] ?? [];
+    const isChecked = current.some(r => r.vocabId === vocab.id);
+    // Per-definition lock: one upsert in flight at a time per song+def.
+    // Trades rapid per-item toggling for atomic diff correctness.
+    const key = `${songId}:${defId}`;
 
-    if (existing) {
-      // Uncheck: optimistic remove, then IPC soft-delete
+    // Compute desired final state
+    const newIds = isChecked
+      ? current.filter(r => r.vocabId !== vocab.id).map(r => r.vocabId)
+      : [...current.map(r => r.vocabId), vocab.id];
+
+    // Optimistic update
+    if (isChecked) {
       setMetaMultiMap(prev => {
         const arr = (prev[songId]?.[defId] ?? []).filter(r => r.vocabId !== vocab.id);
         return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
       });
-      try {
-        await (window as any).ether.songMetadataValues.delete(existing.uuid, stationId);
-      } catch (e) {
-        console.error('[toggleMultiChoice] delete failed, reverting:', e);
-        setMetaMultiMap(prev => {
-          const arr = [...(prev[songId]?.[defId] ?? []), existing];
-          return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
-        });
-      }
     } else {
-      // Check: guard in-flight, optimistic add with temp uuid, swap after DB returns
-      inFlightCreates.current.add(key);
-      const tempUuid = `tmp-${Date.now()}-${vocab.id}`;
       setMetaMultiMap(prev => {
-        const arr = [...(prev[songId]?.[defId] ?? []), { uuid: tempUuid, vocabId: vocab.id, value: vocab.value }];
+        const arr = [...(prev[songId]?.[defId] ?? []), { uuid: `tmp-${Date.now()}-${vocab.id}`, vocabId: vocab.id, value: vocab.value }];
         return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
       });
-      try {
-        const res = await (window as any).ether.songMetadataValues.create({
-          station_id: stationId, song_id: songId, definition_id: defId,
-          value_text: vocab.value, value_vocabulary_id: vocab.id,
-        });
-        if (res?.ok && res.row?.uuid) {
-          const realUuid = res.row.uuid;
-          setMetaMultiMap(prev => {
-            const arr = (prev[songId]?.[defId] ?? []).map(r => r.uuid === tempUuid ? { ...r, uuid: realUuid } : r);
-            return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
-          });
-        }
-      } catch (e) {
-        console.error('[toggleMultiChoice] create failed, reverting:', e);
-        setMetaMultiMap(prev => {
-          const arr = (prev[songId]?.[defId] ?? []).filter(r => r.uuid !== tempUuid);
-          return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
-        });
-      } finally {
-        inFlightCreates.current.delete(key);
-      }
+    }
+
+    inFlightCreates.current.add(key);
+    try {
+      await (window as any).ether.songMetadataValues.upsert({
+        station_id: stationId, song_id: songId, definition_id: defId,
+        value_vocabulary_ids: newIds,
+      });
+    } catch (e) {
+      console.error('[toggleMultiChoice] upsert failed, reverting:', e);
+      setMetaMultiMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: current } }));
+    } finally {
+      inFlightCreates.current.delete(key);
     }
   };
 
-  // ── Single-choice clear (soft-delete the smv row) ─────────
+  // ── Single-choice clear ───────────────────────────────────
   const clearSingleChoice = async (songId: number, defId: number) => {
-    const uuid = metaUuidMap[songId]?.[defId];
-    if (!uuid) return;
     const prevValue   = metaMap[songId]?.[defId];
     const prevVocabId = metaVocabIdMap[songId]?.[defId];
+    // Optimistic clear
     setMetaMap(prev => { const r = { ...(prev[songId] ?? {}) }; delete r[defId]; return { ...prev, [songId]: r }; });
-    setMetaUuidMap(prev => { const r = { ...(prev[songId] ?? {}) }; delete r[defId]; return { ...prev, [songId]: r }; });
     setMetaVocabIdMap(prev => { const r = { ...(prev[songId] ?? {}) }; delete r[defId]; return { ...prev, [songId]: r }; });
     try {
-      await (window as any).ether.songMetadataValues.delete(uuid, stationId);
+      // Upsert with both values null signals "clear" to the handler:
+      //   row exists  → soft-delete, returns action: 'cleared'
+      //   no row      → no-op, returns action: 'no-change'
+      await (window as any).ether.songMetadataValues.upsert({
+        station_id: stationId, song_id: songId, definition_id: defId,
+        value_text: null, value_vocabulary_id: null,
+      });
     } catch (e) {
-      console.error('[clearSingleChoice] delete failed, reverting:', e);
-      setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: prevValue ?? '' } }));
-      setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: uuid } }));
+      console.error('[clearSingleChoice] upsert failed, reverting:', e);
+      if (prevValue !== undefined) setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: prevValue } }));
       if (prevVocabId !== undefined) setMetaVocabIdMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: prevVocabId } }));
     }
   };
@@ -3606,29 +3587,30 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     reloadDefs();
   }, [stationId]);
 
-  // Fetch song_metadata_values for visible metadata columns (skip if none visible)
+  // Fetch song_metadata_values for visible songs via server-side filtering.
+  // Loads ALL smv rows for the current song page regardless of which columns are
+  // visible — column visibility is a render-time filter only. Dep array omits
+  // visibleMetaCols intentionally: toggling a column doesn't need a new network
+  // round-trip since the data is already loaded.
   useEffect(() => {
-    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaUuidMap({}); setMetaVocabIdMap({}); setMetaMultiMap({}); return; }
+    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaVocabIdMap({}); setMetaMultiMap({}); return; }
     (async () => {
       try {
-        const res = await (window as any).ether.songMetadataValues.list(stationId, { limit: 10000 });
+        const songIds = songs.map((s: any) => s.id);
+        const res = await (window as any).ether.songMetadataValues.listBySong(songIds, stationId);
         const rows: any[] = res?.ok ? (res.rows ?? []) : [];
         const map: Record<number, Record<number, string>> = {};
-        const uuidMap: Record<number, Record<number, string>> = {};
         const vocabIdMap: Record<number, Record<number, number>> = {};
         const multiMap: Record<number, Record<number, MultiItem[]>> = {};
         for (const r of rows) {
-          if (!visibleMetaCols.has(r.definition_id)) continue;
-          const defType = defs.find(d => d.id === r.definition_id)?.data_type;
+          const defType = defs.find((d: any) => d.id === r.definition_id)?.data_type;
           if (defType === 'multi_choice') {
             if (!multiMap[r.song_id]) multiMap[r.song_id] = {};
             if (!multiMap[r.song_id][r.definition_id]) multiMap[r.song_id][r.definition_id] = [];
             multiMap[r.song_id][r.definition_id].push({ uuid: r.uuid, vocabId: r.value_vocabulary_id ?? 0, value: r.value_text ?? '' });
           } else {
             if (!map[r.song_id]) map[r.song_id] = {};
-            if (!uuidMap[r.song_id]) uuidMap[r.song_id] = {};
             map[r.song_id][r.definition_id] = r.value_text ?? '';
-            uuidMap[r.song_id][r.definition_id] = r.uuid;
             if (r.value_vocabulary_id != null) {
               if (!vocabIdMap[r.song_id]) vocabIdMap[r.song_id] = {};
               vocabIdMap[r.song_id][r.definition_id] = r.value_vocabulary_id;
@@ -3636,12 +3618,11 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           }
         }
         setMetaMap(map);
-        setMetaUuidMap(uuidMap);
         setMetaVocabIdMap(vocabIdMap);
         setMetaMultiMap(multiMap);
       } catch (e) { console.error('[LibraryPanel] failed to load metadata values:', e); }
     })();
-  }, [stationId, songs, visibleMetaCols, smvReloadKey]);
+  }, [stationId, songs, smvReloadKey]);
 
   // Load vocabulary for all definitions in this station (needed for choice-type cell editors)
   useEffect(() => {
@@ -4120,7 +4101,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                         <div key={col.defId} role="gridcell"
                           style={{ flex: `0 0 ${w}px`, padding: "4px 6px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)", overflow: "hidden" }}
                           onClick={e => setSinglePopover({ songId: s.id, defId: col.defId, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
-                          <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", overflow: "hidden", position: "relative" }}>
+                          <div style={{ display: "flex", alignItems: "center", alignSelf: "stretch", flex: 1, minWidth: 0, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", overflow: "hidden", position: "relative" }}>
                             <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
                               <SingleChoicePillCell value={displayVal} color={displayColor} />
                             </div>
@@ -4135,7 +4116,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                         <div key={col.defId} role="gridcell"
                           style={{ flex: `0 0 ${w}px`, padding: "4px 6px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)", overflow: "hidden" }}
                           onClick={e => setMultiPopover({ songId: s.id, defId: col.defId, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
-                          <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", overflow: "hidden", position: "relative" }}>
+                          <div style={{ display: "flex", alignItems: "center", alignSelf: "stretch", flex: 1, minWidth: 0, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", overflow: "hidden", position: "relative" }}>
                             <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
                               <MultiChoicePillCell items={items} vocabDef={vocabByDef[col.defId]} />
                             </div>

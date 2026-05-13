@@ -222,6 +222,122 @@ function metadataValuesBulkApply(db, { song_ids, changes, station_id }) {
   return { ok: true, songsAffected, smvOperations };
 }
 
+// ── List by song ──────────────────────────────────────────────────────────────
+//
+// Returns all active smv rows for a given set of song_ids. Server-side
+// filtering replaces the old renderer pattern: list(stationId, { limit:10000 })
+// + client-side filter. For a 5000-song library with 10+ columns this was
+// scanning every smv row; now only rows for the requested songs are returned.
+
+function metadataValuesListBySong(db, songIds, stationId) {
+  if (!Array.isArray(songIds) || songIds.length === 0) return [];
+  if (stationId == null) throw new Error('[list-by-song] station_id is required');
+  const ph = songIds.map(() => '?').join(', ');
+  return db.prepare(
+    `SELECT uuid, song_id, definition_id, value_text, value_vocabulary_id, station_id, created_at, updated_at
+     FROM ${TABLE}
+     WHERE deleted_at IS NULL AND station_id = ? AND song_id IN (${ph})`
+  ).all(String(stationId), ...songIds);
+}
+
+// ── Upsert ────────────────────────────────────────────────────────────────────
+//
+// Single-call replacement for the renderer's old create-vs-update decision logic.
+// Handler decides the right operation by querying current state.
+//
+// Single-row path (text / number / date / boolean / single_choice):
+//   payload: { song_id, definition_id, station_id, value_text?, value_vocabulary_id? }
+//   • Both values null + row exists  → soft-delete (operator clear). Returns action: 'cleared'.
+//   • Both values null + no row      → noop. Returns action: 'no-change'.
+//   • Row exists + values unchanged  → noop. Returns action: 'no-change', uuid.
+//   • Row exists + values changed    → update. Returns action: 'updated', uuid.
+//   • No row                         → insert. Returns action: 'created', uuid.
+//
+// Multi-choice diff path (value_vocabulary_ids: number[] present):
+//   payload: { song_id, definition_id, station_id, value_vocabulary_ids }
+//   Fetches existing active rows, computes adds/removes, applies atomically.
+//   Dedup guard: each toAdd id is re-queried before inserting to handle
+//   race conditions (double-click, optimistic-state desync, network retry).
+//   Returns action: 'updated' | 'no-change'.
+
+function metadataValuesUpsert(db, { song_id, definition_id, station_id, value_text, value_vocabulary_id, value_vocabulary_ids }) {
+  validateScope();
+  if (station_id == null)   throw new Error('[upsert] station_id is required');
+  if (!song_id)             throw new Error('[upsert] song_id is required');
+  if (!definition_id)       throw new Error('[upsert] definition_id is required');
+
+  // ── Multi-choice diff path ────────────────────────────────────────────────
+  if (Array.isArray(value_vocabulary_ids)) {
+    const existing = db.prepare(
+      `SELECT uuid, value_vocabulary_id FROM ${TABLE}
+       WHERE song_id = ? AND definition_id = ? AND deleted_at IS NULL`
+    ).all(song_id, definition_id);
+
+    const existingIds = new Set(existing.map(r => r.value_vocabulary_id));
+    const targetIds   = new Set(value_vocabulary_ids);
+
+    const toAdd    = value_vocabulary_ids.filter(id => !existingIds.has(id));
+    const toRemove = existing.filter(r => !targetIds.has(r.value_vocabulary_id));
+
+    if (toAdd.length === 0 && toRemove.length === 0) {
+      return { ok: true, action: 'no-change' };
+    }
+
+    db.transaction(() => {
+      for (const vocabId of toAdd) {
+        // Correction 1: re-query inside transaction to guard against race conditions
+        // (renderer double-click, optimistic desync, network retry).
+        const alreadyExists = db.prepare(
+          `SELECT id FROM ${TABLE} WHERE song_id = ? AND definition_id = ? AND value_vocabulary_id = ? AND deleted_at IS NULL`
+        ).get(song_id, definition_id, vocabId);
+        if (alreadyExists) continue;
+        songMetadataValuesCreate(db, { song_id, definition_id, value_vocabulary_id: vocabId, station_id, value_text: null });
+      }
+      for (const row of toRemove) {
+        songMetadataValuesDelete(db, row.uuid, station_id);
+      }
+    })();
+
+    return { ok: true, action: 'updated' };
+  }
+
+  // ── Single-row path ───────────────────────────────────────────────────────
+  const existing = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE song_id = ? AND definition_id = ? AND deleted_at IS NULL`
+  ).get(song_id, definition_id);
+
+  const isNull = (value_text == null) && (value_vocabulary_id == null);
+
+  if (isNull) {
+    // Operator clear: soft-delete existing row, or noop if nothing is set.
+    if (existing) {
+      songMetadataValuesDelete(db, existing.uuid, station_id);
+      return { ok: true, action: 'cleared' };
+    }
+    return { ok: true, action: 'no-change' };
+  }
+
+  if (existing) {
+    const sameText  = existing.value_text          === (value_text          ?? null);
+    const sameVocab = existing.value_vocabulary_id === (value_vocabulary_id ?? null);
+    if (sameText && sameVocab) {
+      return { ok: true, action: 'no-change', uuid: existing.uuid };
+    }
+    songMetadataValuesUpdate(db, existing.uuid, {
+      value_text:          value_text          ?? null,
+      value_vocabulary_id: value_vocabulary_id ?? null,
+    });
+    return { ok: true, action: 'updated', uuid: existing.uuid };
+  }
+
+  const created = songMetadataValuesCreate(db, {
+    song_id, definition_id, station_id,
+    value_text:          value_text          ?? null,
+    value_vocabulary_id: value_vocabulary_id ?? null,
+  });
+  return { ok: true, action: 'created', uuid: created?.uuid };
+}
+
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSongMetadataValues(ipcMain, db) {
@@ -255,6 +371,16 @@ function installSongMetadataValues(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('song_metadata_values:list-by-song', (_, songIds, stationId) => {
+    try { return { ok: true, rows: metadataValuesListBySong(db, songIds, stationId) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  ipcMain.handle('song_metadata_values:upsert', (_, payload) => {
+    try { return metadataValuesUpsert(db, payload); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   console.log('[song_metadata_values] handlers installed');
 }
 
@@ -267,4 +393,6 @@ module.exports = {
   songMetadataValuesUpdate,
   songMetadataValuesDelete,
   metadataValuesBulkApply,
+  metadataValuesListBySong,
+  metadataValuesUpsert,
 };
