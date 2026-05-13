@@ -52,6 +52,46 @@ function metadataDefinitionsCreate(db, payload) {
   if (HAS_STATION_ID_COL && payload.station_id == null) {
     throw new Error(`[metadata_definitions] station_id is required for station-scoped create`);
   }
+
+  // UNIQUE(station_id, name) includes soft-deleted rows, so a deleted definition
+  // blocks re-creation. Resurrect the ghost row instead of inserting a new one.
+  // NOTE: vocab rows and smv rows that were cascade-deleted with the original
+  // definition are NOT restored — they stay deleted. Only the definition itself
+  // is un-deleted; the operator must re-add vocab values if needed.
+  const ghost = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE station_id = ? AND name = ? AND deleted_at IS NOT NULL LIMIT 1`
+  ).get(payload.station_id, payload.name);
+
+  if (ghost) {
+    const now     = new Date().toISOString();
+    const updated = {
+      ...ghost,
+      deleted_at:    null,
+      updated_at:    now,
+      data_type:     payload.data_type     !== undefined ? payload.data_type     : ghost.data_type,
+      description:   payload.description   !== undefined ? payload.description   : ghost.description,
+      is_built_in:   payload.is_built_in   !== undefined ? payload.is_built_in   : ghost.is_built_in,
+      is_required:   payload.is_required   !== undefined ? payload.is_required   : ghost.is_required,
+      display_order: payload.display_order !== undefined ? payload.display_order : ghost.display_order,
+    };
+    const before = serializePayload(ghost,   TABLE);
+    const after  = serializePayload(updated, TABLE);
+    withMutation(db, {
+      table_name:     TABLE,
+      row_id:         ghost.uuid,
+      op:             'update',
+      payload_before: before,
+      payload_after:  after,
+      station_id:     ghost.station_id,
+      actor_id:       payload.actor_id ?? null,
+    }, () => {
+      db.prepare(
+        `UPDATE ${TABLE} SET deleted_at = NULL, data_type = ?, description = ?, is_built_in = ?, is_required = ?, display_order = ?, updated_at = ? WHERE uuid = ?`
+      ).run(updated.data_type, updated.description, updated.is_built_in, updated.is_required, updated.display_order, now, ghost.uuid);
+    });
+    return metadataDefinitionsGet(db, ghost.uuid);
+  }
+
   const now  = new Date().toISOString();
   const uuid = payload.uuid ?? crypto.randomUUID();
   const row  = {
