@@ -1146,12 +1146,6 @@ export default function App() {
   const anyDeckPlaying = [deckA, deckB, deckC].some(d => d?.status === "playing");
 
   const handleStationSwitch = async (id: number, name: string): Promise<boolean> => {
-    if (anyDeckPlaying || queueLen > 0) {
-      if (!confirm("Switching stations will stop playback and clear all decks. Continue?")) return false;
-      engine.getDeck("A")?.stop(); engine.getDeck("B")?.stop(); engine.getDeck("C")?.stop();
-      engine.clearQueue(); setQueueLen(0);
-      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    }
     const r = await (window as any).ether.stations.switch(id);
     if (!r?.ok) return false;
     window.dispatchEvent(new CustomEvent("station-switched", { detail: { id, name } }));
