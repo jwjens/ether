@@ -170,6 +170,19 @@ function metadataValuesBulkApply(db, { song_ids, changes, station_id }) {
       const { definition_id, action } = change;
       if (!definition_id || !action) throw new Error(`[bulk_apply] invalid change: ${JSON.stringify(change)}`);
 
+      const def = db.prepare(
+        `SELECT data_type FROM metadata_definitions WHERE id = ? AND deleted_at IS NULL`
+      ).get(definition_id);
+      if (!def) {
+        throw new Error(`[bulk_apply] definition ${definition_id} not found or deleted`);
+      }
+      if (action === 'set' && def.data_type === 'multi_choice') {
+        throw new Error(`[bulk_apply] action 'set' is invalid for multi_choice definition ${definition_id} ('${def.data_type}'); use 'add' instead`);
+      }
+      if (action === 'add' && def.data_type !== 'multi_choice') {
+        throw new Error(`[bulk_apply] action 'add' is only valid for multi_choice definitions; definition ${definition_id} is '${def.data_type}'`);
+      }
+
       for (const songId of song_ids) {
         if (action === 'clear') {
           const rows = db.prepare(
