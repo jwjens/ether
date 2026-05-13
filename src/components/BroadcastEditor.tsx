@@ -28,7 +28,7 @@ const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
 const openDialog = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import TrackEditor from "./TrackEditor";
 
 // Open Cue Editor as a free-floating native OS window
@@ -2193,14 +2193,14 @@ function CtxItem({ icon, label, onClick, color }: {
   );
 }
 
-function Btn({ children, onClick, active, color, disabled, style }: {
+function Btn({ children, onClick, active, color, disabled, style, title }: {
   children: React.ReactNode; onClick?: () => void;
   active?: boolean; color?: string; disabled?: boolean;
-  style?: React.CSSProperties;
+  style?: React.CSSProperties; title?: string;
 }) {
   const c = color || "#7dd3fc";
   return (
-    <button onClick={onClick} disabled={disabled} style={{
+    <button onClick={onClick} disabled={disabled} title={title} style={{
       padding: "4px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600,
       cursor: disabled ? "default" : "pointer",
       background: active ? `${c}22` : "var(--bg-tertiary)",

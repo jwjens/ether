@@ -1,12 +1,18 @@
 declare module "*.png" {
-  const value: string;
-  export default value;
+  const src: string;
+  export default src;
 }
 declare module "*.jpg" {
-  const value: string;
-  export default value;
+  const src: string;
+  export default src;
 }
 declare module "*.svg" {
-  const value: string;
-  export default value;
+  const src: string;
+  export default src;
+}
+
+declare module "react" {
+  interface InputHTMLAttributes<T> {
+    orient?: string;
+  }
 }

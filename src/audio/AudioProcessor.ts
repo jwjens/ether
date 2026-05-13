@@ -113,7 +113,7 @@ export class AudioProcessor {
   private gateOpen:    boolean = true;
 
   // Metering
-  private meterData:   Uint8Array;
+  private meterData:   Uint8Array<ArrayBuffer>;
   private rafId:       number = 0;
   public  level:       number = 0;   // 0-1
   public  peakDb:      number = -Infinity;

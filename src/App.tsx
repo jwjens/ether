@@ -4,7 +4,7 @@ import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
 // Electron IPC bridge (replaces @tauri-apps imports)
-const invoke = (cmd: string, args?: Record<string, unknown>) =>
+const invoke = <T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> =>
   (window as any).ether.invoke(cmd, args);
 const emit = (event: string, payload?: unknown): Promise<void> =>
   Promise.resolve((window as any).ether.emit(event, payload));
@@ -101,7 +101,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "aivoice" | "gselector" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;

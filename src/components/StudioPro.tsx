@@ -1434,7 +1434,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       // Saturation (conventional position: pre-comp)
       if (t.saturation.on && t.saturation.drive > 0) {
         const ws = (ctx as AudioContext).createWaveShaper();
-        ws.curve = makeSatCurve(t.saturation.drive);
+        ws.curve = makeSatCurve(t.saturation.drive) as Float32Array<ArrayBuffer>;
         ws.oversample = "2x";
         chainTail.connect(ws); chainTail = ws;
       }
@@ -1982,7 +1982,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       for (const e of eqBands) { chainTail.connect(e); chainTail = e; }
       if (t.saturation.on && t.saturation.drive > 0) {
         const ws = offline.createWaveShaper();
-        ws.curve = makeSatCurve(t.saturation.drive);
+        ws.curve = makeSatCurve(t.saturation.drive) as Float32Array<ArrayBuffer>;
         ws.oversample = "2x";
         chainTail.connect(ws); chainTail = ws;
       }
@@ -2161,7 +2161,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       });
       if (t.saturation.on && t.saturation.drive > 0) {
         const ws = offline.createWaveShaper();
-        ws.curve = makeSatCurve(t.saturation.drive);
+        ws.curve = makeSatCurve(t.saturation.drive) as Float32Array<ArrayBuffer>;
         ws.oversample = "2x";
         chainTail.connect(ws); chainTail = ws;
       }
@@ -3876,7 +3876,7 @@ function TrackHeaderRow({
   onColorPick, showPalette, onChooseColor, onClosePalette,
   onToggleFx, onToggleAutomation,
   onAddAutomationLane, onRemoveAutomationLane, onSetAutomationParam,
-  onContext,
+  onContext, onToggleOriginal,
 }: {
   track: StudioTrack;
   height: number;

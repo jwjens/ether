@@ -18,7 +18,7 @@ import { runMigrations } from "./db/client";
 
 // ── Root error boundary — catches crashes before EtherErrorBoundary mounts ──
 class RootBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
-  state = { error: null };
+  state: { error: Error | null } = { error: null };
   static getDerivedStateFromError(error: Error) { return { error }; }
   render() {
     if (this.state.error) {

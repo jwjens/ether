@@ -136,6 +136,6 @@ export async function saveFileDialog(options?: any): Promise<string | null> {
 
 // ── Event listener ────────────────────────────────────────────
 export function listenEvent(event: string, callback: (payload: any) => void): () => void {
-  const handler = window.ether.on(event, callback);
-  return () => window.ether.off(event, handler);
+  window.ether.on(event, callback);
+  return () => window.ether.off(event);
 }

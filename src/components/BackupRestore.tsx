@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 
 export default function BackupRestore() {
   const [backups, setBackups] = useState<string[]>([]);

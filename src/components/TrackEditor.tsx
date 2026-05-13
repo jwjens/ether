@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import WaveformGL from "./WaveformGL";
 
 interface Song {

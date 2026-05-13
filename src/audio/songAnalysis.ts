@@ -10,7 +10,7 @@
 // This file is just a thin TypeScript wrapper around invoke() calls.
 // No Web Audio API, no fetch(), works from any window.
 
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { execute, query } from "../db/client";
 
 // ── Types (mirror Rust structs) ───────────────────────────────

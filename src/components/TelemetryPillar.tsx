@@ -9,8 +9,8 @@
 //   <TelemetryPillar />
 
 import { useEffect, useRef, useState, useCallback } from "react";
-const listen = (e: string, cb: (ev: any) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const listen = <T = any>(e: string, cb: (ev: { payload: T }) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 
 // ── Types ─────────────────────────────────────────────────────
 

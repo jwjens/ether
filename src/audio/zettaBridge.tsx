@@ -16,7 +16,7 @@
 // a jock at a Zetta station can prep in Ether, export, and hand
 // the folder to their engineer.
 
-const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
+const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
 const mkdir = (p: string) => (window as any).ether.fs.mkdir(p);
 const copyFile = (src: string, dst: string) => (window as any).ether.fs.copyFile(src, dst);
@@ -200,8 +200,8 @@ export async function exportToZettaBridge(opts: ExportOptions): Promise<ExportRe
     const dir = outputDir.endsWith("/") ? outputDir.slice(0, -1) : outputDir;
 
     // Create directory structure
-    await mkdir(dir, { recursive: true });
-    await mkdir(`${dir}/assets`, { recursive: true });
+    await mkdir(dir);
+    await mkdir(`${dir}/assets`);
 
     let fileCount = 0;
 
