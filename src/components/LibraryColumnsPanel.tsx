@@ -9,6 +9,7 @@ interface Props {
   stationId: number;
   visibleMetadataColumns: Set<number>;
   onMetadataColumnToggle: (defId: number) => void;
+  onDefinitionsChanged?: () => void;
 }
 
 type DataType = MetadataDefinition["data_type"];
@@ -73,7 +74,7 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, onColumnToggle, stationId, visibleMetadataColumns, onMetadataColumnToggle }: Props) {
+export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, onColumnToggle, stationId, visibleMetadataColumns, onMetadataColumnToggle, onDefinitionsChanged }: Props) {
   // ── Data ──────────────────────────────────────────────────────
   const [definitions, setDefinitions]   = useState<MetadataDefinition[]>([]);
   const [vocabByDefId, setVocabByDefId] = useState<Record<number, MetadataVocabulary[]>>({});
@@ -219,6 +220,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
       closeDefForm();
       setReloadKey(k => k + 1);
       if (createdUuid) setNewDefUuid(createdUuid);
+      onDefinitionsChanged?.();
     } catch (e: any) { setFormError(e?.message ?? "Unexpected error."); setFormPending(false); }
   }
 

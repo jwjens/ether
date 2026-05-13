@@ -17,7 +17,7 @@ const open = (opts?: { directory?: boolean; title?: string; multiple?: boolean }
   opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (path: string) =>
   (window as any).ether.fs.readDir(path);
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
 import { queryScoped } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
@@ -2956,6 +2956,151 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
 // ── Library column definitions (ALL_LIB_COLS, LibCol, LIB_COL_LABELS imported from src/types/metadata.ts)
 
 interface EditMeta { id: number; title: string; artist: string; album: string; year: string; genre: string; bpm: string; }
+
+// ── Multi-choice shared item shape ───────────────────────────
+interface MultiItem { uuid: string; vocabId: number; value: string; }
+
+// ── MultiChoicePillCell ───────────────────────────────────────
+// Renders selected values as colored pills inside a fixed-height cell.
+// Uses layout measurement to find the first overflowing pill; hides overflow
+// items with visibility:hidden (preserves layout for stable remeasurement)
+// and shows a +N chip absolutely positioned at the right edge.
+// Click handling lives on the outer gridcell wrapper — not here.
+function MultiChoicePillCell({
+  items, vocabDef,
+}: {
+  items: MultiItem[];
+  vocabDef: MetadataVocabulary[] | undefined;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [clipFrom, setClipFrom] = useState(-1);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el || items.length === 0) { setClipFrom(p => p === -1 ? p : -1); return; }
+    const pills = el.querySelectorAll<HTMLElement>('[data-pill]');
+    if (!pills.length) return;
+    // Reserve 32px for the +N chip so it always fits when needed
+    const maxW = el.clientWidth - 32;
+    let first = -1;
+    for (let i = 0; i < pills.length; i++) {
+      if (pills[i].offsetLeft + pills[i].offsetWidth > maxW) { first = i; break; }
+    }
+    setClipFrom(p => p === first ? p : first);
+  });
+
+  if (items.length === 0) return <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>—</span>;
+
+  const hiddenCount = clipFrom >= 0 ? items.length - clipFrom : 0;
+
+  return (
+    <div ref={containerRef}
+      style={{ position: 'relative', display: 'flex', gap: 3, overflow: 'hidden',
+               alignItems: 'center', flex: 1, minWidth: 0 }}>
+      {items.map((item, i) => {
+        const color = vocabDef?.find(v => v.id === item.vocabId)?.color ?? '#555';
+        return (
+          <span key={item.uuid} data-pill=""
+            style={{ visibility: clipFrom >= 0 && i >= clipFrom ? 'hidden' : undefined,
+              display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 3,
+              fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+              background: color, color: '#fff', flexShrink: 0 }}>
+            {item.value}
+          </span>
+        );
+      })}
+      {hiddenCount > 0 && (
+        <span style={{ position: 'absolute', right: 0,
+          background: 'var(--bg-tertiary)', paddingLeft: 4,
+          fontSize: 11, color: 'var(--text-tertiary)', flexShrink: 0 }}>
+          +{hiddenCount}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── MultiChoicePopover ────────────────────────────────────────
+// Absolutely-positioned checkbox list for toggling multi_choice values.
+// Flips above the anchor row when it would clip the viewport bottom.
+function MultiChoicePopover({
+  songId, defId, anchorRect, vocabOptions, selectedItems, inFlightCreates, onToggle, onClose,
+}: {
+  songId: number;
+  defId: number;
+  anchorRect: DOMRect;
+  vocabOptions: MetadataVocabulary[];
+  selectedItems: MultiItem[];
+  inFlightCreates: React.MutableRefObject<Set<string>>;
+  onToggle: (v: MetadataVocabulary) => void;
+  onClose: () => void;
+}) {
+  const popRef = useRef<HTMLDivElement>(null);
+  const [measuredH, setMeasuredH] = useState(0);
+
+  // Measure real height after first render for accurate viewport flip
+  useLayoutEffect(() => {
+    if (popRef.current) {
+      const h = popRef.current.offsetHeight;
+      if (h > 0) setMeasuredH(p => p === h ? p : h);
+    }
+  });
+
+  const estimatedH = measuredH > 0 ? measuredH : Math.min(vocabOptions.length * 34 + 16, 280);
+  const flipUp     = anchorRect.bottom + estimatedH > window.innerHeight;
+  const top        = flipUp ? Math.max(4, anchorRect.top - estimatedH) : anchorRect.bottom;
+  const left       = Math.min(anchorRect.left, window.innerWidth - 210);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const isSelected = (id: number) => selectedItems.some(r => r.vocabId === id);
+  const isInflight = (id: number) => inFlightCreates.current.has(`${songId}:${defId}:${id}`);
+
+  return (
+    <div ref={popRef} style={{
+      position: 'fixed', top, left,
+      minWidth: Math.max(anchorRect.width, 200),
+      background: 'var(--bg-secondary)',
+      border: '1px solid var(--border-primary)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      zIndex: 9999, maxHeight: 280, overflowY: 'auto',
+      padding: '6px 0',
+    }}>
+      {vocabOptions.length === 0
+        ? <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-tertiary)' }}>No options defined</div>
+        : vocabOptions.map(v => {
+            const inflight   = isInflight(v.id);
+            const checked    = isSelected(v.id);
+            const pillColor  = v.color ?? '#555';
+            return (
+              <label key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px',
+                cursor: inflight ? 'wait' : 'pointer', opacity: inflight ? 0.5 : 1 }}>
+                <input type="checkbox" checked={checked} disabled={inflight}
+                  onChange={() => !inflight && onToggle(v)}
+                  style={{ cursor: 'inherit', flexShrink: 0 }} />
+                <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 3,
+                  fontSize: 11, fontWeight: 600, background: pillColor, color: '#fff', whiteSpace: 'nowrap' }}>
+                  {v.value}
+                </span>
+              </label>
+            );
+          })
+      }
+    </div>
+  );
+}
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
 function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
@@ -3018,6 +3163,12 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [metaUuidMap, setMetaUuidMap] = useState<Record<number, Record<number, string>>>({});
   // FK map: song_id → definition_id → value_vocabulary_id (only set for choice-type rows)
   const [metaVocabIdMap, setMetaVocabIdMap] = useState<Record<number, Record<number, number>>>({});
+  // multi_choice: song_id → definition_id → [{uuid, vocabId, value}]
+  const [metaMultiMap, setMetaMultiMap] = useState<Record<number, Record<number, MultiItem[]>>>({});
+  // anchor for the multi_choice popover picker
+  const [multiPopover, setMultiPopover] = useState<{ songId: number; defId: number; rect: DOMRect } | null>(null);
+  // in-flight create guard: prevents unchecking before the real uuid returns from DB
+  const inFlightCreates = useRef<Set<string>>(new Set());
   const [vocabByDef, setVocabByDef] = useState<Record<number, MetadataVocabulary[]>>({});
   const [metaEdit, setMetaEdit] = useState<{ songId: number; col: MetadataColumn; value: string } | null>(null);
 
@@ -3172,6 +3323,59 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     }
   };
 
+  // ── Multi-choice toggle ───────────────────────────────────
+  const toggleMultiChoice = async (songId: number, defId: number, vocab: MetadataVocabulary) => {
+    const current  = metaMultiMap[songId]?.[defId] ?? [];
+    const existing = current.find(r => r.vocabId === vocab.id);
+    const key      = `${songId}:${defId}:${vocab.id}`;
+
+    if (existing) {
+      // Uncheck: optimistic remove, then IPC soft-delete
+      setMetaMultiMap(prev => {
+        const arr = (prev[songId]?.[defId] ?? []).filter(r => r.vocabId !== vocab.id);
+        return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
+      });
+      try {
+        await (window as any).ether.songMetadataValues.delete(existing.uuid, stationId);
+      } catch (e) {
+        console.error('[toggleMultiChoice] delete failed, reverting:', e);
+        setMetaMultiMap(prev => {
+          const arr = [...(prev[songId]?.[defId] ?? []), existing];
+          return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
+        });
+      }
+    } else {
+      // Check: guard in-flight, optimistic add with temp uuid, swap after DB returns
+      inFlightCreates.current.add(key);
+      const tempUuid = `tmp-${Date.now()}-${vocab.id}`;
+      setMetaMultiMap(prev => {
+        const arr = [...(prev[songId]?.[defId] ?? []), { uuid: tempUuid, vocabId: vocab.id, value: vocab.value }];
+        return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
+      });
+      try {
+        const res = await (window as any).ether.songMetadataValues.create({
+          station_id: stationId, song_id: songId, definition_id: defId,
+          value_text: vocab.value, value_vocabulary_id: vocab.id,
+        });
+        if (res?.ok && res.row?.uuid) {
+          const realUuid = res.row.uuid;
+          setMetaMultiMap(prev => {
+            const arr = (prev[songId]?.[defId] ?? []).map(r => r.uuid === tempUuid ? { ...r, uuid: realUuid } : r);
+            return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
+          });
+        }
+      } catch (e) {
+        console.error('[toggleMultiChoice] create failed, reverting:', e);
+        setMetaMultiMap(prev => {
+          const arr = (prev[songId]?.[defId] ?? []).filter(r => r.uuid !== tempUuid);
+          return { ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: arr } };
+        });
+      } finally {
+        inFlightCreates.current.delete(key);
+      }
+    }
+  };
+
   // ── Column resize drag ─────────────────────────────────────
   const startColResize = (col: LibCol, e: React.MouseEvent, currentW: number) => {
     e.preventDefault();
@@ -3234,6 +3438,14 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   useEffect(() => { load(); }, [stationId]);
 
   // Load definitions and restore per-station metadata column visibility + widths
+  const reloadDefs = useCallback(async () => {
+    try {
+      const res = await (window as any).ether.metadataDefinitions.list(stationId);
+      const rows: MetadataDefinition[] = res?.ok ? (res.rows ?? []) : [];
+      setDefs(rows.filter(d => !d.deleted_at).sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name)));
+    } catch (e) { console.error('[LibraryPanel] failed to load definitions:', e); }
+  }, [stationId]);
+
   useEffect(() => {
     try {
       const stored = localStorage.getItem(`ether_lib_meta_cols_${stationId}`);
@@ -3243,18 +3455,12 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
       const storedW = localStorage.getItem(`ether_lib_meta_col_widths_${stationId}`);
       setMetaColWidths(JSON.parse(storedW || '{}'));
     } catch { setMetaColWidths({}); }
-    (async () => {
-      try {
-        const res = await (window as any).ether.metadataDefinitions.list(stationId);
-        const rows: MetadataDefinition[] = res?.ok ? (res.rows ?? []) : [];
-        setDefs(rows.filter(d => !d.deleted_at).sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name)));
-      } catch (e) { console.error('[LibraryPanel] failed to load definitions:', e); }
-    })();
+    reloadDefs();
   }, [stationId]);
 
   // Fetch song_metadata_values for visible metadata columns (skip if none visible)
   useEffect(() => {
-    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaUuidMap({}); setMetaVocabIdMap({}); return; }
+    if (visibleMetaCols.size === 0 || songs.length === 0) { setMetaMap({}); setMetaUuidMap({}); setMetaVocabIdMap({}); setMetaMultiMap({}); return; }
     (async () => {
       try {
         const res = await (window as any).ether.songMetadataValues.list(stationId, { limit: 10000 });
@@ -3262,20 +3468,29 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         const map: Record<number, Record<number, string>> = {};
         const uuidMap: Record<number, Record<number, string>> = {};
         const vocabIdMap: Record<number, Record<number, number>> = {};
+        const multiMap: Record<number, Record<number, MultiItem[]>> = {};
         for (const r of rows) {
           if (!visibleMetaCols.has(r.definition_id)) continue;
-          if (!map[r.song_id]) map[r.song_id] = {};
-          if (!uuidMap[r.song_id]) uuidMap[r.song_id] = {};
-          map[r.song_id][r.definition_id] = r.value_text ?? '';
-          uuidMap[r.song_id][r.definition_id] = r.uuid;
-          if (r.value_vocabulary_id != null) {
-            if (!vocabIdMap[r.song_id]) vocabIdMap[r.song_id] = {};
-            vocabIdMap[r.song_id][r.definition_id] = r.value_vocabulary_id;
+          const defType = defs.find(d => d.id === r.definition_id)?.data_type;
+          if (defType === 'multi_choice') {
+            if (!multiMap[r.song_id]) multiMap[r.song_id] = {};
+            if (!multiMap[r.song_id][r.definition_id]) multiMap[r.song_id][r.definition_id] = [];
+            multiMap[r.song_id][r.definition_id].push({ uuid: r.uuid, vocabId: r.value_vocabulary_id ?? 0, value: r.value_text ?? '' });
+          } else {
+            if (!map[r.song_id]) map[r.song_id] = {};
+            if (!uuidMap[r.song_id]) uuidMap[r.song_id] = {};
+            map[r.song_id][r.definition_id] = r.value_text ?? '';
+            uuidMap[r.song_id][r.definition_id] = r.uuid;
+            if (r.value_vocabulary_id != null) {
+              if (!vocabIdMap[r.song_id]) vocabIdMap[r.song_id] = {};
+              vocabIdMap[r.song_id][r.definition_id] = r.value_vocabulary_id;
+            }
           }
         }
         setMetaMap(map);
         setMetaUuidMap(uuidMap);
         setMetaVocabIdMap(vocabIdMap);
+        setMetaMultiMap(multiMap);
       } catch (e) { console.error('[LibraryPanel] failed to load metadata values:', e); }
     })();
   }, [stationId, songs, visibleMetaCols]);
@@ -3358,7 +3573,6 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     ...ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(c => ({ kind: 'standard' as const, id: c, label: LIB_COL_LABELS[c] })),
     ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type, width: META_COL_WIDTHS[d.data_type] })),
   ];
-
   const hasTitleCol = visibleCols.has('title');
   const ACTION_ZONE_W = 252; // 6 buttons × 36px min-width + 5 gaps × 3px + 12px h-padding
   const titleW = colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'];
@@ -3423,6 +3637,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         stationId={stationId}
         visibleMetadataColumns={visibleMetaCols}
         onMetadataColumnToggle={toggleMetaCol}
+        onDefinitionsChanged={reloadDefs}
       />
 
       {/* Header */}
@@ -3754,6 +3969,21 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                       </div>
                     );
                     }
+                    if (col.dataType === 'multi_choice') {
+                      const items = metaMultiMap[s.id]?.[col.defId] ?? [];
+                      return (
+                        <div key={col.defId} role="gridcell"
+                          style={{ flex: `0 0 ${w}px`, padding: "4px 6px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)", overflow: "hidden" }}
+                          onClick={e => setMultiPopover({ songId: s.id, defId: col.defId, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
+                          <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", overflow: "hidden", position: "relative" }}>
+                            <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
+                              <MultiChoicePillCell items={items} vocabDef={vocabByDef[col.defId]} />
+                            </div>
+                            <span style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "var(--text-tertiary)", pointerEvents: "none" }}>▾</span>
+                          </div>
+                        </div>
+                      );
+                    }
                     if (col.dataType === 'boolean') return (
                       <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "10px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
                         <input type="checkbox" checked={rawVal === 'true' || rawVal === '1'} onChange={e => commitMetaEdit(s.id, col, e.target.checked ? 'true' : 'false')} />
@@ -3763,8 +3993,8 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                       <div
                         key={col.defId}
                         role="gridcell"
-                        style={{ flex: `0 0 ${w}px`, padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", fontSize: 13, color: "var(--text-secondary)", borderRight: "1px solid var(--border-primary)", cursor: col.dataType !== 'multi_choice' ? "text" : undefined }}
-                        onDoubleClick={() => col.dataType !== 'multi_choice' && setMetaEdit({ songId: s.id, col, value: rawVal })}
+                        style={{ flex: `0 0 ${w}px`, padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", fontSize: 13, color: "var(--text-secondary)", borderRight: "1px solid var(--border-primary)", cursor: "text" }}
+                        onDoubleClick={() => setMetaEdit({ songId: s.id, col, value: rawVal })}
                       >
                         {isMetaInline
                           ? <input autoFocus value={metaEdit!.value} onChange={e => setMetaEdit(prev => prev ? { ...prev, value: e.target.value } : prev)}
@@ -3791,6 +4021,18 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
             </div>
           ))}
         </div>
+      )}
+      {multiPopover && (
+        <MultiChoicePopover
+          songId={multiPopover.songId}
+          defId={multiPopover.defId}
+          anchorRect={multiPopover.rect}
+          vocabOptions={vocabByDef[multiPopover.defId] ?? []}
+          selectedItems={metaMultiMap[multiPopover.songId]?.[multiPopover.defId] ?? []}
+          inFlightCreates={inFlightCreates}
+          onToggle={v => toggleMultiChoice(multiPopover.songId, multiPopover.defId, v)}
+          onClose={() => setMultiPopover(null)}
+        />
       )}
     </div>
   );
