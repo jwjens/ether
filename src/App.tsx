@@ -3020,6 +3020,19 @@ function MultiChoicePillCell({
   );
 }
 
+// ── SingleChoicePillCell ──────────────────────────────────────
+// Renders the currently selected value as one colored pill, or — if empty.
+function SingleChoicePillCell({ value, color }: { value: string | null; color: string | null }) {
+  if (!value) return <span style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>—</span>;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 3,
+      fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+      background: color ?? '#555', color: '#fff' }}>
+      {value}
+    </span>
+  );
+}
+
 // ── MultiChoicePopover ────────────────────────────────────────
 // Absolutely-positioned checkbox list for toggling multi_choice values.
 // Flips above the anchor row when it would clip the viewport bottom.
@@ -3101,6 +3114,116 @@ function MultiChoicePopover({
     </div>
   );
 }
+// ── SingleChoicePopover ───────────────────────────────────────
+// Fixed-position picker for single_choice columns.
+// Arrow Up/Down moves highlight; Enter commits; Escape closes.
+// Item 0 is always "— clear —"; items 1..n are vocab options.
+function SingleChoicePopover({
+  anchorRect, vocabOptions, currentVocabId, onSelect, onClear, onClose,
+}: {
+  anchorRect: DOMRect;
+  vocabOptions: MetadataVocabulary[];
+  currentVocabId: number | null;
+  onSelect: (v: MetadataVocabulary) => void;
+  onClear: () => void;
+  onClose: () => void;
+}) {
+  const popRef = useRef<HTMLDivElement>(null);
+  const [measuredH, setMeasuredH] = useState(0);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const highlightIdxRef = useRef(-1);
+  const allItemsRef = useRef<(MetadataVocabulary | null)[]>([null, ...vocabOptions]);
+
+  useLayoutEffect(() => {
+    if (popRef.current) {
+      const h = popRef.current.offsetHeight;
+      if (h > 0) setMeasuredH(p => p === h ? p : h);
+    }
+  });
+
+  const itemCount = 1 + vocabOptions.length;
+  const estimatedH = measuredH > 0 ? measuredH : Math.min(itemCount * 34 + 16, 280);
+  const flipUp = anchorRect.bottom + estimatedH > window.innerHeight;
+  const top    = flipUp ? Math.max(4, anchorRect.top - estimatedH) : anchorRect.bottom;
+  const left   = Math.min(anchorRect.left, window.innerWidth - 210);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (popRef.current && !popRef.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [onClose]);
+
+  useEffect(() => {
+    const count = allItemsRef.current.length;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = Math.min(highlightIdxRef.current + 1, count - 1);
+        highlightIdxRef.current = next; setHighlightIdx(next); return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const next = Math.max(highlightIdxRef.current - 1, 0);
+        highlightIdxRef.current = next; setHighlightIdx(next); return;
+      }
+      if (e.key === 'Enter') {
+        const idx = highlightIdxRef.current;
+        if (idx < 0) return;
+        const item = allItemsRef.current[idx];
+        if (item === null) { onClear(); } else { onSelect(item); }
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose, onSelect, onClear]);
+
+  const setHl = (idx: number) => { highlightIdxRef.current = idx; setHighlightIdx(idx); };
+
+  return (
+    <div ref={popRef} style={{
+      position: 'fixed', top, left,
+      minWidth: Math.max(anchorRect.width, 200),
+      background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)',
+      boxShadow: '0 4px 16px rgba(0,0,0,0.5)',
+      zIndex: 9999, maxHeight: 280, overflowY: 'auto', padding: '6px 0',
+    }}>
+      <div
+        style={{ display: 'flex', alignItems: 'center', padding: '5px 12px', cursor: 'pointer',
+          background: highlightIdx === 0 ? 'rgba(255,255,255,0.08)' : 'transparent',
+          fontSize: 12, color: 'var(--text-tertiary)' }}
+        onMouseEnter={() => setHl(0)} onMouseLeave={() => setHl(-1)}
+        onMouseDown={() => { onClear(); onClose(); }}>
+        — clear —
+      </div>
+      {vocabOptions.length === 0
+        ? <div style={{ padding: '4px 12px', fontSize: 12, color: 'var(--text-tertiary)', fontStyle: 'italic' }}>No options defined</div>
+        : vocabOptions.map((v, i) => {
+            const idx = i + 1;
+            return (
+              <div key={v.id}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px', cursor: 'pointer',
+                  background: highlightIdx === idx ? 'rgba(255,255,255,0.08)' : 'transparent' }}
+                onMouseEnter={() => setHl(idx)} onMouseLeave={() => setHl(-1)}
+                onMouseDown={() => { onSelect(v); onClose(); }}>
+                <span style={{ width: 12, fontSize: 10, color: 'var(--text-tertiary)', flexShrink: 0, textAlign: 'center' as const }}>
+                  {v.id === currentVocabId ? '✓' : ''}
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', padding: '1px 6px', borderRadius: 3,
+                  fontSize: 11, fontWeight: 600, background: v.color ?? '#555', color: '#fff', whiteSpace: 'nowrap' }}>
+                  {v.value}
+                </span>
+              </div>
+            );
+          })
+      }
+    </div>
+  );
+}
+
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
 function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
@@ -3167,6 +3290,8 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [metaMultiMap, setMetaMultiMap] = useState<Record<number, Record<number, MultiItem[]>>>({});
   // anchor for the multi_choice popover picker
   const [multiPopover, setMultiPopover] = useState<{ songId: number; defId: number; rect: DOMRect } | null>(null);
+  // anchor for the single_choice popover picker
+  const [singlePopover, setSinglePopover] = useState<{ songId: number; defId: number; rect: DOMRect } | null>(null);
   // in-flight create guard: prevents unchecking before the real uuid returns from DB
   const inFlightCreates = useRef<Set<string>>(new Set());
   const [vocabByDef, setVocabByDef] = useState<Record<number, MetadataVocabulary[]>>({});
@@ -3373,6 +3498,25 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
       } finally {
         inFlightCreates.current.delete(key);
       }
+    }
+  };
+
+  // ── Single-choice clear (soft-delete the smv row) ─────────
+  const clearSingleChoice = async (songId: number, defId: number) => {
+    const uuid = metaUuidMap[songId]?.[defId];
+    if (!uuid) return;
+    const prevValue   = metaMap[songId]?.[defId];
+    const prevVocabId = metaVocabIdMap[songId]?.[defId];
+    setMetaMap(prev => { const r = { ...(prev[songId] ?? {}) }; delete r[defId]; return { ...prev, [songId]: r }; });
+    setMetaUuidMap(prev => { const r = { ...(prev[songId] ?? {}) }; delete r[defId]; return { ...prev, [songId]: r }; });
+    setMetaVocabIdMap(prev => { const r = { ...(prev[songId] ?? {}) }; delete r[defId]; return { ...prev, [songId]: r }; });
+    try {
+      await (window as any).ether.songMetadataValues.delete(uuid, stationId);
+    } catch (e) {
+      console.error('[clearSingleChoice] delete failed, reverting:', e);
+      setMetaMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: prevValue ?? '' } }));
+      setMetaUuidMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: uuid } }));
+      if (prevVocabId !== undefined) setMetaVocabIdMap(prev => ({ ...prev, [songId]: { ...(prev[songId] ?? {}), [defId]: prevVocabId } }));
     }
   };
 
@@ -3954,20 +4098,22 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                     const rawVal = metaMap[s.id]?.[col.defId] ?? '';
                     const isMetaInline = metaEdit?.songId === s.id && metaEdit?.col.defId === col.defId;
                     if (col.dataType === 'single_choice') {
-                      // Resolve display via FK when available — auto-reflects vocabulary renames
-                      const vocabId = metaVocabIdMap[s.id]?.[col.defId];
-                      const displayVal = vocabId != null
-                        ? (vocabByDef[col.defId]?.find(v => v.id === vocabId)?.value ?? rawVal)
-                        : rawVal;
+                      const vocabId    = metaVocabIdMap[s.id]?.[col.defId] ?? null;
+                      const vocabEntry = vocabId != null ? vocabByDef[col.defId]?.find(v => v.id === vocabId) : undefined;
+                      const displayVal = vocabEntry?.value ?? metaMap[s.id]?.[col.defId] ?? null;
+                      const displayColor = vocabEntry?.color ?? null;
                       return (
-                      <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
-                        <select value={displayVal} onChange={e => commitMetaEdit(s.id, col, e.target.value)}
-                          style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
-                          <option value="">—</option>
-                          {vocabByDef[col.defId]?.map(v => <option key={v.id} value={v.value}>{v.value}</option>)}
-                        </select>
-                      </div>
-                    );
+                        <div key={col.defId} role="gridcell"
+                          style={{ flex: `0 0 ${w}px`, padding: "4px 6px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)", overflow: "hidden" }}
+                          onClick={e => setSinglePopover({ songId: s.id, defId: col.defId, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() })}>
+                          <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", cursor: "pointer", overflow: "hidden", position: "relative" }}>
+                            <div style={{ flex: 1, minWidth: 0, marginRight: 16 }}>
+                              <SingleChoicePillCell value={displayVal} color={displayColor} />
+                            </div>
+                            <span style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", fontSize: 10, color: "var(--text-tertiary)", pointerEvents: "none" }}>▾</span>
+                          </div>
+                        </div>
+                      );
                     }
                     if (col.dataType === 'multi_choice') {
                       const items = metaMultiMap[s.id]?.[col.defId] ?? [];
@@ -4032,6 +4178,20 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           inFlightCreates={inFlightCreates}
           onToggle={v => toggleMultiChoice(multiPopover.songId, multiPopover.defId, v)}
           onClose={() => setMultiPopover(null)}
+        />
+      )}
+      {singlePopover && (
+        <SingleChoicePopover
+          anchorRect={singlePopover.rect}
+          vocabOptions={vocabByDef[singlePopover.defId] ?? []}
+          currentVocabId={metaVocabIdMap[singlePopover.songId]?.[singlePopover.defId] ?? null}
+          onSelect={v => {
+            const col: MetadataColumn = { kind: 'metadata', defId: singlePopover.defId, defUuid: '', label: '', dataType: 'single_choice', width: 0 };
+            commitMetaEdit(singlePopover.songId, col, v.value);
+            setSinglePopover(null);
+          }}
+          onClear={() => { clearSingleChoice(singlePopover.songId, singlePopover.defId); setSinglePopover(null); }}
+          onClose={() => setSinglePopover(null)}
         />
       )}
     </div>

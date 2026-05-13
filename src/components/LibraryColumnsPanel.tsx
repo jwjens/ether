@@ -95,6 +95,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   // ── Vocabulary add form ───────────────────────────────────────
   const [vocabFormDefId, setVocabFormDefId]   = useState<number | null>(null);
   const [vocabFormValue, setVocabFormValue]   = useState("");
+  const [vocabFormColor, setVocabFormColor]   = useState<string | null>(null);
   const [vocabFormError, setVocabFormError]   = useState("");
   const [vocabFormPending, setVocabFormPending] = useState(false);
 
@@ -105,8 +106,11 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   const [newDefUuid, setNewDefUuid] = useState<string | null>(null);
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const nameInputRef  = useRef<HTMLInputElement>(null);
-  const vocabInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef      = useRef<HTMLInputElement>(null);
+  const vocabInputRef     = useRef<HTMLInputElement>(null);
+  const addColorInputRef  = useRef<HTMLInputElement>(null);
+  const editColorInputRef = useRef<HTMLInputElement>(null);
+  const editColorUuidRef  = useRef<string | null>(null);
 
   // ── Derived: count per definition ─────────────────────────────
   const vocabCounts: Record<number, number> = {};
@@ -227,11 +231,13 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
   // ── Vocabulary form helpers ───────────────────────────────────
 
   function closeVocabForm() {
-    setVocabFormDefId(null); setVocabFormValue(""); setVocabFormError(""); setVocabFormPending(false);
+    setVocabFormDefId(null); setVocabFormValue(""); setVocabFormColor(null);
+    setVocabFormError(""); setVocabFormPending(false);
   }
 
   function openVocabForm(defId: number) {
-    setVocabFormValue(""); setVocabFormError(""); setVocabFormPending(false);
+    setVocabFormValue(""); setVocabFormColor(null);
+    setVocabFormError(""); setVocabFormPending(false);
     setVocabFormDefId(defId);
   }
 
@@ -247,7 +253,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
       const maxOrder = existing.reduce((m, v) => Math.max(m, v.display_order ?? 0), 0);
       const res = await (window as any).ether.metadataVocabulary.create({
         station_id: stationId, definition_id: def.id,
-        value, display_order: maxOrder + 10, color: null,
+        value, display_order: maxOrder + 10, color: vocabFormColor,
       });
       if (!res?.ok) { setVocabFormError(res?.error ?? "Failed to add value."); setVocabFormPending(false); return; }
       closeVocabForm();
@@ -262,6 +268,28 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
       if (!res?.ok) { alert(res?.error ?? "Failed to remove value."); return; }
       setReloadKey(k => k + 1);
     } catch (e: any) { alert(e?.message ?? "Unexpected error."); }
+  }
+
+  async function updateVocabColor(uuid: string, color: string) {
+    setVocabByDefId(prev => {
+      const next = { ...prev };
+      for (const [defIdStr, rows] of Object.entries(next)) {
+        const idx = rows.findIndex(r => r.uuid === uuid);
+        if (idx !== -1) {
+          const newRows = [...rows];
+          newRows[idx] = { ...rows[idx], color };
+          next[Number(defIdStr)] = newRows;
+          break;
+        }
+      }
+      return next;
+    });
+    try {
+      await (window as any).ether.metadataVocabulary.update(uuid, { color });
+    } catch (e) {
+      console.error('[updateVocabColor] failed:', e);
+      setReloadKey(k => k + 1);
+    }
   }
 
   function toggleExpand(def: MetadataDefinition) {
@@ -436,7 +464,16 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                           <div key={v.uuid}
                             onContextMenu={e => { e.preventDefault(); e.stopPropagation(); setVocabCtxMenu({ x: e.clientX, y: e.clientY, def, vocab: v }); }}
                             style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: vi < vocabRows.length - 1 || vocabFormDefId === def.id ? "1px solid var(--border-primary)" : "none", cursor: "context-menu" }}>
-                            <span style={{ flex: 1, fontSize: 13, color: "var(--text-secondary)" }}>{v.value}</span>
+                            {/* Color swatch — click to edit */}
+                            <div
+                              title="Click to change color"
+                              style={{ width: 14, height: 14, borderRadius: 2, background: v.color ?? '#555555', border: '1px solid rgba(255,255,255,0.15)', cursor: 'pointer', flexShrink: 0 }}
+                              onMouseDown={e => e.stopPropagation()}
+                              onClick={e => { e.stopPropagation(); editColorUuidRef.current = v.uuid; if (editColorInputRef.current) { editColorInputRef.current.value = v.color ?? '#555555'; editColorInputRef.current.click(); } }}
+                            />
+                            <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 3, fontSize: 12, fontWeight: 600, background: v.color ?? '#555555', color: "#fff", whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {v.value}
+                            </span>
                           </div>
                         ))}
 
@@ -444,6 +481,21 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                         {vocabFormDefId === def.id ? (
                           <div style={{ padding: "10px 16px", display: "flex", flexDirection: "column" as const, gap: 8 }}>
                             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                              {/* Color picker swatch */}
+                              <div style={{ position: "relative", flexShrink: 0 }}>
+                                <div
+                                  title="Pick a color"
+                                  style={{ width: 30, height: 30, borderRadius: 2, background: vocabFormColor ?? '#555555', border: "1px solid var(--border-primary)", cursor: "pointer" }}
+                                  onClick={() => addColorInputRef.current?.click()}
+                                />
+                                <input
+                                  ref={addColorInputRef}
+                                  type="color"
+                                  style={{ position: "absolute", top: 0, left: 0, width: 1, height: 1, opacity: 0, pointerEvents: "none", border: 0, padding: 0 }}
+                                  value={vocabFormColor ?? '#555555'}
+                                  onChange={e => setVocabFormColor(e.target.value)}
+                                />
+                              </div>
                               <input
                                 ref={vocabInputRef}
                                 value={vocabFormValue}
@@ -491,6 +543,17 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
 
         </div>
       </div>
+
+      {/* Hidden input for editing existing vocab colors — value set programmatically before .click() */}
+      <input
+        ref={editColorInputRef}
+        type="color"
+        style={{ position: "fixed", top: -999, left: -999, width: 1, height: 1, opacity: 0, pointerEvents: "none", border: 0, padding: 0 }}
+        onChange={e => {
+          const uuid = editColorUuidRef.current;
+          if (uuid) updateVocabColor(uuid, e.target.value);
+        }}
+      />
 
       {/* Vocab value context menu */}
       {vocabCtxMenu && (
