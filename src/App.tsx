@@ -472,13 +472,14 @@ export default function App() {
     }
     if (!targetDeck) return;
     engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
+    // Dequeue targetDeck's song and clear its ready slot immediately — it just went live.
+    const qBefore = engine.getQueue();
+    if (qBefore.length > 0) engine.replaceQueue(qBefore.slice(1));
+    engine.clearDeckReady(targetDeck as "A"|"B"|"C");
+    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
+    // Load next song into old playing deck AFTER the crossfade's own stop fires (ms+100).
+    // Loading before the stop clears the source and the audio thread silently skips Play.
     setTimeout(async () => {
-      engine.getDeck(playingDeck)?.stop();
-      // Dequeue targetDeck's song — it just went live via crossfade, bypassing handleRotate's dequeue.
-      const qBefore = engine.getQueue();
-      if (qBefore.length > 0) engine.replaceQueue(qBefore.slice(1));
-      // Clear targetDeck from deckReady, then count remaining preloaded standby slots.
-      engine.clearDeckReady(targetDeck as "A"|"B"|"C");
       const readyCount = (["A","B","C"] as const).filter(id => engine.isDeckReady(id)).length;
       const q = engine.getQueue();
       if (q.length > readyCount) {
@@ -487,7 +488,7 @@ export default function App() {
         engine.markDeckReady(playingDeck as "A" | "B" | "C");
       }
       window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    }, 2200);
+    }, (xfadeDuration * 1000) + 300);
     setXfadeActive(true);
     setTimeout(() => setXfadeActive(false), 2200);
   };
