@@ -52,6 +52,30 @@ function metadataVocabularyCreate(db, payload) {
   if (HAS_STATION_ID_COL && payload.station_id == null) {
     throw new Error(`[metadata_vocabulary] station_id is required for station-scoped create`);
   }
+
+  // UNIQUE(definition_id, value) includes soft-deleted rows, so a deleted value blocks re-creation.
+  // Resurrect the deleted row instead of inserting a new one.
+  const ghost = db.prepare(
+    `SELECT * FROM ${TABLE} WHERE definition_id = ? AND value = ? AND station_id = ? AND deleted_at IS NOT NULL LIMIT 1`
+  ).get(payload.definition_id, payload.value, payload.station_id);
+
+  if (ghost) {
+    const now     = new Date().toISOString();
+    const updated = { ...ghost, deleted_at: null, updated_at: now,
+                      color: payload.color !== undefined ? payload.color : ghost.color };
+    const before  = serializePayload(ghost, TABLE);
+    const after   = serializePayload(updated, TABLE);
+    withMutation(db, {
+      table_name: TABLE, row_id: ghost.uuid, op: 'update',
+      payload_before: before, payload_after: after,
+      station_id: ghost.station_id, actor_id: payload.actor_id ?? null,
+    }, () => {
+      db.prepare(`UPDATE ${TABLE} SET deleted_at = NULL, updated_at = ?, color = ? WHERE uuid = ?`)
+        .run(now, updated.color, ghost.uuid);
+    });
+    return metadataVocabularyGet(db, ghost.uuid);
+  }
+
   const now  = new Date().toISOString();
   const uuid = payload.uuid ?? crypto.randomUUID();
   const row  = {
