@@ -159,9 +159,10 @@ function metadataVocabularyDelete(db, uuid, stationId) {
   }, () => {
     const now = new Date().toISOString();
     // Query inside the transaction so the snapshot is atomic with the writes (Correction 1)
+    // value_vocabulary_id is an integer FK to metadata_vocabulary.id, not the uuid
     const smvRows = db.prepare(
       `SELECT * FROM song_metadata_values WHERE value_vocabulary_id = ? AND deleted_at IS NULL`
-    ).all(uuid);
+    ).all(existing.id);
 
     for (const smv of smvRows) {
       const smvBefore = serializePayload(smv, 'song_metadata_values');

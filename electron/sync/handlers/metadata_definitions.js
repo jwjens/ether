@@ -151,9 +151,10 @@ function metadataDefinitionsDelete(db, uuid, stationId) {
         actor_id:       null,
       }, () => {
         // CASCADE level 2: SMV rows for this vocab value
+        // value_vocabulary_id is an integer FK to metadata_vocabulary.id, not the uuid
         const smvRows = db.prepare(
           `SELECT * FROM song_metadata_values WHERE value_vocabulary_id = ? AND deleted_at IS NULL`
-        ).all(v.uuid);
+        ).all(v.id);
 
         for (const smv of smvRows) {
           const smvBefore = serializePayload(smv, 'song_metadata_values');
