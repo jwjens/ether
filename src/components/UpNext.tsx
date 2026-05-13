@@ -49,6 +49,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
   const [anyPlaying, setAnyPlaying] = useState(false);
 
+  const topTitleRef            = useRef<HTMLDivElement>(null);
+  const [topScrollPx, setTopScrollPx] = useState(0);
+
   const dragIdxRef     = useRef<number | null>(null);
   const dragOverIdxRef = useRef<number | null>(null);
   const isDraggingRef  = useRef(false);
@@ -83,6 +86,16 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     });
     setTotalDuration(queue.reduce((s, q) => s + ((q as any).durationMs || 0), 0));
   }, [queueLen]);
+
+  useEffect(() => {
+    const el = topTitleRef.current;
+    if (!el) { setTopScrollPx(0); return; }
+    const id = requestAnimationFrame(() => {
+      const overflow = el.scrollWidth - el.offsetWidth;
+      setTopScrollPx(overflow > 4 ? overflow + 8 : 0);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [queue[2]?.title]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -138,8 +151,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
         const rect = items[i].getBoundingClientRect();
         if (ev.clientY < rect.top + rect.height / 2) { over = i; break; }
       }
-      // `over` is a visual index (0 = first rendered item = engine queue index 3)
-      const engineOver = over + 3;
+      // `over` is a visual index (0 = first rendered item = engine queue index 2)
+      const engineOver = over + 2;
       dragOverIdxRef.current = engineOver;
       setDragVisual({ from: dragIdxRef.current, over: engineOver });
     };
@@ -225,15 +238,15 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
       {/* Queue list */}
       <div style={{ flex: 1, overflowY: "auto" as any }} onDragOver={handleCartDragOver} onDrop={handleCartDrop}>
-        {queue.length < 4 ? (
+        {queue.length < 3 ? (
           <div style={{ padding: "28px 14px", textAlign: "center" as any }}>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 4 }}>Queue empty</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", opacity: 0.4 }}>Drag carts here or use GEN LOG</div>
           </div>
         ) : (
           <AnimatePresence initial={false}>
-            {queue.slice(3, 53).map((item, i) => {
-          const engineIdx = i + 3;
+            {queue.slice(2, 52).map((item, i) => {
+          const engineIdx = i + 2;
           const color = getItemColor(item);
           const catLabel = getCatLabel(item);
           const ms = (item as any).durationMs || (item as any).duration_ms || 0;
@@ -246,20 +259,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               key={`${item.title}-${item.artist}-${engineIdx}`}
               layout
               initial={{ opacity: 0, y: -8 }}
-              animate={i === 0 ? {
-                opacity: 1, y: 0,
-                boxShadow: [
-                  "0 0 0 0 rgba(255,140,40,0)",
-                  "0 0 0 4px rgba(255,140,40,0.15)",
-                  "0 0 0 0 rgba(255,140,40,0)",
-                ],
-              } : { opacity: 1, y: 0 }}
+              animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              transition={i === 0 ? {
-                layout: { duration: 0.35, ease: [0.4, 0, 0.2, 1] },
-                opacity: { duration: 0.2 },
-                boxShadow: { duration: 2.5, repeat: Infinity, ease: "easeInOut" },
-              } : {
+              transition={{
                 layout: { duration: 0.35, ease: [0.4, 0, 0.2, 1] },
                 opacity: { duration: 0.2 },
                 y: { duration: 0.25 },
@@ -278,6 +280,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 cursor: isBeingDragged ? "grabbing" : "grab",
                 userSelect: "none" as any,
                 transition: "background 0.1s",
+                animation: i === 0 ? "nextup-pulse 2.4s ease-in-out infinite" : undefined,
               } as React.CSSProperties}
             >
               {/* 4px left category color strip */}
@@ -286,10 +289,10 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               {/* Main content */}
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, padding: "10px 10px 10px 8px", minWidth: 0 }}>
                 {/* Position */}
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 12, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 4}</span>
+                {i > 0 && <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 12, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 3}</span>}
 
                 {/* Album art thumbnail */}
-                <div style={{ width: 36, height: 36, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                <div style={{ width: i === 0 ? 48 : 36, height: i === 0 ? 48 : 36, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
                   {artUrls[artKey] && (
                     <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   )}
@@ -302,7 +305,15 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
                 {/* Title + artist */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, letterSpacing: "-0.01em" }}>{item.title}</div>
+                  <div
+                    ref={i === 0 ? topTitleRef : undefined}
+                    style={{
+                      fontSize: i === 0 ? 16 : 11, fontWeight: 600, color: "var(--text-primary)",
+                      overflow: "hidden", textOverflow: i === 0 && topScrollPx > 0 ? "clip" : "ellipsis",
+                      whiteSpace: "nowrap" as any, letterSpacing: "-0.01em",
+                      ...(i === 0 && topScrollPx > 0 ? { animation: "nextup-title-scroll 9s ease-in-out infinite", "--scroll-x": `-${topScrollPx}px` } : {}),
+                    } as React.CSSProperties}
+                  >{item.title}</div>
                   <div style={{ fontSize: 9, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
                 </div>
 
@@ -325,7 +336,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                     e.stopPropagation();
                     const cur = (item as any).chainType || "segue";
                     const next = cur === "segue" ? "stop" : "segue";
-                    engine.setQueueItemChainType(i, next);
+                    engine.setQueueItemChainType(engineIdx, next);
                     onQueueChange();
                   }}
                   title={((item as any).chainType || "segue") === "segue" ? "Segue — auto-advance to next. Click to change to Stop." : "Stop — wait for manual trigger. Click to change to Segue."}
@@ -343,7 +354,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 {/* Remove */}
                 <button
                   onMouseDown={e => e.stopPropagation()}
-                  onClick={e => { e.stopPropagation(); removeItem(i); }}
+                  onClick={e => { e.stopPropagation(); removeItem(engineIdx); }}
                   style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "0 2px", flexShrink: 0 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
@@ -354,8 +365,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
         })}
           </AnimatePresence>
         )}
-        {queue.length > 53 && (
-          <div style={{ padding: 8, fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 53} more</div>
+        {queue.length > 52 && (
+          <div style={{ padding: 8, fontSize: 9, color: "var(--text-tertiary)", textAlign: "center" as any, fontFamily: "'DM Mono', monospace" }}>+{queue.length - 52} more</div>
         )}
       </div>
 
