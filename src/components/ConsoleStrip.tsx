@@ -23,6 +23,8 @@ interface Props {
   /** When provided the strip subscribes to audio:levels IPC directly
    *  and updates the VU bar without triggering React state. */
   deckId?: string;
+  /** Hide the channel label row — used when an external bar (ThreeSlotBar) shows it instead. */
+  hideLabel?: boolean;
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -43,7 +45,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel,
 }: Props) {
   const midi = useMidiState();
   const [dragging, setDragging] = useState(false);
@@ -205,30 +207,32 @@ export default function ConsoleStrip({
       userSelect: "none", overflow: "hidden",
     }}>
 
-      {/* ── Channel label — progress fill lives here, sweeps left→right as song plays ── */}
-      <div style={{
-        width: "100%", padding: "8px 0",
-        background: isOn && isPlaying ? `${color}28` : "var(--strip-label-bg, transparent)",
-        borderBottom: "1px solid var(--strip-divider, #303040)",
-        textAlign: "center",
-        fontSize: 11, fontWeight: 800, letterSpacing: "0.14em",
-        position: "relative", overflow: "hidden",
-        transition: "background 0.3s",
-      }}>
-        {deckId && (
-          <div ref={fillRef} style={{
-            position: "absolute", top: 0, left: 0, bottom: 0,
-            background: color,
-            zIndex: 0, pointerEvents: "none",
-          }} />
-        )}
-        <span style={{
-          position: "relative", zIndex: 1,
-          color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #555)"),
-          textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
-          transition: "color 0.2s",
-        }}>{label}</span>
-      </div>
+      {/* ── Channel label — hidden when ThreeSlotBar provides it externally ── */}
+      {!hideLabel && (
+        <div style={{
+          width: "100%", padding: "8px 0",
+          background: isOn && isPlaying ? `${color}28` : "var(--strip-label-bg, transparent)",
+          borderBottom: "1px solid var(--strip-divider, #303040)",
+          textAlign: "center",
+          fontSize: 11, fontWeight: 800, letterSpacing: "0.14em",
+          position: "relative", overflow: "hidden",
+          transition: "background 0.3s",
+        }}>
+          {deckId && (
+            <div ref={fillRef} style={{
+              position: "absolute", top: 0, left: 0, bottom: 0,
+              background: color,
+              zIndex: 0, pointerEvents: "none",
+            }} />
+          )}
+          <span style={{
+            position: "relative", zIndex: 1,
+            color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #555)"),
+            textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
+            transition: "color 0.2s",
+          }}>{label}</span>
+        </div>
+      )}
 
       {/* ── Main area: fader column + VU meter ── */}
       <div ref={faderAreaRef} style={{
