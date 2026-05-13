@@ -1,6 +1,10 @@
-import { AudioEngine } from "./engine-rodio";
+import { AudioEngine, engine as singletonEngine } from "./engine-rodio";
 
-const registry = new Map<number, AudioEngine>();
+// Pre-register the station-1 singleton so getEngine(1) returns the same
+// instance that legacy consumers import directly from engine-rodio. Without
+// this, getEngine(1) would create a second AudioEngine(1), producing two
+// divergent JS-side queues. (Patches a Commit 2 oversight.)
+const registry = new Map<number, AudioEngine>([[1, singletonEngine]]);
 
 export function getEngine(stationId: number): AudioEngine {
   if (!registry.has(stationId)) {

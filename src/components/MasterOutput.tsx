@@ -9,7 +9,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import MasterEQRack from "./MasterEQRack";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import { AudioRoutingPicker, CurrentRoutingSummary } from "./AudioRoutingPanel";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 // ── Constants ────────────────────────────────────────────────
 // Fallback values only — resolved via CSS custom properties at runtime
@@ -495,6 +495,7 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 
 // ── MasterOutput ─────────────────────────────────────────────
 export default function MasterOutput({ expanded, collapsed = false, onToggleCollapsed }: { expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
+  const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [masterLevel, setMasterLevel] = useState(0);
   const [masterVol,  setMasterVol]  = useState(1.0);
@@ -548,7 +549,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     const unsub = engine.on(() => pull());
     const tick = setInterval(() => { pull(); setNowSec(s => s + 10); }, 10_000);
     return () => { unsub(); clearInterval(tick); };
-  }, [expanded]);
+  }, [expanded, engine]);
 
   useEffect(() => {
     if (!expanded) return;

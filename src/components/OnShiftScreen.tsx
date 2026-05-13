@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { queryOne } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { getNextTransition } from "../audio/showClock";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -46,6 +46,7 @@ function fmtSecs(s: number): string {
 // ── Component ─────────────────────────────────────────────────
 
 export default function OnShiftScreen({ onStart }: Props) {
+  const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const loadVersionRef = useRef(0);
   const [operators, setOperators]       = useState<Operator[]>([]);
@@ -189,7 +190,7 @@ export default function OnShiftScreen({ onStart }: Props) {
       text = `${greeting()}, ${operator.name}. ${showLine} ${queueLine}${explicitLine}${breakLine}${noteLine}`;
     }
     setIrisText(text.trim());
-  }, [operator?.id, currentShow, note, nextBreakIn, inviteUsed, invitedBy, mode]);
+  }, [operator?.id, currentShow, note, nextBreakIn, inviteUsed, invitedBy, mode, engine]);
 
   // ── Save note on blur ─────────────────────────────────────────
 

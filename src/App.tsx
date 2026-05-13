@@ -39,7 +39,8 @@ import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
-import { AudioEngineProvider } from "./audio/AudioEngineContext";
+import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
+import { getEngine } from "./audio/engine-registry";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
 import StreamStatusToast from "./components/StreamStatusToast";
@@ -406,6 +407,17 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
 
 export default function App() {
   const { stationId, isReady: stationReady } = useActiveStation();
+  // IMPORTANT: App() renders <AudioEngineProvider> in its JSX return, so App()
+  // sits ABOVE the context boundary. useAudioEngine() here would always read the
+  // default context value (station 1). getEngine(stationId) bypasses context and
+  // returns the correct engine directly — re-evaluated on every render, so it
+  // tracks station switches via useActiveStation(). Child components rendered
+  // inside <AudioEngineProvider> (ConsoleStrip, UpNext, ThreeSlotBar, etc.) use
+  // useAudioEngine() normally. CartWallPanel, PlaylistPanel, LivePanel,
+  // LibraryPanel are top-level functions in this file (NOT inside App()) — they
+  // still reference the module-level singleton and are migrated in Commit 6.
+  // Do not remove the module-level `engine` import until Commit 6 clears them.
+  const engine = getEngine(stationId);
   const viewport = useViewport();
   // Macro automation: listen for hotkey-triggered macros + clock-based triggers
   useMacroHotkeys();
@@ -814,6 +826,22 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [deckA, deckB]);
 
+  // Display subscription — re-subscribes whenever the active station changes so
+  // deckA/B/C and queueLen always reflect the currently-viewed station.
+  useEffect(() => {
+    setDeckA(engine.getDeck("A")?.getState?.() ?? null);
+    setDeckB(engine.getDeck("B")?.getState?.() ?? null);
+    setDeckC(engine.getDeck("C")?.getState?.() ?? null);
+    setQueueLen(engine.getQueue().length);
+    const unsub = engine.on((id, st) => {
+      if (id === "A") setDeckA({...st});
+      else if (id === "B") setDeckB({...st});
+      else if (id === "C") setDeckC({...st});
+      setQueueLen(engine.getQueue().length);
+    });
+    return () => unsub();
+  }, [engine]);
+
   useEffect(() => {
     engine.init();
     engine.outroCrossfade = true;
@@ -854,10 +882,6 @@ export default function App() {
       }, 2000);
     }
     const unsub = engine.on((id, st) => {
-      if (id === "A") setDeckA({...st});
-      else if (id === "B") setDeckB({...st});
-      else if (id === "C") setDeckC({...st});
-
       // If a deck is playing but has no duration (e.g. Rust backend survived a JS reload),
       // look up duration_ms from the DB by filePath — fires at most once per filePath.
       if (st.durationSec === 0 && st.filePath && !durQueried.current.has(st.filePath)) {
@@ -887,7 +911,6 @@ export default function App() {
         if (prevQueueLen.current >= 0) consoleLog("rotation", `[QUEUE] ${newQLen} track${newQLen !== 1 ? "s" : ""} loaded`);
         prevQueueLen.current = newQLen;
       }
-      setQueueLen(newQLen);
       // Broadcast the full queue (not just length) to pop-out windows so
       // their local engine instances can mirror it. Pop-outs are separate
       // BrowserWindows with their own JS context, so they have empty engine
@@ -4197,6 +4220,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 // Shows DECK A / DECK B / DECK C as fixed physical columns — titles never shift.
 // ON AIR badge floats to whichever deck is playing; preloaded decks show green.
 function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: { queueLen: number; masterCollapsed?: boolean; showCarts?: boolean }) {
+  const engine = useAudioEngine();
   interface SlotData {
     title: string; artist: string; positionSec: number; durationSec: number; status: string; ready: boolean;
   }
@@ -4238,7 +4262,7 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
     const unsub = engine.on(pull);
     const tick  = setInterval(pull, 1000);
     return () => { unsub(); clearInterval(tick); };
-  }, [queueLen]);
+  }, [engine, queueLen]);
 
   // Progress fill — imperative CSS transitions matching ConsoleStrip pattern
   useEffect(() => {
@@ -4268,7 +4292,7 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
       });
     });
     return () => unsub();
-  }, []);
+  }, [engine]);
 
   useEffect(() => {
     titleRefs.forEach((ref) => {
@@ -4409,6 +4433,7 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
 // Shows active track info with a slide+fade animation when the song changes.
 // Subscribes to the engine for deck state updates.
 function NowPlayingPill() {
+  const engine = useAudioEngine();
   const [track, setTrack] = useState<{ title: string; artist: string; positionSec: number; durationSec: number } | null>(null);
 
   useEffect(() => {
@@ -4427,7 +4452,7 @@ function NowPlayingPill() {
     // Update position every second for the progress bar
     const tick = setInterval(pull, 1000);
     return () => { unsub(); clearInterval(tick); };
-  }, []);
+  }, [engine]);
 
   // Key forces remount on title change → triggers enter animation
   const trackKey = track?.title ?? "__empty__";

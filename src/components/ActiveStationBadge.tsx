@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { usePlan } from "../hooks/usePlan";
 
 interface Station {
   id: number;
@@ -15,7 +14,6 @@ interface Props {
 }
 
 export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
-  const { isOperator } = usePlan();
   const ether = (window as any).ether;
   const [stations, setStations] = useState<Station[]>([]);
   const [active, setActive]     = useState<Station | null>(null);
@@ -64,13 +62,13 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
       {/* Pill trigger */}
       <button
         onClick={() => {
-          if (!isOperator) {
+          if (stations.length <= 1) {
             window.dispatchEvent(new CustomEvent("ether:open-subscription"));
             return;
           }
           setOpen(o => !o);
         }}
-        title={isOperator ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Operator to manage multiple stations"}
+        title={stations.length > 1 ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Operator to manage multiple stations"}
         style={{
           display: "inline-flex", alignItems: "center", gap: 5,
           height: 32, padding: "0 10px", borderRadius: 0,

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -41,6 +41,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function UpNext({ queueLen, onQueueChange }: Props) {
+  const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories]   = useState<CategoryInfo[]>([]);
@@ -66,7 +67,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       setQueue(engine.getQueue());
     }, 1000);
     return () => clearInterval(interval);
-  }, [queueLen]);
+  }, [engine, queueLen]);
 
   useEffect(() => {
     const update = () => setAnyPlaying(
@@ -74,7 +75,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     );
     update();
     return engine.on(update);
-  }, []);
+  }, [engine]);
 
   useEffect(() => {
     queue.forEach(item => {

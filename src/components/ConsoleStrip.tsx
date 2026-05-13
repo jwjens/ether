@@ -7,7 +7,7 @@
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 interface Props {
   label: string;
@@ -47,6 +47,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 export default function ConsoleStrip({
   label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel,
 }: Props) {
+  const engine = useAudioEngine();
   const midi = useMidiState();
   const [dragging, setDragging] = useState(false);
   const [pflActive, setPflActive] = useState(false);
@@ -111,7 +112,7 @@ export default function ConsoleStrip({
       }
     });
     return () => unsub();
-  }, [deckId]);
+  }, [deckId, engine]);
 
   // Direct DOM VU update when deckId is provided — bypasses React state
   // so the parent (App.tsx) doesn't re-render the library table on each tick.

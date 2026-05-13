@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { engine, DeckState } from "../audio/engine-rodio";
+import { DeckState } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = (cmd: string, args?: any) => (window as any).ether.invoke(cmd, args);
@@ -46,6 +47,7 @@ function fmtMs(ms: number): string {
 // ── Mini On-Air Monitor ──────────────────────────────────────
 
 function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
+  const engine = useAudioEngine();
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
   const [deckC, setDeckC] = useState<DeckState | null>(null);
@@ -61,7 +63,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
     });
     const clock = setInterval(() => setTime(new Date()), 1000);
     return () => { unsub(); clearInterval(clock); };
-  }, []);
+  }, [engine]);
 
   const toggleMic = async () => {
     if (micActive) {
