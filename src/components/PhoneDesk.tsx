@@ -140,7 +140,7 @@ function LevelMeter({ level, peak }: { level: number; peak: number }) {
 
 function WaveformView({
   peaks, duration, cueIn, cueOut,
-  playhead, onSeek,
+  playhead, onSeek, onCueInChange, onCueOutChange,
 }: {
   peaks: Float32Array | null;
   duration: number;
@@ -148,8 +148,17 @@ function WaveformView({
   cueOut: number;
   playhead: number;
   onSeek: (sec: number) => void;
+  onCueInChange: (sec: number) => void;
+  onCueOutChange: (sec: number) => void;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef       = useRef<HTMLCanvasElement>(null);
+  const dragRef         = useRef<null | 'in' | 'out'>(null);
+  const cueInPropRef    = useRef(cueIn);
+  const cueOutPropRef   = useRef(cueOut);
+  const durationPropRef = useRef(duration);
+  useEffect(() => { cueInPropRef.current    = cueIn;    }, [cueIn]);
+  useEffect(() => { cueOutPropRef.current   = cueOut;   }, [cueOut]);
+  useEffect(() => { durationPropRef.current = duration; }, [duration]);
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -259,16 +268,63 @@ function WaveformView({
     return () => ro.disconnect();
   }, [draw]);
 
-  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const getHit = (clientX: number, rect: DOMRect): 'in' | 'out' | null => {
+    const x    = clientX - rect.left;
+    const dur  = durationPropRef.current;
+    if (dur <= 0) return null;
+    const inX  = (cueInPropRef.current  / dur) * rect.width;
+    const outX = (cueOutPropRef.current / dur) * rect.width;
+    const HIT  = 12;
+    if (Math.abs(x - inX)  <= HIT) return 'in';
+    if (Math.abs(x - outX) <= HIT) return 'out';
+    return null;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const ratio = (e.clientX - rect.left) / rect.width;
-    onSeek(ratio * duration);
+    const hit  = getHit(e.clientX, rect);
+    if (hit) {
+      dragRef.current = hit;
+      document.body.style.cursor = 'ew-resize';
+
+      const onMove = (ev: MouseEvent) => {
+        const dur = durationPropRef.current;
+        if (dur <= 0) return;
+        const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+        const sec   = ratio * dur;
+        const MIN_GAP = 0.05;
+        if (dragRef.current === 'in') {
+          onCueInChange(Math.min(sec, cueOutPropRef.current - MIN_GAP));
+        } else {
+          onCueOutChange(Math.max(sec, cueInPropRef.current + MIN_GAP));
+        }
+      };
+      const onUp = () => {
+        dragRef.current = null;
+        document.body.style.cursor = '';
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    } else {
+      const ratio = (e.clientX - rect.left) / rect.width;
+      onSeek(Math.max(0, Math.min(1, ratio)) * durationPropRef.current);
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (dragRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const hit  = getHit(e.clientX, rect);
+    e.currentTarget.style.cursor = hit ? 'ew-resize' : 'crosshair';
   };
 
   return (
     <canvas
       ref={canvasRef}
-      onClick={handleClick}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
       style={{
         width: "100%", height: "100%",
         cursor: "crosshair",
@@ -990,6 +1046,8 @@ export default function PhoneDesk({ onClose }: Props) {
                   setPlayhead(sec);
                   if (previewing) startPreview(sec);
                 }}
+                onCueInChange={(sec) => setCueIn(Math.max(0, sec))}
+                onCueOutChange={(sec) => setCueOut(Math.min(clipDuration, sec))}
               />
             )}
           </div>
