@@ -101,11 +101,8 @@ export async function readID3(filePath: string): Promise<ID3Tags> {
     result.year = v2.year || v1.year || null;
     result.genre = v2.genre || v1.genre || null;
     try {
-      const ctx = new AudioContext();
-      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const decoded = await ctx.decodeAudioData(buf);
-      result.durationSec = decoded.duration;
-      await ctx.close();
+      const dur = await (window as any).ether.audio.getFileDuration(filePath);
+      if (typeof dur === "number" && dur > 0) result.durationSec = dur;
     } catch {}
   } catch (e) {
     console.error("ID3 read error:", e);

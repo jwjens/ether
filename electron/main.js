@@ -1489,7 +1489,7 @@ ipcMain.handle("db:execute", (_, sql, params) => {
 ipcMain.handle("fs:readFile", async (_, filePath) => {
   try {
     const fd = fs.openSync(filePath, "r");
-    const size = Math.min(fs.fstatSync(fd).size, 256 * 1024);
+    const size = fs.fstatSync(fd).size;
     const buf = Buffer.alloc(size);
     fs.readSync(fd, buf, 0, size, 0);
     fs.closeSync(fd);
@@ -1983,6 +1983,7 @@ ipcMain.handle("window:popout", async (_, panel) => {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
       webSecurity: false,
     },
   });
@@ -2050,6 +2051,7 @@ ipcMain.handle("open_nowplaying_window", async () => {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
       webSecurity: false,
     },
   });
