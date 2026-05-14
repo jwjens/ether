@@ -2175,6 +2175,7 @@ function DragHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<H
 
 // ── Full-page Cart Wall Panel ─────────────────────────────────
 function CartWallPanel({ onClose }: { onClose: () => void }) {
+  const engine = useAudioEngine();
   const KEYS = ["1","2","3","4","5","6","7","8","9","0","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F"];
   const COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","#22d3ee","#38bdf8","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16","#f43f5e"];
 
@@ -2316,6 +2317,7 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
 
 // ── Full-page Playlist Panel ───────────────────────────────────
 function PlaylistPanel({ onClose }: { onClose: () => void }) {
+  const engine = useAudioEngine();
   const { stationId } = useActiveStation();
   const [tracks, setTracks] = useState<any[]>([]);
   const [library, setLibrary] = useState<any[]>([]);
@@ -2475,6 +2477,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   handleXfade: () => void;
   onOpenCarts: () => void;
 }) {
+  const engine = useAudioEngine();
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();
   // Master Output collapse state — persisted; auto-collapses below 1200px unless user opted in
@@ -3251,6 +3254,7 @@ function SingleChoicePopover({
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
 function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
+  const engine = useAudioEngine();
   const { stationId } = useActiveStation();
   const watermarkedPaths = React.useMemo<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem("ether_watermarked_paths") || "[]")); }

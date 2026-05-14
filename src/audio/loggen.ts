@@ -15,7 +15,7 @@
 
 import { query, execute, queryOne } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
-import { engine } from "./engine-rodio";
+import { getEngine } from "./engine-registry";
 
 interface SmartRule {
   id: string;
@@ -420,6 +420,7 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
 export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
   try {
     const stationId = getActiveStationIdSync();
+    const engine = getEngine(stationId);
     const hour = new Date().getHours();
     maybeDaypartLog(hour);
 
@@ -516,6 +517,7 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
 }
 
 export async function refillFromSchedule(): Promise<void> {
+  const engine = getEngine(getActiveStationIdSync());
   const queueLen = engine.getQueue().length;
   if (queueLen < 5) {
     await fillQueueFromSchedule(20 - queueLen);

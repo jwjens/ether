@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { engine } from "../audio/engine-rodio";
+import type { AudioEngine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -14,7 +15,7 @@ const DUCK_LEVEL = 0.18;
 const DUCK_RAMP_MS = 400;
 const RESTORE_RAMP_MS = 800;
 
-function rampVolume(deckId: string, from: number, to: number, ms: number) {
+function rampVolume(engine: AudioEngine, deckId: string, from: number, to: number, ms: number) {
   const steps = 20;
   const interval = ms / steps;
   const delta = (to - from) / steps;
@@ -28,6 +29,7 @@ function rampVolume(deckId: string, from: number, to: number, ms: number) {
 }
 
 export function useAutoDuck() {
+  const engine = useAudioEngine();
   const [enabled, setEnabled] = useState(true);
   const [ducked, setDucked] = useState(false);
   const prevVolumes = useRef<Record<string, number>>({ A: 1, B: 1, C: 1 });
@@ -39,19 +41,19 @@ export function useAutoDuck() {
       const deck = engine.getDeck(id);
       if (deck) {
         prevVolumes.current[id] = deck.getState().volume ?? 1;
-        rampVolume(id, prevVolumes.current[id], DUCK_LEVEL, DUCK_RAMP_MS);
+        rampVolume(engine, id, prevVolumes.current[id], DUCK_LEVEL, DUCK_RAMP_MS);
       }
     });
-  }, [enabled, ducked]);
+  }, [engine, enabled, ducked]);
 
   const unduck = useCallback(() => {
     if (!ducked) return;
     setDucked(false);
     ["A", "B", "C"].forEach(id => {
       const deck = engine.getDeck(id);
-      if (deck) rampVolume(id, DUCK_LEVEL, prevVolumes.current[id] ?? 1, RESTORE_RAMP_MS);
+      if (deck) rampVolume(engine, id, DUCK_LEVEL, prevVolumes.current[id] ?? 1, RESTORE_RAMP_MS);
     });
-  }, [ducked]);
+  }, [engine, ducked]);
 
   return { enabled, setEnabled, ducked, duck, unduck };
 }

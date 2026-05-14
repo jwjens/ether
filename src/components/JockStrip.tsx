@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { engine, DeckState } from "../audio/engine-rodio";
+import { DeckState } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -25,6 +26,7 @@ function fmtDur(ms: number): string {
 }
 
 export default function JockStrip({ deckA, deckB, dropDown = false, externalSearch, onSearchChange }: Props & { dropDown?: boolean; externalSearch?: string; onSearchChange?: (v: string) => void }) {
+  const engine = useAudioEngine();
   const { stationId } = useActiveStation();
   const [search, setSearch] = useState("");
 

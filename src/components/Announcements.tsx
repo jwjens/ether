@@ -3,7 +3,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
-import { engine } from "../audio/engine-rodio";
+import { getEngine } from "../audio/engine-registry";
 
 interface Announcement {
   id: number; title: string; file_path: string;
@@ -36,6 +36,7 @@ async function checkAnnouncements() {
       const nowEpoch = Math.floor(Date.now() / 1000);
       if (ann.last_played_at && nowEpoch - ann.last_played_at < 120) continue;
       lastFiredMinute = currentTime;
+      const engine = getEngine(getActiveStationIdSync());
       const deckA = engine.getDeck("A");
       const deckB = engine.getDeck("B");
       if (ann.duck_music) { deckA?.setVolume(ann.duck_level); deckB?.setVolume(ann.duck_level); }

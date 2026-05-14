@@ -1,5 +1,5 @@
 import React from "react";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import VUMeter from "./VUMeter";
 
 export interface MixerChannelStripProps {
@@ -20,6 +20,7 @@ export default function MixerChannelStrip({
   label, color, deck, deckSlot, isMic, deviceId, setDeviceId,
   audioDevices, guestStatus, isLast, vertical,
 }: MixerChannelStripProps) {
+  const engine = useAudioEngine();
   const [level, setLevel] = React.useState(0);
   const [levelR, setLevelR] = React.useState(0);
   const [peakHold, setPeakHold] = React.useState(0);

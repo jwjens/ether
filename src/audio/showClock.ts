@@ -11,7 +11,7 @@
 
 import { query } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
-import { engine } from "./engine-rodio";
+import { getEngine } from "./engine-registry";
 import { fillQueueFromSchedule } from "./loggen";
 
 interface ShowRow {
@@ -68,6 +68,8 @@ export async function getNextTransition(): Promise<NextTransition | null> {
 
 async function executeTransition(showName: string, newHour: number): Promise<void> {
   console.log(`[showClock] ⏰ SHOW TRANSITION → "${showName}" at ${newHour}:00`);
+
+  const engine = getEngine(getActiveStationIdSync());
 
   // 1. Hard-stop all decks — no fades, no grace period
   engine.getDeck("A")?.stop();

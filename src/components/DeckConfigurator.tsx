@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -82,6 +82,7 @@ interface Props {
 }
 
 export default function DeckConfigurator({ onClose, onApply }: Props) {
+  const engine = useAudioEngine();
   // Deck slots are defined in the database. Do not hardcode deck lists here.
   const { configs: dbConfigs, save } = useDeckConfig();
   const [configs, setConfigs] = useState<DeckConfig[]>([]);
@@ -306,6 +307,7 @@ interface PlaylistProps {
 }
 
 export function PlaylistPlayer({ deckSlot, color }: PlaylistProps) {
+  const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [tracks, setTracks] = useState<PlaylistTrack[]>([]);
   const [currentIdx, setCurrentIdx] = useState<number | null>(null);
@@ -463,6 +465,7 @@ interface CartProps {
 }
 
 export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
+  const engine = useAudioEngine();
   const [carts, setCarts] = useState<CartSlot[]>(
     DEFAULT_CART_KEYS.map((k, i) => ({
       key: k, label: `Cart ${i + 1}`, color: CART_COLORS[i % CART_COLORS.length], playing: false,
