@@ -633,20 +633,12 @@ export default function PhoneDesk({ onClose }: Props) {
       const outSample = Math.floor(cueOutRef.current * SAMPLE_RATE);
       const sliced    = recPCM.slice(inSample, outSample);
 
-      // Encode to WAV and save via IPC; falls back to Blob URL if handler unavailable
-      let filePath = "";
-      try {
-        filePath = await invoke<string>("save_wav_clip", {
-          pcm:        Array.from(sliced),
-          sampleRate: SAMPLE_RATE,
-          path:       `phone_clip_${Date.now()}.wav`,
-        });
-      } catch {
-        // Fallback: encode in-browser and use a blob URL
-        const wavBuf   = encodeWAV(sliced, SAMPLE_RATE);
-        const blob     = new Blob([wavBuf], { type: "audio/wav" });
-        filePath       = URL.createObjectURL(blob);
-      }
+      const wavBuf   = encodeWAV(sliced, SAMPLE_RATE);
+      const bytes    = new Uint8Array(wavBuf);
+      const appDir   = await (window as any).ether.system.getAppDataDir();
+      const filePath = appDir + `/phone-recordings/phone_clip_${Date.now()}.wav`;
+      const result   = await (window as any).ether.ffmpeg.writeAudio(bytes, filePath);
+      if (!result?.ok) throw new Error(result?.error ?? "writeAudio failed");
 
       const title  = `Phone Clip ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
       const artist = "Phone";
