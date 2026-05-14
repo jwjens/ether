@@ -1,4 +1,5 @@
 const readFile = (p: string): Promise<Uint8Array> => (window as any).ether.fs.readFile(p).then((r: any) => new Uint8Array(r.data ?? r));
+const readFileTail = (p: string, n: number): Promise<Uint8Array> => (window as any).ether.fs.readFileTail(p, n).then((r: any) => new Uint8Array(r.data ?? r));
 
 export interface ID3Tags {
   title: string | null;
@@ -92,9 +93,9 @@ function parseID3v2(bytes: Uint8Array): Partial<ID3Tags> {
 export async function readID3(filePath: string): Promise<ID3Tags> {
   const result: ID3Tags = { title: null, artist: null, album: null, year: null, genre: null, durationSec: null };
   try {
-    const bytes = await readFile(filePath);
+    const [bytes, tail] = await Promise.all([readFile(filePath), readFileTail(filePath, 128)]);
     const v2 = parseID3v2(bytes);
-    const v1 = parseID3v1(bytes);
+    const v1 = parseID3v1(tail);
     result.title = v2.title || v1.title || null;
     result.artist = v2.artist || v1.artist || null;
     result.album = v2.album || v1.album || null;

@@ -1489,9 +1489,24 @@ ipcMain.handle("db:execute", (_, sql, params) => {
 ipcMain.handle("fs:readFile", async (_, filePath) => {
   try {
     const fd = fs.openSync(filePath, "r");
-    const size = fs.fstatSync(fd).size;
+    const size = Math.min(fs.fstatSync(fd).size, 256 * 1024);
     const buf = Buffer.alloc(size);
     fs.readSync(fd, buf, 0, size, 0);
+    fs.closeSync(fd);
+    return { data: Array.from(buf), error: null };
+  } catch (e) {
+    return { data: null, error: e.message };
+  }
+});
+
+ipcMain.handle("fs:readFileTail", async (_, filePath, n) => {
+  try {
+    const fd = fs.openSync(filePath, "r");
+    const totalSize = fs.fstatSync(fd).size;
+    const readSize = Math.min(n, totalSize);
+    const offset = totalSize - readSize;
+    const buf = Buffer.alloc(readSize);
+    fs.readSync(fd, buf, 0, readSize, offset);
     fs.closeSync(fd);
     return { data: Array.from(buf), error: null };
   } catch (e) {

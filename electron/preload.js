@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld("ether", {
   },
   fs: {
     readFile: (fp) => ipcRenderer.invoke("fs:readFile", fp),
+    readFileTail: (fp, n) => ipcRenderer.invoke("fs:readFileTail", fp, n),
     exists: (fp) => ipcRenderer.invoke("fs:exists", fp),
     readDir: (dp) => ipcRenderer.invoke("fs:readDir", dp),
     writeFile: (fp, d) => ipcRenderer.invoke("fs:writeFile", fp, d),
