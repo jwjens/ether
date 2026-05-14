@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, Component, ReactNode } from "react";
 import { query, dbHealthCheck } from "../db/client";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 
 // ═══════════════════════════════════════════════════════════════
@@ -183,6 +183,7 @@ function HealthRow({ label, value, status, sub }: { label: string; value: string
 }
 
 export function HealthMonitor({ onClose }: { onClose: () => void }) {
+  const engine = useAudioEngine();
   const [health, setHealth] = useState<HealthData | null>(null);
   const [dbSchemaVersion, setDbSchemaVersion] = useState(0);
   const [exporting, setExporting] = useState(false);

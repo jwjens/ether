@@ -12,7 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
-import { engine } from "../audio/engine-rodio";
+import { getEngine } from "../audio/engine-registry";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -82,6 +82,7 @@ export const MACRO_ACTIONS: { category: string; actions: { label: string; type: 
 const ether = (window as any).ether;
 
 export async function executeMacro(macro: Macro, dispatch?: (cmd: string) => void) {
+  const engine = getEngine(getActiveStationIdSync());
   console.log(`[MACRO] ▶ ${macro.name} (${macro.actions.length} actions)`);
   for (const action of macro.actions) {
     switch (action.type) {

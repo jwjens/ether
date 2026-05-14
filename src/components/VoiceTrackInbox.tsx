@@ -11,7 +11,7 @@
 // side. Voice tracks live as files in <userData>/voice-tracks/.
 
 import { useEffect, useState } from "react";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 interface Track {
   id: number;
@@ -56,6 +56,7 @@ function fmtAgo(unixSec: number) {
 }
 
 export default function VoiceTrackInbox({ onClose }: { onClose?: () => void }) {
+  const engine = useAudioEngine();
   const ether = (window as any).ether;
   const [tracks, setTracks]   = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);

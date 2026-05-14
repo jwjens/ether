@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -318,6 +318,7 @@ function TrackCard({
 // ─── Main Component ────────────────────────────────────────────
 
 export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string }) {
+  const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
 
   // Data

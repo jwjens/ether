@@ -22,7 +22,7 @@ import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from ".
 import { queryScoped } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
-import { engine, DeckState, rotLog } from "./audio/engine-rodio";
+import { DeckState, rotLog } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";

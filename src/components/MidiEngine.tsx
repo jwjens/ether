@@ -13,7 +13,8 @@
 
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 import { query, execute } from "../db/client";
-import { engine } from "../audio/engine-rodio";
+import { getEngine } from "../audio/engine-registry";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -197,6 +198,7 @@ function dispatchMidiAction(
   setFaderPositions: React.Dispatch<React.SetStateAction<Record<string, number>>>,
   setChannelOn: React.Dispatch<React.SetStateAction<Record<string, boolean>>>,
 ) {
+  const engine = getEngine(getActiveStationIdSync());
   const normalized = value / 127; // 0-1
 
   if (isFader) {

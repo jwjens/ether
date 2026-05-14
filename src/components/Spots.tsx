@@ -3,7 +3,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 interface Spot {
   id: number; title: string; file_path: string | null;
@@ -25,6 +25,7 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function Spots() {
+  const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [spots, setSpots] = useState<Spot[]>([]);
   const [filter, setFilter] = useState<string>("all");

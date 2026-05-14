@@ -14,7 +14,7 @@
 // stay out of the renderer.
 
 import { useEffect, useMemo, useState } from "react";
-import { engine } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 type SegmentStatus = "pending" | "generating" | "ready" | "played" | "error" | "archived";
 
@@ -278,6 +278,7 @@ function ComposeTab({ templates, onGenerated }: { templates: Template[]; onGener
 // ── Library tab — generated segments + actions ──
 function LibraryTab({ segments, loading, playing, setPlaying, onRefresh }:
   { segments: Segment[]; loading: boolean; playing: number | null; setPlaying: (n: number | null) => void; onRefresh: () => void }) {
+  const engine = useAudioEngine();
   const ether = (window as any).ether;
   const [filter, setFilter] = useState<"all" | SegmentStatus>("all");
 

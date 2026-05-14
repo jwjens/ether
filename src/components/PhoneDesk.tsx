@@ -25,7 +25,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
-import { engine, DeckId } from "../audio/engine-rodio";
+import { DeckId } from "../audio/engine-rodio";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -280,6 +281,7 @@ function WaveformView({
 // ─── Main Component ───────────────────────────────────────────
 
 export default function PhoneDesk({ onClose }: Props) {
+  const engine = useAudioEngine();
   // Input mode
   const [inputMode, setInputMode]   = useState<InputMode>("device");
   const [devices, setDevices]       = useState<AudioDevice[]>([]);
