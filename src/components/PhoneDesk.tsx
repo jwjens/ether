@@ -97,6 +97,23 @@ function encodeWAV(samples: Float32Array, sampleRate: number): ArrayBuffer {
   return buf;
 }
 
+function computePeaks(pcm: Float32Array): Float32Array {
+  const total     = pcm.length;
+  const bars      = Math.min(3000, Math.max(100, Math.floor(total / 64)));
+  const blockSize = Math.floor(total / bars);
+  const peaks     = new Float32Array(bars);
+  let gMax = 0;
+  for (let i = 0; i < bars; i++) {
+    let mx = 0;
+    const start = i * blockSize;
+    for (let j = 0; j < blockSize; j++) { const v = Math.abs(pcm[start + j] || 0); if (v > mx) mx = v; }
+    peaks[i] = mx;
+    if (mx > gMax) gMax = mx;
+  }
+  if (gMax > 0) for (let i = 0; i < bars; i++) peaks[i] /= gMax;
+  return peaks;
+}
+
 // ─── Level Meter ──────────────────────────────────────────────
 
 function LevelMeter({ level, peak }: { level: number; peak: number }) {
@@ -141,6 +158,7 @@ function LevelMeter({ level, peak }: { level: number; peak: number }) {
 function WaveformView({
   peaks, duration, cueIn, cueOut,
   playhead, onSeek, onCueInChange, onCueOutChange,
+  region, onRegionChange,
 }: {
   peaks: Float32Array | null;
   duration: number;
@@ -150,9 +168,13 @@ function WaveformView({
   onSeek: (sec: number) => void;
   onCueInChange: (sec: number) => void;
   onCueOutChange: (sec: number) => void;
+  region: { start: number; end: number } | null;
+  onRegionChange: (r: { start: number; end: number } | null) => void;
 }) {
   const canvasRef       = useRef<HTMLCanvasElement>(null);
   const dragRef         = useRef<null | 'in' | 'out'>(null);
+  const regionDragRef   = useRef<{ startSec: number; startX: number; active: boolean } | null>(null);
+  const DRAG_THRESHOLD_PX = 5;
   const cueInPropRef    = useRef(cueIn);
   const cueOutPropRef   = useRef(cueOut);
   const durationPropRef = useRef(duration);
@@ -193,6 +215,14 @@ function WaveformView({
     // Muted zone right of cueOut
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(outX, 0, W - outX, H);
+
+    // Region selection overlay (drawn before bars so waveform remains visible through it)
+    if (region && duration > 0) {
+      const rStartX = (region.start / duration) * W;
+      const rEndX   = (region.end   / duration) * W;
+      ctx.fillStyle = "rgba(255, 200, 100, 0.25)";
+      ctx.fillRect(rStartX, 0, rEndX - rStartX, H);
+    }
 
     // Waveform bars
     const barW = Math.max(1, W / peaks.length);
@@ -249,7 +279,7 @@ function WaveformView({
       ctx.fillStyle = "#52525b";
       ctx.fillText(fmtTime(t), tx, H - 4);
     }
-  }, [peaks, duration, cueIn, cueOut, playhead]);
+  }, [peaks, duration, cueIn, cueOut, playhead, region]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -308,8 +338,31 @@ function WaveformView({
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     } else {
-      const ratio = (e.clientX - rect.left) / rect.width;
-      onSeek(Math.max(0, Math.min(1, ratio)) * durationPropRef.current);
+      const dur = durationPropRef.current;
+      if (dur <= 0) return;
+      const startX   = e.clientX;
+      const startSec = ((e.clientX - rect.left) / rect.width) * dur;
+      regionDragRef.current = { startSec, startX, active: false };
+
+      const onMove = (ev: MouseEvent) => {
+        if (!regionDragRef.current) return;
+        if (Math.abs(ev.clientX - startX) > DRAG_THRESHOLD_PX) {
+          regionDragRef.current.active = true;
+          const curSec = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width)) * dur;
+          onRegionChange({ start: Math.min(startSec, curSec), end: Math.max(startSec, curSec) });
+        }
+      };
+      const onUp = (ev: MouseEvent) => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        if (!regionDragRef.current?.active) {
+          const ratio = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+          onSeek(ratio * dur);
+        }
+        regionDragRef.current = null;
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
     }
   };
 
@@ -371,6 +424,9 @@ export default function PhoneDesk({ onClose }: Props) {
   const [recPCM, setRecPCM]         = useState<Float32Array | null>(null);
   const [waveformPeaks, setWaveformPeaks] = useState<Float32Array | null>(null);
   const [clipDuration, setClipDuration]   = useState(0);
+
+  // Region select
+  const [region, setRegion]         = useState<{ start: number; end: number } | null>(null);
 
   // Cue editor
   const [cueIn, setCueIn]           = useState(0);
@@ -514,6 +570,7 @@ export default function PhoneDesk({ onClose }: Props) {
       liveWaveRef.current   = [];
       recDurRef.current     = 0;
       setRecDuration(0);
+      setRegion(null);
 
       recStateRef.current = "recording";
       setRecState("recording");
@@ -549,21 +606,8 @@ export default function PhoneDesk({ onClose }: Props) {
     cueInRef.current  = 0;
     cueOutRef.current = dur;
     setPlayhead(0);
-
-    // Build waveform peaks (3000 bars)
-    const bars      = Math.min(3000, Math.max(100, Math.floor(total / 64)));
-    const blockSize = Math.floor(total / bars);
-    const peaks     = new Float32Array(bars);
-    let gMax = 0;
-    for (let i = 0; i < bars; i++) {
-      let mx = 0;
-      const start = i * blockSize;
-      for (let j = 0; j < blockSize; j++) { const v = Math.abs(flat[start + j] || 0); if (v > mx) mx = v; }
-      peaks[i] = mx;
-      if (mx > gMax) gMax = mx;
-    }
-    if (gMax > 0) for (let i = 0; i < bars; i++) peaks[i] /= gMax;
-    setWaveformPeaks(peaks);
+    setRegion(null);
+    setWaveformPeaks(computePeaks(flat));
   }, []);
 
   // ── Arm / Record / Stop button ──
@@ -662,47 +706,58 @@ export default function PhoneDesk({ onClose }: Props) {
   // ── Save recording to disk ──
   const [saving, setSaving]     = useState(false);
   const [savedPath, setSavedPath] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   const saveRecording = useCallback(async () => {
     if (!recPCM || saving) return;
     setSaving(true);
+    setSaveError("");
     try {
       const now   = new Date();
       const stamp = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}-${String(now.getMinutes()).padStart(2,"0")}-${String(now.getSeconds()).padStart(2,"0")}`;
       const fileName = `phone-recording-${stamp}.wav`;
 
-      const wavBuf = encodeWAV(recPCM, SAMPLE_RATE);
-      const bytes  = new Uint8Array(wavBuf);
-
-      // Try Electron fs.writeFile first, fall back to browser download
-      try {
-        const appDir = await (window as any).ether.system.getAppDataDir();
-        const dir    = appDir + "/phone-recordings";
-        await (window as any).ether.fs.mkdir(dir).catch(() => {});
-        const filePath = dir + "/" + fileName;
-        await (window as any).ether.fs.writeFile(filePath, Array.from(bytes));
-        setSavedPath(filePath);
-      } catch {
-        // Browser download fallback
-        const blob = new Blob([wavBuf], { type: "audio/wav" });
-        const url  = URL.createObjectURL(blob);
-        const a    = document.createElement("a");
-        a.href = url; a.download = fileName; a.click();
-        URL.revokeObjectURL(url);
-        setSavedPath(fileName);
-      }
+      const wavBuf   = encodeWAV(recPCM, SAMPLE_RATE);
+      const bytes    = new Uint8Array(wavBuf);
+      const appDir   = await (window as any).ether.system.getAppDataDir();
+      const filePath = appDir + `/phone-recordings/${fileName}`;
+      const result   = await (window as any).ether.ffmpeg.writeAudio(bytes, filePath);
+      if (!result?.ok) throw new Error(result?.error ?? "writeAudio failed");
+      setSavedPath(filePath);
       setTimeout(() => setSavedPath(""), 4000);
+    } catch (e: any) {
+      setSaveError(String(e));
     } finally {
       setSaving(false);
     }
   }, [recPCM, saving]);
 
+  // ── Delete selected region ──
+  const handleDeleteRegion = useCallback(() => {
+    if (!recPCM || !region) return;
+    const startSample = Math.floor(region.start * SAMPLE_RATE);
+    const endSample   = Math.floor(region.end   * SAMPLE_RATE);
+    const before = recPCM.slice(0, startSample);
+    const after  = recPCM.slice(endSample);
+    const merged = new Float32Array(before.length + after.length);
+    merged.set(before, 0);
+    merged.set(after, before.length);
+    const newDur = merged.length / SAMPLE_RATE;
+    const removedDur = (endSample - startSample) / SAMPLE_RATE;
+    setRecPCM(merged);
+    setWaveformPeaks(computePeaks(merged));
+    setClipDuration(newDur);
+    setCueIn(prev  => prev  >= region.end ? Math.max(0, prev  - removedDur) : prev  >= region.start ? region.start : prev);
+    setCueOut(prev => prev  >= region.end ? Math.max(0, Math.min(prev - removedDur, newDur)) : prev >= region.start ? region.start : Math.min(prev, newDur));
+    setRegion(null);
+  }, [recPCM, region]);
+
   // ── Clip keyboard shortcuts ──
-  // Left arrow → snap to beginning, Space → play/stop, Right arrow → snap to end
+  // Space → play/stop, Left → snap start, Right → snap end, Delete/Backspace → delete region
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Only fire when phone desk is focused / active — skip if user is typing in an input
-      if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "SELECT") return;
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
       const clipReady = recPCM !== null && recState === "stopped";
       if (!clipReady) return;
 
@@ -717,11 +772,13 @@ export default function PhoneDesk({ onClose }: Props) {
         e.preventDefault();
         setPlayhead(cueOutRef.current);
         stopPreview();
+      } else if (e.key === "Delete" || e.key === "Backspace") {
+        if (region) { e.preventDefault(); handleDeleteRegion(); }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [recPCM, recState, previewing, startPreview, stopPreview]);
+  }, [recPCM, recState, previewing, startPreview, stopPreview, region, handleDeleteRegion]);
 
   // ── Cleanup on unmount ──
   useEffect(() => {
@@ -743,8 +800,8 @@ export default function PhoneDesk({ onClose }: Props) {
 
   // ─── Pop-out ─────────────────────────────────────────────────
 
-  const openGuestEditorWindow = async () => {
-    await (window as any).ether.invoke("window:guesteditor");
+  const popOutPhoneDesk = async () => {
+    await (window as any).ether.invoke("window:popout", "phone");
   };
 
   // ─── Render ─────────────────────────────────────────────────
@@ -804,7 +861,7 @@ export default function PhoneDesk({ onClose }: Props) {
         {/* Pop-out button */}
         <button
           title="Pop out to separate window"
-          onClick={openGuestEditorWindow}
+          onClick={popOutPhoneDesk}
           style={{ background: "none", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", padding: "0 10px", height: 26, display: "flex", alignItems: "center", gap: 5, transition: "all 0.12s", borderRadius: 0, flexShrink: 0, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", fontFamily: "'DM Mono', monospace" }}
           onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(96,128,192,0.4)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border-primary)"; }}
@@ -1040,6 +1097,8 @@ export default function PhoneDesk({ onClose }: Props) {
                 }}
                 onCueInChange={(sec) => setCueIn(Math.max(0, sec))}
                 onCueOutChange={(sec) => setCueOut(Math.min(clipDuration, sec))}
+                region={region}
+                onRegionChange={setRegion}
               />
             )}
           </div>
@@ -1200,6 +1259,11 @@ export default function PhoneDesk({ onClose }: Props) {
           {sendError && (
             <div style={{ padding: "8px 16px", background: "rgba(239,68,68,0.08)", borderTop: "1px solid rgba(239,68,68,0.2)", fontSize: 11, color: "#ef4444", flexShrink: 0 }}>
               {sendError}
+            </div>
+          )}
+          {saveError && (
+            <div style={{ padding: "8px 16px", background: "rgba(239,68,68,0.08)", borderTop: "1px solid rgba(239,68,68,0.2)", fontSize: 11, color: "#ef4444", flexShrink: 0 }}>
+              {saveError}
             </div>
           )}
         </div>
