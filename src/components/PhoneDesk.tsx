@@ -427,6 +427,7 @@ export default function PhoneDesk({ onClose }: Props) {
 
   // Region select
   const [region, setRegion]         = useState<{ start: number; end: number } | null>(null);
+  const undoRef                     = useRef<{ pcm: Float32Array; peaks: Float32Array; duration: number; cueIn: number; cueOut: number } | null>(null);
 
   // Cue editor
   const [cueIn, setCueIn]           = useState(0);
@@ -571,6 +572,7 @@ export default function PhoneDesk({ onClose }: Props) {
       recDurRef.current     = 0;
       setRecDuration(0);
       setRegion(null);
+      undoRef.current = null;
 
       recStateRef.current = "recording";
       setRecState("recording");
@@ -607,6 +609,7 @@ export default function PhoneDesk({ onClose }: Props) {
     cueOutRef.current = dur;
     setPlayhead(0);
     setRegion(null);
+    undoRef.current = null;
     setWaveformPeaks(computePeaks(flat));
   }, []);
 
@@ -735,6 +738,13 @@ export default function PhoneDesk({ onClose }: Props) {
   // ── Delete selected region ──
   const handleDeleteRegion = useCallback(() => {
     if (!recPCM || !region) return;
+    undoRef.current = {
+      pcm:      recPCM,
+      peaks:    waveformPeaks ?? new Float32Array(0),
+      duration: clipDuration,
+      cueIn:    cueInRef.current,
+      cueOut:   cueOutRef.current,
+    };
     const startSample = Math.floor(region.start * SAMPLE_RATE);
     const endSample   = Math.floor(region.end   * SAMPLE_RATE);
     const before = recPCM.slice(0, startSample);
@@ -750,7 +760,20 @@ export default function PhoneDesk({ onClose }: Props) {
     setCueIn(prev  => prev  >= region.end ? Math.max(0, prev  - removedDur) : prev  >= region.start ? region.start : prev);
     setCueOut(prev => prev  >= region.end ? Math.max(0, Math.min(prev - removedDur, newDur)) : prev >= region.start ? region.start : Math.min(prev, newDur));
     setRegion(null);
-  }, [recPCM, region]);
+  }, [recPCM, region, waveformPeaks, clipDuration]);
+
+  // ── Undo last region delete ──
+  const handleUndo = useCallback(() => {
+    const snap = undoRef.current;
+    if (!snap) return;
+    setRecPCM(snap.pcm);
+    setWaveformPeaks(snap.peaks);
+    setClipDuration(snap.duration);
+    setCueIn(snap.cueIn);
+    setCueOut(snap.cueOut);
+    setRegion(null);
+    undoRef.current = null;
+  }, []);
 
   // ── Clip keyboard shortcuts ──
   // Space → play/stop, Left → snap start, Right → snap end, Delete/Backspace → delete region
@@ -774,11 +797,13 @@ export default function PhoneDesk({ onClose }: Props) {
         stopPreview();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (region) { e.preventDefault(); handleDeleteRegion(); }
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        if (undoRef.current) { e.preventDefault(); handleUndo(); }
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [recPCM, recState, previewing, startPreview, stopPreview, region, handleDeleteRegion]);
+  }, [recPCM, recState, previewing, startPreview, stopPreview, region, handleDeleteRegion, handleUndo]);
 
   // ── Cleanup on unmount ──
   useEffect(() => {
@@ -1042,6 +1067,8 @@ export default function PhoneDesk({ onClose }: Props) {
                 <div>⌨ Space — play / stop</div>
                 <div>⌨ ← — snap to start</div>
                 <div>⌨ → — snap to end</div>
+                <div>⌨ Del — delete region</div>
+                <div>⌨ Ctrl+Z — undo delete</div>
               </div>
             </div>
           </div>
