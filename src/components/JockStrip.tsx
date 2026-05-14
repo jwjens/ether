@@ -67,6 +67,10 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
     if (song.file_path) engine.loadToDeck("B", song.file_path, song.title, song.artist_name || "");
     setSearch(""); setShowResults(false);
   };
+  const loadToDeckC = (song: SongResult) => {
+    if (song.file_path) engine.loadToDeck("C", song.file_path, song.title, song.artist_name || "");
+    setSearch(""); setShowResults(false);
+  };
 
   return (
     <div style={{ position: "relative", height: "100%", display: "flex", flexDirection: "column" }}>
@@ -201,6 +205,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
                 <button onMouseDown={e => { e.preventDefault(); addToQueue(r); }} style={{ padding: "4px 9px", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer" }}>Q</button>
                 <button onMouseDown={e => { e.preventDefault(); loadToDeckA(r); }} style={{ padding: "4px 9px", background: "#38bdf8", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>A</button>
                 <button onMouseDown={e => { e.preventDefault(); loadToDeckB(r); }} style={{ padding: "4px 9px", background: "#34d399", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>B</button>
+                <button onMouseDown={e => { e.preventDefault(); loadToDeckC(r); }} style={{ padding: "4px 9px", background: "#a78bfa", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>C</button>
               </div>
             </div>
           ))}
