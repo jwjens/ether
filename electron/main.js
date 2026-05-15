@@ -555,6 +555,22 @@ function runMigrations() {
       resolved    INTEGER DEFAULT 0,
       created_at  INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS eas_tests (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      occurred_at        INTEGER NOT NULL,
+      alert_code         TEXT NOT NULL,
+      direction          TEXT NOT NULL DEFAULT 'received',
+      originator         TEXT DEFAULT '',
+      sender_id          TEXT DEFAULT '',
+      received_from      TEXT DEFAULT '',
+      retransmitted      INTEGER DEFAULT 0,
+      retransmitted_at   INTEGER DEFAULT 0,
+      operator_initials  TEXT DEFAULT '',
+      notes              TEXT DEFAULT '',
+      created_at         INTEGER DEFAULT (unixepoch()),
+      station_id         INTEGER NOT NULL DEFAULT 1
+    );
   `);
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
@@ -612,6 +628,8 @@ function runMigrations() {
   alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_artist TEXT");
   alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_position INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE crash_recovery ADD COLUMN was_playing INTEGER DEFAULT 0");
+  // eas_tests: add station_id for existing installs (fresh installs get it from CREATE TABLE above)
+  alterSafe("ALTER TABLE eas_tests ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
   // Ensure the single crash_recovery sentinel row exists
   db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
   // Seed default users if table is empty
@@ -749,6 +767,9 @@ function runMigrations() {
     seedRules();
     console.log("[DB] Seeded default separation rules for station", sid);
   }
+
+  // Station-scope index for eas_tests (idempotent)
+  db.exec("CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)");
 
   // FTS index for song search
   db.exec(`
@@ -1051,6 +1072,7 @@ function buildMenu() {
       { label: "Program Log",      click: () => send("nav:programlog") },
       { label: "Play Log",         click: () => send("nav:logs") },
       { label: "Announcements",    click: () => send("nav:announce") },
+      { label: "EAS Logbook",     click: () => send("nav:eas") },
     ]},
     { label: "Tools", submenu: [
       { label: "Voice Tracker", click: () => send("nav:voicetrack") },

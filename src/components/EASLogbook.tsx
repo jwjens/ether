@@ -18,6 +18,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { query, execute } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // Alert codes per FCC § 11.31.
 const ALERT_CODES: { code: string; label: string; severity: "test" | "alert" }[] = [
@@ -75,6 +76,7 @@ function startOfMonth(): number {
 }
 
 export default function EASLogbook({ onClose }: { onClose?: () => void }) {
+  const { stationId } = useActiveStation();
   const [entries, setEntries] = useState<EasEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -90,8 +92,8 @@ export default function EASLogbook({ onClose }: { onClose?: () => void }) {
         filter === "year"  ? Math.floor(Date.now()/1000) - 365*86400 :
                              0;
       const rows = await query<EasEntry>(
-        "SELECT * FROM eas_tests WHERE occurred_at >= ? ORDER BY occurred_at DESC",
-        [since]
+        "SELECT * FROM eas_tests WHERE occurred_at >= ? AND station_id = ? ORDER BY occurred_at DESC",
+        [since, stationId]
       );
       setEntries(rows);
     } catch (e) {
@@ -118,7 +120,7 @@ export default function EASLogbook({ onClose }: { onClose?: () => void }) {
 
   const deleteEntry = async (id: number) => {
     if (!confirm("Delete this EAS log entry? FCC requires 2-year retention — only delete duplicates or errors.")) return;
-    await execute("DELETE FROM eas_tests WHERE id = ?", [id]);
+    await execute("DELETE FROM eas_tests WHERE id = ? AND station_id = ?", [id, stationId]);
     load();
   };
 
@@ -289,6 +291,7 @@ export default function EASLogbook({ onClose }: { onClose?: () => void }) {
       {showForm && (
         <EntryForm
           editingId={editingId}
+          stationId={stationId}
           onClose={() => { setShowForm(false); setEditingId(null); }}
           onSaved={() => { setShowForm(false); setEditingId(null); load(); }}
         />
@@ -313,7 +316,7 @@ function SummaryCard({ label, value, target, status, hint }: { label: string; va
 }
 
 // ── Sub: entry add/edit form ──
-function EntryForm({ editingId, onClose, onSaved }: { editingId: number | null; onClose: () => void; onSaved: () => void }) {
+function EntryForm({ editingId, stationId, onClose, onSaved }: { editingId: number | null; stationId: number; onClose: () => void; onSaved: () => void }) {
   const isEdit = editingId !== null;
   const [occurredAt, setOccurredAt]    = useState<string>(() => new Date().toISOString().slice(0, 16));
   const [alertCode, setAlertCode]      = useState("RWT");
@@ -330,7 +333,7 @@ function EntryForm({ editingId, onClose, onSaved }: { editingId: number | null; 
   useEffect(() => {
     if (!isEdit) return;
     (async () => {
-      const r = await query<EasEntry>("SELECT * FROM eas_tests WHERE id = ?", [editingId!]);
+      const r = await query<EasEntry>("SELECT * FROM eas_tests WHERE id = ? AND station_id = ?", [editingId!, stationId]);
       if (r[0]) {
         const e = r[0];
         setOccurredAt(new Date(e.occurred_at * 1000).toISOString().slice(0, 16));
@@ -354,13 +357,13 @@ function EntryForm({ editingId, onClose, onSaved }: { editingId: number | null; 
       const retxUnix = retransmittedAt ? Math.floor(new Date(retransmittedAt).getTime() / 1000) : 0;
       if (isEdit) {
         await execute(
-          "UPDATE eas_tests SET occurred_at=?, alert_code=?, direction=?, originator=?, sender_id=?, received_from=?, retransmitted=?, retransmitted_at=?, operator_initials=?, notes=? WHERE id=?",
-          [occUnix, alertCode, direction, originator, senderId, receivedFrom, retransmitted ? 1 : 0, retxUnix, operatorInitials, notes, editingId]
+          "UPDATE eas_tests SET occurred_at=?, alert_code=?, direction=?, originator=?, sender_id=?, received_from=?, retransmitted=?, retransmitted_at=?, operator_initials=?, notes=? WHERE id=? AND station_id=?",
+          [occUnix, alertCode, direction, originator, senderId, receivedFrom, retransmitted ? 1 : 0, retxUnix, operatorInitials, notes, editingId, stationId]
         );
       } else {
         await execute(
-          "INSERT INTO eas_tests (occurred_at, alert_code, direction, originator, sender_id, received_from, retransmitted, retransmitted_at, operator_initials, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          [occUnix, alertCode, direction, originator, senderId, receivedFrom, retransmitted ? 1 : 0, retxUnix, operatorInitials, notes]
+          "INSERT INTO eas_tests (occurred_at, alert_code, direction, originator, sender_id, received_from, retransmitted, retransmitted_at, operator_initials, notes, station_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [occUnix, alertCode, direction, originator, senderId, receivedFrom, retransmitted ? 1 : 0, retxUnix, operatorInitials, notes, stationId]
         );
       }
       onSaved();
