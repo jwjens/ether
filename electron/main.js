@@ -2,11 +2,25 @@
 // Ether Electron main process
 // Replaces src-tauri entirely — Chromium rendering, Node.js backend, NAPI audio
 
-// ─── PHASE 3 CHECKLIST — renderer INSERT callsites missing station_id ───────────
-// Before setting multistation_insert_audit_complete=true in station_config_kv,
-// every callsite below must pass station_id explicitly (read via ether.stations.getActive()).
-// Until then, stations:create blocks creation of a second station (see safety gate).
+// ─── PHASE A INSERT AUDIT — COMPLETE 2026-05-14 ──────────────────────────────
+// The original concern: ~40 renderer INSERT callsites might write rows without
+// an explicit station_id, breaking multi-station isolation. That concern was
+// resolved during Phase F (sync engine work) before any callsite was broken in
+// production. INSERT audit confirmed zero broken callsites (commit 08f75da).
 //
+// Phase A schema migrations (non-synced local tables):
+//   eas_tests         station_id added — schema v13 (commit 433e7a0, 2026-05-14)
+//   midi_mappings     station_id added — schema v14 (commit bcc9f66, 2026-05-14)
+//   ai_voice_segments station_id added — schema v15 (commit 1c0fc88, 2026-05-14)
+//
+// Gate flag 'multistation_insert_audit_complete' = 'true':
+//   Existing installs — flag already present in station_config_kv
+//   Fresh installs    — seeded via INSERT OR IGNORE in runMigrations() (this file)
+//   Guard location    — stations:create handler ~line 3935
+//
+// Multi-station station creation is now permitted.
+//
+// ── Original callsite inventory (audit history — not a live to-do list) ──────
 // Table               File                               INSERT location
 // categories          src/App.tsx                        ~line 3269
 // categories          src/components/CreateShowWizard    ~line 164
@@ -48,7 +62,7 @@
 // prep_notes          src/components/ShowPrep.tsx        ~line 391
 // format_clocks       src/components/ClockEditor.tsx     ~line 168
 // published_episodes  src/components/PublishEpisode.tsx  ~line 428
-// ─────────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ── Load .env before anything else so process.env is populated for all modules ──
 try { require("dotenv").config(); } catch (e) { /* dotenv optional in packaged build */ }
@@ -674,6 +688,9 @@ function runMigrations() {
       INSERT INTO users (name, role, pin_hash, color) VALUES ('Music Director', 'music_director', '1234', '#a78bfa');
     `);
   }
+  // Phase A complete — gate flag seeded for fresh installs (existing installs already have it set)
+  db.prepare("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('multistation_insert_audit_complete', 'true')").run();
+
   // EQ settings stored in station_config_kv with keys eq_deck_A, eq_deck_B, eq_deck_C, eq_deck_mic, eq_master
   // Part 2 — operators and operator notes
   db.exec(`
