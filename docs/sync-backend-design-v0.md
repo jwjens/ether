@@ -149,8 +149,10 @@ CREATE TABLE license_keys (
 **B-06 — Data isolation: row-level, enforced at query time.**  
 Every query that reads or writes `mutations` is filtered by `license_key_id`. The `license_key_id` is resolved from the `x-license-key` header by the auth middleware before any handler runs. No client-supplied `license_key_id` is trusted. Cross-tenant data is not accessible by any query path.
 
-**B-07 — Provisioning: Stripe Checkout via existing Railway infrastructure.**  
-Stripe is already deployed on Railway. The primary provisioning path is: Stripe Checkout → webhook → license key generated → key emailed to customer. The exact integration between Railway's Stripe handling and the Lightsail backend's `license_keys` table is an implementation detail to nail down during backend scaffolding — not a deferred design question.
+**B-07 — Provisioning: Stripe Checkout via Railway `ether-backend` service (existing infrastructure).**  
+The `ether-backend` service on Railway is already live with `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PRICE_PRO`, `PRICE_STATION`, `RESEND_API_KEY`, `DATABASE_URL`, and `ADMIN_SECRET` configured. Payment links for Ether Pro ($19/mo) and Ether Station ($79/mo) are active.
+
+Primary provisioning path: customer completes Stripe Checkout → `ether-backend` webhook fires → license key generated and inserted into `license_keys` → key emailed to customer via Resend.
 
 A manual admin CLI exists as a backstop for edge cases (refunds, comped accounts, internal testing). It is not the primary path.
 
@@ -398,8 +400,8 @@ These are not decisions for v0. They are tracked here so the design doc remains 
 **Tier semantics (deferred to future arc)**  
 The `tier` column exists on `accounts`. The specific values, what each tier unlocks, upgrade/downgrade flows, and how tiers map to subscription state are not yet designed. No code should gate on tier values until the tier arc is executed.
 
-**Stripe provisioning integration (scaffolding task)**  
-Stripe is already live on Railway. The integration work — wiring the Railway webhook handler to create rows in the Lightsail `accounts` and `license_keys` tables and email the raw key — is a concrete scaffolding task, not a future arc. The schema requires no migration; both tables are designed for this.
+**Stripe provisioning wiring (scaffolding task)**  
+`ether-backend` on Railway handles Stripe webhooks and Resend emails today. The scaffolding task is connecting the webhook handler to the Lightsail sync backend so it can write to `accounts` and `license_keys`. The schema is already designed for this — no migration required.
 
 **Stage 4 client wiring (client-side, tracked in electron/sync/sync-engine.js)**  
 The client's `SyncEngine` and `SyncScheduler` are not wired into `main.js` startup. This is a client-side task (Stage 4 per the sync-protocol-v0.md staging plan). The server must be live before Stage 4 lands.
