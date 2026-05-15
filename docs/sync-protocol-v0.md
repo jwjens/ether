@@ -8,6 +8,8 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 
 **Numbering stability.** Rule numbers are permanent. Once this document is committed, a rule that is superseded or removed is replaced with a placeholder of the form *"[N-NN] Deleted — reason. Number reserved, do not reuse."* New rules always get the next unused number; numbers are never shifted to close gaps.
 
+**Amendment 2026-05-15 — operator_id:** Field 4 renamed from `actor_id` to `operator_id` throughout to match Ether's existing operator system. The Terminology section already referenced `operator_id`; this amendment aligns the field table and WireMutation type definition. New normative rule N-123 formalizes `operator_id` semantics. Wire field count: 14 (unchanged). On-disk field count: 17 (unchanged).
+
 ---
 
 ## Table of contents
@@ -83,7 +85,7 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 | 1 | `id` | TEXT PRIMARY KEY | No | Yes | UUID v4 identifying this mutation globally. |
 | 2 | `client_id` | TEXT | No | Yes | UUID of the client that created this mutation. |
 | 3 | `station_id` | TEXT | Yes | Yes | Tenant scope; NULL for install-scoped mutations ([N-89]). |
-| 4 | `actor_id` | TEXT | Yes | Yes | Operator UUID if known; NULL for `origin='system'` or `'migration'`. |
+| 4 | `operator_id` | TEXT | Yes | Yes | Operator UUID if known; NULL for `origin='system'` or `'migration'`. References `operators.id` from the local operators table. Semantics per [N-123]. |
 | 5 | `table_name` | TEXT | No | Yes | One of the 37 synced table names. |
 | 6 | `row_id` | TEXT | No | Yes | UUID of the target row (not the integer `id` PK — the `uuid` column added in sync-ready 1/7). |
 | 7 | `op` | TEXT | No | Yes | One of `'insert'`, `'update'`, `'delete'`, or reserved `'checkpoint'`. See [N-10]. |
@@ -99,7 +101,7 @@ Normative statements are numbered `[N-nn]`. When a code review or bug report ref
 | 17 | `conflict_resolution` | TEXT | Yes | Yes | JSON describing how a conflict was resolved, if this mutation is the product of a merge. NULL otherwise. |
 
 - `[N-08]` Fields marked "No" in the Wire column above are LOCAL-ONLY and SHALL NOT be included in the wire format. Fields marked "Yes" ARE included. Any edit to this table's Wire column is a protocol change.
-- `[N-09]` `id`, `client_id`, `station_id`, `actor_id`, `row_id`, and `parent_mutation_id` are all UUIDs stored as lowercase hex strings with dashes (standard RFC 4122 format). Implementations SHALL reject non-conforming UUIDs at write time.
+- `[N-09]` `id`, `client_id`, `station_id`, `operator_id`, `row_id`, and `parent_mutation_id` are all UUIDs stored as lowercase hex strings with dashes (standard RFC 4122 format). Implementations SHALL reject non-conforming UUIDs at write time.
 - `[N-10]` `op` SHALL be enforced by a CHECK constraint: `CHECK (op IN ('insert', 'update', 'delete', 'checkpoint'))`. The `'checkpoint'` value is RESERVED for future compaction use (see [§12](#compaction)) and SHALL NOT be written by v0 code. Including it in the CHECK constraint now avoids a schema bump when compaction lands.
 - `[N-11]` `origin` SHALL be enforced by a CHECK constraint: `CHECK (origin IN ('local', 'remote', 'system', 'migration'))`.
 - `[N-12]` `sync_status` SHALL be enforced by a CHECK constraint: `CHECK (sync_status IN ('pending', 'syncing', 'synced', 'conflicted'))`.
@@ -259,7 +261,7 @@ Worked examples are in [Appendix A](#hlc-examples).
 ### 7.1 Field inclusion
 
 - `[N-48]` The wire format of a mutation is the JSON serialization of a mutation record with the fields marked "No" in the Wire column of [§3](#schema)'s table OMITTED. [§3](#schema)'s table is the single source of truth for wire-format membership; this section does not re-enumerate.
-- `[N-49]` Sanity check: the wire format SHALL contain exactly 14 fields; 3 fields are LOCAL-ONLY. If a reviewer counts differently against [§3](#schema)'s table, either the table has been edited without updating this count, or the reviewer has miscounted — both warrant investigation.
+- `[N-49]` Sanity check: the wire format SHALL contain exactly 14 fields (including `operator_id` per [N-123]); 3 fields are LOCAL-ONLY. If a reviewer counts differently against [§3](#schema)'s table, either the table has been edited without updating this count, or the reviewer has miscounted — both warrant investigation.
 
 ### 7.2 Serialization
 
@@ -537,7 +539,7 @@ For reviewers and implementers who just need the field list without the prose.
 | 1 | `id` | TEXT | N | Y | Mutation UUID |
 | 2 | `client_id` | TEXT | N | Y | Originating client |
 | 3 | `station_id` | TEXT | **Y** | Y | Tenant scope; NULL for install-scoped writes [N-89] |
-| 4 | `actor_id` | TEXT | Y | Y | Operator who made the change |
+| 4 | `operator_id` | TEXT | Y | Y | Operator who made the change; see [N-123] |
 | 5 | `table_name` | TEXT | N | Y | Target table |
 | 6 | `row_id` | TEXT | N | Y | Target row UUID |
 | 7 | `op` | TEXT | N | Y | insert/update/delete (+ reserved checkpoint) |
@@ -759,7 +761,7 @@ Applying a remote mutation is the most critical operation in the sync engine. Th
     id: string;                  // required
     client_id: string;           // required
     station_id: string | null;   // required (null for install-scoped)
-    actor_id: string | null;
+    operator_id: string | null;
     table_name: string;          // required
     row_id: string;              // required
     op: 'insert' | 'update' | 'delete' | 'checkpoint'; // required
@@ -888,6 +890,15 @@ Every scenario below MUST pass before Stage 3 (transport) begins. Test IDs are p
 | T-36 | Receive mutation at schema_version N-1 (local is at N) | Transformer chain applied; result applied to live table at schema N |
 | T-37 | Receive mutation at schema_version N+1 (local is at N) | Mutation quarantined; not applied to live table; cursor advances |
 | T-38 | Transformer throws during backward-compat replay | Mutation written with `sync_status='conflicted'`; live table unchanged; error logged |
+
+---
+
+- `[N-123]` **operator_id semantics.** `operator_id` is a nullable TEXT UUID identifying the operator who created the mutation. It references `operators.id` from the local `operators` table, captured at mutation-creation time from the active operator session. Rules:
+  - The value SHALL NOT be modified after the mutation row is written.
+  - NULL is correct for mutations with `origin='system'` or `origin='migration'` where no operator session is active.
+  - `operator_id` is transmitted on the wire and SHALL be stored by the backend byte-exact.
+  - `operator_id` SHALL NOT participate in conflict resolution. It has no influence on LWW outcomes. It exists for presence display and audit UX only.
+  - Receivers SHALL preserve the value from the wire format. They SHALL NOT substitute their own active operator's ID for the value received from a remote peer.
 
 ---
 

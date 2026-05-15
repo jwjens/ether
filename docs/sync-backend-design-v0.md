@@ -1,7 +1,7 @@
 # Sync Backend Design v0
 
 **Status:** DRAFT — decisions locked 2026-05-14  
-**Companion doc:** `docs/sync-protocol-v0.md` (client-side protocol, N-01..N-122)  
+**Companion doc:** `docs/sync-protocol-v0.md` (client-side protocol, N-01..N-123)  
 **Rule prefix:** B-01..B-24
 
 ---
@@ -69,26 +69,26 @@ x-license-key: <raw license key string>
 }
 ```
 
-### 2.6 WireMutation fields (14, locked by N-01..N-40)
+### 2.6 WireMutation fields (14, per sync-protocol-v0.md §3 + amendment N-123)
 
-| Field            | Type    | Notes                                    |
-|------------------|---------|------------------------------------------|
-| `id`             | TEXT    | Client-assigned UUID                     |
-| `table_name`     | TEXT    |                                          |
-| `row_id`         | TEXT    |                                          |
-| `col`            | TEXT    |                                          |
-| `val`            | TEXT    | Nullable                                 |
-| `val_type`       | TEXT    | `scalar`, `json-text`, `blob-ref`        |
-| `hlc`            | TEXT    | `<wall_ms>:<logical>:<client_uuid>`      |
-| `client_id`      | TEXT    | UUID                                     |
-| `op`             | TEXT    | `set` \| `delete`                        |
-| `schema_version` | INTEGER |                                          |
-| `station_id`     | TEXT    | Nullable; null for install-scoped tables |
-| `install_id`     | TEXT    |                                          |
-| `table_scope`    | TEXT    | `install` \| `station`                  |
-| `format_version` | INTEGER | Always 1 in v0                           |
+| Field                | Type    | Notes                                                    |
+|----------------------|---------|----------------------------------------------------------|
+| `id`                 | TEXT    | Client-assigned UUID                                     |
+| `client_id`          | TEXT    | UUID of originating client                               |
+| `station_id`         | TEXT    | Nullable; null for install-scoped tables                 |
+| `operator_id`        | TEXT    | Nullable; references operators.id; see N-123             |
+| `table_name`         | TEXT    | One of the 37 synced table names                         |
+| `row_id`             | TEXT    | UUID of target row                                       |
+| `op`                 | TEXT    | `insert` \| `update` \| `delete` \| `checkpoint` (N-10) |
+| `payload_before`     | JSONB   | Full row state before; null for op=insert                |
+| `payload_after`      | JSONB   | Full row state after; null for op=delete                 |
+| `created_at`         | TEXT    | ISO 8601 UTC at originating client                       |
+| `hlc`                | TEXT    | Hybrid logical clock value (protocol §6)                 |
+| `parent_mutation_id` | TEXT    | Nullable; causal parent UUID (N-103)                     |
+| `schema_version`     | INTEGER | DB schema version at originating client                  |
+| `conflict_resolution`| JSONB   | Nullable; JSON merge record                              |
 
-The three local-only fields (`applied_at`, `origin`, `sync_status`) are stripped by the client before sending and are never present on the wire.
+The three local-only fields (`applied_at`, `origin`, `sync_status`) are stripped by the client before sending and are never present on the wire. JSONB is the PostgreSQL-native equivalent of the protocol's TEXT JSON columns — semantically identical.
 
 ---
 
@@ -122,29 +122,12 @@ The `UNIQUE (license_key_id, id)` constraint on the `mutations` table (see §10)
 
 ## 4. Multi-Tenant Model
 
-**B-05 — Identity hierarchy: accounts → license_keys → mutations.**  
-A tenant is an account. An account has one or more license keys (one per installation in practice, but the schema is not artificially restricted). License keys are the auth unit. This hierarchy costs a single extra table and FK in v0, and avoids a structural migration when the Control Center feature lands.
+**B-05 — Identity hierarchy: accounts → licenses → mutations.**  
+A tenant is an account. An account has one or more licenses (one per installation in practice, but the schema is not artificially restricted). Licenses are the auth unit. This hierarchy adds a single `accounts` table and FKs in v0, and avoids a structural migration when the Control Center feature lands.
 
 The `accounts` table carries a `tier` column (TEXT NOT NULL DEFAULT 'free'). The column exists now so tier-gated features can read it without a migration. The specific tier values, what they gate, and upgrade semantics are deferred — the column is a placeholder for a future arc.
 
-```sql
-CREATE TABLE accounts (
-  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  name       TEXT        NOT NULL,
-  tier       TEXT        NOT NULL DEFAULT 'free',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE license_keys (
-  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  account_id  UUID        NOT NULL REFERENCES accounts(id),
-  key_prefix  TEXT        NOT NULL,    -- first 8 chars, plaintext, for fast bcrypt lookup
-  key_hash    TEXT        NOT NULL,    -- bcrypt hash of the full raw key
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  revoked_at  TIMESTAMPTZ,
-  UNIQUE (key_prefix)
-);
-```
+The existing `licenses` table is extended (not replaced) with `account_id`, `key_prefix`, and `key_hash` columns. See §10 for the migration shape.
 
 **B-06 — Data isolation: row-level, enforced at query time.**  
 Every query that reads or writes `mutations` is filtered by `license_key_id`. The `license_key_id` is resolved from the `x-license-key` header by the auth middleware before any handler runs. No client-supplied `license_key_id` is trusted. Cross-tenant data is not accessible by any query path.
@@ -152,7 +135,7 @@ Every query that reads or writes `mutations` is filtered by `license_key_id`. Th
 **B-07 — Provisioning: Stripe Checkout via Railway `ether-backend` service (existing infrastructure).**  
 The `ether-backend` service on Railway is already live with `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `PRICE_PRO`, `PRICE_STATION`, `RESEND_API_KEY`, `DATABASE_URL`, and `ADMIN_SECRET` configured. Payment links for Ether Pro ($19/mo) and Ether Station ($79/mo) are active.
 
-Primary provisioning path: customer completes Stripe Checkout → `ether-backend` webhook fires → license key generated and inserted into `license_keys` → key emailed to customer via Resend.
+Primary provisioning path: customer completes Stripe Checkout → `ether-backend` webhook fires → license key generated and inserted into `licenses` → key emailed to customer via Resend.
 
 A manual admin CLI exists as a backstop for edge cases (refunds, comped accounts, internal testing). It is not the primary path.
 
@@ -172,7 +155,7 @@ Rate limit responses: HTTP 429 with `Retry-After: 1` header. The client's `SyncS
 ## 5. Multi-Station Handling
 
 **B-09 — station_id passes through verbatim.**  
-The server stores `station_id` from the wire mutation as received. It does not validate station_id against a registry of known stations. Null station_id means the mutation is install-scoped (`table_scope = 'install'`). The server is not a station registry — station lifecycle is managed entirely by the client.
+The server stores `station_id` from the wire mutation as received. It does not validate station_id against a registry of known stations. Null station_id means the mutation is install-scoped (per N-89). The server is not a station registry — station lifecycle is managed entirely by the client.
 
 **B-10 — Station-filtered pull is supported.**  
 `GET /sync/mutations?client_id=X&since_seq=0&station_id=Y` returns only mutations where `station_id = Y` for the authenticated license key.
@@ -189,7 +172,7 @@ Both patterns must work. The station-filtered index (B-04) covers the filtered c
 No sessions, no JWTs, no OAuth flows. Every request presents the raw license key in the `x-license-key` header. The auth middleware validates it on every request. There is no persistent session state on the server.
 
 **B-12 — Key storage: bcrypt-with-prefix.**  
-The raw key is never stored. The `license_keys` table stores:
+The raw key is never stored. The `licenses` table carries two new columns:
 - `key_prefix`: first 8 characters of the raw key, plaintext, used for the initial lookup (avoids a full-table bcrypt scan).
 - `key_hash`: bcrypt hash of the full raw key.
 
@@ -197,16 +180,16 @@ Auth flow:
 1. Extract `x-license-key` from header.
 2. Take first 8 chars as prefix; query `WHERE key_prefix = ?` (fast indexed lookup).
 3. bcrypt-compare the full raw key against `key_hash`.
-4. If no match or revoked (`revoked_at IS NOT NULL`): return 401.
-5. Attach resolved `license_key_id` and `account_id` to the request context.
+4. If no match or `active = false`: return 401.
+5. Attach resolved `license_id` and `account_id` to the request context.
 
 bcrypt verify cost is ~100ms. This is acceptable for a machine-to-machine protocol that sends one request per second at most. Plain SHA-256 is never used for auth tokens.
 
 **B-13 — client_id: stored per-mutation, not validated.**  
 The `client_id` field in the mutation comes from the client. The server stores it as-is. Multiple `client_id` values under one `license_key_id` are valid and expected (e.g. reinstall generates a new client_id). The server does not maintain a registry of client_ids.
 
-**B-14 — install_id: stored per-mutation, informational only.**  
-Stored as received. Not used for access control. Available for tracing and audit queries.
+**B-14 — license_activations serves as the installs registry.**  
+The existing `license_activations` table (columns: `id`, `license_key`, `machine_id`, `machine_name`, `os`, `ip_address`, `activated_at`, `last_seen`) already tracks per-machine activation state. No separate `installs` table is created in v0. Future arc: add a `client_id` column to `license_activations` to formally link a sync peer (by its `client_identity.client_id`) to a licensed machine.
 
 ---
 
@@ -215,8 +198,8 @@ Stored as received. Not used for access control. Available for tracing and audit
 **B-15 — POST /sync/mutations: per-mutation accept/reject, idempotent.**
 
 Processing steps for each mutation in the batch:
-1. Validate `format_version == 1`. If not: reject with `"unsupported_format_version"`.
-2. Validate required fields present (`id`, `table_name`, `row_id`, `col`, `val_type`, `hlc`, `client_id`, `op`, `schema_version`, `install_id`, `table_scope`, `format_version`). Missing required field: reject with `"malformed_mutation"`.
+1. Validate required fields present (`id`, `table_name`, `row_id`, `hlc`, `client_id`, `op`, `schema_version`, `created_at`). Missing required field: reject with `"malformed_mutation"`.
+2. Validate `op IN ('insert', 'update', 'delete', 'checkpoint')`. Invalid op: reject with `"invalid_op"`. Note: `license_key_id` is resolved by auth middleware from the request header — it is NOT accepted from the client body.
 3. Attempt INSERT. On `UNIQUE (license_key_id, id)` violation: treat as accepted (the mutation is already stored; the client needs to mark it sent). This makes the push idempotent — retrying a batch after a network timeout has no effect.
 4. Successful insert: add `id` to `accepted` list.
 
@@ -331,64 +314,75 @@ A `schema_migrations` table tracks applied versions. On startup: apply all unapp
 ## 10. Reference SQL Schema
 
 ```sql
--- Schema migration tracking
-CREATE TABLE schema_migrations (
-  version    INT         PRIMARY KEY,
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
+-- ── New table ────────────────────────────────────────────────────────
 -- Accounts (minimal in v0; Control Center will expand)
 -- tier column exists for future feature gating; semantics TBD
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
   id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   name       TEXT        NOT NULL,
   tier       TEXT        NOT NULL DEFAULT 'free',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- License keys — one per installation in practice
-CREATE TABLE license_keys (
-  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  account_id  UUID        NOT NULL REFERENCES accounts(id),
-  key_prefix  TEXT        NOT NULL,    -- first 8 chars of raw key, plaintext
-  key_hash    TEXT        NOT NULL,    -- bcrypt hash of full raw key
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  revoked_at  TIMESTAMPTZ,
-  UNIQUE (key_prefix)
-);
+-- ── Extensions to existing licenses table ────────────────────────────
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS account_id UUID REFERENCES accounts(id);
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_prefix  TEXT;  -- first 8 chars, plaintext
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_hash    TEXT;  -- bcrypt of full raw key
+--
+-- Existing columns preserved: id (INTEGER PK), license_key, email, plan,
+-- stripe_customer_id, stripe_subscription_id, status, active, created_at, dates.
+-- license_key TEXT is legacy (plain-text, for existing activations pre-bcrypt).
+-- New keys issued by webhook populate key_prefix + key_hash instead.
 
--- Mutation log — core sync table
-CREATE TABLE mutations (
-  server_seq     BIGSERIAL   PRIMARY KEY,
-  license_key_id UUID        NOT NULL REFERENCES license_keys(id),
-  -- WireMutation fields (14)
-  id             TEXT        NOT NULL,
-  table_name     TEXT        NOT NULL,
-  row_id         TEXT        NOT NULL,
-  col            TEXT        NOT NULL,
-  val            TEXT,
-  val_type       TEXT        NOT NULL,
-  hlc            TEXT        NOT NULL,
-  client_id      TEXT        NOT NULL,
-  op             TEXT        NOT NULL,
-  schema_version INT         NOT NULL,
-  station_id     TEXT,
-  install_id     TEXT        NOT NULL,
-  table_scope    TEXT        NOT NULL,
-  format_version INT         NOT NULL DEFAULT 1,
-  -- Server-assigned metadata
-  received_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+-- ── Mutation log — core sync table (existing table, amended) ─────────
+-- Amendments applied via migration SQL (see session notes 2026-05-15):
+--   TRUNCATE (8 test rows removed)
+--   RENAME actor_id → operator_id
+--   ADD license_key_id INTEGER NOT NULL REFERENCES licenses(id)
+--   PRIMARY KEY moved from id → server_seq
+--   ADD UNIQUE (license_key_id, id)
+--   ADD CHECK (op IN ('insert','update','delete','checkpoint'))
+--   Indexes rebuilt (see below)
+
+CREATE TABLE mutations (  -- shape after migration
+  server_seq          BIGSERIAL    PRIMARY KEY,
+  license_key_id      INTEGER      NOT NULL REFERENCES licenses(id),
+  received_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  -- WireMutation fields (14, per sync-protocol-v0.md §3 + N-123)
+  id                  TEXT         NOT NULL,
+  client_id           TEXT         NOT NULL,
+  station_id          TEXT,
+  operator_id         TEXT,
+  table_name          TEXT         NOT NULL,
+  row_id              TEXT         NOT NULL,
+  op                  TEXT         NOT NULL
+    CHECK (op IN ('insert','update','delete','checkpoint')),
+  payload_before      JSONB,
+  payload_after       JSONB,
+  created_at          TIMESTAMPTZ  NOT NULL,
+  hlc                 TEXT         NOT NULL,
+  parent_mutation_id  TEXT,
+  schema_version      INTEGER      NOT NULL,
+  conflict_resolution JSONB,
   UNIQUE (license_key_id, id)
 );
 
--- Pull index: all mutations for a license key since a cursor
+-- Pull indexes (B-04)
 CREATE INDEX idx_mutations_pull
   ON mutations (license_key_id, server_seq);
 
--- Pull index: station-filtered variant
 CREATE INDEX idx_mutations_pull_station
   ON mutations (license_key_id, station_id, server_seq)
   WHERE station_id IS NOT NULL;
+
+CREATE INDEX idx_mutations_client_id
+  ON mutations (client_id);
+
+-- ── license_activations (existing, no structural change in v0) ────────
+-- Serves as the installs registry per B-14. Existing columns:
+--   id, license_key, machine_id, machine_name, os, ip_address,
+--   activated_at, last_seen
+-- Future arc: ADD COLUMN client_id TEXT to link sync peer to activation.
 ```
 
 ---
@@ -401,7 +395,13 @@ These are not decisions for v0. They are tracked here so the design doc remains 
 The `tier` column exists on `accounts`. The specific values, what each tier unlocks, upgrade/downgrade flows, and how tiers map to subscription state are not yet designed. No code should gate on tier values until the tier arc is executed.
 
 **Stripe provisioning wiring (scaffolding task)**  
-`ether-backend` on Railway handles Stripe webhooks and Resend emails today. The scaffolding task is connecting the webhook handler to the Lightsail sync backend so it can write to `accounts` and `license_keys`. The schema is already designed for this — no migration required.
+`ether-backend` on Railway handles Stripe webhooks and Resend emails today. The scaffolding task is connecting the webhook handler to the Lightsail sync backend so it can write to `accounts` and `licenses`. The schema is already designed for this — no migration required.
+
+**operator_id presence UX (future arc)**  
+`operator_id` is captured on the client, transmitted on the wire, and stored on the backend in v0 (per N-123). The presence UX — Jason/Alison edit badges, per-row activity feed — is a future arc. In v0 the field is queryable but no UI renders it.
+
+**license_activations → formal installs link (future arc)**  
+`license_activations` tracks machine activations by `license_key` (TEXT). When a sync client sends its first push, the backend can upsert a row keyed by `client_id` to formally link a sync peer to a license. Schema change deferred: add `client_id TEXT` column to `license_activations` when this link is needed.
 
 **Stage 4 client wiring (client-side, tracked in electron/sync/sync-engine.js)**  
 The client's `SyncEngine` and `SyncScheduler` are not wired into `main.js` startup. This is a client-side task (Stage 4 per the sync-protocol-v0.md staging plan). The server must be live before Stage 4 lands.
@@ -417,5 +417,5 @@ Single Lightsail region in v0. Multi-region active-active would require either a
 
 ---
 
-*Last updated: 2026-05-14*  
-*All 24 decisions locked. Next action: scaffold the server repo.*
+*Last updated: 2026-05-15*  
+*All 24 decisions locked. Wire format corrected to match sync-protocol-v0.md. Next action: run schema migration on Railway, rewrite sync.js handlers.*
