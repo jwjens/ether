@@ -116,7 +116,7 @@ export function MidiProvider({ children }: { children: React.ReactNode }) {
   // Load mappings from DB
   const loadMappings = useCallback(async () => {
     try {
-      const rows = await query<MidiMapping>("SELECT * FROM midi_mappings");
+      const rows = await query<MidiMapping>("SELECT * FROM midi_mappings WHERE station_id = ?", [getActiveStationIdSync()]);
       mappingsRef.current = rows || [];
     } catch { mappingsRef.current = []; }
   }, []);
@@ -252,7 +252,7 @@ export default function MidiSettingsPanel() {
 
   const loadMappings = useCallback(async () => {
     try {
-      const rows = await query<MidiMapping>("SELECT * FROM midi_mappings ORDER BY action");
+      const rows = await query<MidiMapping>("SELECT * FROM midi_mappings WHERE station_id = ? ORDER BY action", [getActiveStationIdSync()]);
       setMappings(rows || []);
     } catch { setMappings([]); }
   }, []);
@@ -296,10 +296,11 @@ export default function MidiSettingsPanel() {
     const actionDef = MIDI_ACTIONS.flatMap(c => c.actions).find(a => a.id === learning);
     if (!actionDef) return;
     // Delete existing mapping for this action
-    await execute("DELETE FROM midi_mappings WHERE action = ?", [learning]);
+    const sid = getActiveStationIdSync();
+    await execute("DELETE FROM midi_mappings WHERE action = ? AND station_id = ?", [learning, sid]);
     await execute(
-      "INSERT INTO midi_mappings (device_name, channel, type, number, action, label, is_fader) VALUES (?,?,?,?,?,?,?)",
-      [lastEvent.deviceName || "Unknown", lastEvent.channel, lastEvent.type, lastEvent.number, learning, actionDef.label, actionDef.isFader ? 1 : 0]
+      "INSERT INTO midi_mappings (device_name, channel, type, number, action, label, is_fader, station_id) VALUES (?,?,?,?,?,?,?,?)",
+      [lastEvent.deviceName || "Unknown", lastEvent.channel, lastEvent.type, lastEvent.number, learning, actionDef.label, actionDef.isFader ? 1 : 0, sid]
     );
     setLearning(null);
     setLastEvent(null);
@@ -307,7 +308,7 @@ export default function MidiSettingsPanel() {
   };
 
   const deleteMapping = async (id: number) => {
-    await execute("DELETE FROM midi_mappings WHERE id = ?", [id]);
+    await execute("DELETE FROM midi_mappings WHERE id = ? AND station_id = ?", [id, getActiveStationIdSync()]);
     loadMappings();
   };
 

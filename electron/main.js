@@ -524,7 +524,8 @@ function runMigrations() {
       number      INTEGER DEFAULT 0,
       action      TEXT NOT NULL,
       label       TEXT,
-      is_fader    INTEGER DEFAULT 0
+      is_fader    INTEGER DEFAULT 0,
+      station_id  INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS studio_sessions (
@@ -630,6 +631,8 @@ function runMigrations() {
   alterSafe("ALTER TABLE crash_recovery ADD COLUMN was_playing INTEGER DEFAULT 0");
   // eas_tests: add station_id for existing installs (fresh installs get it from CREATE TABLE above)
   alterSafe("ALTER TABLE eas_tests ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
+  // midi_mappings: add station_id for existing installs
+  alterSafe("ALTER TABLE midi_mappings ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
   // Ensure the single crash_recovery sentinel row exists
   db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
   // Seed default users if table is empty
@@ -770,6 +773,8 @@ function runMigrations() {
 
   // Station-scope index for eas_tests (idempotent)
   db.exec("CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)");
+  // Station-scope index for midi_mappings (idempotent)
+  db.exec("CREATE INDEX IF NOT EXISTS idx_midi_mappings_station_id ON midi_mappings(station_id)");
 
   // FTS index for song search
   db.exec(`
