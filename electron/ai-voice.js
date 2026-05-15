@@ -186,7 +186,7 @@ function installAIVoice(ipcMain, database, opts = {}) {
   });
 
   // Generate a segment from text. Saves to disk, inserts row, returns the row.
-  ipcMain.handle("ai-voice:generate", async (_, { title, script, templateId = null, providerOverride = null, voiceIdOverride = null }) => {
+  ipcMain.handle("ai-voice:generate", async (_, { title, script, templateId = null, providerOverride = null, voiceIdOverride = null, stationId = 1 }) => {
     const cfg = getConfig();
     const provider = providerOverride || cfg.provider;
     const voiceId  = voiceIdOverride  || cfg.voiceId;
@@ -194,8 +194,8 @@ function installAIVoice(ipcMain, database, opts = {}) {
     let segmentId;
     try {
       const r = db.prepare(
-        "INSERT INTO ai_voice_segments (template_id, title, script, provider, voice_id, status) VALUES (?, ?, ?, ?, ?, 'generating')"
-      ).run(templateId, title || "Untitled", script, provider, voiceId);
+        "INSERT INTO ai_voice_segments (template_id, title, script, provider, voice_id, status, station_id) VALUES (?, ?, ?, ?, ?, 'generating', ?)"
+      ).run(templateId, title || "Untitled", script, provider, voiceId, stationId);
       segmentId = r.lastInsertRowid;
     } catch (e) {
       return { ok: false, error: "DB insert failed: " + e.message };
@@ -210,48 +210,48 @@ function installAIVoice(ipcMain, database, opts = {}) {
       const stat = fs.statSync(filePath);
 
       db.prepare(
-        "UPDATE ai_voice_segments SET status='ready', file_path=?, size_bytes=?, generated_at=? WHERE id=?"
-      ).run(filePath, stat.size, Math.floor(Date.now() / 1000), segmentId);
+        "UPDATE ai_voice_segments SET status='ready', file_path=?, size_bytes=?, generated_at=? WHERE id=? AND station_id=?"
+      ).run(filePath, stat.size, Math.floor(Date.now() / 1000), segmentId, stationId);
 
-      const row = db.prepare("SELECT * FROM ai_voice_segments WHERE id = ?").get(segmentId);
+      const row = db.prepare("SELECT * FROM ai_voice_segments WHERE id=? AND station_id=?").get(segmentId, stationId);
       return { ok: true, segment: row };
     } catch (e) {
-      db.prepare("UPDATE ai_voice_segments SET status='error', error_msg=? WHERE id=?")
-        .run(e.message || String(e), segmentId);
+      db.prepare("UPDATE ai_voice_segments SET status='error', error_msg=? WHERE id=? AND station_id=?")
+        .run(e.message || String(e), segmentId, stationId);
       return { ok: false, error: e.message || String(e), segmentId };
     }
   });
 
   // List segments — newest first
-  ipcMain.handle("ai-voice:list-segments", (_, { status, limit = 100 } = {}) => {
+  ipcMain.handle("ai-voice:list-segments", (_, { status, limit = 100, stationId = 1 } = {}) => {
     try {
       const sql = status
-        ? "SELECT * FROM ai_voice_segments WHERE status = ? ORDER BY created_at DESC LIMIT ?"
-        : "SELECT * FROM ai_voice_segments ORDER BY created_at DESC LIMIT ?";
-      return status ? db.prepare(sql).all(status, limit) : db.prepare(sql).all(limit);
+        ? "SELECT * FROM ai_voice_segments WHERE station_id=? AND status=? ORDER BY created_at DESC LIMIT ?"
+        : "SELECT * FROM ai_voice_segments WHERE station_id=? ORDER BY created_at DESC LIMIT ?";
+      return status ? db.prepare(sql).all(stationId, status, limit) : db.prepare(sql).all(stationId, limit);
     } catch { return []; }
   });
 
   // Update status (queued/played/archived) and metadata
-  ipcMain.handle("ai-voice:update-segment", (_, { id, status, title }) => {
+  ipcMain.handle("ai-voice:update-segment", (_, { id, status, title, stationId = 1 }) => {
     try {
       if (status) {
         db.prepare(
-          "UPDATE ai_voice_segments SET status=?, played_at=CASE WHEN ?='played' THEN unixepoch() ELSE played_at END WHERE id=?"
-        ).run(status, status, id);
+          "UPDATE ai_voice_segments SET status=?, played_at=CASE WHEN ?='played' THEN unixepoch() ELSE played_at END WHERE id=? AND station_id=?"
+        ).run(status, status, id, stationId);
       }
-      if (title !== undefined) db.prepare("UPDATE ai_voice_segments SET title=? WHERE id=?").run(title, id);
+      if (title !== undefined) db.prepare("UPDATE ai_voice_segments SET title=? WHERE id=? AND station_id=?").run(title, id, stationId);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
-  ipcMain.handle("ai-voice:delete-segment", (_, { id }) => {
+  ipcMain.handle("ai-voice:delete-segment", (_, { id, stationId = 1 }) => {
     try {
-      const row = db.prepare("SELECT file_path FROM ai_voice_segments WHERE id = ?").get(id);
+      const row = db.prepare("SELECT file_path FROM ai_voice_segments WHERE id=? AND station_id=?").get(id, stationId);
       if (row?.file_path && fs.existsSync(row.file_path)) {
         try { fs.unlinkSync(row.file_path); } catch {}
       }
-      db.prepare("DELETE FROM ai_voice_segments WHERE id = ?").run(id);
+      db.prepare("DELETE FROM ai_voice_segments WHERE id=? AND station_id=?").run(id, stationId);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });

@@ -160,6 +160,19 @@ contextBridge.exposeInMainWorld("ether", {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),
     verifyPin: (pin, stored) => ipcRenderer.invoke("user:verify-pin", pin, stored),
   },
+  // ── AI Voice Studio (TTS generation + segment library) ─────
+  ai: {
+    getConfig:       ()                   => ipcRenderer.invoke("ai-voice:get-config"),
+    setConfig:       (cfg)                => ipcRenderer.invoke("ai-voice:set-config", cfg),
+    listVoices:      (opts)               => ipcRenderer.invoke("ai-voice:list-voices", opts),
+    generate:        (opts)               => ipcRenderer.invoke("ai-voice:generate", opts),
+    listSegments:    (opts)               => ipcRenderer.invoke("ai-voice:list-segments", opts),
+    updateSegment:   (id, patch)          => ipcRenderer.invoke("ai-voice:update-segment", { id, ...patch }),
+    deleteSegment:   (id, stationId)      => ipcRenderer.invoke("ai-voice:delete-segment", { id, stationId }),
+    listTemplates:   ()                   => ipcRenderer.invoke("ai-voice:list-templates"),
+    saveTemplate:    (t)                  => ipcRenderer.invoke("ai-voice:save-template", t),
+    deleteTemplate:  (id)                 => ipcRenderer.invoke("ai-voice:delete-template", { id }),
+  },
   // ── Multi-station management (operator tier) ───────────────
   stations: {
     list:      ()         => ipcRenderer.invoke("stations:list"),

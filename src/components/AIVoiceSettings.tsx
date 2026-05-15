@@ -9,6 +9,7 @@
 // hears their voice before committing.
 
 import { useEffect, useState } from "react";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 
 type Provider = "elevenlabs" | "openai" | "browser";
 
@@ -129,6 +130,7 @@ export default function AIVoiceSettings() {
       const r = await ether.ai.generate({
         title: "Test clip",
         script: "This is your AI DJ. Up next on Ether Radio, the freshest sound on the dial.",
+        stationId: getActiveStationIdSync(),
       });
       if (r?.ok) {
         setTestStatus("✓ Generated " + (r.segment?.size_bytes ? `(${Math.round(r.segment.size_bytes / 1024)} KB)` : ""));

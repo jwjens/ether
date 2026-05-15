@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 
 type SegmentStatus = "pending" | "generating" | "ready" | "played" | "error" | "archived";
 
@@ -89,7 +90,7 @@ export default function AIVoiceStudio({ onClose }: { onClose?: () => void }) {
     setLoading(true);
     try {
       const [s, t] = await Promise.all([
-        ether?.ai?.listSegments?.() || Promise.resolve([]),
+        ether?.ai?.listSegments?.({ stationId: getActiveStationIdSync() }) || Promise.resolve([]),
         ether?.ai?.listTemplates?.() || Promise.resolve([]),
       ]);
       setSegments(Array.isArray(s) ? s : []);
@@ -178,6 +179,7 @@ function ComposeTab({ templates, onGenerated }: { templates: Template[]; onGener
         templateId: selected?.id || null,
         providerOverride: selected?.provider || null,
         voiceIdOverride: selected?.voice_id || null,
+        stationId: getActiveStationIdSync(),
       });
       if (r?.ok) {
         setStatus("✓ Generated " + (r.segment?.size_bytes ? `(${Math.round(r.segment.size_bytes / 1024)} KB)` : ""));
@@ -292,15 +294,15 @@ function LibraryTab({ segments, loading, playing, setPlaying, onRefresh }:
         title:  s.title || `AI segment #${s.id}`,
         artist: `🤖 AI Voice (${s.provider})`,
       }]);
-      ether.ai.updateSegment(s.id, { status: "played" }).then(onRefresh);
+      ether.ai.updateSegment(s.id, { status: "played", stationId: getActiveStationIdSync() }).then(onRefresh);
     } catch (e) { console.error(e); }
   };
 
-  const archive = (s: Segment) => ether.ai.updateSegment(s.id, { status: "archived" }).then(onRefresh);
-  const reactivate = (s: Segment) => ether.ai.updateSegment(s.id, { status: "ready" }).then(onRefresh);
+  const archive = (s: Segment) => ether.ai.updateSegment(s.id, { status: "archived", stationId: getActiveStationIdSync() }).then(onRefresh);
+  const reactivate = (s: Segment) => ether.ai.updateSegment(s.id, { status: "ready", stationId: getActiveStationIdSync() }).then(onRefresh);
   const del = (s: Segment) => {
     if (!confirm(`Delete "${s.title}"? The audio file will be removed.`)) return;
-    ether.ai.deleteSegment(s.id).then(onRefresh);
+    ether.ai.deleteSegment(s.id, getActiveStationIdSync()).then(onRefresh);
   };
 
   const counts: Record<string, number> = { all: segments.length };

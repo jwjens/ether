@@ -572,6 +572,34 @@ function runMigrations() {
       created_at         INTEGER DEFAULT (unixepoch()),
       station_id         INTEGER NOT NULL DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS ai_voice_templates (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      name            TEXT NOT NULL,
+      kind            TEXT DEFAULT 'evergreen',
+      prompt_template TEXT NOT NULL,
+      voice_id        TEXT DEFAULT '',
+      provider        TEXT DEFAULT '',
+      created_at      INTEGER DEFAULT (unixepoch())
+    );
+
+    CREATE TABLE IF NOT EXISTS ai_voice_segments (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id  INTEGER,
+      title        TEXT NOT NULL,
+      script       TEXT NOT NULL,
+      provider     TEXT NOT NULL,
+      voice_id     TEXT NOT NULL,
+      file_path    TEXT DEFAULT '',
+      duration_ms  INTEGER DEFAULT 0,
+      size_bytes   INTEGER DEFAULT 0,
+      status       TEXT DEFAULT 'pending',
+      error_msg    TEXT DEFAULT '',
+      generated_at INTEGER DEFAULT 0,
+      played_at    INTEGER DEFAULT 0,
+      created_at   INTEGER DEFAULT (unixepoch()),
+      station_id   INTEGER NOT NULL DEFAULT 1
+    );
   `);
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
@@ -633,6 +661,8 @@ function runMigrations() {
   alterSafe("ALTER TABLE eas_tests ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
   // midi_mappings: add station_id for existing installs
   alterSafe("ALTER TABLE midi_mappings ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
+  // ai_voice_segments: add station_id for existing installs
+  alterSafe("ALTER TABLE ai_voice_segments ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
   // Ensure the single crash_recovery sentinel row exists
   db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
   // Seed default users if table is empty
@@ -775,6 +805,8 @@ function runMigrations() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)");
   // Station-scope index for midi_mappings (idempotent)
   db.exec("CREATE INDEX IF NOT EXISTS idx_midi_mappings_station_id ON midi_mappings(station_id)");
+  // Station-scope index for ai_voice_segments (idempotent)
+  db.exec("CREATE INDEX IF NOT EXISTS idx_ai_voice_segments_station_id ON ai_voice_segments(station_id)");
 
   // FTS index for song search
   db.exec(`
@@ -2312,6 +2344,14 @@ try {
   console.log("[FFMPEG] Binary:", ffmpegBin);
 } catch (e) {
   console.warn("[FFMPEG] ffmpeg-static not available:", e.message);
+}
+
+// ── AI Voice Studio (TTS generation + segment library) ──────────────────────
+try {
+  const { installAIVoice } = require("./ai-voice.js");
+  installAIVoice(ipcMain, db, { userDataPath: app.getPath("userData") });
+} catch (e) {
+  console.warn("[AI-VOICE] installAIVoice failed:", e.message);
 }
 
 // ── Video engine (renderer composites; we run ffmpeg for RTMP/MP4) ─────────
