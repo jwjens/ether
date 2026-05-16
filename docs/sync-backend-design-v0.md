@@ -173,12 +173,12 @@ No sessions, no JWTs, no OAuth flows. Every request presents the raw license key
 
 **B-12 — Key storage: bcrypt-with-prefix.**  
 The raw key is never stored. The `licenses` table carries two new columns:
-- `key_prefix`: first 8 characters of the raw key, plaintext, used for the initial lookup (avoids a full-table bcrypt scan).
+- `key_prefix`: first 12 characters of the raw key, plaintext, used for the initial lookup (avoids a full-table bcrypt scan). 12 chars captures 4 random hex digits beyond the plan-type prefix (e.g. `ETH-PRO-XXXX`), giving ~65k unique values per plan — sufficient to keep bcrypt fan-out negligible at any expected customer count.
 - `key_hash`: bcrypt hash of the full raw key.
 
 Auth flow:
 1. Extract `x-license-key` from header.
-2. Take first 8 chars as prefix; query `WHERE key_prefix = ?` (fast indexed lookup).
+2. Take first 12 chars as prefix; query `WHERE key_prefix = ?` (fast indexed lookup).
 3. bcrypt-compare the full raw key against `key_hash`.
 4. If no match or `active = false`: return 401.
 5. Attach resolved `license_id` and `account_id` to the request context.
@@ -326,7 +326,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 -- ── Extensions to existing licenses table ────────────────────────────
 -- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS account_id UUID REFERENCES accounts(id);
--- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_prefix  TEXT;  -- first 8 chars, plaintext
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_prefix  TEXT;  -- first 12 chars, plaintext
 -- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_hash    TEXT;  -- bcrypt of full raw key
 --
 -- Existing columns preserved: id (INTEGER PK), license_key, email, plan,
