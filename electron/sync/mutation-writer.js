@@ -45,6 +45,12 @@ let cachedClientId = null;
 // better-sqlite3 is synchronous so this stack is never racy.
 const _mutationContextStack = [];
 
+// Test-only: reset module-level state between tests. Never called in production.
+function _resetForTest() {
+  cachedClientId = null;
+  _mutationContextStack.length = 0;
+}
+
 // ── Constants ─────────────────────────────────────────────────
 
 const VALID_OPS = new Set(['insert', 'update', 'delete', 'checkpoint']);
@@ -664,4 +670,5 @@ module.exports = {
   deserializePayload,
   toWireFormat,
   compactMutations,
+  _resetForTest,
 };

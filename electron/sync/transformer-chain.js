@@ -23,6 +23,15 @@ const MIGRATION_RE = /^migrate-.+-phase-sync-(\d+)\.js$/;
 // version → { filename, transformer } | null (null = confirmed missing)
 const _cache = new Map();
 
+// Test-only: override script discovery directory. null = use SCRIPTS_DIR.
+let _scriptsDirOverride = null;
+
+// Test-only: point transformer discovery at a custom directory (e.g. a tmp dir with a fake script).
+function setScriptsDir(dir) { _scriptsDirOverride = dir; }
+
+// Test-only: clear the transformer cache so a new directory is re-scanned.
+function clearCache() { _cache.clear(); }
+
 class TransformerMissingError extends Error {
   constructor(version) {
     super(`No migration script for target v${version} — transformer chain cannot proceed`);
@@ -39,14 +48,15 @@ function _loadTransformer(targetVersion) {
     return cached;
   }
 
+  const dir = _scriptsDirOverride ?? SCRIPTS_DIR;
   let found = null;
   try {
-    for (const f of fs.readdirSync(SCRIPTS_DIR)) {
+    for (const f of fs.readdirSync(dir)) {
       const m = MIGRATION_RE.exec(f);
       if (m && parseInt(m[1], 10) === targetVersion) { found = f; break; }
     }
   } catch (_) {
-    // SCRIPTS_DIR unreadable — treat as missing
+    // dir unreadable — treat as missing
   }
 
   if (!found) {
@@ -56,7 +66,7 @@ function _loadTransformer(targetVersion) {
 
   let mod;
   try {
-    mod = require(path.join(SCRIPTS_DIR, found));
+    mod = require(path.join(dir, found));
   } catch (e) {
     // MODULE_NOT_FOUND or any load error → permanent missing
     _cache.set(targetVersion, null);
@@ -97,4 +107,4 @@ function applyTransformerChain(payload, fromVersion, toVersion, envelope) {
   return current;
 }
 
-module.exports = { applyTransformerChain, TransformerMissingError };
+module.exports = { applyTransformerChain, TransformerMissingError, setScriptsDir, clearCache };
