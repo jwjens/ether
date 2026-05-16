@@ -7,7 +7,7 @@
 
 ## Current Phase
 
-Sync backend implementation is complete (Step 8 done 2026-05-16). All 38 tests green. The remaining blocker before the second client can be deployed against real data is Step 5 (pull scope fix — wire station_id through SyncEngine.pull()).
+Sync backend implementation (Item 1) is fully complete as of 2026-05-16 — all 8 steps done, 38/38 tests green. Roadmap Item 2 (Deploy OV + 2nd Client) is now unblocked.
 
 ---
 
@@ -15,7 +15,7 @@ Sync backend implementation is complete (Step 8 done 2026-05-16). All 38 tests g
 
 ### 1. Sync Backend Implementation
 
-**Status:** All 8 steps complete (Step 8 done 2026-05-16). Remaining blocker for Roadmap Item 2: Step 5 (pull scope fix).
+**Status:** All 8 steps complete. Item 2 (Deploy OV + 2nd Client) is unblocked.
 
 The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every local change in Ether generates a mutation with a hybrid logical clock timestamp. Mutations push to the backend and pull back across clients. LWW merge runs locally; the server is a dumb append log with filtered read access.
 
@@ -24,15 +24,13 @@ The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every lo
 2. Railway schema migration — TRUNCATE test rows, add accounts table, extend licenses (key_prefix, key_hash), rename actor_id→operator_id, add license_key_id FK, fix PK to BIGSERIAL, UNIQUE(license_key_id, id), op CHECK, rebuild indexes. sync.js rewritten to match locked wire contract.
 3. bcrypt auth (B-12) — two-path lookup (12-char prefix+bcrypt for new keys, plaintext for legacy), bcrypt-only storage on new INSERTs (no plaintext retained), transaction-wrapped Stripe webhook (INSERT + email in one tx so Stripe retry is safe), SSE routing key fixed to license.id, cmd-stream auth gap patched. Client wiring: station_config_kv drives sync_backend_url and sync_enabled gate; SyncScheduler starts on boot.
 4. Smoke test — 5,669 mutations pushed to Railway (openair aa6e7c4, ether-backend 0806ffb). Two bugs found and fixed during smoke: missing UNIQUE(license_key_id, id) index on Railway (0806ffb), _saveCursor() missing updated_at causing NOT NULL crash after every push tick (aa6e7c4). Idempotency confirmed: restart shows pushed=0. Plaintext license key backward-compat path (ETHER-OWNER-2026, plan=station) validated.
+5. Pull scope fix (92eb50d) — `getStationId` getter wired through `SyncEngine.pull()`; `main.js` owns resolution via `getActiveStationId()`; SyncEngine stores only the getter and calls it per tick so mid-session station switches are handled without restart. Station-scoped mutations (station_id='1', 3,564 Railway rows) now delivered to pulling clients. Backend pull handler and transport already implemented station_id correctly — no server changes needed.
 6. Quarantine store — quarantine_mutations table (schema v16, de0fd8f). Forward-schema-version mutations now land in a recoverable local table instead of being warn-logged and lost. _quarantine() throws on DB failure so the transaction rolls back and cursor does not advance past an unquarantined mutation [N-102]. retry_count semantics: increments only on genuine apply failure; mutations still ahead of local schema_version are never touched by drain logic.
 7. Transformer replay + quarantine drain (4d93321) — electron/sync/transformer-chain.js discovers migration scripts by regex (same pattern as verify-transformer-chain.js pre-commit hook), loads on demand (require.main guard confirmed zero side effects on plain require), caches per process lifetime. merge-engine.js Step 3 now runs both payload_before and payload_after through the transformer chain on schema_version mismatch [N-62]; failure → sync_status='conflicted', cursor advances, no re-pull [N-63]; conflicted mutations are fully queryable for a future operator-review UI. drainQuarantine() in SyncEngine replays quarantine_mutations whose foreign_schema_version <= local; TransformerMissingError → immediate dead-letter (no retry — retrying is pointless until a deployment ships the script); other failures retry up to 3× then dead-letter with ERROR log. Drain triggered from SyncScheduler.start() before _schedule(), wrapped in try/catch so drain failure cannot block sync.
 
 **Step 7 caveat (now partially resolved by Step 8):** All current payloadTransformers are identity functions; the quarantine table is empty on the live DB. The transformer chain and drain logic are implemented and structurally correct. Step 8 (T-36..T-38) now synthetically proves the backward-compat transform path [N-62], the forward-quarantine path [N-64], and the conflicted path [N-63] using setScriptsDir()/clearCache() test seams. The one still-unexercised path is a real non-identity transform on a real payload from a future schema migration — that happens when the next schema bump ships.
 
-8. Test suite — T-01..T-38 per sync-protocol-v0.md §23: **complete** (38/38 green, ce9e1ef). Covers HLC ordering (A), writer (B), LWW merge (C), causal ordering (D), tombstones (E), security/filter (F), idempotency (G), retention (H), schema compat incl. synthetic transformer replay and quarantine (I).
-
-**Remaining step:**
-5. Pull scope fix — wire station_id through SyncEngine.pull() so station-scoped mutations propagate to other clients (currently only install-scoped mutations pull).
+8. Test suite — T-01..T-38 per sync-protocol-v0.md §23 (ce9e1ef) — 38/38 green. Covers HLC ordering (A), writer (B), LWW merge (C), causal ordering (D), tombstones (E), security/filter (F), idempotency (G), retention (H), schema compat incl. synthetic transformer replay and quarantine (I).
 
 **Cleanup item (non-blocking):** Test fixtures in `electron/sync/tests/helpers/create-test-db.js` were verified against migration-script source and the REGISTRY — not against the live `openair.db`, because the better-sqlite3 ABI mismatch blocked the direct query during development. Migration source and live DB should agree, but "should agree" has been wrong before on this project. Before the test suite is treated as authoritative: dump the actual schema for `system_state`, `monitor_routing`, `mutations`, and `albums` from the live `openair.db` via Electron's Node (ABI matches there) and diff against the fixtures. The `albums` fixture deserves special attention — it is `wire-mutation.js`'s default table (~20 tests inherit it) and no migration file defines `albums` directly, so its DDL provenance is unconfirmed; the production schema was built up by a chain of `ALTER TABLE` calls across multiple migration scripts.
 
@@ -44,7 +42,7 @@ The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every lo
 
 ### 2. Deploy OV + 2nd Client
 
-**Status:** Blocked on Item 1, Steps 5 and 8 (pull scope fix + test suite).
+**Status:** Ready to start. Item 1 (sync backend) is fully complete as of 2026-05-16.
 
 Once the smoke test passes, the first real deployment: one live Ether install (OV station) pushes mutations to Railway; a second install pulls and replays them. This is the first time the sync engine runs against real broadcast data with two live clients.
 
@@ -149,4 +147,5 @@ The terminal arc for Ether's architecture. It has three components that must be 
 | 2026-05-16 | Sync steps 4 (smoke test) and 6 (quarantine store) complete. Two smoke-test bugs fixed: Railway missing UNIQUE constraint (ether-backend 0806ffb), _saveCursor NOT NULL crash (openair aa6e7c4). Quarantine store committed as de0fd8f, schema v16. Cleanup item added: JS migration v16 unverified under Electron Node due to NODE_MODULE_VERSION mismatch. |
 | 2026-05-16 | Sync step 7 (transformer replay + quarantine drain) complete (4d93321). transformer-chain.js implemented; merge-engine Step 3 now transforms both payload_before and payload_after [N-62]; transformer failure → conflicted [N-63]; drain triggered from SyncScheduler.start(). Pre-commit harness: 16/16 PASS (v2→v16). Caveat: all transformers currently identity functions, quarantine table empty — behaviorally unexercised until first non-identity migration or test suite T-01..T-38. |
 | 2026-05-16 | Deployment model decision: v1 = Model A (Jeff-hosted multi-tenant SaaS). Self-hosting / boxed option preserved as an architectural requirement — backend stays a clean sync-protocol implementation, station can run their own later with only a config change. Not building self-hosting now; keeping the door open. |
-| 2026-05-16 | Sync step 8 (test suite T-01..T-38) complete (ce9e1ef). 38/38 tests green across 9 categories: A=HLC, B=Writer, C=LWW, D=Causal ordering, E=Tombstone, F=Security/filter, G=Idempotency, H=Retention, I=Schema compat. Three DDL bugs in test fixture fixed during suite construction. T-36..T-38 synthetically prove the transformer chain and quarantine paths via setScriptsDir()/clearCache() seams. Remaining Item 1 blocker: Step 5 (pull scope fix). |
+| 2026-05-16 | Sync step 8 (test suite T-01..T-38) complete (ce9e1ef). 38/38 tests green across 9 categories: A=HLC, B=Writer, C=LWW, D=Causal ordering, E=Tombstone, F=Security/filter, G=Idempotency, H=Retention, I=Schema compat. Three DDL bugs in test fixture fixed during suite construction. T-36..T-38 synthetically prove the transformer chain and quarantine paths via setScriptsDir()/clearCache() seams. |
+| 2026-05-16 | Correction: previous roadmap update (after context compaction) incorrectly listed Step 5 (pull scope fix) as a remaining blocker. Step 5 was completed earlier the same day as commit 92eb50d — getStationId getter wired through SyncEngine.pull(), main.js passes getActiveStationId(). All 8 steps of Item 1 are complete. Item 2 (Deploy OV + 2nd Client) is unblocked. |
