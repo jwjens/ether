@@ -15,7 +15,7 @@ Sync backend implementation is active. The first three steps are complete: proto
 
 ### 1. Sync Backend Implementation
 
-**Status:** Steps 1–3 of 8 complete.
+**Status:** Steps 1–4 and 6 of 8 complete.
 
 The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every local change in Ether generates a mutation with a hybrid logical clock timestamp. Mutations push to the backend and pull back across clients. LWW merge runs locally; the server is a dumb append log with filtered read access.
 
@@ -23,13 +23,15 @@ The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every lo
 1. Protocol doc (sync-protocol-v0.md) and backend design doc (sync-backend-design-v0.md) locked — 17 on-disk fields, 14 wire fields, operator_id, payload_before/after row-level JSONB, HLC format.
 2. Railway schema migration — TRUNCATE test rows, add accounts table, extend licenses (key_prefix, key_hash), rename actor_id→operator_id, add license_key_id FK, fix PK to BIGSERIAL, UNIQUE(license_key_id, id), op CHECK, rebuild indexes. sync.js rewritten to match locked wire contract.
 3. bcrypt auth (B-12) — two-path lookup (12-char prefix+bcrypt for new keys, plaintext for legacy), bcrypt-only storage on new INSERTs (no plaintext retained), transaction-wrapped Stripe webhook (INSERT + email in one tx so Stripe retry is safe), SSE routing key fixed to license.id, cmd-stream auth gap patched. Client wiring: station_config_kv drives sync_backend_url and sync_enabled gate; SyncScheduler starts on boot.
+4. Smoke test — 5,669 mutations pushed to Railway (openair aa6e7c4, ether-backend 0806ffb). Two bugs found and fixed during smoke: missing UNIQUE(license_key_id, id) index on Railway (0806ffb), _saveCursor() missing updated_at causing NOT NULL crash after every push tick (aa6e7c4). Idempotency confirmed: restart shows pushed=0. Plaintext license key backward-compat path (ETHER-OWNER-2026, plan=station) validated.
+6. Quarantine store — quarantine_mutations table (schema v16, de0fd8f). Forward-schema-version mutations now land in a recoverable local table instead of being warn-logged and lost. _quarantine() throws on DB failure so the transaction rolls back and cursor does not advance past an unquarantined mutation [N-102]. retry_count semantics: increments only on genuine apply failure; mutations still ahead of local schema_version are never touched by drain logic.
 
 **Remaining steps:**
-4. Smoke test — fire 5,645 queued mutations against Railway, verify idempotency on restart.
 5. Pull scope fix — wire station_id through SyncEngine.pull() so station-scoped mutations propagate to other clients (currently only install-scoped mutations pull).
-6. Quarantine store — local table for mutations that fail transformer application; retry on schema upgrade.
-7. Transformer replay — apply pulled mutations through schema-version-aware transformers; replay quarantine on version advance.
-8. Test suite — T-01..T-38 per sync-protocol-v0.md §20; covers push/pull idempotency, HLC ordering, merge correctness, and network error recovery.
+7. Transformer replay — apply pulled mutations through schema-version-aware transformers; drain quarantine_mutations when local schema advances to >= foreign_schema_version.
+8. Test suite — T-01..T-38 per sync-protocol-v0.md §23; covers push/pull idempotency, HLC ordering, merge correctness, and network error recovery.
+
+**Cleanup item (non-blocking):** The canonical migration script `scripts/migrate-quarantine-store-phase-sync-16.js` was never executed — the better-sqlite3 NODE_MODULE_VERSION mismatch (145 vs 137, Electron Node vs system Node v24) blocked it, and migration v16 was applied via a Python workaround. The committed JS script is therefore unverified against a real execution path. Before any fresh-install deployment: either (a) run the v16 JS migration under Electron's embedded Node to confirm it executes clean, or (b) establish a dev workflow for running migration scripts that avoids the version mismatch (npm rebuild better-sqlite3 against system Node, or a small Electron runner shim). This Node-version tax has recurred across the session and needs a proper solution.
 
 ---
 
@@ -134,3 +136,4 @@ The terminal arc for Ether's architecture. It has three components that must be 
 |------------|---------------------------------------------------------------------------------------------------------------------------------|
 | 2026-05-15 | Sync backend moved to position 1 (was position 3). Urgency: 5,645 mutations queued locally, second client blocked on sync live. |
 | 2026-05-15 | Rust watchdog absorbed into High Availability Architecture (position 3, was position 2). Scope expanded from crash recovery to full Program Director Test HA model per RCS Zetta research. |
+| 2026-05-16 | Sync steps 4 (smoke test) and 6 (quarantine store) complete. Two smoke-test bugs fixed: Railway missing UNIQUE constraint (ether-backend 0806ffb), _saveCursor NOT NULL crash (openair aa6e7c4). Quarantine store committed as de0fd8f, schema v16. Cleanup item added: JS migration v16 unverified under Electron Node due to NODE_MODULE_VERSION mismatch. |
