@@ -31,13 +31,19 @@ class SyncEngine {
    * @param {import('better-sqlite3').Database} db
    * @param {import('./transport').EtherTransport} transport
    * @param {object} [opts]
-   * @param {number} [opts.localSchemaVersion]  defaults to reading schema_version table
+   * @param {number}   [opts.localSchemaVersion]  defaults to reading schema_version table
+   * @param {function} [opts.getStationId]        () => string|null — called per pull so the
+   *                                              active station is always current. Defaults to
+   *                                              () => null (install-scoped only). Pass from
+   *                                              main.js; SyncEngine does not query stations
+   *                                              directly [single-station v1; multi-station safe].
    */
   constructor(db, transport, opts = {}) {
-    this._db        = db;
-    this._transport = transport;
-    this._localSV   = opts.localSchemaVersion ?? this._readSchemaVersion();
-    this._cursor    = this._loadCursor();
+    this._db           = db;
+    this._transport    = transport;
+    this._localSV      = opts.localSchemaVersion ?? this._readSchemaVersion();
+    this._cursor       = this._loadCursor();
+    this._getStationId = opts.getStationId ?? (() => null);
 
     this._causalQueue = new CausalOrderQueue();
     this._mergeEngine = new MergeEngine(db, {
@@ -106,7 +112,7 @@ class SyncEngine {
     try {
       result = await this._transport.pull({
         client_id:  clientId,
-        station_id: null,
+        station_id: this._getStationId(),
         cursor:     this._cursor,
       });
     } catch (err) {

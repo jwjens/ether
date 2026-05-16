@@ -35,6 +35,8 @@ The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every lo
 
 **Cleanup item (non-blocking):** The canonical migration script `scripts/migrate-quarantine-store-phase-sync-16.js` was never executed — the better-sqlite3 NODE_MODULE_VERSION mismatch (145 vs 137, Electron Node vs system Node v24) blocked it, and migration v16 was applied via a Python workaround. The committed JS script is therefore unverified against a real execution path. Before any fresh-install deployment: either (a) run the v16 JS migration under Electron's embedded Node to confirm it executes clean, or (b) establish a dev workflow for running migration scripts that avoids the version mismatch (npm rebuild better-sqlite3 against system Node, or a small Electron runner shim). This Node-version tax has recurred across the session and needs a proper solution.
 
+**Cleanup item (non-blocking):** Railway mutations table contains orphaned rows from early development: ~36 rows with `station_id='system'` (pre-refactor `station_config_kv` that used the string 'system' as a global-scope sentinel — dead code path, the current handler throws if station_id is not an integer) and ~60 rows with `station_id='3'` (real station "US Phenomenon", is_active=0; mutations are legitimate but for an inactive station). Both sets are harmless to the current pull scope (clients pull `station_id='1'` and never receive these). Before multi-station production: confirm no live code path writes non-integer station_ids, and purge the 'system' rows as they are permanently unreachable by any valid client.
+
 ---
 
 ### 2. Deploy OV + 2nd Client

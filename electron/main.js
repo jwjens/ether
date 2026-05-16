@@ -1314,7 +1314,11 @@ app.whenReady().then(() => {
       const urlRow  = db.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
       const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || '';
       const transport = new HttpTransport(db, { baseUrl });
-      const scheduler = new SyncScheduler(db, transport);
+      const scheduler = new SyncScheduler(db, transport, {
+        // Read active station on every pull so mid-session station switches are handled
+        // correctly. main.js owns getActiveStationId(); SyncEngine stores only the getter.
+        getStationId: () => String(getActiveStationId()),
+      });
       scheduler.start();
       app._syncScheduler = scheduler;
 
