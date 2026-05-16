@@ -29,8 +29,8 @@ const INFRASTRUCTURE_DDL = `
 
   CREATE TABLE system_state (
     key        TEXT PRIMARY KEY,
-    value      TEXT,
-    updated_at TEXT
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   );
 
   CREATE TABLE mutations (
@@ -90,22 +90,22 @@ const SYNCED_TABLE_DDL = {
       key        TEXT PRIMARY KEY,
       value      TEXT,
       uuid       TEXT NOT NULL,
-      created_at TEXT,
-      updated_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
       deleted_at TEXT
     );
   `,
 
   // monitor_routing — needed for T-26 (push-filter excludes scope:'local-only')
+  // DDL sourced from scripts/migrate-phase-a-v8.js Step 5 (S4).
   monitor_routing: `
     CREATE TABLE monitor_routing (
-      id         INTEGER PRIMARY KEY,
-      uuid       TEXT NOT NULL UNIQUE,
-      source     TEXT,
-      target     TEXT,
-      created_at TEXT,
-      updated_at TEXT,
-      deleted_at TEXT
+      output_device_id TEXT PRIMARY KEY,
+      station_id       INTEGER,
+      uuid             TEXT NOT NULL,
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      deleted_at       TEXT
     );
   `,
 
