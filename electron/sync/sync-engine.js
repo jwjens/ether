@@ -185,12 +185,10 @@ class SyncEngine {
 
   _saveCursor() {
     const json = JSON.stringify(this._cursor);
-    const exists = this._db.prepare(`SELECT 1 FROM system_state WHERE key = '${CURSOR_KEY}'`).get();
-    if (exists) {
-      this._db.prepare(`UPDATE system_state SET value = ? WHERE key = '${CURSOR_KEY}'`).run(json);
-    } else {
-      this._db.prepare(`INSERT INTO system_state (key, value) VALUES ('${CURSOR_KEY}', ?)`).run(json);
-    }
+    this._db.prepare(
+      `INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+    ).run(CURSOR_KEY, json, new Date().toISOString());
   }
 
   _readSchemaVersion() {
