@@ -1311,7 +1311,9 @@ app.whenReady().then(() => {
     } else {
       const { HttpTransport }   = require('./sync/transport-http');
       const { SyncScheduler }   = require('./sync/sync-scheduler');
-      const transport = new HttpTransport(db);
+      const urlRow  = db.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
+      const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || '';
+      const transport = new HttpTransport(db, { baseUrl });
       const scheduler = new SyncScheduler(db, transport);
       scheduler.start();
       app._syncScheduler = scheduler;
