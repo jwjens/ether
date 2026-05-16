@@ -26,9 +26,9 @@ fix-*.js
 
 .env.development
 
-# v8 migration artifacts
-scripts/pre-migration-snapshot-*.txt
-scripts/post-migration-snapshot-*.txt
+# Migration diagnostic snapshots (runtime output, never committed)
+scripts/pre-*-snapshot.txt
+scripts/post-*-snapshot.txt
 
 # Runtime logs
 electron-launch*.log
