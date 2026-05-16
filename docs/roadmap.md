@@ -138,6 +138,18 @@ The terminal arc for Ether's architecture. It has three components that must be 
 
 ---
 
+## Parking Lot — Future Concepts (Unscheduled)
+
+Ideas worth preserving. Not committed to any roadmap item or timeline.
+
+**Fuzzy-matching metadata importer** — RCS G-Selector 5.1.2 (observed 2026-05-16) shipped a bulk Excel/CSV importer with column-mapping templates and match-on-media-ID-or-title+artist. On their own livestream, RCS explicitly declined to validate incoming artist names against the existing library — their importer is deliberately "blind," no fuzzy matching, no dedup. Consequence: spelling variance creates duplicate artist entities. Ether's Phase 4 library already models artists and albums as install-scoped first-class entities — the foundation to do what RCS won't: an importer that fuzzy-matches incoming names against existing entities and surfaces "did you mean X?" before creating a duplicate. Competitive gap RCS publicly confirmed they're leaving open.
+
+**Future-date rotation preview ("demand date")** — G-Selector 5.1.2 added a preview showing how library rotation will look on a chosen future date, accounting for song run-dates and expiry, without scheduling for that date. Use cases: format-switch planning, monthly song swaps, turnover auditing. When Ether builds scheduling/rotation intelligence, a "show me my rotation as of \<future date\>" time-travel preview is a program-director-intuitive feature worth including.
+
+**Positioning observations (no action required)** — RCS's headline feature is live integration between Zetta (automation) and G-Selector (scheduler), two separate products wired together. Ether is a single application — library, scheduling, automation, DAW, audio engine, one process, one database — so RCS's integration selling point is a seam Ether doesn't have. Also: RCS's new "Active Stations" library column (which stations a song is currently active on) is multi-station visibility that Ether's station-aware schema and `station_programming` entity already support natively. Ensure the library and Station Monitor UI surfaces per-station programming status so this advantage is visible to operators.
+
+---
+
 ## Roadmap Revision Log
 
 | Date       | Change                                                                                                                          |
