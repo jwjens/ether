@@ -185,8 +185,9 @@ const migrate = db.transaction(() => {
   // ── Step B: Backfill UUIDs ──────────────────────────────────
   console.log("─── Step B: Backfill UUIDs ───");
   for (const table of ALL_TABLES) {
-    // Fetch all row ids that need a UUID (uuid IS NULL)
-    const rows = db.prepare(`SELECT rowid FROM "${table}" WHERE uuid IS NULL`).all();
+    // SELECT rowid AS _rowid: INTEGER PRIMARY KEY tables return the PK column name (e.g. "id")
+    // for rowid, so row.rowid would be undefined without the alias.
+    const rows = db.prepare(`SELECT rowid AS _rowid FROM "${table}" WHERE uuid IS NULL`).all();
 
     if (rows.length === 0) {
       console.log(`[migrate-uuids] FILL   "${table}" — 0 rows to backfill`);
@@ -195,7 +196,7 @@ const migrate = db.transaction(() => {
 
     const stmtUpdate = db.prepare(`UPDATE "${table}" SET uuid = ? WHERE rowid = ?`);
     for (const row of rows) {
-      stmtUpdate.run(crypto.randomUUID(), row.rowid);
+      stmtUpdate.run(crypto.randomUUID(), row._rowid);
     }
 
     console.log(`[migrate-uuids] FILL   "${table}" — backfilled ${rows.length} row(s)`);
