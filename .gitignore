@@ -27,8 +27,9 @@ fix-*.js
 .env.development
 
 # Migration diagnostic snapshots (runtime output, never committed)
-scripts/pre-*-snapshot.txt
-scripts/post-*-snapshot.txt
+scripts/pre-*snapshot*.txt
+scripts/post-*snapshot*.txt
+scripts/*.log
 
 # Runtime logs
 electron-launch*.log
