@@ -228,11 +228,22 @@ class MergeEngine {
   }
 
   _quarantine(m) {
-    // v1 stub: logs for investigation. Full quarantine store defined in Stage 2 [Q-12].
+    this._db.prepare(`
+      INSERT INTO quarantine_mutations
+        (id, raw_json, foreign_schema_version, local_schema_version, received_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING
+    `).run(
+      m.id,
+      JSON.stringify(m),
+      m.schema_version,
+      this._localSchemaVersion,
+      new Date().toISOString(),
+    );
     console.warn(
-      '[merge-engine] quarantine: id=' + m.id +
-      ' schema_version=' + m.schema_version +
-      ' > local=' + this._localSchemaVersion + ' [N-64]'
+      '[merge-engine] quarantined: id=' + m.id +
+      ' foreign_sv=' + m.schema_version +
+      ' local_sv=' + this._localSchemaVersion + ' [N-64]'
     );
   }
 
