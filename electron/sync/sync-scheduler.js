@@ -46,6 +46,17 @@ class SyncScheduler {
     if (this._running) return;
     this._running = true;
     console.log('[SYNC] scheduler started (interval=' + this._getInterval() + 'ms)');
+    // Drain quarantine on startup: replay any mutations held for a newer schema
+    // that are now compatible after a local schema upgrade. Failures log at ERROR
+    // but do not block the sync schedule from starting.
+    try {
+      const drain = this._engine.drainQuarantine();
+      if (drain.drained > 0 || drain.failed > 0) {
+        console.log('[SYNC] quarantine drain: drained=' + drain.drained + ' failed=' + drain.failed);
+      }
+    } catch (err) {
+      console.error('[SYNC] quarantine drain failed: ' + err.message);
+    }
     this._schedule();
   }
 

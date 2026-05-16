@@ -10,10 +10,11 @@
 //   syncCycle()   — push then pull, retry causal queue, check staleness
 //   compact()     — 90-day retention via compactMutations() [§22]
 
-const { REGISTRY }                     = require('./synced-tables');
-const { toWireFormat, compactMutations } = require('./mutation-writer');
-const { MergeEngine, compareHLC }       = require('./merge-engine');
-const { CausalOrderQueue }              = require('./causal-order');
+const { REGISTRY }                               = require('./synced-tables');
+const { toWireFormat, compactMutations }          = require('./mutation-writer');
+const { MergeEngine, compareHLC }                = require('./merge-engine');
+const { CausalOrderQueue }                       = require('./causal-order');
+const { applyTransformerChain, TransformerMissingError } = require('./transformer-chain');
 
 const MAX_PUSH_BATCH = 500;           // [N-93]
 const CURSOR_KEY     = 'sync_cursor'; // key in system_state [N-96]
@@ -114,7 +115,7 @@ class SyncEngine {
     }
 
     const mutations = result.mutations ?? [];
-    const outcomes  = { applied: 0, loser: 0, idempotent: 0, held: 0, quarantined: 0, rejected: 0 };
+    const outcomes  = { applied: 0, loser: 0, idempotent: 0, held: 0, quarantined: 0, rejected: 0, conflicted: 0 };
 
     for (const m of mutations) {
       const outcome = this._mergeEngine.apply(m);
@@ -143,6 +144,113 @@ class SyncEngine {
 
   compact() {
     return compactMutations(this._db);
+  }
+
+  // ── Quarantine drain [§20] ────────────────────────────────────────────────
+  //
+  // Called from SyncScheduler.start() after migrations complete.
+  // Replays mutations that were quarantined because their schema_version exceeded
+  // local at receive time and are now compatible after a local schema upgrade.
+  //
+  // retry_count semantics differ from the live-merge conflicted path [N-63]:
+  // quarantine drain is a replay of already-safely-stored mutations, not a live
+  // merge decision. We allow 3 attempts before dead-lettering so transient state
+  // issues don't permanently drop mutations, but TransformerMissingError is always
+  // an immediate dead-letter — retrying is pointless until a deployment ships the script.
+  // Dead-lettered mutations are set to drain_status='failed' and logged at ERROR level.
+
+  drainQuarantine() {
+    const pending = this._db.prepare(`
+      SELECT id, raw_json, foreign_schema_version, retry_count
+      FROM quarantine_mutations
+      WHERE drain_status = 'pending' AND foreign_schema_version <= ?
+      ORDER BY foreign_schema_version ASC, received_at ASC
+    `).all(this._localSV);
+
+    if (pending.length === 0) return { drained: 0, failed: 0 };
+
+    let drained = 0, failed = 0;
+
+    for (const row of pending) {
+      let m;
+      try {
+        m = JSON.parse(row.raw_json);
+      } catch (_) {
+        this._markQuarantineFailed(row.id);
+        console.error('[sync-engine] drainQuarantine: corrupt raw_json id=' + row.id);
+        failed++;
+        continue;
+      }
+
+      // Apply transformer chain to bring both payloads up to local schema version [N-62].
+      // payload_before is null for inserts; payload_after is null for deletes — both legitimate.
+      // One try/catch: if either transform throws the mutation goes to retry/dead-letter.
+      if (row.foreign_schema_version < this._localSV) {
+        try {
+          m = { ...m,
+            payload_before: m.payload_before ? applyTransformerChain(m.payload_before, row.foreign_schema_version, this._localSV, m) : null,
+            payload_after:  m.payload_after  ? applyTransformerChain(m.payload_after,  row.foreign_schema_version, this._localSV, m) : null,
+          };
+        } catch (err) {
+          if (err instanceof TransformerMissingError) {
+            // Missing script is permanent — no deployment currently provides it.
+            this._markQuarantineFailed(row.id);
+            console.error(
+              '[sync-engine] drainQuarantine: DEAD-LETTER missing transformer v' +
+              row.foreign_schema_version + '→' + this._localSV + ' id=' + row.id
+            );
+            failed++;
+          } else {
+            if (this._incrementRetry(row, err) >= 3) failed++;
+          }
+          continue;
+        }
+      }
+
+      // Apply through MergeEngine — handles idempotency, LWW, causal ordering, log, cursor
+      try {
+        const outcome = this._mergeEngine.apply(m);
+        this._db.prepare(
+          "UPDATE quarantine_mutations SET drain_status = 'drained' WHERE id = ?"
+        ).run(row.id);
+        drained++;
+        if (outcome === 'applied' || outcome === 'loser') this._retryCausalQueue(m.id);
+      } catch (err) {
+        if (this._incrementRetry(row, err) >= 3) failed++;
+      }
+    }
+
+    if (drained > 0) this._saveCursor();
+    return { drained, failed };
+  }
+
+  _markQuarantineFailed(id) {
+    this._db.prepare(
+      "UPDATE quarantine_mutations SET drain_status = 'failed' WHERE id = ?"
+    ).run(id);
+  }
+
+  // Returns the new retry_count so callers can check against the dead-letter threshold.
+  _incrementRetry(row, err) {
+    const newCount = row.retry_count + 1;
+    if (newCount >= 3) {
+      this._db.prepare(
+        "UPDATE quarantine_mutations SET drain_status = 'failed', retry_count = ? WHERE id = ?"
+      ).run(newCount, row.id);
+      console.error(
+        '[sync-engine] drainQuarantine: DEAD-LETTER after ' + newCount +
+        ' failures id=' + row.id + ' err=' + err.message
+      );
+    } else {
+      this._db.prepare(
+        "UPDATE quarantine_mutations SET retry_count = ?, retry_after = ? WHERE id = ?"
+      ).run(newCount, new Date().toISOString(), row.id);
+      console.warn(
+        '[sync-engine] drainQuarantine: retry ' + newCount +
+        '/3 id=' + row.id + ' err=' + err.message
+      );
+    }
+    return newCount;
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────

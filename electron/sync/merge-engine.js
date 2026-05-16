@@ -10,10 +10,11 @@
 //   Step 6 — Apply to live table [N-107]
 //   Step 7 — Log mutation + advance cursor [N-108]
 //
-// Returns one of: 'applied' | 'loser' | 'idempotent' | 'held' | 'quarantined' | 'rejected'
+// Returns one of: 'applied' | 'loser' | 'idempotent' | 'held' | 'quarantined' | 'rejected' | 'conflicted'
 
-const { deserializePayload } = require('./mutation-writer');
-const { REGISTRY }           = require('./synced-tables');
+const { deserializePayload }                      = require('./mutation-writer');
+const { REGISTRY }                                = require('./synced-tables');
+const { applyTransformerChain } = require('./transformer-chain');
 
 // ── HLC comparison [N-46] ─────────────────────────────────────────────────────
 // Returns -1 if a < b, 0 if a === b, +1 if a > b.
@@ -75,7 +76,7 @@ class MergeEngine {
         @payload_before, @payload_after,
         @created_at, @applied_at, @hlc,
         @parent_mutation_id, @schema_version,
-        'remote', 'synced', @conflict_resolution
+        'remote', @sync_status, @conflict_resolution
       )
     `);
   }
@@ -84,7 +85,7 @@ class MergeEngine {
    * Apply one remote wire-format mutation.
    * All 7 steps execute inside a single SQLite transaction.
    * @param {object} wireMutation  14-field wire object
-   * @returns {string}  'applied'|'loser'|'idempotent'|'held'|'quarantined'|'rejected'
+   * @returns {string}  'applied'|'loser'|'idempotent'|'held'|'quarantined'|'rejected'|'conflicted'
    */
   apply(wireMutation) {
     return this._db.transaction(() => this._applyInner(wireMutation))();
@@ -116,13 +117,26 @@ class MergeEngine {
       return 'quarantined';
     }
     if (m.schema_version < this._localSchemaVersion) {
-      // Backward compat: transformer chain [N-62].
-      // v1 has no transformers — warn and proceed. Must be revisited before any
-      // multi-schema-version peer scenario is enabled in production.
-      console.warn(
-        '[merge-engine] schema v' + m.schema_version + ' < local v' + this._localSchemaVersion +
-        ' — no transformer chain in v1, applying as-is [N-62]'
-      );
+      // Transformer chain: upgrade both payloads from mutation's schema version to local [N-62].
+      // payload_before is null for inserts; payload_after is null for deletes — both legitimate.
+      // One try/catch: if either transform throws the whole mutation goes conflicted [N-63].
+      try {
+        m = { ...m,
+          payload_before: m.payload_before ? applyTransformerChain(m.payload_before, m.schema_version, this._localSchemaVersion, m) : null,
+          payload_after:  m.payload_after  ? applyTransformerChain(m.payload_after,  m.schema_version, this._localSchemaVersion, m) : null,
+        };
+      } catch (err) {
+        // Transformer failure — log as conflicted and skip apply [N-63].
+        // Cursor advances so the next pull does not re-deliver this mutation.
+        // m is still the original untransformed wire object here (assignment threw before completing).
+        console.error(
+          '[merge-engine] transformer chain failed id=' + m.id +
+          ' sv=' + m.schema_version + ': ' + err.message
+        );
+        this._logRemote(m, now, 'conflicted');
+        this._advanceCursor(m.client_id, m.hlc);
+        return 'conflicted';
+      }
     }
 
     // ── Step 4: Causal ordering [N-103..N-104] ────────────────────────────────
@@ -207,7 +221,7 @@ class MergeEngine {
     // op='checkpoint': reserved; not applied to live tables in v0 [N-10]
   }
 
-  _logRemote(m, appliedAt) {
+  _logRemote(m, appliedAt, syncStatus = 'synced') {
     this._stmtLog.run({
       id:                  m.id,
       client_id:           m.client_id,
@@ -223,6 +237,7 @@ class MergeEngine {
       hlc:                 m.hlc,
       parent_mutation_id:  m.parent_mutation_id ?? null,
       schema_version:      m.schema_version,
+      sync_status:         syncStatus,
       conflict_resolution: m.conflict_resolution ? JSON.stringify(m.conflict_resolution) : null,
     });
   }
