@@ -677,19 +677,6 @@ function runMigrations() {
   alterSafe("ALTER TABLE midi_mappings ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
   // ai_voice_segments: add station_id for existing installs
   alterSafe("ALTER TABLE ai_voice_segments ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
-  // Ensure the single crash_recovery sentinel row exists
-  db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
-  // Seed default users if table is empty
-  const userCount = db.prepare("SELECT COUNT(*) as n FROM users").get();
-  if (userCount.n === 0) {
-    db.exec(`
-      INSERT INTO users (name, role, pin_hash, color) VALUES ('Admin', 'admin', '1234', '#f87171');
-      INSERT INTO users (name, role, pin_hash, color) VALUES ('Jock', 'jock', NULL, '#22d3ee');
-      INSERT INTO users (name, role, pin_hash, color) VALUES ('Music Director', 'music_director', '1234', '#a78bfa');
-    `);
-  }
-  // Phase A complete — gate flag seeded for fresh installs (existing installs already have it set)
-  db.prepare("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('multistation_insert_audit_complete', 'true')").run();
 
   // EQ settings stored in station_config_kv with keys eq_deck_A, eq_deck_B, eq_deck_C, eq_deck_mic, eq_master
   // Part 2 — operators and operator notes
@@ -716,18 +703,8 @@ function runMigrations() {
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
 
-  // Seed station 1 if no stations exist yet (pull existing kv values if present)
-  const stationCount = db.prepare("SELECT COUNT(*) as c FROM stations").get();
-  if (stationCount.c === 0) {
-    const serverKv = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
-    const pwKv     = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
-    const nameKv   = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name'").get();
-    db.prepare(
-      "INSERT INTO stations (id, name, callsign, is_active, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format) VALUES (1, ?, '', 1, ?, '/live', ?, 128, 'mp3')"
-    ).run(nameKv?.value || 'Station 1', serverKv?.value?.trim() || '127.0.0.1', pwKv?.value?.trim() || 'hackme');
-    console.log("[DB] Seeded station 1");
-  } else {
-    // Ensure station 1 Icecast columns are filled if they were just added and are empty
+  // Ensure station 1 Icecast columns are filled if they were just added and are empty
+  {
     const s1 = db.prepare("SELECT * FROM stations WHERE id=1").get();
     if (s1 && !s1.icecast_server_url) {
       const serverKv = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
@@ -800,24 +777,6 @@ function runMigrations() {
   alterSafe('ALTER TABLE station_config_kv ADD COLUMN updated_at TEXT');
   alterSafe('ALTER TABLE station_config_kv ADD COLUMN deleted_at TEXT');
 
-  // Seed default separation rules — runs after Phase 1 so station_id column exists
-  const ruleCount = db.prepare("SELECT COUNT(*) as c FROM separation_rules").get();
-  if (ruleCount.c === 0) {
-    const sid = getActiveStationId();
-    const insertRule = db.prepare(
-      "INSERT INTO separation_rules (station_id, rule_type, scope, value, is_hard, is_active, description) VALUES (?,?,?,?,?,?,?)"
-    );
-    const seedRules = db.transaction(() => {
-      insertRule.run(sid, 'artist_separation_min', 'global', 60,  1, 1, 'Minimum minutes between songs by the same artist');
-      insertRule.run(sid, 'song_separation_min',   'global', 180, 1, 1, 'Minimum minutes before a song can repeat');
-      insertRule.run(sid, 'title_separation_min',  'global', 120, 1, 1, 'Minimum minutes between songs with the same title');
-      insertRule.run(sid, 'max_same_gender',        'global', 3,   0, 1, 'Max consecutive songs of the same gender');
-      insertRule.run(sid, 'max_same_category',      'global', 3,   0, 1, 'Max consecutive songs from the same category');
-    });
-    seedRules();
-    console.log("[DB] Seeded default separation rules for station", sid);
-  }
-
   // Station-scope index for eas_tests (idempotent)
   db.exec("CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)");
   // Station-scope index for midi_mappings (idempotent)
@@ -887,11 +846,60 @@ function runMigrations() {
   // installs may have D/E/F stuck at disabled. Re-enable them so all 6 show.
   db.exec("UPDATE deck_configs SET enabled=1 WHERE slot IN ('D','E','F')");
 
+  seedFreshInstall();
+
   console.log("[DB] Schema ready");
 
   const maxVer = db.prepare("SELECT MAX(version) AS v FROM schema_version").get();
   if (maxVer?.v) {
     db.prepare("INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES ('schema_version', ?, unixepoch())").run(String(maxVer.v));
+  }
+}
+
+// ── Fresh-install seeder ──────────────────────────────────────
+// Business data only — no schema. All blocks are count-guarded so this is
+// safe to call unconditionally (no-ops on existing installs).
+// Called from runMigrations(); conditional guard (isFreshInstall) added in Step 6.
+function seedFreshInstall() {
+  db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
+
+  const userCount = db.prepare("SELECT COUNT(*) as n FROM users").get();
+  if (userCount.n === 0) {
+    db.exec(`
+      INSERT INTO users (name, role, pin_hash, color) VALUES ('Admin', 'admin', '1234', '#f87171');
+      INSERT INTO users (name, role, pin_hash, color) VALUES ('Jock', 'jock', NULL, '#22d3ee');
+      INSERT INTO users (name, role, pin_hash, color) VALUES ('Music Director', 'music_director', '1234', '#a78bfa');
+    `);
+  }
+
+  db.prepare("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('multistation_insert_audit_complete', 'true')").run();
+
+  const stationCount = db.prepare("SELECT COUNT(*) as c FROM stations").get();
+  if (stationCount.c === 0) {
+    const serverKv = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
+    const pwKv     = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
+    const nameKv   = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name'").get();
+    db.prepare(
+      "INSERT INTO stations (id, name, callsign, is_active, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format) VALUES (1, ?, '', 1, ?, '/live', ?, 128, 'mp3')"
+    ).run(nameKv?.value || 'Station 1', serverKv?.value?.trim() || '127.0.0.1', pwKv?.value?.trim() || 'hackme');
+    console.log("[DB] Seeded station 1");
+  }
+
+  const ruleCount = db.prepare("SELECT COUNT(*) as c FROM separation_rules").get();
+  if (ruleCount.c === 0) {
+    const sid = getActiveStationId();
+    const insertRule = db.prepare(
+      "INSERT INTO separation_rules (station_id, rule_type, scope, value, is_hard, is_active, description) VALUES (?,?,?,?,?,?,?)"
+    );
+    const seedRules = db.transaction(() => {
+      insertRule.run(sid, 'artist_separation_min', 'global', 60,  1, 1, 'Minimum minutes between songs by the same artist');
+      insertRule.run(sid, 'song_separation_min',   'global', 180, 1, 1, 'Minimum minutes before a song can repeat');
+      insertRule.run(sid, 'title_separation_min',  'global', 120, 1, 1, 'Minimum minutes between songs with the same title');
+      insertRule.run(sid, 'max_same_gender',        'global', 3,   0, 1, 'Max consecutive songs of the same gender');
+      insertRule.run(sid, 'max_same_category',      'global', 3,   0, 1, 'Max consecutive songs from the same category');
+    });
+    seedRules();
+    console.log("[DB] Seeded default separation rules for station", sid);
   }
 }
 
