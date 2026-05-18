@@ -118,6 +118,20 @@ The terminal arc for Ether's architecture. It has three components that must be 
 
 ---
 
+### 7. AirLogger (Compliance Recorder)
+
+**Status:** Not started.
+
+Continuous rolling capture of the program output bus for FCC/compliance audits and traffic reconciliation (spot proof-of-performance / air-checks). Configurable retention window with automatic rotation. Timestamped, seekable archive supporting retrieve-by-time and extract-segment, cross-referenced with play_log and spot air data. Per-station — each station logs its own program bus independently.
+
+**Storage model:** Local-first: rolling archive written to local disk on the station's engine machine (traffic staff scrub from local disk, no per-seek network round-trip); R2 used for offsite/retention archive in a dedicated bucket separate from ether-backups. Archive stored as fixed-length indexed segments (a row per segment with start/end timestamps) so retrieval is an indexed lookup, not a scan of one giant file.
+
+**Traffic workflow:** Navigate by spot (click a play_log ad entry → jump to that moment) or by time, scrub the waveform, set in/out points, extract a named air-check clip.
+
+**Build note:** Requires its own schema table for segment/retention metadata (lands as a numbered migration on the existing chain).
+
+---
+
 ## Cross-Cutting Design Principles
 
 ### UX
@@ -161,3 +175,4 @@ Ideas worth preserving. Not committed to any roadmap item or timeline.
 | 2026-05-16 | Deployment model decision: v1 = Model A (Jeff-hosted multi-tenant SaaS). Self-hosting / boxed option preserved as an architectural requirement — backend stays a clean sync-protocol implementation, station can run their own later with only a config change. Not building self-hosting now; keeping the door open. |
 | 2026-05-16 | Sync step 8 (test suite T-01..T-38) complete (ce9e1ef). 38/38 tests green across 9 categories: A=HLC, B=Writer, C=LWW, D=Causal ordering, E=Tombstone, F=Security/filter, G=Idempotency, H=Retention, I=Schema compat. Three DDL bugs in test fixture fixed during suite construction. T-36..T-38 synthetically prove the transformer chain and quarantine paths via setScriptsDir()/clearCache() seams. |
 | 2026-05-16 | Correction: previous roadmap update (after context compaction) incorrectly listed Step 5 (pull scope fix) as a remaining blocker. Step 5 was completed earlier the same day as commit 92eb50d — getStationId getter wired through SyncEngine.pull(), main.js passes getActiveStationId(). All 8 steps of Item 1 are complete. Item 2 (Deploy OV + 2nd Client) is unblocked. |
+| 2026-05-18 | AirLogger (Compliance Recorder) added as Item 7. No existing items renumbered. FCC/compliance recording, local-first disk archive, R2 offsite, traffic workflow UI, schema migration required. |
