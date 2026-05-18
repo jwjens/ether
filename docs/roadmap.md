@@ -122,13 +122,17 @@ The terminal arc for Ether's architecture. It has three components that must be 
 
 **Status:** Not started.
 
-Continuous rolling capture of the program output bus for FCC/compliance audits and traffic reconciliation (spot proof-of-performance / air-checks). Configurable retention window with automatic rotation. Timestamped, seekable archive supporting retrieve-by-time and extract-segment, cross-referenced with play_log and spot air data. Per-station — each station logs its own program bus independently.
+**Purpose** — Continuous compliance/audit recording of the air signal, and proof-of-performance for advertisers (traffic pulls air-checks showing a spot ran).
 
-**Storage model:** Local-first: rolling archive written to local disk on the station's engine machine (traffic staff scrub from local disk, no per-seek network round-trip); R2 used for offsite/retention archive in a dedicated bucket separate from ether-backups. Archive stored as fixed-length indexed segments (a row per segment with start/end timestamps) so retrieval is an indexed lookup, not a scan of one giant file.
+**Capture** — Taps the program output bus (same tap that feeds Icecast). Per-station; each station logs its own bus independently. Local-first: rolling archive on local disk on the engine machine; R2 dedicated bucket for offsite/retention copy, separate from ether-backups.
 
-**Traffic workflow:** Navigate by spot (click a play_log ad entry → jump to that moment) or by time, scrub the waveform, set in/out points, extract a named air-check clip.
+**Storage** — Fixed-length indexed segments, one DB row per segment with start/end timestamps; retrieval is an indexed lookup, not a scan of one large file. Requires its own schema table for segment/retention metadata — a numbered migration on the existing chain.
 
-**Build note:** Requires its own schema table for segment/retention metadata (lands as a numbered migration on the existing chain).
+**UI** — Two-region GarageBand-style layout. Top: a play_log browser, spot/ad-filtered by default (date, daypart/hour, advertiser dropdowns) — proof-of-performance is the primary use, so the list shows the log entries being proven; a secondary time-browse mode covers open-ended audit ("what aired 3-4pm"). Bottom: a docked waveform transport — play/pause, scrub, jog; the spot's known duration pre-marks a rough in/out when a row is cued.
+
+**Workflow** — Click a play_log row → bottom player cues the audio at that timestamp → traffic trims in/out on the waveform → Export Clip writes a named air-check file for sales.
+
+**Design requirements** — (1) Segment-boundary stitching: a spot straddling two segment files must scrub and export as continuous audio. (2) Export is copy-out to a separate permanent location, never a reference into the rolling archive — retention rotation must not delete saved air-checks. (3) The play_log row already carries the advertiser; v1 exports a plain file, but advertiser linkage on export is the natural next step.
 
 ---
 
