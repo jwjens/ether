@@ -64,6 +64,20 @@
 // published_episodes  src/components/PublishEpisode.tsx  ~line 428
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── DIAGNOSTIC — writes to %TEMP%\ether-diag.txt to pinpoint early crash ─────
+// Remove after the no-window bug is diagnosed.
+(function() {
+  try {
+    const _fs = require('fs'), _os = require('os'), _p = require('path');
+    const _log = (msg) => _fs.appendFileSync(_p.join(_os.tmpdir(), 'ether-diag.txt'),
+      new Date().toISOString() + ' ' + msg + '\n');
+    _log('POINT-1: main.js started  pid=' + process.pid + '  argv=' + process.argv.slice(1).join(' '));
+    process.on('uncaughtException', (e) => _log('UNCAUGHT: ' + e.message + '\n' + (e.stack||'')));
+    process.on('unhandledRejection', (r) => _log('UNHANDLED_REJECTION: ' + r));
+    global.__etherDiag = _log;
+  } catch(e) { /* silently skip if fs not available */ }
+})();
+
 // ── Load .env before anything else so process.env is populated for all modules ──
 try { require("dotenv").config(); } catch (e) { /* dotenv optional in packaged build */ }
 
@@ -87,9 +101,16 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
-const Database = require("better-sqlite3");
-const { SYNCED_TABLES } = require('./sync/synced-tables');
-const SYNCED_TABLES_SET = new Set(SYNCED_TABLES);
+if (global.__etherDiag) global.__etherDiag('POINT-1b: path/fs loaded OK');
+let Database;
+try { Database = require("better-sqlite3"); if (global.__etherDiag) global.__etherDiag('POINT-1c: better-sqlite3 loaded OK'); }
+catch(e) { if (global.__etherDiag) global.__etherDiag('POINT-1c: better-sqlite3 FAILED: ' + e.message); throw e; }
+let SYNCED_TABLES, SYNCED_TABLES_SET;
+try {
+  ({ SYNCED_TABLES } = require('./sync/synced-tables'));
+  SYNCED_TABLES_SET = new Set(SYNCED_TABLES);
+  if (global.__etherDiag) global.__etherDiag('POINT-1d: synced-tables loaded OK  count=' + SYNCED_TABLES.length);
+} catch(e) { if (global.__etherDiag) global.__etherDiag('POINT-1d: synced-tables FAILED: ' + e.message); throw e; }
 console.log(`[db:execute guard] active — ${SYNCED_TABLES.length} synced tables locked from direct writes`);
 
 // ── Startup diagnostics log ────────────────────────────────────
@@ -117,10 +138,13 @@ if (process.platform === "win32") {
 // Without this, every additional Electron instance tries to bind port 3400
 // and crashes with EADDRINUSE. The second instance focuses the running window
 // and exits; the first instance never sees the conflict.
+if (global.__etherDiag) global.__etherDiag('POINT-2: before requestSingleInstanceLock');
 if (!app.requestSingleInstanceLock()) {
+  if (global.__etherDiag) global.__etherDiag('POINT-2b: lock NOT acquired — exiting (another instance running)');
   app.quit();
   process.exit(0);
 }
+if (global.__etherDiag) global.__etherDiag('POINT-3: lock acquired OK');
 app.on('second-instance', () => {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
@@ -941,6 +965,7 @@ app.whenReady().then(() => {
     console.error(e.stack);
   }
 
+  if (global.__etherDiag) global.__etherDiag('POINT-4: app.whenReady() fired');
   // Initialize startup log — written to userData so it survives packaged builds with no terminal
   _startupLogPath = path.join(app.getPath('userData'), 'ether-startup.log');
   logStartup('=== SESSION START ===');
