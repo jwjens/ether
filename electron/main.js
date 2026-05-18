@@ -175,7 +175,11 @@ function runMigrationChain(db) {
 }
 
 function runMigrations() {
-  const isFreshInstall = !db.prepare("SELECT 1 FROM schema_version LIMIT 1").get();
+  const schemaVersionExists = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+  ).get();
+  const isFreshInstall = !schemaVersionExists ||
+    !db.prepare("SELECT 1 FROM schema_version LIMIT 1").get();
 
   require('../scripts/schema-v0-baseline')(db);
 
