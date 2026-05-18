@@ -184,6 +184,102 @@ for (const [v, entry] of Object.entries(loaded)) {
   }
 }
 
+// ── Step 7: verify applyMigration export on all discovered scripts ──
+
+section('STEP 7 — Verify applyMigration export on all discovered migrations');
+
+// Check ALL discovered scripts (including v1, which Step 5 skips for transformer coverage).
+// require() is cached by Node for v2..currentVersion already loaded in Step 5.
+const sortedVersions = Object.keys(byVersion).map(Number).sort((a, b) => a - b);
+const withApply = {};
+
+for (const v of sortedVersions) {
+  if (!byVersion[v] || byVersion[v].length === 0) continue;
+  const filename = byVersion[v][0];
+  const fullPath = path.join(scriptsDir, filename);
+  let mod;
+  try {
+    mod = require(fullPath);
+  } catch (e) {
+    fail(`require("${filename}") threw`, e.message);
+    continue;
+  }
+  if (typeof mod.applyMigration !== 'function') {
+    fail(`"${filename}" missing applyMigration export`, `got typeof ${typeof mod.applyMigration}`);
+    continue;
+  }
+  pass(`"${filename}" exports applyMigration as function`);
+  withApply[v] = { filename, fn: mod.applyMigration };
+}
+
+// ── Step 8: in-memory chain run (fresh-install path) ─────────
+
+section('STEP 8 — In-memory chain run (fresh-install path)');
+
+// NOTE: This check exercises the FRESH-INSTALL path only.
+// It proves that the actual scripts/schema-v0-baseline.js + full
+// applyMigration chain runs clean end-to-end on a new in-memory DB.
+// It does NOT verify upgrade-path guard branches (columns absent/present
+// from pre-sync installs). Upgrade-path coverage must be verified
+// separately via scratch tests whenever guard logic changes.
+
+let chainDb = null;
+
+try {
+  chainDb = new Database(':memory:');
+  chainDb.pragma('journal_mode = WAL');
+  chainDb.pragma('foreign_keys = ON');
+
+  // 8a — apply v0 baseline using the real module (never inlined DDL)
+  require(path.join(scriptsDir, 'schema-v0-baseline.js'))(chainDb);
+  pass('schema-v0-baseline applied to :memory: DB');
+
+  // 8b — insert station 1 BEFORE chain (migration-6 per-station seeding depends on it)
+  chainDb.prepare("INSERT INTO stations (name) VALUES (?)").run('Station 1');
+  pass('Station 1 inserted before chain');
+
+  // 8c — run full applyMigration chain in version order.
+  // Iterates sortedVersions (all discovered), NOT withApply survivors — so a
+  // migration missing its export is independently flagged here rather than silently
+  // dropped from the expected set. Step 7 and Step 8 must not share a single point
+  // of failure.
+  for (const v of sortedVersions) {
+    if (!withApply[v]) {
+      const filename = (byVersion[v] && byVersion[v][0]) || `(v${v})`;
+      fail(`applyMigration v${v} ("${filename}") discovered but missing export — cannot run chain`);
+      continue;
+    }
+    const { filename, fn } = withApply[v];
+    try {
+      fn(chainDb);
+      pass(`applyMigration v${v} ("${filename}") completed`);
+    } catch (e) {
+      fail(`applyMigration v${v} ("${filename}") threw`, e.message);
+    }
+  }
+
+  // 8d — assert schema_version against the full sortedVersions set.
+  // Using sortedVersions (not withApply survivors) means a missing migration
+  // makes this assertion fail independently of Step 7.
+  const actualVersions = chainDb
+    .prepare('SELECT version FROM schema_version ORDER BY version')
+    .all()
+    .map(r => r.version);
+  if (JSON.stringify(actualVersions) === JSON.stringify(sortedVersions)) {
+    pass(`schema_version = [${sortedVersions.join(',')}] after chain run`);
+  } else {
+    fail(
+      'schema_version mismatch after chain run',
+      `got [${actualVersions.join(',')}], expected [${sortedVersions.join(',')}]`
+    );
+  }
+
+} catch (e) {
+  fail('In-memory chain run setup threw', e.message);
+} finally {
+  if (chainDb) { try { chainDb.close(); } catch (_) {} }
+}
+
 // ── Summary ───────────────────────────────────────────────────
 
 section('SUMMARY');
@@ -195,7 +291,9 @@ console.log(`  Total migrations discovered: ${totalDiscovered} | Expected covera
 console.log('');
 
 if (failed === 0) {
-  console.log(`Transformer chain verified: v2 → v${currentVersion}, ${totalDiscovered} migrations, all transformers present and callable.`);
+  console.log(`Transformer chain verified: v2 → v${currentVersion}, ${totalDiscovered} migrations,`);
+  console.log(`all payloadTransformer + applyMigration exports present and callable.`);
+  console.log(`Fresh-install chain run: v0-baseline + v${Math.min(...sortedVersions)}–v${Math.max(...sortedVersions)} clean.`);
   console.log('');
   process.exit(0);
 } else {
