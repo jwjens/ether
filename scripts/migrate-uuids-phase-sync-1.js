@@ -101,10 +101,82 @@ function abort(msg) {
   process.exit(1);
 }
 
+function applyMigration(db) {
+  // No pre-flight check — chain runner guarantees this version has not been applied.
+  // Uses passed-in db; does NOT open its own connection.
+  const migrate = db.transaction(() => {
+
+    // ── Step A: ADD COLUMN uuid TEXT ────────────────────────────
+    console.log("─── Step A: ADD COLUMN uuid TEXT ───");
+    for (const table of ALL_TABLES) {
+      const cols = getTableCols(db, table);
+      if (cols.includes("uuid")) {
+        console.log(`[migrate-uuids] ALTER  "${table}" — uuid column already exists, skipping ADD`);
+      } else {
+        db.prepare(`ALTER TABLE "${table}" ADD COLUMN uuid TEXT`).run();
+        console.log(`[migrate-uuids] ALTER  "${table}" — uuid column added`);
+      }
+    }
+
+    console.log("");
+
+    // ── Step B: Backfill UUIDs ──────────────────────────────────
+    console.log("─── Step B: Backfill UUIDs ───");
+    for (const table of ALL_TABLES) {
+      // SELECT rowid AS _rowid: INTEGER PRIMARY KEY tables return the PK column name (e.g. "id")
+      // for rowid, so row.rowid would be undefined without the alias.
+      const rows = db.prepare(`SELECT rowid AS _rowid FROM "${table}" WHERE uuid IS NULL`).all();
+
+      if (rows.length === 0) {
+        console.log(`[migrate-uuids] FILL   "${table}" — 0 rows to backfill`);
+        continue;
+      }
+
+      const stmtUpdate = db.prepare(`UPDATE "${table}" SET uuid = ? WHERE rowid = ?`);
+      for (const row of rows) {
+        stmtUpdate.run(crypto.randomUUID(), row._rowid);
+      }
+
+      console.log(`[migrate-uuids] FILL   "${table}" — backfilled ${rows.length} row(s)`);
+    }
+
+    console.log("");
+
+    // ── Step C: CREATE UNIQUE INDEX ─────────────────────────────
+    console.log("─── Step C: CREATE UNIQUE INDEX ───");
+    for (const table of ALL_TABLES) {
+      const indexName = `idx_${table}_uuid`;
+
+      const existing = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name=?"
+      ).get(indexName);
+
+      if (existing) {
+        console.log(`[migrate-uuids] INDEX  "${table}" — index "${indexName}" already exists, skipping`);
+      } else {
+        db.prepare(`CREATE UNIQUE INDEX "${indexName}" ON "${table}"(uuid)`).run();
+        console.log(`[migrate-uuids] INDEX  "${table}" — created "${indexName}"`);
+      }
+    }
+
+    console.log("");
+
+    // ── Step D: Mark schema_version ─────────────────────────────
+    console.log("─── Step D: INSERT schema_version = 1 ───");
+    db.prepare("INSERT INTO schema_version (version) VALUES (1)").run();
+    console.log("[migrate-uuids] schema_version row inserted.");
+
+  });
+
+  migrate();
+  console.log("[migrate-uuids] Transaction committed.");
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     return payload;
   },
+  applyMigration,
 };
 
 if (require.main === module) {
@@ -166,75 +238,9 @@ console.log("RUNNING MIGRATION");
 console.log("═".repeat(60));
 console.log("");
 
-const migrate = db.transaction(() => {
-
-  // ── Step A: ADD COLUMN uuid TEXT ────────────────────────────
-  console.log("─── Step A: ADD COLUMN uuid TEXT ───");
-  for (const table of ALL_TABLES) {
-    const cols = getTableCols(db, table);
-    if (cols.includes("uuid")) {
-      console.log(`[migrate-uuids] ALTER  "${table}" — uuid column already exists, skipping ADD`);
-    } else {
-      db.prepare(`ALTER TABLE "${table}" ADD COLUMN uuid TEXT`).run();
-      console.log(`[migrate-uuids] ALTER  "${table}" — uuid column added`);
-    }
-  }
-
-  console.log("");
-
-  // ── Step B: Backfill UUIDs ──────────────────────────────────
-  console.log("─── Step B: Backfill UUIDs ───");
-  for (const table of ALL_TABLES) {
-    // SELECT rowid AS _rowid: INTEGER PRIMARY KEY tables return the PK column name (e.g. "id")
-    // for rowid, so row.rowid would be undefined without the alias.
-    const rows = db.prepare(`SELECT rowid AS _rowid FROM "${table}" WHERE uuid IS NULL`).all();
-
-    if (rows.length === 0) {
-      console.log(`[migrate-uuids] FILL   "${table}" — 0 rows to backfill`);
-      continue;
-    }
-
-    const stmtUpdate = db.prepare(`UPDATE "${table}" SET uuid = ? WHERE rowid = ?`);
-    for (const row of rows) {
-      stmtUpdate.run(crypto.randomUUID(), row._rowid);
-    }
-
-    console.log(`[migrate-uuids] FILL   "${table}" — backfilled ${rows.length} row(s)`);
-  }
-
-  console.log("");
-
-  // ── Step C: CREATE UNIQUE INDEX ─────────────────────────────
-  console.log("─── Step C: CREATE UNIQUE INDEX ───");
-  for (const table of ALL_TABLES) {
-    const indexName = `idx_${table}_uuid`;
-
-    // Check if index already exists
-    const existing = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='index' AND name=?"
-    ).get(indexName);
-
-    if (existing) {
-      console.log(`[migrate-uuids] INDEX  "${table}" — index "${indexName}" already exists, skipping`);
-    } else {
-      db.prepare(`CREATE UNIQUE INDEX "${indexName}" ON "${table}"(uuid)`).run();
-      console.log(`[migrate-uuids] INDEX  "${table}" — created "${indexName}"`);
-    }
-  }
-
-  console.log("");
-
-  // ── Step D: Mark schema_version ─────────────────────────────
-  console.log("─── Step D: INSERT schema_version = 1 ───");
-  db.prepare("INSERT INTO schema_version (version) VALUES (1)").run();
-  console.log("[migrate-uuids] schema_version row inserted.");
-
-});
-
 try {
-  migrate();
+  applyMigration(db);
   console.log("");
-  console.log("[migrate-uuids] Transaction committed.");
 } catch (err) {
   console.error("\n[migrate-uuids] ERROR — transaction rolled back:", err.message);
   db.close();

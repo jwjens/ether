@@ -24,10 +24,24 @@
 // payloadTransformer: eas_tests is intentionally non-synced (local-only FCC log per
 // machine). No payload transform is needed — this is a trivial identity function
 // required by the pre-commit hook's migration-chain validator.
+
+function applyMigration(db) {
+  const migrate = db.transaction(() => {
+    if (!db.prepare('PRAGMA table_info(eas_tests)').all().some(c => c.name === 'station_id')) {
+      db.exec('ALTER TABLE eas_tests ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)');
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(13);
+  });
+  migrate();
+  console.log('[migrate-v13] Transaction committed.');
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload) {
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────
@@ -94,12 +108,7 @@ const preMuts = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
 console.log(`[migrate-v13] Pre-migration: eas_tests=${preEas}, mutations=${preMuts}`);
 
 // ── Atomic transaction ────────────────────────────────────────
-db.transaction(() => {
-  db.exec('ALTER TABLE eas_tests ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)');
-  db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(13);
-})();
-console.log('[migrate-v13] Transaction committed.');
+applyMigration(db);
 
 // ── Post-verification ─────────────────────────────────────────
 let ok = true;

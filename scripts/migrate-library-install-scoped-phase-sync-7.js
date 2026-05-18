@@ -25,11 +25,32 @@
 
 // payloadTransformer: identity. v7 drops physical columns only; no payload field mapping needed
 // (install-scoped handlers already exclude station_id from payloads per [N-89]).
+
+function applyMigration(db) {
+  const migrate = db.transaction(() => {
+    // Guard: only drop if present — fresh installs (v0 baseline never adds station_id to
+    // artists/albums) would crash on unconditional DROP. Upgrade installs that previously
+    // ran a pre-DROP revision of v7 (OV case) will be skipped since schema_version=7 exists.
+    const artistsCols = db.prepare('PRAGMA table_info(artists)').all().map(c => c.name);
+    if (artistsCols.includes('station_id')) {
+      db.exec('ALTER TABLE artists DROP COLUMN station_id');
+    }
+    const albumsCols = db.prepare('PRAGMA table_info(albums)').all().map(c => c.name);
+    if (albumsCols.includes('station_id')) {
+      db.exec('ALTER TABLE albums  DROP COLUMN station_id');
+    }
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(7);
+  });
+  migrate();
+  console.log('[migrate-v7] Transaction committed.');
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────
@@ -102,12 +123,7 @@ const preMuts     = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
 console.log(`[migrate-v7] Pre-migration: artists=${preArtists}, albums=${preAlbums}, mutations=${preMuts}`);
 
 // ── Atomic transaction ────────────────────────────────────────
-db.transaction(() => {
-  db.exec('ALTER TABLE artists DROP COLUMN station_id');
-  db.exec('ALTER TABLE albums  DROP COLUMN station_id');
-  db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(7);
-})();
-console.log('[migrate-v7] Transaction committed.');
+applyMigration(db);
 
 // ── Post-verification ─────────────────────────────────────────
 let ok = true;

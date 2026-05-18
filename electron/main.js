@@ -156,7 +156,27 @@ function initDb() {
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
 
+function runMigrationChain(db) {
+  const applied = new Set(
+    db.prepare("SELECT version FROM schema_version").all().map(r => r.version)
+  );
+  const MIGRATION_RE = /^migrate-.+-phase-sync-(\d+)\.js$/;
+  const scriptsDir = path.join(__dirname, '..', 'scripts');
+  const scripts = [];
+  for (const f of require('fs').readdirSync(scriptsDir)) {
+    const m = MIGRATION_RE.exec(f);
+    if (m) scripts.push({ v: parseInt(m[1], 10), file: f });
+  }
+  scripts.sort((a, b) => a.v - b.v);
+  for (const { v, file } of scripts) {
+    if (applied.has(v)) continue;
+    require(path.join(scriptsDir, file)).applyMigration(db);
+  }
+}
+
 function runMigrations() {
+  const isFreshInstall = !db.prepare("SELECT 1 FROM schema_version LIMIT 1").get();
+
   require('../scripts/schema-v0-baseline')(db);
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
@@ -222,21 +242,7 @@ function runMigrations() {
   alterSafe("ALTER TABLE ai_voice_segments ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
 
   // EQ settings stored in station_config_kv with keys eq_deck_A, eq_deck_B, eq_deck_C, eq_deck_mic, eq_master
-  // Part 2 — operators and operator notes
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS operators (
-      id       INTEGER PRIMARY KEY AUTOINCREMENT,
-      name     TEXT NOT NULL,
-      initials TEXT NOT NULL DEFAULT '',
-      created_at INTEGER DEFAULT (unixepoch())
-    );
-    CREATE TABLE IF NOT EXISTS operator_notes (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      operator_id INTEGER NOT NULL REFERENCES operators(id),
-      note        TEXT NOT NULL DEFAULT '',
-      updated_at  INTEGER DEFAULT (unixepoch())
-    );
-  `);
+  // operators and operator_notes are in schema-v0-baseline.js (moved in Step 6)
 
   // ── Phase 1: Multi-station schema ────────────────────────────
   // Add Icecast columns to stations table
@@ -389,7 +395,17 @@ function runMigrations() {
   // installs may have D/E/F stuck at disabled. Re-enable them so all 6 show.
   db.exec("UPDATE deck_configs SET enabled=1 WHERE slot IN ('D','E','F')");
 
-  seedFreshInstall();
+  // Seed bare station 1 before chain so migration-6's seeding loop has a station to bind to
+  if (isFreshInstall) {
+    const stationCount = db.prepare("SELECT COUNT(*) as c FROM stations").get().c;
+    if (stationCount === 0) {
+      db.prepare("INSERT INTO stations (name) VALUES (?)").run('Station 1');
+    }
+  }
+
+  runMigrationChain(db);
+
+  if (isFreshInstall) seedFreshInstall();
 
   console.log("[DB] Schema ready");
 

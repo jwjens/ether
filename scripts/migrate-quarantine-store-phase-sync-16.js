@@ -9,11 +9,34 @@
 // A mutation that is still "too new" (foreign_schema_version > local after upgrade) is
 // never retried and retry_count is never incremented for it — it waits for the next upgrade.
 
+function applyMigration(db) {
+  const migrate = db.transaction(() => {
+    db.prepare(`
+      CREATE TABLE quarantine_mutations (
+        id                     TEXT PRIMARY KEY,
+        raw_json               TEXT NOT NULL,
+        foreign_schema_version INTEGER NOT NULL,
+        local_schema_version   INTEGER NOT NULL,
+        received_at            TEXT NOT NULL,
+        retry_after            TEXT,
+        retry_count            INTEGER NOT NULL DEFAULT 0,
+        drain_status           TEXT NOT NULL DEFAULT 'pending'
+                                 CHECK (drain_status IN ('pending', 'drained', 'failed'))
+      )
+    `).run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_quarantine_drain ON quarantine_mutations(drain_status, foreign_schema_version)').run();
+    db.prepare('INSERT INTO schema_version (version) VALUES (16)').run();
+  });
+  migrate();
+  console.log('[migrate-v16] Transaction committed.');
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload) {
     // Identity — quarantine_mutations is not a synced table; no payload transformation needed.
     return payload;
   },
+  applyMigration,
 };
 
 if (require.main === module) {
@@ -46,36 +69,7 @@ if (require.main === module) {
   }
 
   // ── Atomic transaction ─────────────────────────────────────────
-  db.prepare('BEGIN').run();
-  try {
-    db.prepare(`
-      CREATE TABLE quarantine_mutations (
-        id                     TEXT PRIMARY KEY,
-        raw_json               TEXT NOT NULL,
-        foreign_schema_version INTEGER NOT NULL,
-        local_schema_version   INTEGER NOT NULL,
-        received_at            TEXT NOT NULL,
-        retry_after            TEXT,
-        retry_count            INTEGER NOT NULL DEFAULT 0,
-        drain_status           TEXT NOT NULL DEFAULT 'pending'
-                                 CHECK (drain_status IN ('pending', 'drained', 'failed'))
-      )
-    `).run();
-    console.log('CREATE TABLE quarantine_mutations: OK');
-
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_quarantine_drain ON quarantine_mutations(drain_status, foreign_schema_version)').run();
-    console.log('CREATE INDEX idx_quarantine_drain: OK');
-
-    db.prepare('INSERT INTO schema_version (version) VALUES (16)').run();
-    console.log('schema_version 16 inserted');
-
-    db.prepare('COMMIT').run();
-    console.log('COMMIT: OK');
-  } catch (err) {
-    db.prepare('ROLLBACK').run();
-    console.error('ROLLBACK — migration failed:', err.message);
-    process.exit(1);
-  }
+  applyMigration(db);
 
   // ── Post-verification ──────────────────────────────────────────
   console.log('\n=== Post-verification ===');

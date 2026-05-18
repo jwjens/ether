@@ -43,10 +43,105 @@ const REQUIRED_INDEXES = [
 // Migration 3 adds infrastructure tables only (mutations, client_identity, system_state).
 // No synced-table columns change. Payload shape from schema_version 2 is valid at schema_version 3.
 
+function applyMigration(db) {
+  // No pre-flight check — chain runner guarantees this version has not been applied.
+  const migrate = db.transaction(() => {
+
+    // ── Step 1: CREATE TABLE mutations ───────────────────────────
+    // 17 fields per §3 [N-06]/[N-07], CHECK constraints per [N-10]/[N-11]/[N-12]
+    console.log("[migrate-mutations] Step 1: CREATE TABLE mutations");
+    db.prepare(`
+      CREATE TABLE mutations (
+        id                   TEXT PRIMARY KEY NOT NULL,
+        client_id            TEXT NOT NULL,
+        station_id           TEXT NOT NULL,
+        actor_id             TEXT,
+        table_name           TEXT NOT NULL,
+        row_id               TEXT NOT NULL,
+        op                   TEXT NOT NULL CHECK (op IN ('insert', 'update', 'delete', 'checkpoint')),
+        payload_before       TEXT,
+        payload_after        TEXT,
+        created_at           TEXT NOT NULL,
+        applied_at           TEXT NOT NULL,
+        hlc                  TEXT NOT NULL,
+        parent_mutation_id   TEXT,
+        schema_version       INTEGER NOT NULL,
+        origin               TEXT NOT NULL CHECK (origin IN ('local', 'remote', 'system', 'migration')),
+        sync_status          TEXT NOT NULL CHECK (sync_status IN ('pending', 'syncing', 'synced', 'conflicted')),
+        conflict_resolution  TEXT
+      )
+    `).run();
+    console.log("[migrate-mutations] Step 1: mutations table created ✓");
+
+    // ── Step 2: CREATE indexes per [N-13] ────────────────────────
+    console.log("[migrate-mutations] Step 2: CREATE indexes");
+    db.prepare("CREATE INDEX idx_mutations_table_row_hlc    ON mutations (table_name, row_id, hlc)").run();
+    console.log("[migrate-mutations] Step 2: idx_mutations_table_row_hlc created ✓");
+    db.prepare("CREATE INDEX idx_mutations_client_hlc       ON mutations (client_id, hlc)").run();
+    console.log("[migrate-mutations] Step 2: idx_mutations_client_hlc created ✓");
+    db.prepare("CREATE INDEX idx_mutations_station_created  ON mutations (station_id, created_at)").run();
+    console.log("[migrate-mutations] Step 2: idx_mutations_station_created created ✓");
+    db.prepare("CREATE INDEX idx_mutations_sync_status      ON mutations (sync_status)").run();
+    console.log("[migrate-mutations] Step 2: idx_mutations_sync_status created ✓");
+    db.prepare("CREATE INDEX idx_mutations_created          ON mutations (created_at)").run();
+    console.log("[migrate-mutations] Step 2: idx_mutations_created created ✓");
+
+    // ── Step 3: CREATE TABLE client_identity per [N-75] ──────────
+    console.log("[migrate-mutations] Step 3: CREATE TABLE client_identity");
+    db.prepare(`
+      CREATE TABLE client_identity (
+        id         INTEGER PRIMARY KEY CHECK (id = 1),
+        client_id  TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        label      TEXT
+      )
+    `).run();
+    console.log("[migrate-mutations] Step 3: client_identity table created ✓");
+
+    // ── Step 4: CREATE TABLE system_state ────────────────────────
+    console.log("[migrate-mutations] Step 4: CREATE TABLE system_state");
+    db.prepare(`
+      CREATE TABLE system_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `).run();
+    console.log("[migrate-mutations] Step 4: system_state table created ✓");
+
+    // ── Step 5: Seed client_identity per [N-77] ──────────────────
+    console.log("[migrate-mutations] Step 5: Seed client_identity");
+    const clientId  = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO client_identity (id, client_id, created_at, label) VALUES (1, ?, ?, NULL)"
+    ).run(clientId, timestamp);
+    console.log(`[migrate-mutations] Step 5: client_identity seeded — client_id=${clientId} ✓`);
+
+    // ── Step 6: Seed system_state.hlc_last per [N-42] ────────────
+    console.log("[migrate-mutations] Step 6: Seed system_state.hlc_last");
+    const hlcInitial = `0:0:${clientId}`;
+    db.prepare(
+      "INSERT INTO system_state (key, value, updated_at) VALUES ('hlc_last', ?, ?)"
+    ).run(hlcInitial, timestamp);
+    console.log(`[migrate-mutations] Step 6: system_state seeded — hlc_last=${hlcInitial} ✓`);
+
+    // ── Step 7: INSERT schema_version = 3 per [N-74] ─────────────
+    console.log("[migrate-mutations] Step 7: INSERT schema_version = 3");
+    db.prepare("INSERT INTO schema_version (version) VALUES (3)").run();
+    console.log("[migrate-mutations] Step 7: schema_version=3 inserted ✓");
+
+  });
+
+  migrate();
+  console.log("[migrate-mutations] Transaction committed.");
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     return payload;
   },
+  applyMigration,
 };
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -120,107 +215,17 @@ console.log("RUNNING MIGRATION");
 console.log("═".repeat(60));
 console.log("");
 
-// Capture generated values outside transaction so post-commit checks can reference them
-let generatedClientId;
-let generatedTimestamp;
-
-const migrate = db.transaction(() => {
-
-  // ── Step 1: CREATE TABLE mutations ───────────────────────────
-  // 17 fields per §3 [N-06]/[N-07], CHECK constraints per [N-10]/[N-11]/[N-12]
-  console.log("[migrate-mutations] Step 1: CREATE TABLE mutations");
-  db.prepare(`
-    CREATE TABLE mutations (
-      id                   TEXT PRIMARY KEY NOT NULL,
-      client_id            TEXT NOT NULL,
-      station_id           TEXT NOT NULL,
-      actor_id             TEXT,
-      table_name           TEXT NOT NULL,
-      row_id               TEXT NOT NULL,
-      op                   TEXT NOT NULL CHECK (op IN ('insert', 'update', 'delete', 'checkpoint')),
-      payload_before       TEXT,
-      payload_after        TEXT,
-      created_at           TEXT NOT NULL,
-      applied_at           TEXT NOT NULL,
-      hlc                  TEXT NOT NULL,
-      parent_mutation_id   TEXT,
-      schema_version       INTEGER NOT NULL,
-      origin               TEXT NOT NULL CHECK (origin IN ('local', 'remote', 'system', 'migration')),
-      sync_status          TEXT NOT NULL CHECK (sync_status IN ('pending', 'syncing', 'synced', 'conflicted')),
-      conflict_resolution  TEXT
-    )
-  `).run();
-  console.log("[migrate-mutations] Step 1: mutations table created ✓");
-
-  // ── Step 2: CREATE indexes per [N-13] ────────────────────────
-  console.log("[migrate-mutations] Step 2: CREATE indexes");
-  db.prepare("CREATE INDEX idx_mutations_table_row_hlc    ON mutations (table_name, row_id, hlc)").run();
-  console.log("[migrate-mutations] Step 2: idx_mutations_table_row_hlc created ✓");
-  db.prepare("CREATE INDEX idx_mutations_client_hlc       ON mutations (client_id, hlc)").run();
-  console.log("[migrate-mutations] Step 2: idx_mutations_client_hlc created ✓");
-  db.prepare("CREATE INDEX idx_mutations_station_created  ON mutations (station_id, created_at)").run();
-  console.log("[migrate-mutations] Step 2: idx_mutations_station_created created ✓");
-  db.prepare("CREATE INDEX idx_mutations_sync_status      ON mutations (sync_status)").run();
-  console.log("[migrate-mutations] Step 2: idx_mutations_sync_status created ✓");
-  db.prepare("CREATE INDEX idx_mutations_created          ON mutations (created_at)").run();
-  console.log("[migrate-mutations] Step 2: idx_mutations_created created ✓");
-
-  // ── Step 3: CREATE TABLE client_identity per [N-75] ──────────
-  console.log("[migrate-mutations] Step 3: CREATE TABLE client_identity");
-  db.prepare(`
-    CREATE TABLE client_identity (
-      id         INTEGER PRIMARY KEY CHECK (id = 1),
-      client_id  TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      label      TEXT
-    )
-  `).run();
-  console.log("[migrate-mutations] Step 3: client_identity table created ✓");
-
-  // ── Step 4: CREATE TABLE system_state ────────────────────────
-  console.log("[migrate-mutations] Step 4: CREATE TABLE system_state");
-  db.prepare(`
-    CREATE TABLE system_state (
-      key        TEXT PRIMARY KEY,
-      value      TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-  `).run();
-  console.log("[migrate-mutations] Step 4: system_state table created ✓");
-
-  // ── Step 5: Seed client_identity per [N-77] ──────────────────
-  console.log("[migrate-mutations] Step 5: Seed client_identity");
-  generatedClientId  = crypto.randomUUID();
-  generatedTimestamp = new Date().toISOString();
-  db.prepare(
-    "INSERT INTO client_identity (id, client_id, created_at, label) VALUES (1, ?, ?, NULL)"
-  ).run(generatedClientId, generatedTimestamp);
-  console.log(`[migrate-mutations] Step 5: client_identity seeded — client_id=${generatedClientId} ✓`);
-
-  // ── Step 6: Seed system_state.hlc_last per [N-42] ────────────
-  console.log("[migrate-mutations] Step 6: Seed system_state.hlc_last");
-  const hlcInitial = `0:0:${generatedClientId}`;
-  db.prepare(
-    "INSERT INTO system_state (key, value, updated_at) VALUES ('hlc_last', ?, ?)"
-  ).run(hlcInitial, generatedTimestamp);
-  console.log(`[migrate-mutations] Step 6: system_state seeded — hlc_last=${hlcInitial} ✓`);
-
-  // ── Step 7: INSERT schema_version = 3 per [N-74] ─────────────
-  console.log("[migrate-mutations] Step 7: INSERT schema_version = 3");
-  db.prepare("INSERT INTO schema_version (version) VALUES (3)").run();
-  console.log("[migrate-mutations] Step 7: schema_version=3 inserted ✓");
-
-});
-
 try {
-  migrate();
+  applyMigration(db);
   console.log("");
-  console.log("[migrate-mutations] Transaction committed.");
 } catch (err) {
   console.error("\n[migrate-mutations] ERROR — transaction rolled back:", err.message);
   db.close();
   process.exit(1);
 }
+
+// Re-read generated client_id from DB for post-commit verification.
+const generatedClientId = db.prepare("SELECT client_id FROM client_identity WHERE id=1").get().client_id;
 
 // ── Post-commit verification ──────────────────────────────────
 

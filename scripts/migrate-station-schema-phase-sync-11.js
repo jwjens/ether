@@ -12,11 +12,21 @@
 // payloadTransformer: identity. v11 is a DDL-only change (indexes + new table).
 // No payload field names, types, or structure changed.
 
+// applyMigration: version stamp only. V11's DDL (idx_macros_station_trigger,
+// idx_macros_station_hotkey, scheduling_rules) is already in schema-v0-baseline.js
+// (extracted verbatim from runMigrations()). The chain runner calls v0 baseline
+// before any numbered migration, so fresh installs already have all three items.
+// No fresh-install gap for v11.
+function applyMigration(db) {
+  db.prepare('INSERT INTO schema_version (version) VALUES (11)').run();
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────────────────────

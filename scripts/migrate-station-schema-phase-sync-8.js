@@ -17,11 +17,21 @@
 // v7 payloads. New tables have no v7 payload history to transform.
 // monitor_routing is local-only and never appears in any sync payload.
 
+// applyMigration: version stamp only. The 12-step v8 schema work (4 station columns,
+// monitor_routing, install_config_kv, install_secrets_kv, station_config_kv rebuild)
+// lives in migrate-phase-a-v8.js, which the chain runner never calls. On a fresh
+// install this stamps version 8 without applying those changes — see "Known issues
+// to resolve at Step 6" in docs/fresh-install-option-b-plan.md.
+function applyMigration(db) {
+  db.prepare('INSERT INTO schema_version (version) VALUES (8)').run();
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────────────────────

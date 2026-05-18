@@ -14,11 +14,23 @@
 // to all stations that were created after the v6 migration ran. No payload
 // field names, types, or structure changed.
 
+// applyMigration: version stamp only. The real v10 work (data backfill — copy
+// metadata_definitions and metadata_vocabulary from station 1 to stations that
+// missed v6 seeding) lives in migrate-phase-a-v10.js, which the chain runner
+// never calls. V10's gap is subsumed by the migration-6 seeding fix — if m-6
+// seeds station 1 correctly, v10 is a no-op on a fresh install. Note: phase-a-v10
+// also stamps system_state.schema_version = '10'; the chain runner does not.
+// See "Known issues to resolve at Step 6" in docs/fresh-install-option-b-plan.md.
+function applyMigration(db) {
+  db.prepare('INSERT INTO schema_version (version) VALUES (10)').run();
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────────────────────

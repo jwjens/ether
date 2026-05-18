@@ -20,6 +20,20 @@
 //        - schema_version = [1..12]
 
 // payloadTransformer: strips station_id from incoming song payloads sent by v11 nodes.
+
+function applyMigration(db) {
+  const migrate = db.transaction(() => {
+    // Only drop station_id if it exists — v0 baseline fresh installs never add it
+    const hasSid = db.prepare('PRAGMA table_info(songs)').all().some(c => c.name === 'station_id');
+    if (hasSid) {
+      db.exec('ALTER TABLE songs DROP COLUMN station_id');
+    }
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(12);
+  });
+  migrate();
+  console.log('[migrate-v12] Transaction committed.');
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
@@ -29,6 +43,7 @@ module.exports = {
     }
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────
@@ -95,11 +110,7 @@ const preMuts  = db.prepare('SELECT COUNT(*) AS c FROM mutations').get().c;
 console.log(`[migrate-v12] Pre-migration: songs=${preSongs}, mutations=${preMuts}`);
 
 // ── Atomic transaction ────────────────────────────────────────
-db.transaction(() => {
-  db.exec('ALTER TABLE songs DROP COLUMN station_id');
-  db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(12);
-})();
-console.log('[migrate-v12] Transaction committed.');
+applyMigration(db);
 
 // ── Post-verification ─────────────────────────────────────────
 let ok = true;

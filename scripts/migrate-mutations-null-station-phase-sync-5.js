@@ -20,11 +20,93 @@
 
 // payloadTransformer: identity. v5 changes only the schema constraint, not any
 // payload fields. Receivers apply no field transforms when upgrading from v4.
+
+function applyMigration(db) {
+  const beforeCount = db.prepare('SELECT COUNT(*) AS n FROM mutations').get().n;
+
+  const migrate = db.transaction(() => {
+
+    // Step 1: CREATE mutations_new with station_id TEXT (NOT NULL removed)
+    console.log('[migrate-v5] Step 1: CREATE TABLE mutations_new');
+    db.prepare(`
+      CREATE TABLE mutations_new (
+        id                   TEXT PRIMARY KEY NOT NULL,
+        client_id            TEXT NOT NULL,
+        station_id           TEXT,
+        actor_id             TEXT,
+        table_name           TEXT NOT NULL,
+        row_id               TEXT NOT NULL,
+        op                   TEXT NOT NULL CHECK (op IN ('insert', 'update', 'delete', 'checkpoint')),
+        payload_before       TEXT,
+        payload_after        TEXT,
+        created_at           TEXT NOT NULL,
+        applied_at           TEXT NOT NULL,
+        hlc                  TEXT NOT NULL,
+        parent_mutation_id   TEXT,
+        schema_version       INTEGER NOT NULL,
+        origin               TEXT NOT NULL CHECK (origin IN ('local', 'remote', 'system', 'migration')),
+        sync_status          TEXT NOT NULL CHECK (sync_status IN ('pending', 'syncing', 'synced', 'conflicted')),
+        conflict_resolution  TEXT
+      )
+    `).run();
+    console.log('[migrate-v5] Step 1: mutations_new created ✓');
+
+    // Step 2: Copy all rows
+    console.log('[migrate-v5] Step 2: INSERT INTO mutations_new SELECT * FROM mutations');
+    db.prepare('INSERT INTO mutations_new SELECT * FROM mutations').run();
+    console.log('[migrate-v5] Step 2: rows copied ✓');
+
+    // Step 3: Row count preservation check (inside transaction — throws and rolls back on mismatch)
+    const afterCount = db.prepare('SELECT COUNT(*) AS n FROM mutations_new').get().n;
+    console.log('[migrate-v5] Step 3: row count before =', beforeCount, '| row count after =', afterCount);
+    if (beforeCount !== afterCount) {
+      throw new Error(
+        `[migrate-v5] Row count mismatch: before=${beforeCount} after=${afterCount}. Transaction rolled back.`
+      );
+    }
+    console.log('[migrate-v5] Step 3: row count preserved ✓');
+
+    // Step 4: DROP old table (drops all 5 indexes automatically)
+    console.log('[migrate-v5] Step 4: DROP TABLE mutations');
+    db.prepare('DROP TABLE mutations').run();
+    console.log('[migrate-v5] Step 4: mutations dropped ✓');
+
+    // Step 5: RENAME mutations_new → mutations
+    console.log('[migrate-v5] Step 5: ALTER TABLE mutations_new RENAME TO mutations');
+    db.prepare('ALTER TABLE mutations_new RENAME TO mutations').run();
+    console.log('[migrate-v5] Step 5: rename complete ✓');
+
+    // Step 6: Recreate 5 indexes
+    // Indexes copied from migrate-mutations-phase-sync-3.js to preserve original definitions
+    console.log('[migrate-v5] Step 6: recreate indexes');
+    db.prepare("CREATE INDEX idx_mutations_table_row_hlc    ON mutations (table_name, row_id, hlc)").run();
+    console.log('[migrate-v5] Step 6: idx_mutations_table_row_hlc ✓');
+    db.prepare("CREATE INDEX idx_mutations_client_hlc       ON mutations (client_id, hlc)").run();
+    console.log('[migrate-v5] Step 6: idx_mutations_client_hlc ✓');
+    db.prepare("CREATE INDEX idx_mutations_station_created  ON mutations (station_id, created_at)").run();
+    console.log('[migrate-v5] Step 6: idx_mutations_station_created ✓');
+    db.prepare("CREATE INDEX idx_mutations_sync_status      ON mutations (sync_status)").run();
+    console.log('[migrate-v5] Step 6: idx_mutations_sync_status ✓');
+    db.prepare("CREATE INDEX idx_mutations_created          ON mutations (created_at)").run();
+    console.log('[migrate-v5] Step 6: idx_mutations_created ✓');
+
+    // Step 7: Record schema version
+    console.log('[migrate-v5] Step 7: INSERT version=5 into schema_version');
+    db.prepare("INSERT INTO schema_version (version) VALUES (5)").run();
+    console.log('[migrate-v5] Step 7: schema_version=5 written ✓');
+
+  });
+
+  migrate();
+  console.log('[migrate-v5] Transaction committed.');
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────
@@ -106,8 +188,8 @@ console.log('[migrate-v5] Pre-flight 2: station_id is NOT NULL (as expected for 
 
 // ── Pre-migration row count ───────────────────────────────────
 
-const beforeCount = db.prepare('SELECT COUNT(*) AS n FROM mutations').get().n;
-console.log('[migrate-v5] mutations row count before migration:', beforeCount);
+const expectedCount = db.prepare('SELECT COUNT(*) AS n FROM mutations').get().n;
+console.log('[migrate-v5] mutations row count before migration:', expectedCount);
 console.log('');
 
 // ── Atomic migration transaction ──────────────────────────────
@@ -117,78 +199,11 @@ console.log('RUNNING MIGRATION');
 console.log('═'.repeat(60));
 console.log('');
 
-db.transaction(() => {
-
-  // Step 1: CREATE mutations_new with station_id TEXT (NOT NULL removed)
-  console.log('[migrate-v5] Step 1: CREATE TABLE mutations_new');
-  db.prepare(`
-    CREATE TABLE mutations_new (
-      id                   TEXT PRIMARY KEY NOT NULL,
-      client_id            TEXT NOT NULL,
-      station_id           TEXT,
-      actor_id             TEXT,
-      table_name           TEXT NOT NULL,
-      row_id               TEXT NOT NULL,
-      op                   TEXT NOT NULL CHECK (op IN ('insert', 'update', 'delete', 'checkpoint')),
-      payload_before       TEXT,
-      payload_after        TEXT,
-      created_at           TEXT NOT NULL,
-      applied_at           TEXT NOT NULL,
-      hlc                  TEXT NOT NULL,
-      parent_mutation_id   TEXT,
-      schema_version       INTEGER NOT NULL,
-      origin               TEXT NOT NULL CHECK (origin IN ('local', 'remote', 'system', 'migration')),
-      sync_status          TEXT NOT NULL CHECK (sync_status IN ('pending', 'syncing', 'synced', 'conflicted')),
-      conflict_resolution  TEXT
-    )
-  `).run();
-  console.log('[migrate-v5] Step 1: mutations_new created ✓');
-
-  // Step 2: Copy all rows
-  console.log('[migrate-v5] Step 2: INSERT INTO mutations_new SELECT * FROM mutations');
-  db.prepare('INSERT INTO mutations_new SELECT * FROM mutations').run();
-  console.log('[migrate-v5] Step 2: rows copied ✓');
-
-  // Step 3: Row count preservation check (inside transaction — throws and rolls back on mismatch)
-  const afterCount = db.prepare('SELECT COUNT(*) AS n FROM mutations_new').get().n;
-  console.log('[migrate-v5] Step 3: row count before =', beforeCount, '| row count after =', afterCount);
-  if (beforeCount !== afterCount) {
-    throw new Error(
-      `[migrate-v5] Row count mismatch: before=${beforeCount} after=${afterCount}. Transaction rolled back.`
-    );
-  }
-  console.log('[migrate-v5] Step 3: row count preserved ✓');
-
-  // Step 4: DROP old table (drops all 5 indexes automatically)
-  console.log('[migrate-v5] Step 4: DROP TABLE mutations');
-  db.prepare('DROP TABLE mutations').run();
-  console.log('[migrate-v5] Step 4: mutations dropped ✓');
-
-  // Step 5: RENAME mutations_new → mutations
-  console.log('[migrate-v5] Step 5: ALTER TABLE mutations_new RENAME TO mutations');
-  db.prepare('ALTER TABLE mutations_new RENAME TO mutations').run();
-  console.log('[migrate-v5] Step 5: rename complete ✓');
-
-  // Step 6: Recreate 5 indexes
-  // Indexes copied from migrate-mutations-phase-sync-3.js to preserve original definitions
-  console.log('[migrate-v5] Step 6: recreate indexes');
-  db.prepare("CREATE INDEX idx_mutations_table_row_hlc    ON mutations (table_name, row_id, hlc)").run();
-  console.log('[migrate-v5] Step 6: idx_mutations_table_row_hlc ✓');
-  db.prepare("CREATE INDEX idx_mutations_client_hlc       ON mutations (client_id, hlc)").run();
-  console.log('[migrate-v5] Step 6: idx_mutations_client_hlc ✓');
-  db.prepare("CREATE INDEX idx_mutations_station_created  ON mutations (station_id, created_at)").run();
-  console.log('[migrate-v5] Step 6: idx_mutations_station_created ✓');
-  db.prepare("CREATE INDEX idx_mutations_sync_status      ON mutations (sync_status)").run();
-  console.log('[migrate-v5] Step 6: idx_mutations_sync_status ✓');
-  db.prepare("CREATE INDEX idx_mutations_created          ON mutations (created_at)").run();
-  console.log('[migrate-v5] Step 6: idx_mutations_created ✓');
-
-  // Step 7: Record schema version
-  console.log('[migrate-v5] Step 7: INSERT version=5 into schema_version');
-  db.prepare("INSERT INTO schema_version (version) VALUES (5)").run();
-  console.log('[migrate-v5] Step 7: schema_version=5 written ✓');
-
-})();
+try {
+  applyMigration(db);
+} catch (err) {
+  abort(db, 'ERROR — transaction rolled back: ' + err.message);
+}
 
 // ── Post-migration verification ───────────────────────────────
 
@@ -206,7 +221,7 @@ function verify(label, ok, detail) {
 // Row count (final)
 const finalCount = db.prepare('SELECT COUNT(*) AS n FROM mutations').get().n;
 console.log('[migrate-v5] Final mutations row count:', finalCount);
-verify('Row count preserved', finalCount === beforeCount, `expected ${beforeCount} got ${finalCount}`);
+verify('Row count preserved', finalCount === expectedCount, `expected ${expectedCount} got ${finalCount}`);
 
 // station_id is now nullable
 const newCols = db.prepare("PRAGMA table_info('mutations')").all();

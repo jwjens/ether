@@ -132,6 +132,80 @@ function convertToIso(val, format, fallback) {
   }
 }
 
+function applyMigration(db) {
+  // No pre-flight check — chain runner guarantees this version has not been applied.
+  // migrationTimestamp: constant for this run, used as fallback for tables with no domain source.
+  const migrationTimestamp = new Date().toISOString();
+
+  const migrate = db.transaction(() => {
+
+    // ── Phase A: ADD COLUMNS ─────────────────────────────────────
+    console.log("─── Phase A: ADD COLUMNS ───");
+    for (const { name } of TABLES) {
+      const cols = getTableCols(db, name);
+      for (const col of TIMESTAMP_COLS) {
+        if (cols.includes(col)) {
+          console.log(`[migrate-timestamps] SKIP   ALTER "${name}".${col} — column already exists`);
+        } else {
+          db.prepare(`ALTER TABLE "${name}" ADD COLUMN ${col} TEXT`).run();
+          console.log(`[migrate-timestamps] ALTER  "${name}".${col} — column added`);
+        }
+      }
+    }
+
+    console.log("");
+
+    // ── Phase B: BACKFILL ────────────────────────────────────────
+    console.log("─── Phase B: BACKFILL created_at / updated_at ───");
+
+    for (const { name, pkCols, createdAtSource } of TABLES) {
+      let createdAtFilled = 0;
+      let updatedAtFilled = 0;
+
+      // B1: Backfill created_at (only NULL rows)
+      if (createdAtSource) {
+        // Per-row: copy from domain column, converting format as needed
+        const format  = detectSourceFormat(db, name, createdAtSource);
+        const selectSql = `SELECT ${pkCols.map(c => `"${c}"`).join(", ")}, "${createdAtSource}" FROM "${name}" WHERE created_at IS NULL`;
+        const rows    = db.prepare(selectSql).all();
+
+        if (rows.length > 0) {
+          const whereParts = pkCols.map(c => `"${c}" = ?`).join(" AND ");
+          const stmt = db.prepare(`UPDATE "${name}" SET created_at = ? WHERE ${whereParts}`);
+          for (const row of rows) {
+            const iso    = convertToIso(row[createdAtSource], format, migrationTimestamp);
+            const pkVals = pkCols.map(c => row[c]);
+            createdAtFilled += stmt.run(iso, ...pkVals).changes;
+          }
+        }
+      } else {
+        // Single-statement: set constant for all NULL rows
+        const r = db.prepare(`UPDATE "${name}" SET created_at = ? WHERE created_at IS NULL`).run(migrationTimestamp);
+        createdAtFilled = r.changes;
+      }
+
+      // B2: Backfill updated_at = created_at (only NULL rows, single SQL statement)
+      // At this point created_at is already populated within this transaction,
+      // so reading created_at here reflects the values we just wrote.
+      const r2 = db.prepare(`UPDATE "${name}" SET updated_at = created_at WHERE updated_at IS NULL`).run();
+      updatedAtFilled = r2.changes;
+
+      console.log(`[migrate-timestamps] FILL   "${name}" — ${createdAtFilled} created_at, ${updatedAtFilled} updated_at`);
+    }
+
+    console.log("");
+
+    // ── Phase C: Mark schema_version ─────────────────────────────
+    console.log("─── Phase C: INSERT schema_version = 2 ───");
+    db.prepare("INSERT INTO schema_version (version) VALUES (2)").run();
+    console.log("[migrate-timestamps] schema_version row inserted.");
+
+  });
+
+  migrate();
+  console.log("[migrate-timestamps] Transaction committed.");
+}
+
 module.exports = {
   // [N-70] Migration 2 adds created_at/updated_at/deleted_at to all synced tables.
   // For v1 payloads missing these fields, inject defaults (wall-clock at receive time).
@@ -147,6 +221,7 @@ module.exports = {
       deleted_at: payload.deleted_at ?? null,
     };
   },
+  applyMigration,
 };
 
 if (require.main === module) {
@@ -170,10 +245,6 @@ function abort(msg) {
   process.exit(1);
 }
 
-// Single constant for the entire migration run — used for tables with no domain timestamp source.
-const migrationTimestamp = new Date().toISOString();
-console.log("[migrate-timestamps] Migration timestamp constant:", migrationTimestamp);
-console.log("");
 
 // ── Pre-migration snapshot ────────────────────────────────────
 
@@ -219,75 +290,9 @@ console.log("RUNNING MIGRATION");
 console.log("═".repeat(60));
 console.log("");
 
-const migrate = db.transaction(() => {
-
-  // ── Phase A: ADD COLUMNS ─────────────────────────────────────
-  console.log("─── Phase A: ADD COLUMNS ───");
-  for (const { name } of TABLES) {
-    const cols = getTableCols(db, name);
-    for (const col of TIMESTAMP_COLS) {
-      if (cols.includes(col)) {
-        console.log(`[migrate-timestamps] SKIP   ALTER "${name}".${col} — column already exists`);
-      } else {
-        db.prepare(`ALTER TABLE "${name}" ADD COLUMN ${col} TEXT`).run();
-        console.log(`[migrate-timestamps] ALTER  "${name}".${col} — column added`);
-      }
-    }
-  }
-
-  console.log("");
-
-  // ── Phase B: BACKFILL ────────────────────────────────────────
-  console.log("─── Phase B: BACKFILL created_at / updated_at ───");
-
-  for (const { name, pkCols, createdAtSource } of TABLES) {
-    let createdAtFilled = 0;
-    let updatedAtFilled = 0;
-
-    // B1: Backfill created_at (only NULL rows)
-    if (createdAtSource) {
-      // Per-row: copy from domain column, converting format as needed
-      const format  = detectSourceFormat(db, name, createdAtSource);
-      const selectSql = `SELECT ${pkCols.map(c => `"${c}"`).join(", ")}, "${createdAtSource}" FROM "${name}" WHERE created_at IS NULL`;
-      const rows    = db.prepare(selectSql).all();
-
-      if (rows.length > 0) {
-        const whereParts = pkCols.map(c => `"${c}" = ?`).join(" AND ");
-        const stmt = db.prepare(`UPDATE "${name}" SET created_at = ? WHERE ${whereParts}`);
-        for (const row of rows) {
-          const iso    = convertToIso(row[createdAtSource], format, migrationTimestamp);
-          const pkVals = pkCols.map(c => row[c]);
-          createdAtFilled += stmt.run(iso, ...pkVals).changes;
-        }
-      }
-    } else {
-      // Single-statement: set constant for all NULL rows
-      const r = db.prepare(`UPDATE "${name}" SET created_at = ? WHERE created_at IS NULL`).run(migrationTimestamp);
-      createdAtFilled = r.changes;
-    }
-
-    // B2: Backfill updated_at = created_at (only NULL rows, single SQL statement)
-    // At this point created_at is already populated within this transaction,
-    // so reading created_at here reflects the values we just wrote.
-    const r2 = db.prepare(`UPDATE "${name}" SET updated_at = created_at WHERE updated_at IS NULL`).run();
-    updatedAtFilled = r2.changes;
-
-    console.log(`[migrate-timestamps] FILL   "${name}" — ${createdAtFilled} created_at, ${updatedAtFilled} updated_at`);
-  }
-
-  console.log("");
-
-  // ── Phase C: Mark schema_version ─────────────────────────────
-  console.log("─── Phase C: INSERT schema_version = 2 ───");
-  db.prepare("INSERT INTO schema_version (version) VALUES (2)").run();
-  console.log("[migrate-timestamps] schema_version row inserted.");
-
-});
-
 try {
-  migrate();
+  applyMigration(db);
   console.log("");
-  console.log("[migrate-timestamps] Transaction committed.");
 } catch (err) {
   console.error("\n[migrate-timestamps] ERROR — transaction rolled back:", err.message);
   db.close();

@@ -15,11 +15,20 @@
 // and type are unchanged. Receivers on v8 and below continue to work as
 // before; the new default only affects future INSERT statements.
 
+// applyMigration: version stamp only. The real v9 work (stations table recreation to
+// change icecast_server_url DEFAULT '127.0.0.1' → NULL, plus data rewrite) lives in
+// migrate-phase-a-v9.js, which the chain runner never calls. Fresh installs get the
+// wrong column default. See "Known issues to resolve at Step 6" in the plan doc.
+function applyMigration(db) {
+  db.prepare('INSERT INTO schema_version (version) VALUES (9)').run();
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload, fromVersion) {
     if (!payload || typeof payload !== 'object') return payload;
     return payload;
   },
+  applyMigration,
 };
 
 // ── Migration body ────────────────────────────────────────────────────────────

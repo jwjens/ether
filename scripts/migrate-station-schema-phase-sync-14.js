@@ -4,10 +4,23 @@
 
 "use strict";
 
+function applyMigration(db) {
+  const migrate = db.transaction(() => {
+    if (!db.prepare('PRAGMA table_info(midi_mappings)').all().some(c => c.name === 'station_id')) {
+      db.prepare('ALTER TABLE midi_mappings ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1').run();
+    }
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_midi_mappings_station_id ON midi_mappings(station_id)').run();
+    db.prepare('INSERT INTO schema_version (version) VALUES (14)').run();
+  });
+  migrate();
+  console.log('[migrate-v14] Transaction committed.');
+}
+
 module.exports = {
   payloadTransformer: function payloadTransformer(payload) {
     return payload;
   },
+  applyMigration,
 };
 
 if (require.main === module) {
@@ -41,24 +54,7 @@ if (require.main === module) {
   }
 
   // ── Atomic transaction ────────────────────────────────────────
-  db.prepare("BEGIN").run();
-  try {
-    db.prepare("ALTER TABLE midi_mappings ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1").run();
-    console.log("ALTER TABLE midi_mappings ADD COLUMN station_id: OK");
-
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_midi_mappings_station_id ON midi_mappings(station_id)").run();
-    console.log("CREATE INDEX idx_midi_mappings_station_id: OK");
-
-    db.prepare("INSERT INTO schema_version (version) VALUES (14)").run();
-    console.log("schema_version 14 inserted");
-
-    db.prepare("COMMIT").run();
-    console.log("COMMIT: OK");
-  } catch (err) {
-    db.prepare("ROLLBACK").run();
-    console.error("ROLLBACK — migration failed:", err.message);
-    process.exit(1);
-  }
+  applyMigration(db);
 
   // ── Post-verification ─────────────────────────────────────────
   console.log("\n=== Post-verification ===");

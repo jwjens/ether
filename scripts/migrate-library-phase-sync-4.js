@@ -22,28 +22,6 @@ const ROTATION_STATUS_VALUES = ['active', 'inactive', 'hold'];
 
 // ── Payload transformer per [N-68]/[N-69] ────────────────────────────────────
 
-module.exports = {
-  payloadTransformer: function payloadTransformer(payload, fromVersion) {
-    if (!payload || typeof payload !== 'object') return payload;
-
-    if (payload.played_at !== undefined && payload.programming_row_id === undefined) {
-      return { ...payload, programming_row_id: null };
-    }
-
-    if (payload.slot_hour !== undefined && payload.uuid === undefined) {
-      return {
-        ...payload,
-        station_id: payload.station_id ?? 1,
-        uuid: crypto.randomUUID(),
-        updated_at: payload.updated_at ?? null,
-        deleted_at: payload.deleted_at ?? null,
-      };
-    }
-
-    return payload;
-  },
-};
-
 function tableExists(db, name) {
   return !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
 }
@@ -58,50 +36,13 @@ function abort(db, msg) {
   process.exit(1);
 }
 
-if (require.main === module) {
-  console.log("[migrate-library] starting");
-  console.log("[migrate-library] DB path:", dbPath);
-
-  if (!fs.existsSync(dbPath)) abort(null, "DB not found at " + dbPath);
-
-  const db = new Database(dbPath);
-  db.pragma('foreign_keys = ON');
-
-  console.log("\n[migrate-library] PRE-FLIGHT");
-
-  const svRows = db.prepare("SELECT version FROM schema_version ORDER BY version").all();
-  const svVersions = svRows.map(r => r.version);
-  console.log("[migrate-library] schema_version contents:", JSON.stringify(svVersions));
-
-  if (svVersions.includes(4)) {
-    console.log("[migrate-library] migration 4 already applied. Exiting cleanly.");
-    db.close();
-    process.exit(0);
-  }
-  if (svVersions.length !== 3 || svVersions[0] !== 1 || svVersions[1] !== 2 || svVersions[2] !== 3) {
-    abort(db, `expected schema_version [1,2,3], got ${JSON.stringify(svVersions)}`);
-  }
-  console.log("[migrate-library] schema_version pre-check OK");
-
-  for (const t of ["station_programming", "mood_tags", "station_programming_moods"]) {
-    if (tableExists(db, t)) abort(db, `table "${t}" already exists`);
-  }
-  console.log("[migrate-library] no conflicting tables exist");
-
+function applyMigration(db) {
+  // No pre-flight check — chain runner guarantees this version has not been applied.
+  // NOTE: Step 5 (ALTER TABLE pinned_songs) assumes pinned_songs exists. On a fresh install
+  // via the chain runner this will fail if pinned_songs is absent from v0 baseline.
+  // Tracked for resolution in Step 6 when the chain runner is tested against a fresh DB.
   const stationRows = db.prepare(`SELECT id FROM stations WHERE deleted_at IS NULL`).all();
-  if (stationRows.length !== 1) abort(db, `expected 1 active station, found ${stationRows.length}`);
-  const stationId = stationRows[0].id;
-  console.log(`[migrate-library] active station: id=${stationId}`);
-
-  const orphans = db.prepare(`
-    SELECT s.id FROM songs s
-    LEFT JOIN categories c ON c.id = s.category_id
-    WHERE s.category_id IS NOT NULL AND s.deleted_at IS NULL AND c.id IS NULL
-  `).all();
-  if (orphans.length > 0) abort(db, `${orphans.length} songs have invalid category_id`);
-  console.log("[migrate-library] no orphan category_id values");
-
-  console.log("\n[migrate-library] RUNNING MIGRATION");
+  const stationId = stationRows[0]?.id ?? 1;
 
   let migratedCount = 0;
   let coercedCount = 0;
@@ -168,16 +109,22 @@ if (require.main === module) {
     db.prepare(`CREATE INDEX idx_spm_tag ON station_programming_moods (mood_tag_id) WHERE deleted_at IS NULL`).run();
 
     console.log("[migrate-library] Step 4: ALTER play_log");
-    db.prepare(`ALTER TABLE play_log ADD COLUMN programming_row_id INTEGER REFERENCES station_programming(id) ON DELETE SET NULL`).run();
-    db.prepare(`CREATE INDEX idx_play_log_programming_row ON play_log (programming_row_id) WHERE programming_row_id IS NOT NULL`).run();
+    const plCols = db.prepare('PRAGMA table_info(play_log)').all().map(c => c.name);
+    if (!plCols.includes('programming_row_id')) {
+      db.prepare(`ALTER TABLE play_log ADD COLUMN programming_row_id INTEGER REFERENCES station_programming(id) ON DELETE SET NULL`).run();
+    }
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_play_log_programming_row ON play_log (programming_row_id) WHERE programming_row_id IS NOT NULL`).run();
 
     console.log("[migrate-library] Step 5: ALTER pinned_songs");
-    db.prepare(`ALTER TABLE pinned_songs ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1 REFERENCES stations(id) ON DELETE CASCADE`).run();
-    db.prepare(`ALTER TABLE pinned_songs ADD COLUMN uuid TEXT`).run();
-    db.prepare(`ALTER TABLE pinned_songs ADD COLUMN updated_at TEXT`).run();
-    db.prepare(`ALTER TABLE pinned_songs ADD COLUMN deleted_at TEXT`).run();
-    db.prepare(`CREATE UNIQUE INDEX idx_pinned_songs_uuid ON pinned_songs(uuid)`).run();
-    db.prepare(`CREATE INDEX idx_pinned_songs_station ON pinned_songs(station_id) WHERE deleted_at IS NULL`).run();
+    const psCols = db.prepare('PRAGMA table_info(pinned_songs)').all().map(c => c.name);
+    if (!psCols.includes('station_id')) {
+      db.prepare(`ALTER TABLE pinned_songs ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1 REFERENCES stations(id) ON DELETE CASCADE`).run();
+    }
+    if (!psCols.includes('uuid'))       db.prepare(`ALTER TABLE pinned_songs ADD COLUMN uuid TEXT`).run();
+    if (!psCols.includes('updated_at')) db.prepare(`ALTER TABLE pinned_songs ADD COLUMN updated_at TEXT`).run();
+    if (!psCols.includes('deleted_at')) db.prepare(`ALTER TABLE pinned_songs ADD COLUMN deleted_at TEXT`).run();
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_pinned_songs_uuid ON pinned_songs(uuid)`).run();
+    db.prepare(`CREATE INDEX IF NOT EXISTS idx_pinned_songs_station ON pinned_songs(station_id) WHERE deleted_at IS NULL`).run();
     const pinnedCount = db.prepare(`SELECT COUNT(*) AS n FROM pinned_songs`).get().n;
     if (pinnedCount > 0) throw new Error(`pinned_songs has ${pinnedCount} rows; UUID backfill not implemented`);
 
@@ -215,9 +162,83 @@ if (require.main === module) {
     db.prepare("INSERT INTO schema_version (version) VALUES (4)").run();
   });
 
+  migrate();
+  console.log("[migrate-library] Transaction committed.");
+  if (coercedCount > 0) console.log(`[migrate-library] ${coercedCount} rotation_status values coerced to 'active'.`);
+}
+
+module.exports = {
+  payloadTransformer: function payloadTransformer(payload, fromVersion) {
+    if (!payload || typeof payload !== 'object') return payload;
+
+    if (payload.played_at !== undefined && payload.programming_row_id === undefined) {
+      return { ...payload, programming_row_id: null };
+    }
+
+    if (payload.slot_hour !== undefined && payload.uuid === undefined) {
+      return {
+        ...payload,
+        station_id: payload.station_id ?? 1,
+        uuid: crypto.randomUUID(),
+        updated_at: payload.updated_at ?? null,
+        deleted_at: payload.deleted_at ?? null,
+      };
+    }
+
+    return payload;
+  },
+  applyMigration,
+};
+
+if (require.main === module) {
+  console.log("[migrate-library] starting");
+  console.log("[migrate-library] DB path:", dbPath);
+
+  if (!fs.existsSync(dbPath)) abort(null, "DB not found at " + dbPath);
+
+  const db = new Database(dbPath);
+  db.pragma('foreign_keys = ON');
+
+  console.log("\n[migrate-library] PRE-FLIGHT");
+
+  const svRows = db.prepare("SELECT version FROM schema_version ORDER BY version").all();
+  const svVersions = svRows.map(r => r.version);
+  console.log("[migrate-library] schema_version contents:", JSON.stringify(svVersions));
+
+  if (svVersions.includes(4)) {
+    console.log("[migrate-library] migration 4 already applied. Exiting cleanly.");
+    db.close();
+    process.exit(0);
+  }
+  if (svVersions.length !== 3 || svVersions[0] !== 1 || svVersions[1] !== 2 || svVersions[2] !== 3) {
+    abort(db, `expected schema_version [1,2,3], got ${JSON.stringify(svVersions)}`);
+  }
+  console.log("[migrate-library] schema_version pre-check OK");
+
+  for (const t of ["station_programming", "mood_tags", "station_programming_moods"]) {
+    if (tableExists(db, t)) abort(db, `table "${t}" already exists`);
+  }
+  console.log("[migrate-library] no conflicting tables exist");
+
+  const stationRows = db.prepare(`SELECT id FROM stations WHERE deleted_at IS NULL`).all();
+  if (stationRows.length !== 1) abort(db, `expected 1 active station, found ${stationRows.length}`);
+  const stationId = stationRows[0].id;
+  console.log(`[migrate-library] active station: id=${stationId}`);
+
+  const orphans = db.prepare(`
+    SELECT s.id FROM songs s
+    LEFT JOIN categories c ON c.id = s.category_id
+    WHERE s.category_id IS NOT NULL AND s.deleted_at IS NULL AND c.id IS NULL
+  `).all();
+  if (orphans.length > 0) abort(db, `${orphans.length} songs have invalid category_id`);
+  console.log("[migrate-library] no orphan category_id values");
+
+  console.log("\n[migrate-library] RUNNING MIGRATION");
+
+  const expectedMigratedCount = db.prepare(`SELECT COUNT(*) AS n FROM songs WHERE category_id IS NOT NULL AND deleted_at IS NULL`).get().n;
+
   try {
-    migrate();
-    console.log("[migrate-library] Transaction committed.");
+    applyMigration(db);
   } catch (err) {
     console.error("[migrate-library] ERROR rolled back:", err.message);
     db.close();
@@ -241,7 +262,7 @@ if (require.main === module) {
     if (columnExists(db, "pinned_songs", c)) vpass(`pinned_songs.${c}`); else vfail(`pinned_songs.${c}`);
   }
   const spCount = db.prepare(`SELECT COUNT(*) AS n FROM station_programming`).get().n;
-  if (spCount === migratedCount) vpass(`station_programming has ${spCount} rows`); else vfail(`row count mismatch`);
+  if (spCount === expectedMigratedCount) vpass(`station_programming has ${spCount} rows`); else vfail(`row count mismatch: expected ${expectedMigratedCount}, got ${spCount}`);
 
   if (!allOk) {
     db.close();
@@ -249,7 +270,6 @@ if (require.main === module) {
   }
 
   console.log(`\n[migrate-library] Migration 4 complete.`);
-  if (coercedCount > 0) console.log(`[migrate-library] ${coercedCount} rotation_status values coerced to 'active'.`);
   db.close();
   process.exit(0);
 }
