@@ -12,6 +12,7 @@
   "files": [
     "dist/**/*",
     "electron/**/*",
+    "scripts/**/*.js",
     "native/**/*.node",
     "node_modules/**/*",
     "package.json"
