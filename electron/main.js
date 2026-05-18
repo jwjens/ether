@@ -1013,6 +1013,15 @@ app.whenReady().then(() => {
     tryShowMain();
   });
 
+  // ready-to-show has a known Electron bug where it doesn't fire for file:// loads
+  // (packaged builds). did-finish-load is a reliable fallback — fires when the page
+  // navigation completes. Both set mainReady; whichever fires first wins.
+  mainWindow.webContents.once("did-finish-load", () => {
+    logStartup('did-finish-load fired');
+    mainReady = true;
+    tryShowMain();
+  });
+
   setTimeout(() => {
     logStartup(`splashTimer elapsed — mainReady=${mainReady}`);
     splashTimer = true;
