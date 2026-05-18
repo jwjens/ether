@@ -92,6 +92,18 @@ const { SYNCED_TABLES } = require('./sync/synced-tables');
 const SYNCED_TABLES_SET = new Set(SYNCED_TABLES);
 console.log(`[db:execute guard] active — ${SYNCED_TABLES.length} synced tables locked from direct writes`);
 
+// ── Startup diagnostics log ────────────────────────────────────
+// Written to userData/ether-startup.log so packaged builds can be diagnosed
+// without a terminal attached.
+let _startupLogPath = null;
+function logStartup(msg) {
+  const line = `${new Date().toISOString()} ${msg}\n`;
+  process.stdout.write(`[STARTUP] ${msg}\n`);
+  if (_startupLogPath) {
+    try { fs.appendFileSync(_startupLogPath, line); } catch {}
+  }
+}
+
 // ── App identity ──────────────────────────────────────────────
 app.setAppUserModelId("ether");
 
@@ -609,6 +621,16 @@ function createWindow() {
   // Do NOT show here — startup timing is controlled in app.whenReady()
   // mainWindow stays hidden (show: false) until the splash finishes.
 
+  // If the renderer fails to load, force-show so the user sees something instead of nothing
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    logStartup(`did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`);
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.setOpacity(1);
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
   // Hide instead of close (keeps app in tray)
   mainWindow.on("close", (e) => {
     if (!app.isQuitting) {
@@ -919,9 +941,17 @@ app.whenReady().then(() => {
     console.error(e.stack);
   }
 
+  // Initialize startup log — written to userData so it survives packaged builds with no terminal
+  _startupLogPath = path.join(app.getPath('userData'), 'ether-startup.log');
+  logStartup('=== SESSION START ===');
+  logStartup(`version: ${app.getVersion()}  packaged: ${app.isPackaged}  pid: ${process.pid}`);
+  logStartup(`userData: ${app.getPath('userData')}`);
+
   // Show native splash first; main window stays hidden behind it
   createSplash();
+  logStartup('createSplash() done');
   createWindow();
+  logStartup('createWindow() done — mainWindow hidden, waiting for ready-to-show');
   createTray();
   buildMenu();
 
@@ -978,14 +1008,31 @@ app.whenReady().then(() => {
   }
 
   mainWindow.once("ready-to-show", () => {
+    logStartup('ready-to-show fired');
     mainReady = true;
     tryShowMain();
   });
 
   setTimeout(() => {
+    logStartup(`splashTimer elapsed — mainReady=${mainReady}`);
     splashTimer = true;
     tryShowMain();
   }, 10000);
+
+  // Hard fallback — if ready-to-show never fires in a packaged build (renderer crash,
+  // preload error, or other packaged-only issue), force-show after 15s so the user
+  // is not staring at a blank screen.
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      logStartup('WARN: force-showing main window — ready-to-show did not fire within 15s');
+      if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+      mainWindow.setOpacity(1);
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      logStartup('15s fallback check — window already visible, no action needed');
+    }
+  }, 15000);
 
   // Start 30fps real-time audio level push to renderer
   mainWindow.webContents.on("did-finish-load", () => {
