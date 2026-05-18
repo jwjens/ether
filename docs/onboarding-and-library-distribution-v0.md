@@ -1,6 +1,9 @@
-# Onboarding & Library Distribution — Design Spec v0
+# Onboarding & Library Distribution — Design Spec v0.1
 
 Status: DRAFT — design locked in conversation, not yet implemented.
+Updated 2026-05-18: pre-implementation investigation complete; confirmed
+facts folded into spec below. The one genuine Open Decision still
+standing is the R2 upload mechanism (see section below).
 Sits after the plain second-client sync test on the roadmap.
 Related: docs/sync-protocol-v0.md, docs/roadmap.md.
 
@@ -68,11 +71,11 @@ next step. It de-risks everything below it. A second client with a
 fully correct but unplayable library is a valid, useful test result —
 it proves the sync engine end to end.
 
-Note: the sync backend talks to clients over HTTP (Railway). Where the
-backend *stores* the mutation log — a database attached to Railway, or
-Cloudflare R2 — is currently unconfirmed and should be checked. In
-either case the client talks to the Railway endpoint, never to R2
-directly, for metadata.
+Confirmed: the sync backend stores the mutation log in Railway Postgres
+(BIGSERIAL `server_seq` column; clients use this as the pull cursor).
+R2 is not in the metadata-sync path at all — R2's only role is future
+Milestone B audio file distribution. The client talks to the Railway
+HTTP endpoint for all metadata sync; it never touches R2 for metadata.
 
 ---
 
@@ -182,13 +185,18 @@ account.
 
 ### Identity note
 
-`client_id` (per-device, e.g. f0df7a2b-… on OV) and any station/account
-identity are different things. Each PC must have its own unique
-`client_id` — the v3 migration generates one locally via
-crypto.randomUUID() on fresh install. Never copy OV's `client_id` to a
-second PC. Whether a separate station/account/library ID concept exists
-yet is unconfirmed — likely it does not, and it is part of this
-onboarding milestone rather than something already built.
+`client_id` (per-device, e.g. f0df7a2b-… on OV) and library identity
+are different things. Each PC must have its own unique `client_id` —
+confirmed: migration 3 generates it locally via `crypto.randomUUID()`
+with no server contact. Never copy OV's `client_id` to a second PC.
+
+Confirmed: there is no separate account/library/tenant/organization ID
+concept in the current system. The **license key is the library
+boundary**. The backend filters the mutation log by `license_key_id`
+(the integer PK of the resolved license row): same license key = shared
+mutation pool = shared library; different license keys = completely
+isolated. Building any org/tenant layer beyond this is part of this
+onboarding milestone, not something already built.
 
 ---
 
@@ -208,20 +216,15 @@ second-client test (1) proves the sync-pull mechanism.
 
 ---
 
-## Investigation needed before B and onboarding
+## Investigation — completed 2026-05-18
 
-Run against the live system; report only, no changes:
+All pre-implementation questions answered against the live system.
+Findings folded into spec above. Summary for reference:
 
-- client_identity table — columns, and contents on the live OV DB.
-- Any "account" / "library" / "tenant" / "organization" ID concept
-  anywhere (client_identity, system_state, station_config_kv,
-  mutations) — or is the system currently single-library with no such
-  concept?
-- What the client sends to the Railway sync endpoint to identify itself
-  — exact URL, headers, body.
-- Whether the Railway server filters mutations by any library/account
-  ID, or returns all mutations to any connecting client.
-- The Railway sync base URL — hardcoded constant or read from config?
-- Fresh-install client_id origin — confirm locally generated, not
-  server-assigned.
-- Where the Railway backend stores mutations — a database, or R2.
+- `client_identity`: singleton table (CHECK id=1), columns: id, client_id, created_at, label. One row per install.
+- No account/library/tenant/org concept anywhere — license key is the library boundary (see Identity note above).
+- Push: `POST {baseUrl}/sync/mutations` with `x-license-key` header, body `{client_id, station_id, batch[]}`. Pull: `GET /sync/mutations?client_id=…&since_seq=…[&station_id=…]` with same header.
+- Backend filters by `license_key_id` — same license = shared pool, different license = isolated.
+- Sync base URL: read from `station_config_kv['sync_backend_url']`, falling back to `process.env.ETHER_SYNC_URL`. Not hardcoded.
+- `client_id`: confirmed locally generated via `crypto.randomUUID()` at migration 3, no server contact.
+- Mutation storage: Railway Postgres, `BIGSERIAL server_seq`. R2 not involved in metadata sync.
