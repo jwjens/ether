@@ -101,6 +101,22 @@ if (process.platform === "win32") {
   app.commandLine.appendSwitch("force-device-scale-factor", "1");
 }
 
+// ── Single-instance lock ──────────────────────────────────────
+// Without this, every additional Electron instance tries to bind port 3400
+// and crashes with EADDRINUSE. The second instance focuses the running window
+// and exits; the first instance never sees the conflict.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 // ── Environment ───────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 const VITE_DEV_URL = "http://127.0.0.1:1420";
@@ -2589,6 +2605,13 @@ const irisHttpServer = require('http').createServer((req, res) => {
   res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id, /api/captions/iris' }));
 });
 
+irisHttpServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error('[API] Port 3400 already in use — REST API disabled. Is another Ether instance running?');
+  } else {
+    console.error('[API] HTTP server error:', err.message);
+  }
+});
 irisHttpServer.listen(3400, '0.0.0.0', () => {
   console.log('[API] REST server listening on http://0.0.0.0:3400');
 });
