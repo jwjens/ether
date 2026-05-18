@@ -136,6 +136,22 @@ The terminal arc for Ether's architecture. It has three components that must be 
 
 ---
 
+### 8. Onboarding & Library Distribution
+
+**Status:** Not started. Requires Item 2 (metadata sync confirmed working).
+
+Item 2 proves Milestone A (metadata sync). This item is the two pieces that build on it:
+
+**Milestone B — R2 audio distribution** — makes a synced library actually playable. Pieces: audio files uploaded to R2 (mechanism per the Open Decision below), per-song R2 object keys on song records, a download manager that pulls missing files to local disk with visible progress, and the file-present air-eligibility gate (a song is never eligible to air until its file is confirmed on local disk — always on, every station).
+
+**Onboarding flow** — new-station vs. connect-to-existing choice on first launch. The "Connect" path: user enters one credential (email + password or license key); client authenticates, pulls full mutation history (Milestone A), then bulk-downloads all audio from R2 (Milestone B). Both green → station opens. R2/Railway credentials are infrastructure — the user never sees them.
+
+**Open decision (must settle before Milestone B):** how audio files reach R2 initially — one-time backfill script, standing background uploader on every import, or both. Unresolved.
+
+**Full design:** docs/onboarding-and-library-distribution-v0.md
+
+---
+
 ## Cross-Cutting Design Principles
 
 ### UX
@@ -180,3 +196,4 @@ Ideas worth preserving. Not committed to any roadmap item or timeline.
 | 2026-05-16 | Sync step 8 (test suite T-01..T-38) complete (ce9e1ef). 38/38 tests green across 9 categories: A=HLC, B=Writer, C=LWW, D=Causal ordering, E=Tombstone, F=Security/filter, G=Idempotency, H=Retention, I=Schema compat. Three DDL bugs in test fixture fixed during suite construction. T-36..T-38 synthetically prove the transformer chain and quarantine paths via setScriptsDir()/clearCache() seams. |
 | 2026-05-16 | Correction: previous roadmap update (after context compaction) incorrectly listed Step 5 (pull scope fix) as a remaining blocker. Step 5 was completed earlier the same day as commit 92eb50d — getStationId getter wired through SyncEngine.pull(), main.js passes getActiveStationId(). All 8 steps of Item 1 are complete. Item 2 (Deploy OV + 2nd Client) is unblocked. |
 | 2026-05-18 | AirLogger (Compliance Recorder) added as Item 7. No existing items renumbered. FCC/compliance recording, local-first disk archive, R2 offsite, traffic workflow UI, schema migration required. |
+| 2026-05-18 | Onboarding & Library Distribution added as Item 8. No existing items renumbered. Covers Milestone B (R2 audio distribution, per-song keys, download manager, air-eligibility gate) and the onboarding flow (new-station vs. connect-to-existing, single-credential path). Requires Item 2 (metadata sync). Open decision: how audio files reach R2 initially — unresolved. Full design in docs/onboarding-and-library-distribution-v0.md. |
