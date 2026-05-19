@@ -49,16 +49,24 @@ async function main() {
 
   const realDb = new Database(REAL_DB, { readonly: true });
 
-  const licRow  = realDb.prepare("SELECT value FROM station_config_kv WHERE key = 'license_key' LIMIT 1").get();
-  const urlRow  = realDb.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
+  const licRow     = realDb.prepare("SELECT value FROM station_config_kv WHERE key = 'license_key' LIMIT 1").get();
+  const urlRow     = realDb.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
+  // Read the primary station_id used in mutations (station-scoped mutations carry this value).
+  // Pull with station_id so station-scoped data (categories, clocks, station_programming, etc.)
+  // is included. The scratch client never pushes, so this is read-only and safe.
+  const stationRow = realDb.prepare(
+    "SELECT DISTINCT station_id FROM mutations WHERE station_id IS NOT NULL LIMIT 1"
+  ).get();
 
-  const licenseKey     = licRow?.value  ?? null;
-  const syncBackendUrl = urlRow?.value  ?? null;
+  const licenseKey     = licRow?.value        ?? null;
+  const syncBackendUrl = urlRow?.value        ?? null;
+  const stationId      = stationRow?.station_id ?? null;
 
   realDb.close();
 
   console.log('license_key:     ', licenseKey    ? `[found — ${licenseKey.slice(0,6)}...]` : 'NOT FOUND');
   console.log('sync_backend_url:', syncBackendUrl ?? 'NOT FOUND');
+  console.log('station_id:      ', stationId     ?? '(null — install-scoped only)');
 
   if (!licenseKey || !syncBackendUrl) {
     console.error('ERROR: Missing sync config in real DB. Aborting.');
@@ -157,7 +165,7 @@ async function main() {
   const { SyncEngine }    = require(path.join(ROOT, 'electron', 'sync', 'sync-engine'));
 
   const transport = new HttpTransport(scratchDb, { baseUrl: syncBackendUrl });
-  const engine    = new SyncEngine(scratchDb, transport, { getStationId: () => null });
+  const engine    = new SyncEngine(scratchDb, transport, { getStationId: () => stationId });
 
   console.log('  Calling engine.pull()...');
   let pullResult;
@@ -180,6 +188,7 @@ async function main() {
   console.log('  quarantined  :', pullResult.quarantined);
   console.log('  rejected     :', pullResult.rejected);
   console.log('  conflicted   :', pullResult.conflicted);
+  console.log('  failed       :', pullResult.failed);
 
   if (pullResult.pulled > 0) {
     console.log(`\n✓ STEP 4 PASS — pulled ${pullResult.pulled} mutations, replayed cleanly`);

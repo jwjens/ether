@@ -48,19 +48,27 @@ async function main() {
   scratchDb.pragma('journal_mode = WAL');
   scratchDb.pragma('foreign_keys = ON');
 
-  const clientId = scratchDb.prepare('SELECT client_id FROM client_identity WHERE id = 1').get()?.client_id;
+  const clientId  = scratchDb.prepare('SELECT client_id FROM client_identity WHERE id = 1').get()?.client_id;
   const serverSeq = scratchDb.prepare("SELECT value FROM system_state WHERE key = 'sync_server_seq'").get()?.value ?? '0';
-  const syncUrl  = scratchDb.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get()?.value;
+  const syncUrl   = scratchDb.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get()?.value;
+
+  // Read station_id from the real DB so station-scoped mutations are included in pull.
+  const realDb    = new Database(REAL_DB, { readonly: true });
+  const stationId = realDb.prepare(
+    "SELECT DISTINCT station_id FROM mutations WHERE station_id IS NOT NULL LIMIT 1"
+  ).get()?.station_id ?? null;
+  realDb.close();
 
   console.log('Scratch client_id :', clientId);
   console.log('Starting since_seq:', serverSeq);
   console.log('Backend URL       :', syncUrl);
+  console.log('station_id        :', stationId ?? '(null)');
 
   const { HttpTransport } = require(path.join(ROOT, 'electron', 'sync', 'transport-http'));
   const { SyncEngine }    = require(path.join(ROOT, 'electron', 'sync', 'sync-engine'));
 
   const transport = new HttpTransport(scratchDb, { baseUrl: syncUrl });
-  const engine    = new SyncEngine(scratchDb, transport, { getStationId: () => null });
+  const engine    = new SyncEngine(scratchDb, transport, { getStationId: () => stationId });
 
   sep('DRAIN LOOP — pulling until cursor exhausted');
 
@@ -71,6 +79,7 @@ async function main() {
   let totalConflicted = 0;
   let totalHeld = 0;
   let totalQuarantined = 0;
+  let totalFailed = 0;
 
   while (true) {
     round++;
@@ -91,11 +100,13 @@ async function main() {
     totalConflicted  += result.conflicted   ?? 0;
     totalHeld        += result.held         ?? 0;
     totalQuarantined += result.quarantined  ?? 0;
+    totalFailed      += result.failed       ?? 0;
 
     console.log(
       `pulled=${result.pulled}  applied=${result.applied ?? 0}` +
       `  rejected=${result.rejected ?? 0}  conflicted=${result.conflicted ?? 0}` +
-      `  held=${result.held ?? 0}  quarantined=${result.quarantined ?? 0}`
+      `  held=${result.held ?? 0}  quarantined=${result.quarantined ?? 0}` +
+      `  failed=${result.failed ?? 0}`
     );
 
     if (result.pulled === 0) {
@@ -112,6 +123,7 @@ async function main() {
   console.log(`  Total conflicted: ${totalConflicted}`);
   console.log(`  Total held      : ${totalHeld}`);
   console.log(`  Total quarantined: ${totalQuarantined}`);
+  console.log(`  Total failed    : ${totalFailed}`);
 
   sep('FINAL COUNTS — scratch DB vs real DB');
 

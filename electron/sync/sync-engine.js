@@ -121,7 +121,7 @@ class SyncEngine {
     }
 
     const mutations = result.mutations ?? [];
-    const outcomes  = { applied: 0, loser: 0, idempotent: 0, held: 0, quarantined: 0, rejected: 0, conflicted: 0 };
+    const outcomes  = { applied: 0, loser: 0, idempotent: 0, held: 0, quarantined: 0, rejected: 0, conflicted: 0, failed: 0 };
 
     if (mutations.length > 0) {
       // Disable FK enforcement for the duration of the replay batch [N-107].
@@ -135,7 +135,17 @@ class SyncEngine {
       this._db.pragma('foreign_keys = OFF');
       try {
         for (const m of mutations) {
-          const outcome = this._mergeEngine.apply(m);
+          let outcome;
+          try {
+            outcome = this._mergeEngine.apply(m);
+          } catch (err) {
+            // Individual mutation failure: log and skip rather than crashing the batch [N-108].
+            // One failing mutation must not prevent the remaining 499 in the page from applying.
+            console.error('[sync-engine] pull: mutation ' + m.id +
+              ' table=' + m.table_name + ' op=' + m.op + ' apply failed: ' + err.message);
+            outcomes.failed = (outcomes.failed ?? 0) + 1;
+            continue;
+          }
           outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
 
           // After a successful apply, retry anything held on this mutation [N-104]
