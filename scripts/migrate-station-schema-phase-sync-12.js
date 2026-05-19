@@ -19,7 +19,9 @@
 //        - mutations row count unchanged
 //        - schema_version = [1..12]
 
-// payloadTransformer: strips station_id from incoming song payloads sent by v11 nodes.
+// payloadTransformer: strips station_id from incoming SONG payloads sent by v11 nodes.
+// Guard is scoped to table_name='songs' — other tables (station_config_kv, categories,
+// clocks, stations) carry station_id as a legitimate column and must not be stripped.
 
 function applyMigration(db) {
   const migrate = db.transaction(() => {
@@ -35,9 +37,9 @@ function applyMigration(db) {
 }
 
 module.exports = {
-  payloadTransformer: function payloadTransformer(payload, fromVersion) {
+  payloadTransformer: function payloadTransformer(payload, fromVersion, envelope) {
     if (!payload || typeof payload !== 'object') return payload;
-    if (fromVersion < 12 && 'station_id' in payload) {
+    if (fromVersion < 12 && envelope?.table_name === 'songs' && 'station_id' in payload) {
       const { station_id, ...rest } = payload;
       return rest;
     }
