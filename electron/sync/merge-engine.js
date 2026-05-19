@@ -193,7 +193,8 @@ class MergeEngine {
 
       } else {
         // UPDATE; fall back to INSERT OR REPLACE if row doesn't exist locally [N-107]
-        const setCols = cols.filter(c => c !== 'uuid' && c !== 'id');
+        // id IS included so UPDATE mutations can move a row's integer pk (e.g. shows id=null→real) [N-108c]
+        const setCols = cols.filter(c => c !== 'uuid');
         if (setCols.length > 0) {
           const setClause = setCols.map(c => `${c} = ?`).join(', ');
           const setVals   = setCols.map(c => row[c] ?? null);

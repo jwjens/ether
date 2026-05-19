@@ -61,13 +61,16 @@ function showsCreate(db, payload) {
     updated_at: now,
     deleted_at: payload.deleted_at ?? null,
   };
-  const payloadAfter = serializePayload(row, TABLE);
   withMutation(db, {
     table_name:     TABLE,
     row_id:         uuid,
     op:             'insert',
     payload_before: null,
-    payload_after:  payloadAfter,
+    // lazy: read back after INSERT so payload.id = real autoincrement value [N-108c]
+    payload_after:  () => {
+      const inserted = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ? LIMIT 1`).get(uuid);
+      return serializePayload(inserted ?? row, TABLE);
+    },
     station_id:     payload.station_id,
     actor_id:       payload.actor_id ?? null,
   }, () => {

@@ -376,8 +376,13 @@ function withMutation(db, opts, fn) {
     _mutationContextStack.push(mutation_id);
     try {
       const result = fn();
+      // payload_after may be a function — resolve it now so it can read post-INSERT state [N-108c]
+      const resolvedPayloadAfter = typeof opts.payload_after === 'function'
+        ? opts.payload_after()
+        : opts.payload_after;
       logMutation(db, {
         ...opts,
+        payload_after:      resolvedPayloadAfter,
         parent_mutation_id: effective_parent,
         _mutation_id:       mutation_id,
       });
