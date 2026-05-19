@@ -125,10 +125,13 @@ class SyncEngine {
 
     if (mutations.length > 0) {
       // Disable FK enforcement for the duration of the replay batch [N-107].
-      // Mutations arrive in HLC order, not FK-dependency order; a child row's mutation
-      // can legitimately precede its parent's INSERT during bulk replay. FK violations
-      // mid-batch are sequencing artifacts, not data errors. The foreign_key_check
-      // afterward verifies the converged final state — failure there is a hard error.
+      // Mutations arrive in HLC (server-sequence) order, not FK-dependency order;
+      // a child row's mutation can legitimately precede its parent's INSERT when the
+      // server paginates (page size=500). FK violations mid-batch are temporary
+      // sequencing artifacts that resolve in subsequent pulls. foreign_key_check is
+      // intentionally NOT run here — it would fire on every partial batch during
+      // initial bulk sync and halt the sync permanently. Integrity of the fully
+      // converged state is verified in drainQuarantine() and explicit verify calls.
       this._db.pragma('foreign_keys = OFF');
       try {
         for (const m of mutations) {
@@ -139,14 +142,6 @@ class SyncEngine {
           if (outcome === 'applied' || outcome === 'loser') {
             this._retryCausalQueue(m.id);
           }
-        }
-
-        const violations = this._db.pragma('foreign_key_check');
-        if (violations.length > 0) {
-          const msg = '[sync-engine] pull: foreign_key_check failed after replay — ' +
-            violations.length + ' violation(s): ' + JSON.stringify(violations);
-          console.error(msg);
-          throw new Error(msg); // cursor not saved; next pull re-fetches this batch
         }
       } finally {
         this._db.pragma('foreign_keys = ON');

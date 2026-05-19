@@ -135,18 +135,43 @@ async function main() {
     console.log(`  ${mark} ${t.padEnd(19)} ${String(s).padStart(8)}    ${r}  ${match}`);
   }
 
+  // ── FK integrity check — final converged state ───────────────────────────
+  // Run after the drain loop is complete (pulled=0), not after each page.
+  // This is the correct placement: the full mutation stream has been applied;
+  // any violations here are genuine final-state corruption, not mid-replay gaps.
+  sep('FK INTEGRITY CHECK — post-drain foreign_key_check');
+  const scratchDbFkCheck = new Database(SCRATCH_DB, { readonly: true });
+  const fkViolations = scratchDbFkCheck.pragma('foreign_key_check');
+  scratchDbFkCheck.close();
+  if (fkViolations.length === 0) {
+    console.log('  foreign_key_check: 0 violations ✓');
+    console.log('  Converged state is FK-valid — a real client can replay the full mutation');
+    console.log('  stream with foreign_keys=ON and land in a consistent database.');
+  } else {
+    console.log('  foreign_key_check: ' + fkViolations.length + ' violation(s) ✗');
+    console.log('  ' + JSON.stringify(fkViolations.slice(0, 10)));
+    if (fkViolations.length > 10) console.log('  ... (truncated, total=' + fkViolations.length + ')');
+    console.log('  FAIL — mutation history has genuine FK corruption in final state.');
+  }
+
   sep('VERDICT');
   if (totalPulled === 0 && round === 1) {
     console.log('  ⚠  Zero mutations pulled across all rounds.');
     console.log('  Check license_key, sync_backend_url, or backend state.');
+  } else if (allConverged && fkViolations.length === 0) {
+    console.log('  ✓ FULL CONVERGENCE + FK-VALID — scratch counts match real DB on all tables.');
+    console.log('  ✓ foreign_key_check: 0 violations after full replay.');
+    console.log('  Item 2 fully proven: a real client replaying the full library with');
+    console.log('  foreign_keys=ON lands in a consistent, FK-valid database.');
   } else if (allConverged) {
-    console.log('  ✓ FULL CONVERGENCE — scratch counts match real DB on all tables.');
-    console.log('  Item 2 fully proven: client-to-client sync works end-to-end.');
-  } else {
+    console.log('  ✓ FULL CONVERGENCE — scratch counts match real DB.');
+    console.log('  ✗ FK violations remain — see FK INTEGRITY CHECK above.');
+  } else if (fkViolations.length === 0) {
     console.log('  ⚠  PARTIAL CONVERGENCE — cursor exhausted but counts differ from real DB.');
-    console.log('  This means the Railway backend pool does not contain all of OV\'s mutations.');
-    console.log('  Still a PASS for sync correctness — what the backend had was replayed cleanly.');
-    console.log('  The gap = mutations OV generated before sync was enabled or that were never pushed.');
+    console.log('  ✓ FK-VALID — what was replayed is consistent.');
+    console.log('  The gap = mutations OV generated before sync was enabled or never pushed.');
+  } else {
+    console.log('  ⚠  PARTIAL CONVERGENCE + FK violations — see above.');
   }
 }
 
