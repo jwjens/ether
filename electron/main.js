@@ -1825,16 +1825,13 @@ ipcMain.handle("open_nowplaying_window", async () => {
 });
 
 // ── Auto-updater ──────────────────────────────────────────────
+// DISABLED — was offering stale downgrade versions and the notification
+// buttons (Dismiss, Later, ×) are non-functional. Re-enable after:
+//   1. Release channel fixed to track the correct latest version
+//   2. Updater.tsx button handlers verified working
+// With autoUpdater=null the IPC handlers below return { available: false }
+// so the renderer banner never shows.
 let autoUpdater = null;
-try {
-  const { autoUpdater: au } = require("electron-updater");
-  autoUpdater = au;
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.logger = null;
-} catch (e) {
-  console.log("[UPDATER] electron-updater not available:", e.message);
-}
 
 ipcMain.handle("updater:check", async () => {
   if (!autoUpdater) return { available: false };
