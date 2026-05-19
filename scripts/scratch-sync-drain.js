@@ -20,7 +20,8 @@ const Database = require(path.join(ROOT, 'node_modules', 'better-sqlite3'));
 
 const TABLES = ['songs', 'artists', 'albums', 'categories', 'stations',
                 'format_clocks', 'clocks', 'clock_slots', 'shows',
-                'spots', 'announcements', 'voice_tracks'];
+                'spots', 'announcements', 'voice_tracks',
+                'station_programming'];
 
 function sep(label) {
   console.log('\n' + '═'.repeat(60));
@@ -214,6 +215,10 @@ async function main() {
     console.log('  foreign_keys=ON lands in a consistent, FK-valid database.');
   } else if (!liveCheckFailed && liveViolations === 0 && softDeletedViolations === fkViolations.length) {
     // All violations are soft-deleted rows — benign
+    // BUG: This branch fires on FK-validity alone regardless of count convergence.
+    // When allConverged is false (e.g. clock_slots 137/191, shows 6/11), claiming
+    // "Item 2 proven" is incorrect — a fresh client is missing rows.
+    // Fix needed: gate the "Item 2 proven" message behind allConverged === true.
     const convStr = allConverged ? 'FULL CONVERGENCE' : 'PARTIAL CONVERGENCE';
     console.log(`  ✓ ${convStr} + LIVE-DATA FK-VALID`);
     if (!allConverged) {
