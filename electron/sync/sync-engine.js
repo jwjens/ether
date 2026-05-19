@@ -123,13 +123,33 @@ class SyncEngine {
     const mutations = result.mutations ?? [];
     const outcomes  = { applied: 0, loser: 0, idempotent: 0, held: 0, quarantined: 0, rejected: 0, conflicted: 0 };
 
-    for (const m of mutations) {
-      const outcome = this._mergeEngine.apply(m);
-      outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+    if (mutations.length > 0) {
+      // Disable FK enforcement for the duration of the replay batch [N-107].
+      // Mutations arrive in HLC order, not FK-dependency order; a child row's mutation
+      // can legitimately precede its parent's INSERT during bulk replay. FK violations
+      // mid-batch are sequencing artifacts, not data errors. The foreign_key_check
+      // afterward verifies the converged final state — failure there is a hard error.
+      this._db.pragma('foreign_keys = OFF');
+      try {
+        for (const m of mutations) {
+          const outcome = this._mergeEngine.apply(m);
+          outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
 
-      // After a successful apply, retry anything held on this mutation [N-104]
-      if (outcome === 'applied' || outcome === 'loser') {
-        this._retryCausalQueue(m.id);
+          // After a successful apply, retry anything held on this mutation [N-104]
+          if (outcome === 'applied' || outcome === 'loser') {
+            this._retryCausalQueue(m.id);
+          }
+        }
+
+        const violations = this._db.pragma('foreign_key_check');
+        if (violations.length > 0) {
+          const msg = '[sync-engine] pull: foreign_key_check failed after replay — ' +
+            violations.length + ' violation(s): ' + JSON.stringify(violations);
+          console.error(msg);
+          throw new Error(msg); // cursor not saved; next pull re-fetches this batch
+        }
+      } finally {
+        this._db.pragma('foreign_keys = ON');
       }
     }
 
@@ -177,53 +197,68 @@ class SyncEngine {
 
     let drained = 0, failed = 0;
 
-    for (const row of pending) {
-      let m;
-      try {
-        m = JSON.parse(row.raw_json);
-      } catch (_) {
-        this._markQuarantineFailed(row.id);
-        console.error('[sync-engine] drainQuarantine: corrupt raw_json id=' + row.id);
-        failed++;
-        continue;
-      }
-
-      // Apply transformer chain to bring both payloads up to local schema version [N-62].
-      // payload_before is null for inserts; payload_after is null for deletes — both legitimate.
-      // One try/catch: if either transform throws the mutation goes to retry/dead-letter.
-      if (row.foreign_schema_version < this._localSV) {
+    // Same FK-off bracket as pull(): quarantined mutations replay in schema-version order,
+    // not FK-dependency order; foreign_key_check after the loop is the hard safety net.
+    this._db.pragma('foreign_keys = OFF');
+    try {
+      for (const row of pending) {
+        let m;
         try {
-          m = { ...m,
-            payload_before: m.payload_before ? applyTransformerChain(m.payload_before, row.foreign_schema_version, this._localSV, m) : null,
-            payload_after:  m.payload_after  ? applyTransformerChain(m.payload_after,  row.foreign_schema_version, this._localSV, m) : null,
-          };
-        } catch (err) {
-          if (err instanceof TransformerMissingError) {
-            // Missing script is permanent — no deployment currently provides it.
-            this._markQuarantineFailed(row.id);
-            console.error(
-              '[sync-engine] drainQuarantine: DEAD-LETTER missing transformer v' +
-              row.foreign_schema_version + '→' + this._localSV + ' id=' + row.id
-            );
-            failed++;
-          } else {
-            if (this._incrementRetry(row, err) >= 3) failed++;
-          }
+          m = JSON.parse(row.raw_json);
+        } catch (_) {
+          this._markQuarantineFailed(row.id);
+          console.error('[sync-engine] drainQuarantine: corrupt raw_json id=' + row.id);
+          failed++;
           continue;
+        }
+
+        // Apply transformer chain to bring both payloads up to local schema version [N-62].
+        // payload_before is null for inserts; payload_after is null for deletes — both legitimate.
+        // One try/catch: if either transform throws the mutation goes to retry/dead-letter.
+        if (row.foreign_schema_version < this._localSV) {
+          try {
+            m = { ...m,
+              payload_before: m.payload_before ? applyTransformerChain(m.payload_before, row.foreign_schema_version, this._localSV, m) : null,
+              payload_after:  m.payload_after  ? applyTransformerChain(m.payload_after,  row.foreign_schema_version, this._localSV, m) : null,
+            };
+          } catch (err) {
+            if (err instanceof TransformerMissingError) {
+              // Missing script is permanent — no deployment currently provides it.
+              this._markQuarantineFailed(row.id);
+              console.error(
+                '[sync-engine] drainQuarantine: DEAD-LETTER missing transformer v' +
+                row.foreign_schema_version + '→' + this._localSV + ' id=' + row.id
+              );
+              failed++;
+            } else {
+              if (this._incrementRetry(row, err) >= 3) failed++;
+            }
+            continue;
+          }
+        }
+
+        // Apply through MergeEngine — handles idempotency, LWW, causal ordering, log, cursor
+        try {
+          const outcome = this._mergeEngine.apply(m);
+          this._db.prepare(
+            "UPDATE quarantine_mutations SET drain_status = 'drained' WHERE id = ?"
+          ).run(row.id);
+          drained++;
+          if (outcome === 'applied' || outcome === 'loser') this._retryCausalQueue(m.id);
+        } catch (err) {
+          if (this._incrementRetry(row, err) >= 3) failed++;
         }
       }
 
-      // Apply through MergeEngine — handles idempotency, LWW, causal ordering, log, cursor
-      try {
-        const outcome = this._mergeEngine.apply(m);
-        this._db.prepare(
-          "UPDATE quarantine_mutations SET drain_status = 'drained' WHERE id = ?"
-        ).run(row.id);
-        drained++;
-        if (outcome === 'applied' || outcome === 'loser') this._retryCausalQueue(m.id);
-      } catch (err) {
-        if (this._incrementRetry(row, err) >= 3) failed++;
+      const violations = this._db.pragma('foreign_key_check');
+      if (violations.length > 0) {
+        const msg = '[sync-engine] drainQuarantine: foreign_key_check failed after replay — ' +
+          violations.length + ' violation(s): ' + JSON.stringify(violations);
+        console.error(msg);
+        throw new Error(msg); // cursor not saved; drain state preserved for next restart
       }
+    } finally {
+      this._db.pragma('foreign_keys = ON');
     }
 
     if (drained > 0) this._saveCursor();
