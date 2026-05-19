@@ -38,6 +38,15 @@ function countAll(db) {
   return out;
 }
 
+function countLive(db) {
+  const out = {};
+  for (const t of TABLES) {
+    try { out[t] = db.prepare(`SELECT COUNT(*) as c FROM ${t} WHERE deleted_at IS NULL`).get()?.c ?? '?'; }
+    catch (e) { out[t] = `ERR: ${e.message}`; }
+  }
+  return out;
+}
+
 async function main() {
   if (!fs.existsSync(SCRATCH_DB)) {
     console.error('ERROR: Scratch DB not found at', SCRATCH_DB);
@@ -129,23 +138,30 @@ async function main() {
   sep('FINAL COUNTS — scratch DB vs real DB');
 
   const scratchCounts = countAll(scratchDb);
+  const scratchLive   = countLive(scratchDb);
   scratchDb.close();
 
   const realDb2 = new Database(REAL_DB, { readonly: true });
   const realCounts = countAll(realDb2);
+  const realLive   = countLive(realDb2);
   realDb2.close();
 
-  console.log('\n  ' + 'Table'.padEnd(20) + 'Scratch'.padStart(10) + '  Real DB');
-  console.log('  ' + '─'.repeat(44));
+  console.log('\n  ' + 'Table'.padEnd(20) + 'Scratch(total)'.padStart(15) + '  Real(total)'.padStart(13) + '  Scratch(live)'.padStart(15) + '  Real(live)'.padStart(12));
+  console.log('  ' + '─'.repeat(78));
 
-  let allConverged = true;
+  let allConverged     = true;
+  let allLiveConverged = true;
   for (const t of TABLES) {
-    const s = scratchCounts[t];
-    const r = realCounts[t];
-    const match = (typeof s === 'number' && typeof r === 'number' && s === r) ? '=' : ' ';
-    const mark  = (typeof s === 'number' && s > 0) ? '✓' : ' ';
-    if (typeof s === 'number' && typeof r === 'number' && s < r) allConverged = false;
-    console.log(`  ${mark} ${t.padEnd(19)} ${String(s).padStart(8)}    ${r}  ${match}`);
+    const s  = scratchCounts[t];
+    const r  = realCounts[t];
+    const sl = scratchLive[t];
+    const rl = realLive[t];
+    const totalMatch = (typeof s === 'number' && typeof r === 'number' && s === r) ? '=' : ' ';
+    const liveMatch  = (typeof sl === 'number' && typeof rl === 'number' && sl === rl) ? '=' : ' ';
+    const mark = (typeof sl === 'number' && sl > 0) ? '✓' : ' ';
+    if (typeof s  === 'number' && typeof r  === 'number' && s  < r)  allConverged     = false;
+    if (typeof sl === 'number' && typeof rl === 'number' && sl < rl) allLiveConverged = false;
+    console.log(`  ${mark} ${t.padEnd(19)} ${String(s).padStart(14)}${totalMatch} ${String(r).padStart(12)}  ${String(sl).padStart(14)}${liveMatch} ${String(rl).padStart(11)}`);
   }
 
   // ── FK integrity check — final converged state ───────────────────────────
@@ -208,28 +224,37 @@ async function main() {
   }
 
   sep('VERDICT');
+  const liveOnlyFkViolations = !liveCheckFailed && liveViolations === 0 && softDeletedViolations === fkViolations.length;
   if (allConverged && fkViolations.length === 0) {
     console.log('  ✓ FULL CONVERGENCE + FK-VALID (all rows) — scratch counts match real DB.');
     console.log('  ✓ foreign_key_check: 0 violations after full replay.');
-    console.log('  Item 2 fully proven: a real client replaying the full library with');
-    console.log('  foreign_keys=ON lands in a consistent, FK-valid database.');
-  } else if (!liveCheckFailed && liveViolations === 0 && softDeletedViolations === fkViolations.length) {
-    // All violations are soft-deleted rows — benign
-    // BUG: This branch fires on FK-validity alone regardless of count convergence.
-    // When allConverged is false (e.g. clock_slots 137/191, shows 6/11), claiming
-    // "Item 2 proven" is incorrect — a fresh client is missing rows.
-    // Fix needed: gate the "Item 2 proven" message behind allConverged === true.
-    const convStr = allConverged ? 'FULL CONVERGENCE' : 'PARTIAL CONVERGENCE';
-    console.log(`  ✓ ${convStr} + LIVE-DATA FK-VALID`);
-    if (!allConverged) {
-      console.log('  ⚠  Count gap: some tables differ (soft-deleted rows or pre-sync data).');
-    }
+    console.log('  ✓ Item 2 fully proven: a real client replaying the full library with');
+    console.log('    foreign_keys=ON lands in a consistent, FK-valid database.');
+  } else if (allConverged && liveOnlyFkViolations) {
+    // Full count convergence; only soft-deleted rows have FK violations (benign)
+    console.log('  ✓ FULL CONVERGENCE + LIVE-DATA FK-VALID');
     console.log('  ✓ foreign_key_check: ' + fkViolations.length + ' violation(s) — ALL from soft-deleted rows.');
     console.log('  ✓ Live-data FK check: 0 violations across all checked relationships.');
     console.log('  ✓ Item 2 proven: a real client replaying the full mutation stream with');
     console.log('    foreign_keys=ON lands in a database where all live rows are FK-valid.');
     console.log('    Soft-deleted tombstones are invisible to the application and do not');
     console.log('    affect application correctness.');
+  } else if (allLiveConverged && liveOnlyFkViolations) {
+    // Live data fully converged; total gap = deleted pre-sync rows with no INSERT mutation
+    console.log('  ✓ LIVE CONVERGENCE + LIVE-DATA FK-VALID');
+    console.log('  ✓ All live rows match real DB. Total gap = deleted pre-sync rows (no INSERT mutation on Railway).');
+    console.log('  ✓ foreign_key_check: ' + fkViolations.length + ' violation(s) — ALL from soft-deleted rows (benign).');
+    console.log('  ✓ Live-data FK check: 0 violations across all checked relationships.');
+    console.log('  ✓ Item 2 proven: a real client replaying the full mutation stream lands in');
+    console.log('    a database with all live rows present and FK-valid. Deleted pre-sync rows');
+    console.log('    are not reconstructable from DELETE-only mutations — this is expected behavior.');
+  } else if (!allConverged && !allLiveConverged && liveOnlyFkViolations) {
+    // FK-valid live data but live counts still differ — live rows genuinely missing from scratch
+    console.log('  ⚠  PARTIAL LIVE CONVERGENCE + LIVE-DATA FK-VALID');
+    console.log('  ⚠  Live row gap: scratch is missing live rows vs real DB — Item 2 NOT proven.');
+    console.log('  ✓ foreign_key_check: all violations are soft-deleted rows (benign).');
+    console.log('  ✓ Live-data FK check: 0 violations — what was replayed is FK-consistent.');
+    console.log('  Next: investigate missing live rows (check since_seq, re-run drain, or backfill).');
   } else if (allConverged) {
     console.log('  ✓ FULL CONVERGENCE — scratch counts match real DB.');
     console.log('  ✗ Live FK violations remain (' + liveViolations + ') — see FK INTEGRITY CHECK above.');

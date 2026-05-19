@@ -73,6 +73,9 @@ const BACKFILL_TABLES = [
   // Station-scoped — FK: clock_id→clocks (above), category_id→categories (above)
   { name: 'clock_slots',          scope: 'station', stationIdCol: 'station_id' },
 
+  // Station-scoped — no FK deps on other backfill tables
+  { name: 'shows',                scope: 'station', stationIdCol: 'station_id' },
+
   // Station-scoped — FK: song_id→songs (synced), category_id→categories (above)
   { name: 'station_programming',  scope: 'station', stationIdCol: 'station_id' },
 ];
