@@ -474,7 +474,10 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
       peersRef.current.set(id, pc);
       console.log("[WEBRTC] PC created for guest", id);
 
-      // Add host's local tracks so guest can hear/see the host
+      // Add host's local tracks so guest can hear/see the host.
+      // If the host camera is unavailable (e.g. permission denied in packaged build),
+      // explicitly add recvonly transceivers so createAnswer() produces recvonly
+      // m-lines instead of inactive — ensuring the guest's tracks still arrive via ontrack.
       if (hostStreamRef.current) {
         hostStreamRef.current.getTracks().forEach(track => {
           console.log("[WEBRTC] Adding host track to PC for guest", id, {
@@ -488,7 +491,9 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
           }
         });
       } else {
-        console.warn("[WEBRTC] No host stream available when creating PC for guest", id);
+        console.warn("[WEBRTC] No host stream — adding recvonly transceivers so guest media still arrives");
+        try { pc.addTransceiver("video", { direction: "recvonly" }); } catch {}
+        try { pc.addTransceiver("audio", { direction: "recvonly" }); } catch {}
       }
 
       pc.ontrack = (e) => {

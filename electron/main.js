@@ -663,7 +663,18 @@ function createWindow() {
     }
   });
 
-  // Grant mic permission automatically — no dialog needed
+  // Grant mic/camera permissions — both layers required for packaged (file://) builds.
+  // setPermissionCheckHandler is the synchronous pre-check Chromium calls before
+  // setPermissionRequestHandler; without it, getUserMedia fails on file:// origins
+  // (packaged exe) because Chromium has no built-in trust rule for non-http origins.
+  mainWindow.webContents.session.setPermissionCheckHandler((webContents, permission) => {
+    if (permission === "media" || permission === "microphone" || permission === "camera" ||
+        permission === "audioCapture" || permission === "videoCapture") {
+      return true;
+    }
+    return true; // allow everything else too
+  });
+
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     if (permission === "media" || permission === "microphone" || permission === "audioCapture") {
       callback(true); // Always grant
