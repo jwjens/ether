@@ -416,6 +416,64 @@ calling `/account/add-station` so Railway knows about it.
 
 ---
 
+## Milestone B additions
+
+This spec is Milestone A: onboarding for a metadata-only library sync.
+The local SQLite database (`openair.db`) lives at a fixed path under
+`<userData>`. Customers do not pick a location because no audio files
+are being distributed yet.
+
+Milestone B (audio file distribution via R2) introduces multi-GB
+libraries that may live on a local drive, a NAS, or a station's
+central server. The AppData default is wrong for that case. The
+following screen is reserved in the onboarding state machine now, to
+be built when Milestone B ships:
+
+### Screen 3.5 — Pick audio library location (Milestone B only)
+
+Inserted between Screen 3/3b (station picked or created) and Screen 4
+(library pull). Skipped entirely in Milestone A.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│      Where should audio files live on this computer?     │
+│                                                          │
+│  Default:                                                │
+│   C:\Users\<user>\AppData\Roaming\com.ether.radio\audio  │
+│                                                          │
+│                                  [    Browse...    ]     │
+│                                                          │
+│  (You can change this later in Settings.)                │
+│                                                          │
+│                                  [    Continue    ]      │
+└──────────────────────────────────────────────────────────┘
+```
+
+What happens on submit:
+
+1. If the customer never clicks Browse, the default path
+   `<userData>/audio` is used (created on first download).
+2. Browse opens Electron's
+   `dialog.showOpenDialog({ properties: ['openDirectory'] })`.
+   Selected path is written to `station_config_kv` key
+   `audio_root_path`.
+3. Continue advances to Screen 4. Audio files downloaded during
+   Milestone B sync use `audio_root_path` if set, else default.
+
+Editable later in Settings → System → Audio Library Location.
+Moving files after the fact is out of scope for this spec.
+
+### State machine impact
+
+OnboardingFlow reserves a `pickAudioLocation` state slot between the
+bolted screens (venue / experience / name) and `pulling`. In Milestone
+A, transitions skip this state and go straight to `pulling`. In
+Milestone B, the state is turned on and the flow routes through it.
+Reserving the slot now means Milestone B is an insertion, not a
+retrofit.
+
+---
+
 ## Build order
 
 1. Backend: tables (accounts, stations, seats) + the six new
