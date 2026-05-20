@@ -86,6 +86,14 @@
 
 ---
 
+## Startup arc (SP-series)
+
+| # | Item | Notes |
+|---|------|-------|
+| SP1 | **Splash screen progress is fake — runs on setTimeout, not real startup events** | Splash runs two independent 10-second setTimeouts (`electron/main.js:1061-1065` and `splash.html:236`) with no connection to real startup events. Status lines and schema version are hardcoded strings (says "schema v5 OK" while actual schema is v16). Real boot work runs in parallel but doesn't drive the splash. Should be reworked to watch actual startup events (DB open, migrations complete, IPC handlers registered, audio engine ready). Cleanup arc after OnboardingFlow ships — the `onProgress` pattern built for Screen 4 is the model. |
+
+---
+
 ## Big arcs (future, no timeline)
 
 | Arc | Description |
