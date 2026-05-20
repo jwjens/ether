@@ -643,6 +643,8 @@ const REGISTRY = {
       id:                  'scalar',
       title:               'scalar',
       file_path:           'blob-ref',
+      file_key:            'scalar',         // v17: R2 object basename
+      r2_uploaded_at:      'local-only',     // v17: local upload marker
       artist_id:           'scalar',
       album_id:            'scalar',
       category_id:         'scalar',
