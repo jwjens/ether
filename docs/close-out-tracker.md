@@ -44,6 +44,7 @@
 | # | Item | Notes |
 |---|------|-------|
 | EB1 | **`license_activations.license_key` should migrate to `license_key_id INTEGER` FK** | Match the mutations table pattern (`license_key_id INTEGER REFERENCES licenses(id)`). Today the column is `TEXT NOT NULL` carrying the raw key string, which works for legacy plaintext rows where `licenses.license_key` is non-null. For new bcrypt-only rows the `licenses.license_key` column is NULL, so `/account/create` falls back to the raw key from the request body to satisfy the NOT NULL + UNIQUE(license_key, machine_id) constraint — meaning license_activations stores plaintext for bcrypt rows. Behavior is correct (matches what `/validate` writes), but the underlying schema mismatch should be retired. Tracked, not blocking. |
+| EB2 | **Station-count cap by tier should be enforced server-side** | `/account/add-station` (and `/account/create` for the first station) currently does not enforce a per-license station limit. Per onboarding-spec-v1.md "multi-station is a Pro+ feature; tier gating is existing behavior, not new work for this spec" — so today the cap relies on client UI cooperation (tier-gated "Add a station" button). A determined or buggy client calling `/account/add-station` directly can create arbitrary stations regardless of `licenses.plan`. Add server-side cap lookup (likely a `PLAN_STATION_LIMITS = { free: 1, pro: 1, station: N }` shape) inside the same transaction as the INSERT, returning 403 station_limit_reached. Tracked, not blocking. |
 
 ---
 
