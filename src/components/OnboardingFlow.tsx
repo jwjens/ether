@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { setPlanGlobally } from "../hooks/usePlan";
+import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
 
 // Replaces FirstRunWizard at the first_run_complete gate in App.tsx.
@@ -321,6 +323,10 @@ export default function OnboardingFlow({ onComplete }: Props) {
         await kv.upsertByKey(stationId, 'account_name', data.account_name);
       }
       await kv.upsertByKey(stationId, 'station_uuid',                data.station_uuid);
+      if (data.plan) {
+        await kv.upsertByKey(stationId, 'plan_tier', data.plan);
+        setPlanGlobally(data.plan as PlanTier);
+      }
       await kv.upsertByKey(stationId, 'onboarding_path',             'create');
       await kv.upsertByKey(stationId, 'onboarding_license_entered',  '1');
       await kv.upsertByKey(stationId, 'onboarding_account_joined',   '1');
@@ -381,6 +387,10 @@ export default function OnboardingFlow({ onComplete }: Props) {
       await kv.upsertByKey(stationId, 'license_key', licenseKey.trim());
       if (data.account_name) {
         await kv.upsertByKey(stationId, 'account_name', data.account_name);
+      }
+      if (data.plan) {
+        await kv.upsertByKey(stationId, 'plan_tier', data.plan);
+        setPlanGlobally(data.plan as PlanTier);
       }
       await kv.upsertByKey(stationId, 'onboarding_path',            'connect');
       await kv.upsertByKey(stationId, 'onboarding_license_entered', '1');
