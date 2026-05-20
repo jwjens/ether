@@ -74,7 +74,8 @@ import AudioDevices from "./components/AudioDevices";
 import VoiceTracker from "./components/VoiceTracker";
 import ShowPrep from "./components/ShowPrep";
 import Announcements, { startAnnouncementEngine } from "./components/Announcements";
-import FirstRunWizard, { VenueProfile, VENUE_LABELS } from "./components/FirstRunWizard";
+import OnboardingFlow from "./components/OnboardingFlow";
+import type { VenueProfile } from "./components/FirstRunWizard";
 import SplashScreen from "./components/SplashScreen";
 import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
@@ -1256,7 +1257,7 @@ export default function App() {
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
-  if (firstRunChecked && !wizardDone) return <EtherErrorBoundary><FirstRunWizard onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  if (firstRunChecked && !wizardDone) return <EtherErrorBoundary><OnboardingFlow onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
