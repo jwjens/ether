@@ -3693,6 +3693,27 @@ ipcMain.handle('stations:delete', (_, id) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ── Machine identity (for /account/* endpoints + Manage Devices) ─
+// machine_id = client_identity.client_id (seeded by migrate-mutations-phase-sync-3.js,
+// stable for the life of this install).
+// machine_name = os.hostname() — best-effort device label for the seat list UI.
+ipcMain.handle('identity:get', () => {
+  try {
+    const os  = require('os');
+    const row = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get();
+    if (!row?.client_id) {
+      return { ok: false, error: 'client_identity not seeded' };
+    }
+    return {
+      ok: true,
+      machine_id:   row.client_id,
+      machine_name: os.hostname(),
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 let _libSyncAbort = false;
 
 ipcMain.handle('library:sync-r2:start', async () => {

@@ -182,6 +182,10 @@ contextBridge.exposeInMainWorld("ether", {
     update:    (id, data) => ipcRenderer.invoke("stations:update", id, data),
     delete:    (id)       => ipcRenderer.invoke("stations:delete", id),
   },
+  // ── Machine identity (for /account/* endpoints + Manage Devices) ─
+  identity: {
+    get: () => ipcRenderer.invoke("identity:get"),
+  },
   // ── Typed sync handlers — all 34 namespaces wired (Phase 3.5) ──────────
   albums:                    handlers.albums,
   announcements:             handlers.announcements,
