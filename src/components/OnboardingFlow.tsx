@@ -118,6 +118,21 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const [connectAccountName, setConnectAccountName] = useState('');
   const [connectStations,    setConnectStations]    = useState<OnboardingStation[]>([]);
 
+  // ── Screen 3 selection ───────────────────────────────────────
+  // Either a station uuid from connectStations, or the 'ADD_NEW' sentinel
+  // for the "Add a new station" card. null = nothing picked yet.
+  const [selection, setSelection] = useState<string | null>(null);
+
+  // Wipe per-flow form state when the user picks a path on welcome. Keeps
+  // licenseKey (same value either path) but clears station fields and
+  // selection so a stale 2a entry can't bleed into 3b's form.
+  const resetForWelcomePath = () => {
+    setWelcomeBanner(null);
+    setFormError(null);
+    setStnName(''); setNickname(''); setFrequency(''); setCallLetters('');
+    setSelection(null);
+  };
+
   const submitCreate = async () => {
     if (!licenseKey.trim() || !stnName.trim()) {
       setFormError('License key and station name are required.');
@@ -244,7 +259,96 @@ export default function OnboardingFlow({ onComplete }: Props) {
       setConnectAccountName(data.account_name || '');
       setConnectStations(data.stations as OnboardingStation[]);
       setSubmitting(false);
-      setState('pickStation'); // Screen 3 (placeholder until task #5)
+      setState('pickStation');
+    } catch (e: any) {
+      setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
+      setSubmitting(false);
+    }
+  };
+
+  const submitBindSeat = async (station_uuid: string) => {
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const idResp = await (window as any).ether.identity.get();
+      if (!idResp?.ok) {
+        throw new Error(idResp?.error || 'identity.get() failed');
+      }
+      const { machine_id, machine_name } = idResp;
+
+      const res = await fetch(`${ETHER_BACKEND_URL}/account/bind-seat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          license_key: licenseKey.trim(),
+          machine_id,
+          machine_name,
+          station_uuid,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.ok) {
+        setFormError(data.error || data.detail || 'Could not join the selected station. Try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      const kv = (window as any).ether.stationConfigKv;
+      await kv.upsertByKey(stationId, 'station_uuid',              station_uuid);
+      await kv.upsertByKey(stationId, 'onboarding_account_joined', '1');
+
+      setSubmitting(false);
+      setState('experienceMode'); // first bolted screen (placeholder until task #7)
+    } catch (e: any) {
+      setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
+      setSubmitting(false);
+    }
+  };
+
+  const submitAddStation = async () => {
+    if (!stnName.trim()) {
+      setFormError('Station name is required.');
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const idResp = await (window as any).ether.identity.get();
+      if (!idResp?.ok) {
+        throw new Error(idResp?.error || 'identity.get() failed');
+      }
+      const { machine_id, machine_name } = idResp;
+
+      const res = await fetch(`${ETHER_BACKEND_URL}/account/add-station`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          license_key: licenseKey.trim(),
+          machine_id,
+          machine_name,
+          station: {
+            name:         stnName.trim(),
+            nickname:     nickname.trim()    || null,
+            frequency:    frequency.trim()   || null,
+            call_letters: callLetters.trim() || null,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data.station_uuid) {
+        setFormError(data.error || data.detail || 'Could not create station. Try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      const kv = (window as any).ether.stationConfigKv;
+      await kv.upsertByKey(stationId, 'station_uuid',              data.station_uuid);
+      await kv.upsertByKey(stationId, 'onboarding_account_joined', '1');
+
+      setSubmitting(false);
+      setState('experienceMode'); // first bolted screen (placeholder until task #7)
     } catch (e: any) {
       setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
       setSubmitting(false);
@@ -292,12 +396,12 @@ export default function OnboardingFlow({ onComplete }: Props) {
               <PathButton
                 title="Create new account"
                 subtitle="First install — set up a new station under your license"
-                onClick={() => { setWelcomeBanner(null); setFormError(null); setState('create'); }}
+                onClick={() => { resetForWelcomePath(); setState('create'); }}
               />
               <PathButton
                 title="Connect to existing account"
                 subtitle="Adding this computer to a station you already use"
-                onClick={() => { setWelcomeBanner(null); setFormError(null); setState('connect'); }}
+                onClick={() => { resetForWelcomePath(); setState('connect'); }}
               />
             </div>
           </div>
@@ -397,6 +501,171 @@ export default function OnboardingFlow({ onComplete }: Props) {
                   label={submitting ? "Creating…" : "Create account"}
                   onClick={submitCreate}
                   disabled={submitting || !licenseKey.trim() || !stnName.trim()}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
+  // ── Screen 3 — Pick or add a station ─────────────────────────────────
+  if (state === 'pickStation') {
+    const onContinue = () => {
+      if (!selection) return;
+      if (selection === 'ADD_NEW') {
+        setFormError(null);
+        setState('addStation');
+        return;
+      }
+      submitBindSeat(selection);
+    };
+
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>Step 2 of 2</div>
+              <h1 style={HEADING_STYLE}>
+                Welcome back,<br />{connectAccountName || 'your account'}
+              </h1>
+              <p style={SUB_STYLE}>Which station is this computer for?</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 520, margin: "0 auto" }}>
+              {connectStations.map(s => (
+                <StationRadioCard
+                  key={s.uuid}
+                  selected={selection === s.uuid}
+                  onClick={() => setSelection(s.uuid)}
+                  title={`${s.frequency ? s.frequency + ' ' : ''}${s.name}`}
+                  subtitle={s.call_letters || s.nickname || undefined}
+                />
+              ))}
+              <StationRadioCard
+                key="__add_new__"
+                selected={selection === 'ADD_NEW'}
+                onClick={() => setSelection('ADD_NEW')}
+                title="Add a new station"
+                subtitle="Create a new station under this account"
+                isAddNew
+              />
+            </div>
+
+            {formError && (
+              <div style={{
+                maxWidth: 520, margin: "16px auto 0",
+                padding: "10px 14px", borderRadius: 0,
+                background: "rgba(239,68,68,0.08)",
+                border: "1px solid rgba(239,68,68,0.4)",
+                color: "#fca5a5", fontSize: 12, lineHeight: 1.5,
+              }}>
+                {formError}
+              </div>
+            )}
+
+            <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <button
+                onClick={() => setState('welcome')}
+                disabled={submitting}
+                style={{
+                  padding: "12px 24px", borderRadius: 0,
+                  background: "transparent", color: "rgba(255,255,255,0.4)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                  letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
+                }}
+              >
+                ← Back
+              </button>
+              <PrimaryButton
+                label={submitting ? "Joining…" : "Continue"}
+                onClick={onContinue}
+                disabled={!selection || submitting}
+              />
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
+  // ── Screen 3b — Add a new station ────────────────────────────────────
+  if (state === 'addStation') {
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>New station</div>
+              <h1 style={HEADING_STYLE}>Name your<br />new station</h1>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 460, margin: "0 auto" }}>
+              <InputField
+                label="Station name"
+                required
+                autoFocus
+                value={stnName}
+                onChange={setStnName}
+                placeholder="98.5 The Wave"
+              />
+              <InputField
+                label="Nickname"
+                value={nickname}
+                onChange={setNickname}
+                placeholder="The Wave"
+              />
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                <InputField
+                  label="Frequency"
+                  value={frequency}
+                  onChange={setFrequency}
+                  placeholder="98.5 FM"
+                />
+                <InputField
+                  label="Call letters"
+                  value={callLetters}
+                  onChange={setCallLetters}
+                  placeholder="WXYZ"
+                />
+              </div>
+
+              {formError && (
+                <div style={{
+                  marginTop: 4, padding: "10px 14px", borderRadius: 0,
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  color: "#fca5a5", fontSize: 12, lineHeight: 1.5,
+                }}>
+                  {formError}
+                </div>
+              )}
+
+              <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => { setFormError(null); setState('pickStation'); }}
+                  disabled={submitting}
+                  style={{
+                    padding: "12px 24px", borderRadius: 0,
+                    background: "transparent", color: "rgba(255,255,255,0.4)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
+                  }}
+                >
+                  ← Back
+                </button>
+                <PrimaryButton
+                  label={submitting ? "Creating…" : "Create station"}
+                  onClick={submitAddStation}
+                  disabled={submitting || !stnName.trim()}
                 />
               </div>
             </div>
@@ -590,6 +859,56 @@ function InputField({ label, value, onChange, placeholder, required, autoFocus, 
         </div>
       )}
     </div>
+  );
+}
+
+interface StationRadioCardProps {
+  title:     string;
+  subtitle?: string;
+  selected:  boolean;
+  onClick:   () => void;
+  isAddNew?: boolean;
+}
+
+function StationRadioCard({ title, subtitle, selected, onClick, isAddNew }: StationRadioCardProps) {
+  const borderColor = selected ? "#22d3ee" : (isAddNew ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)");
+  const background  = selected ? "rgba(34,211,238,0.08)" : "rgba(255,255,255,0.03)";
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "16px 20px", borderRadius: 0, textAlign: "left",
+        background,
+        border: `1.5px ${isAddNew && !selected ? "dashed" : "solid"} ${borderColor}`,
+        cursor: "pointer", transition: "all 0.2s",
+        display: "flex", alignItems: "center", gap: 16,
+        color: "#f0f0f8",
+        boxShadow: selected ? "0 0 24px rgba(34,211,238,0.12)" : "none",
+      }}
+    >
+      <div style={{
+        width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+        border: `2px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.2)"}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        {selected && <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22d3ee" }} />}
+      </div>
+      <div style={{ flex: 1 }}>
+        <div style={{
+          fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700,
+          color: selected ? "#22d3ee" : "#f0f0f8",
+          letterSpacing: "-0.02em",
+          marginBottom: subtitle ? 4 : 0,
+        }}>
+          {title}
+        </div>
+        {subtitle && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+    </button>
   );
 }
 
