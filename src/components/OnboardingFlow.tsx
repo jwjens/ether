@@ -28,6 +28,18 @@ interface Props {
   onComplete: (profile: VenueProfile) => void;
 }
 
+// Shape of each station returned by /account/connect. Used by Screen 3
+// to render the picker. Per docs/onboarding-spec-v1.md the stations table
+// carries id/uuid/name plus optional nickname/frequency/call_letters.
+export interface OnboardingStation {
+  id:            number;
+  uuid:          string;
+  name:          string;
+  nickname?:     string | null;
+  frequency?:    string | null;
+  call_letters?: string | null;
+}
+
 // ── Shared visual constants ────────────────────────────────────────────
 // Pulled from FirstRunWizard so the whole onboarding feels like one product.
 // Extracted as module-level consts so each screen body stays readable as the
@@ -90,7 +102,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
   // account_already_exists — directs the user to the Connect path.
   const [welcomeBanner, setWelcomeBanner] = useState<string | null>(null);
 
-  // ── Screen 2a form state ─────────────────────────────────────
+  // ── Form state (shared across Screens 2a/2b/3/3b) ────────────
   const [licenseKey,  setLicenseKey]  = useState('');
   const [accountName, setAccountName] = useState('');
   const [stnName,     setStnName]     = useState('');
@@ -99,6 +111,12 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const [callLetters, setCallLetters] = useState('');
   const [submitting,  setSubmitting]  = useState(false);
   const [formError,   setFormError]   = useState<string | null>(null);
+
+  // ── Screen 2b → 3 carryover ──────────────────────────────────
+  // /account/connect returns the account name + stations list; both are
+  // displayed on Screen 3 ("Welcome back, <account_name>" + radio list).
+  const [connectAccountName, setConnectAccountName] = useState('');
+  const [connectStations,    setConnectStations]    = useState<OnboardingStation[]>([]);
 
   const submitCreate = async () => {
     if (!licenseKey.trim() || !stnName.trim()) {
@@ -169,6 +187,70 @@ export default function OnboardingFlow({ onComplete }: Props) {
     }
   };
 
+  const submitConnect = async () => {
+    if (!licenseKey.trim()) {
+      setFormError('License key is required.');
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const idResp = await (window as any).ether.identity.get();
+      if (!idResp?.ok) {
+        throw new Error(idResp?.error || 'identity.get() failed');
+      }
+      const { machine_id, machine_name } = idResp;
+
+      const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          license_key: licenseKey.trim(),
+          machine_id,
+          machine_name,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (data.error === 'invalid_license_key') {
+        setFormError('Invalid license key. Check the key and try again.');
+        setSubmitting(false);
+        return;
+      }
+      if (data.error === 'seat_limit_reached') {
+        setFormError(
+          'This license is using all 5 seats. To add this computer, ' +
+          'deauthorize a seat in the Manage Devices panel on another machine.'
+        );
+        setSubmitting(false);
+        return;
+      }
+      if (!res.ok || !Array.isArray(data.stations)) {
+        setFormError(data.error || data.detail || 'Could not connect. Try again.');
+        setSubmitting(false);
+        return;
+      }
+
+      const kv = (window as any).ether.stationConfigKv;
+      await kv.upsertByKey(stationId, 'license_key', licenseKey.trim());
+      if (data.account_name) {
+        await kv.upsertByKey(stationId, 'account_name', data.account_name);
+      }
+      await kv.upsertByKey(stationId, 'onboarding_path',            'connect');
+      await kv.upsertByKey(stationId, 'onboarding_license_entered', '1');
+      // onboarding_account_joined is set on Screen 3 (bind-seat / add-station),
+      // not here — Connect path has not joined a station yet.
+
+      setConnectAccountName(data.account_name || '');
+      setConnectStations(data.stations as OnboardingStation[]);
+      setSubmitting(false);
+      setState('pickStation'); // Screen 3 (placeholder until task #5)
+    } catch (e: any) {
+      setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
+      setSubmitting(false);
+    }
+  };
+
   // Stub for the done branch — wired in commits #7-9 once the bolted screens
   // and Screen 4 collect venueType/name/tagline. Kept here so the onComplete
   // prop is referenced and the call shape lines up with handleWizardComplete
@@ -210,12 +292,12 @@ export default function OnboardingFlow({ onComplete }: Props) {
               <PathButton
                 title="Create new account"
                 subtitle="First install — set up a new station under your license"
-                onClick={() => { setWelcomeBanner(null); setState('create'); }}
+                onClick={() => { setWelcomeBanner(null); setFormError(null); setState('create'); }}
               />
               <PathButton
                 title="Connect to existing account"
                 subtitle="Adding this computer to a station you already use"
-                onClick={() => { setWelcomeBanner(null); setState('connect'); }}
+                onClick={() => { setWelcomeBanner(null); setFormError(null); setState('connect'); }}
               />
             </div>
           </div>
@@ -315,6 +397,70 @@ export default function OnboardingFlow({ onComplete }: Props) {
                   label={submitting ? "Creating…" : "Create account"}
                   onClick={submitCreate}
                   disabled={submitting || !licenseKey.trim() || !stnName.trim()}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
+  // ── Screen 2b — Connect to existing account ──────────────────────────
+  if (state === 'connect') {
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>Step 1 of 2</div>
+              <h1 style={HEADING_STYLE}>Connect to your<br />Ether account</h1>
+              <p style={{ ...SUB_STYLE, marginTop: 8 }}>
+                Enter the same license key you used on your first computer.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 460, margin: "0 auto" }}>
+              <InputField
+                label="License key"
+                required
+                autoFocus
+                value={licenseKey}
+                onChange={setLicenseKey}
+                placeholder="ETHER-PRO-XXXX-XXXX"
+              />
+
+              {formError && (
+                <div style={{
+                  marginTop: 4, padding: "10px 14px", borderRadius: 0,
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  color: "#fca5a5", fontSize: 12, lineHeight: 1.5,
+                }}>
+                  {formError}
+                </div>
+              )}
+
+              <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => setState('welcome')}
+                  disabled={submitting}
+                  style={{
+                    padding: "12px 24px", borderRadius: 0,
+                    background: "transparent", color: "rgba(255,255,255,0.4)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
+                  }}
+                >
+                  ← Back
+                </button>
+                <PrimaryButton
+                  label={submitting ? "Connecting…" : "Continue"}
+                  onClick={submitConnect}
+                  disabled={submitting || !licenseKey.trim()}
                 />
               </div>
             </div>
