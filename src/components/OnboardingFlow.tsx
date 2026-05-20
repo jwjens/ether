@@ -1013,6 +1013,20 @@ export default function OnboardingFlow({ onComplete }: Props) {
     );
   }
 
+  // ── Screen 4 — Pulling library ───────────────────────────────────────
+  // Real progress UI consuming the sync:* events shipped in task #8a.
+  // Renders a PullingScreen subcomponent so its hooks (subscription +
+  // initial-complete handler) are scoped to this branch's lifetime.
+  if (state === 'pulling') {
+    return (
+      <PullingScreen
+        stationId={stationId}
+        stationName={stnName}
+        onContinue={() => setState('done')}
+      />
+    );
+  }
+
   // ── Screen 2b — Connect to existing account ──────────────────────────
   if (state === 'connect') {
     return (
@@ -1252,6 +1266,157 @@ function StationRadioCard({ title, subtitle, description, selected, onClick, isA
         )}
       </div>
     </button>
+  );
+}
+
+function StatusLine({ done, text }: { done: boolean; text: string }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12,
+      fontSize: 14, lineHeight: 1.4,
+      color: done ? "rgba(34,211,238,0.9)" : "rgba(255,255,255,0.6)",
+    }}>
+      <span style={{
+        fontFamily: "'Inter', system-ui, sans-serif",
+        width: 16, display: "inline-block", textAlign: "center",
+        color: done ? "#22d3ee" : "rgba(255,255,255,0.4)",
+        fontWeight: 700, fontSize: 14,
+      }}>
+        {done ? '✓' : '○'}
+      </span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+interface PullingScreenProps {
+  stationId:   number;
+  stationName: string;
+  onContinue:  () => void;
+}
+
+function PullingScreen({ stationId, stationName, onContinue }: PullingScreenProps) {
+  const [appliedTotal,    setAppliedTotal]    = useState(0);
+  const [initialComplete, setInitialComplete] = useState(false);
+
+  // Subscribe on mount; catch up via getState in case events already fired
+  // before this component mounted (initial-complete is a one-shot — see the
+  // three-tier persistence design in sync-scheduler.js).
+  useEffect(() => {
+    let cancelled = false;
+
+    (window as any).ether.sync.getState()
+      .then((s: { initialComplete: boolean; appliedTotal: number; byTable: Record<string, number> }) => {
+        if (cancelled) return;
+        setAppliedTotal(s.appliedTotal || 0);
+        if (s.initialComplete) setInitialComplete(true);
+      })
+      .catch((err: any) => console.error('[onboarding] sync.getState() failed:', err));
+
+    const unsubP = (window as any).ether.sync.onProgress(
+      (event: { applied: number; byTable: Record<string, number> }) => {
+        if (cancelled) return;
+        setAppliedTotal(prev => prev + event.applied);
+      }
+    );
+    const unsubI = (window as any).ether.sync.onInitialComplete(() => {
+      if (cancelled) return;
+      setInitialComplete(true);
+    });
+
+    return () => { cancelled = true; unsubP(); unsubI(); };
+  }, []);
+
+  // When initial-complete fires (or arrives via getState), write the
+  // onboarding_library_pulled flag and advance to done.
+  useEffect(() => {
+    if (!initialComplete) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        await (window as any).ether.stationConfigKv
+          .upsertByKey(stationId, 'onboarding_library_pulled', '1');
+      } catch (e) {
+        console.error('[onboarding] write onboarding_library_pulled failed:', e);
+      }
+      if (!cancelled) onContinue();
+    })();
+    return () => { cancelled = true; };
+  }, [initialComplete, stationId, onContinue]);
+
+  // Escape hatch — only visible while waiting. Writes the same flag as the
+  // auto path so the next launch doesn't re-prompt. Used when sync isn't
+  // running this session (sync_enabled=false at startup, network down, etc.)
+  // and the user doesn't want to be stuck on Screen 4. Library sync resumes
+  // on the next launch when sync is running.
+  const continueWithoutWaiting = async () => {
+    try {
+      await (window as any).ether.stationConfigKv
+        .upsertByKey(stationId, 'onboarding_library_pulled', '1');
+    } catch (e) {
+      console.error('[onboarding] write onboarding_library_pulled failed:', e);
+    }
+    onContinue();
+  };
+
+  const countLabel = `${appliedTotal.toLocaleString()} ${appliedTotal === 1 ? 'entry' : 'entries'} received`;
+
+  return (
+    <div style={OVERLAY_STYLE}>
+      <div style={GLOW_STYLE} />
+      <div style={SHELL_STYLE}>
+        <div style={{ animation: "onb-in 0.4s ease both" }}>
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div style={LABEL_STYLE}>Setup</div>
+            <h1 style={HEADING_STYLE}>
+              Connecting to<br />{stationName || 'your station'}…
+            </h1>
+          </div>
+
+          <div style={{
+            maxWidth: 520, margin: "0 auto",
+            display: "flex", flexDirection: "column", gap: 14,
+          }}>
+            <StatusLine done text="License verified" />
+            <StatusLine done text="Account joined" />
+            <StatusLine
+              done={initialComplete}
+              text={initialComplete ? "Library downloaded" : `Downloading library… ${countLabel}`}
+            />
+          </div>
+
+          <p style={{
+            fontSize: 13, color: "rgba(255,255,255,0.4)", lineHeight: 1.6,
+            maxWidth: 520, margin: "32px auto 0", textAlign: "center",
+          }}>
+            Your library list arrives now; songs will appear in the Library
+            panel immediately. Audio file sync coming in a future update —
+            until then, songs are visible but not yet playable on this
+            computer.
+          </p>
+
+          {!initialComplete && (
+            <div style={{ maxWidth: 520, margin: "20px auto 0", textAlign: "center" }}>
+              <button
+                onClick={continueWithoutWaiting}
+                style={{
+                  background: "transparent", border: "none",
+                  color: "rgba(255,255,255,0.3)", fontSize: 11,
+                  textDecoration: "underline", cursor: "pointer",
+                  fontFamily: "'Inter', system-ui, sans-serif",
+                  letterSpacing: "0.02em",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.6)")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,255,255,0.3)")}
+              >
+                Continue without waiting — library will sync in the background
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      <style>{ANIMATION_CSS}</style>
+    </div>
   );
 }
 
