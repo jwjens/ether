@@ -39,6 +39,14 @@
 
 ---
 
+## ether-backend follow-ups
+
+| # | Item | Notes |
+|---|------|-------|
+| EB1 | **`license_activations.license_key` should migrate to `license_key_id INTEGER` FK** | Match the mutations table pattern (`license_key_id INTEGER REFERENCES licenses(id)`). Today the column is `TEXT NOT NULL` carrying the raw key string, which works for legacy plaintext rows where `licenses.license_key` is non-null. For new bcrypt-only rows the `licenses.license_key` column is NULL, so `/account/create` falls back to the raw key from the request body to satisfy the NOT NULL + UNIQUE(license_key, machine_id) constraint — meaning license_activations stores plaintext for bcrypt rows. Behavior is correct (matches what `/validate` writes), but the underlying schema mismatch should be retired. Tracked, not blocking. |
+
+---
+
 ## Library polish (L-series, parked from v4.0.0)
 
 | # | Item | Notes |
