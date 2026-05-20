@@ -40,6 +40,28 @@ export interface OnboardingStation {
   call_letters?: string | null;
 }
 
+// ── Bolted-screen option data ──────────────────────────────────────────
+// experience_mode is read by OnShiftScreen + SettingsPanel; venue_type is
+// read by App.tsx persona labels (~line 1954). The `id` values are the
+// canonical KV values those readers expect — do not change them. Taglines
+// and descriptions are local to OnboardingFlow's card UI (not shared with
+// FirstRunWizard's data shape, which carries 9 extra fields per venue
+// that don't display on the new cards).
+
+const EXPERIENCE_OPTIONS = [
+  { id: 'solo',       label: 'Solo',       tagline: 'One deck · Simple play/pause',     description: 'Single deck, no crossfades. Best for podcasters and first-time users.' },
+  { id: 'standard',   label: 'Standard',   tagline: 'Two decks · Crossfades included',  description: 'Decks A and B always visible. Smooth crossfades between them. For independent broadcasters.' },
+  { id: 'live_radio', label: 'Live Radio', tagline: 'All six decks · Full automation',  description: 'All six decks unlocked. Format clock scheduling, hard transitions, full rotation engine.' },
+] as const;
+
+const VENUE_OPTIONS = [
+  { id: 'radio',   label: 'Radio Station',      tagline: 'AM · FM · Internet · Podcast · College Radio' },
+  { id: 'venue',   label: 'Venue / Attraction', tagline: 'Bars · Clubs · Theme Parks · Arenas · Events' },
+  { id: 'retail',  label: 'Retail / Business',  tagline: 'Stores · Restaurants · Hotels · Gyms · Offices' },
+  { id: 'worship', label: 'House of Worship',   tagline: 'Churches · Mosques · Synagogues · Temples' },
+  { id: 'podcast', label: 'Podcast / YouTube',  tagline: 'Podcasts · YouTube · Livestreams · Video Shows' },
+] as const;
+
 // ── Shared visual constants ────────────────────────────────────────────
 // Pulled from FirstRunWizard so the whole onboarding feels like one product.
 // Extracted as module-level consts so each screen body stays readable as the
@@ -122,6 +144,11 @@ export default function OnboardingFlow({ onComplete }: Props) {
   // Either a station uuid from connectStations, or the 'ADD_NEW' sentinel
   // for the "Add a new station" card. null = nothing picked yet.
   const [selection, setSelection] = useState<string | null>(null);
+
+  // ── Bolted-screen state ──────────────────────────────────────
+  const [chosenExperience, setChosenExperience] = useState<string | null>(null);
+  const [chosenVenue,      setChosenVenue]      = useState<string | null>(null);
+  const [displayTagline,   setDisplayTagline]   = useState('');
 
   // Wipe per-flow form state when the user picks a path on welcome. Keeps
   // licenseKey (same value either path) but clears station fields and
@@ -304,6 +331,32 @@ export default function OnboardingFlow({ onComplete }: Props) {
       setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
       setSubmitting(false);
     }
+  };
+
+  const submitExperience = async () => {
+    if (!chosenExperience) return;
+    const kv = (window as any).ether.stationConfigKv;
+    await kv.upsertByKey(stationId, 'experience_mode', chosenExperience);
+    setState('venueType');
+  };
+
+  const submitVenue = async () => {
+    if (!chosenVenue) return;
+    const kv = (window as any).ether.stationConfigKv;
+    await kv.upsertByKey(stationId, 'venue_type', chosenVenue);
+    setState('nameStation');
+  };
+
+  const submitName = async () => {
+    if (!stnName.trim()) {
+      setFormError('Station name is required.');
+      return;
+    }
+    setFormError(null);
+    const kv = (window as any).ether.stationConfigKv;
+    await kv.upsertByKey(stationId, 'station_name',    stnName.trim());
+    await kv.upsertByKey(stationId, 'station_tagline', displayTagline.trim());
+    setState('pulling'); // Screen 4 (placeholder until task #9)
   };
 
   const submitAddStation = async () => {
@@ -676,6 +729,172 @@ export default function OnboardingFlow({ onComplete }: Props) {
     );
   }
 
+  // ── Bolted: experience mode ──────────────────────────────────────────
+  // FirstRunWizard step 0 equivalent, restyled to match OnboardingFlow.
+  // No back button — account/seat is already committed to the backend by
+  // 2a/3/3b. Going back would let the user edit committed state.
+  if (state === 'experienceMode') {
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>Interface</div>
+              <h1 style={HEADING_STYLE}>How do you want<br />to broadcast?</h1>
+              <p style={SUB_STYLE}>This sets your default deck layout. You can change it later in Settings.</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 520, margin: "0 auto" }}>
+              {EXPERIENCE_OPTIONS.map(opt => (
+                <StationRadioCard
+                  key={opt.id}
+                  selected={chosenExperience === opt.id}
+                  onClick={() => setChosenExperience(opt.id)}
+                  title={opt.label}
+                  subtitle={opt.tagline}
+                  description={opt.description}
+                />
+              ))}
+            </div>
+
+            <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", justifyContent: "flex-end" }}>
+              <PrimaryButton
+                label="Continue"
+                onClick={submitExperience}
+                disabled={!chosenExperience}
+              />
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
+  // ── Bolted: venue type ───────────────────────────────────────────────
+  if (state === 'venueType') {
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>Persona</div>
+              <h1 style={HEADING_STYLE}>What are you using<br />Ether for?</h1>
+              <p style={SUB_STYLE}>We'll customize the interface and language to match your setup.</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 520, margin: "0 auto" }}>
+              {VENUE_OPTIONS.map(opt => (
+                <StationRadioCard
+                  key={opt.id}
+                  selected={chosenVenue === opt.id}
+                  onClick={() => setChosenVenue(opt.id)}
+                  title={opt.label}
+                  subtitle={opt.tagline}
+                />
+              ))}
+            </div>
+
+            <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <button
+                onClick={() => setState('experienceMode')}
+                style={{
+                  padding: "12px 24px", borderRadius: 0,
+                  background: "transparent", color: "rgba(255,255,255,0.4)",
+                  border: "1px solid rgba(255,255,255,0.1)",
+                  fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                  letterSpacing: "0.04em", cursor: "pointer",
+                }}
+              >
+                ← Back
+              </button>
+              <PrimaryButton
+                label="Continue"
+                onClick={submitVenue}
+                disabled={!chosenVenue}
+              />
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
+  // ── Bolted: station name + tagline ───────────────────────────────────
+  // station_tagline has no UI reader today — kept as a placeholder field
+  // for future UI per design discussion. Pre-populates stnName with
+  // whatever's already in component state (typed on 2a/3b, empty on
+  // pickStation path).
+  if (state === 'nameStation') {
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>Station details</div>
+              <h1 style={HEADING_STYLE}>Name your<br />station</h1>
+              <p style={SUB_STYLE}>This shows in the header and on your Now Playing screen.</p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 14, maxWidth: 460, margin: "0 auto" }}>
+              <InputField
+                label="Station name"
+                required
+                autoFocus
+                value={stnName}
+                onChange={setStnName}
+                placeholder="98.5 The Wave"
+              />
+              <InputField
+                label="Tagline"
+                hint="A short slogan or descriptor."
+                value={displayTagline}
+                onChange={setDisplayTagline}
+                placeholder="Your city's home for classic rock"
+              />
+
+              {formError && (
+                <div style={{
+                  marginTop: 4, padding: "10px 14px", borderRadius: 0,
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  color: "#fca5a5", fontSize: 12, lineHeight: 1.5,
+                }}>
+                  {formError}
+                </div>
+              )}
+
+              <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => { setFormError(null); setState('venueType'); }}
+                  style={{
+                    padding: "12px 24px", borderRadius: 0,
+                    background: "transparent", color: "rgba(255,255,255,0.4)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    letterSpacing: "0.04em", cursor: "pointer",
+                  }}
+                >
+                  ← Back
+                </button>
+                <PrimaryButton
+                  label="Continue"
+                  onClick={submitName}
+                  disabled={!stnName.trim()}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
   // ── Screen 2b — Connect to existing account ──────────────────────────
   if (state === 'connect') {
     return (
@@ -863,14 +1082,15 @@ function InputField({ label, value, onChange, placeholder, required, autoFocus, 
 }
 
 interface StationRadioCardProps {
-  title:     string;
-  subtitle?: string;
-  selected:  boolean;
-  onClick:   () => void;
-  isAddNew?: boolean;
+  title:        string;
+  subtitle?:    string;
+  description?: string;
+  selected:     boolean;
+  onClick:      () => void;
+  isAddNew?:    boolean;
 }
 
-function StationRadioCard({ title, subtitle, selected, onClick, isAddNew }: StationRadioCardProps) {
+function StationRadioCard({ title, subtitle, description, selected, onClick, isAddNew }: StationRadioCardProps) {
   const borderColor = selected ? "#22d3ee" : (isAddNew ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)");
   const background  = selected ? "rgba(34,211,238,0.08)" : "rgba(255,255,255,0.03)";
   return (
@@ -898,13 +1118,18 @@ function StationRadioCard({ title, subtitle, selected, onClick, isAddNew }: Stat
           fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700,
           color: selected ? "#22d3ee" : "#f0f0f8",
           letterSpacing: "-0.02em",
-          marginBottom: subtitle ? 4 : 0,
+          marginBottom: (subtitle || description) ? 4 : 0,
         }}>
           {title}
         </div>
         {subtitle && (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.4 }}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.4, marginBottom: description ? 4 : 0 }}>
             {subtitle}
+          </div>
+        )}
+        {description && (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
+            {description}
           </div>
         )}
       </div>
