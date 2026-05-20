@@ -340,8 +340,11 @@ Body: `{ license_key, machine_id }`
 - Sets `deauthorized_at = NOW()` on the matching `license_activations` row (soft delete; the row is preserved for audit).
 - Returns: `{ ok: true }`.
 
-**GET `/account/seats?license_key=...`**
+**GET `/account/seats`**
+Auth: `x-license-key` header (not a query param, so the key doesn't land
+in access logs, proxy logs, or browser history; matches `/api/cmd`).
 - Returns active seats (`deauthorized_at IS NULL`) for the Manage Devices panel.
+- Response: `{ seats: [...], seats_used, seats_max }`.
 
 ### Existing endpoints touched
 
