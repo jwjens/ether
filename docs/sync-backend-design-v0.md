@@ -122,12 +122,12 @@ The `UNIQUE (license_key_id, id)` constraint on the `mutations` table (see §10)
 
 ## 4. Multi-Tenant Model
 
-**B-05 — Identity hierarchy: accounts → licenses → mutations.**  
-A tenant is an account. An account has one or more licenses (one per installation in practice, but the schema is not artificially restricted). Licenses are the auth unit. This hierarchy adds a single `accounts` table and FKs in v0, and avoids a structural migration when the Control Center feature lands.
+**B-05 — Identity hierarchy: licenses → mutations.**  
+A tenant is a license. The license key IS the customer identity — there is no separate accounts table. An optional human-readable label (`account_name`) lives on the licenses row for display ("WXYZ Broadcasting") and can be renamed freely without touching anything that's keyed by the license. Per-tenant tier gating uses the existing `licenses.plan` column ('free'/'pro'/'station'); a separate `tier` column was considered and rejected as duplication.
 
-The `accounts` table carries a `tier` column (TEXT NOT NULL DEFAULT 'free'). The column exists now so tier-gated features can read it without a migration. The specific tier values, what they gate, and upgrade semantics are deferred — the column is a placeholder for a future arc.
+This collapses the original "accounts → licenses → mutations" design (see commit history) — the abstract `accounts` table never carried information that wasn't already 1:1 with a license. Removing it simplifies onboarding (one row to create, not three) and matches the v1 product reality that one license = one customer.
 
-The existing `licenses` table is extended (not replaced) with `account_id`, `key_prefix`, and `key_hash` columns. See §10 for the migration shape.
+The `licenses` table is extended (not replaced) with `key_prefix`, `key_hash`, `account_name`, and `onboarded_at` columns. See §10 for the migration shape.
 
 **B-06 — Data isolation: row-level, enforced at query time.**  
 Every query that reads or writes `mutations` is filtered by `license_key_id`. The `license_key_id` is resolved from the `x-license-key` header by the auth middleware before any handler runs. No client-supplied `license_key_id` is trusted. Cross-tenant data is not accessible by any query path.
@@ -181,15 +181,15 @@ Auth flow:
 2. Take first 12 chars as prefix; query `WHERE key_prefix = ?` (fast indexed lookup).
 3. bcrypt-compare the full raw key against `key_hash`.
 4. If no match or `active = false`: return 401.
-5. Attach resolved `license_id` and `account_id` to the request context.
+5. Attach resolved `license_id` to the request context.
 
 bcrypt verify cost is ~100ms. This is acceptable for a machine-to-machine protocol that sends one request per second at most. Plain SHA-256 is never used for auth tokens.
 
 **B-13 — client_id: stored per-mutation, not validated.**  
 The `client_id` field in the mutation comes from the client. The server stores it as-is. Multiple `client_id` values under one `license_key_id` are valid and expected (e.g. reinstall generates a new client_id). The server does not maintain a registry of client_ids.
 
-**B-14 — license_activations serves as the installs registry.**  
-The existing `license_activations` table (columns: `id`, `license_key`, `machine_id`, `machine_name`, `os`, `ip_address`, `activated_at`, `last_seen`) already tracks per-machine activation state. No separate `installs` table is created in v0. Future arc: add a `client_id` column to `license_activations` to formally link a sync peer (by its `client_identity.client_id`) to a licensed machine.
+**B-14 — license_activations serves as the installs/seats registry.**  
+The existing `license_activations` table tracks per-machine activation state and doubles as the seat registry for onboarding. Columns: `id`, `license_key`, `machine_id`, `machine_name`, `os`, `ip_address`, `activated_at`, `last_seen`, plus `station_uuid` (FK to `stations.uuid`, nullable until a seat is bound to a station) and `deauthorized_at` (nullable; NULL = active seat). Deactivation is soft — `deauthorized_at` is set to NOW(), the row is preserved. The "seat limit reached" count in onboarding filters on `deauthorized_at IS NULL`. No separate `installs` or `seats` table is created. Future arc: add a `client_id` column to formally link a sync peer (by its `client_identity.client_id`) to a licensed machine.
 
 ---
 
@@ -314,25 +314,35 @@ A `schema_migrations` table tracks applied versions. On startup: apply all unapp
 ## 10. Reference SQL Schema
 
 ```sql
--- ── New table ────────────────────────────────────────────────────────
--- Accounts (minimal in v0; Control Center will expand)
--- tier column exists for future feature gating; semantics TBD
-CREATE TABLE IF NOT EXISTS accounts (
-  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  name       TEXT        NOT NULL,
-  tier       TEXT        NOT NULL DEFAULT 'free',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- ── Extensions to existing licenses table ────────────────────────────
--- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS account_id UUID REFERENCES accounts(id);
--- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_prefix  TEXT;  -- first 12 chars, plaintext
--- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_hash    TEXT;  -- bcrypt of full raw key
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_prefix    TEXT;          -- first 12 chars, plaintext
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS key_hash      TEXT;          -- bcrypt of full raw key
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS account_name  TEXT;          -- display label (onboarding-spec-v1)
+-- ALTER TABLE licenses ADD COLUMN IF NOT EXISTS onboarded_at  TIMESTAMPTZ;   -- set when /account/create completes
 --
 -- Existing columns preserved: id (INTEGER PK), license_key, email, plan,
 -- stripe_customer_id, stripe_subscription_id, status, active, created_at, dates.
 -- license_key TEXT is legacy (plain-text, for existing activations pre-bcrypt).
 -- New keys issued by webhook populate key_prefix + key_hash instead.
+-- The license_key string remains the canonical tenant identity; there is no
+-- separate accounts table (see B-05).
+
+-- ── Stations (onboarding-spec-v1) ────────────────────────────────────
+-- A station is a broadcast unit under a license. One license can own multiple
+-- stations (Pro+ feature gated by licenses.plan, not enforced at this layer).
+-- license_key_id matches the FK style used by the mutations table.
+CREATE TABLE IF NOT EXISTS stations (
+  id              SERIAL       PRIMARY KEY,
+  uuid            TEXT         NOT NULL UNIQUE,   -- matches the local station uuid
+  license_key_id  INTEGER      NOT NULL REFERENCES licenses(id),
+  name            TEXT         NOT NULL,
+  nickname        TEXT,
+  frequency       TEXT,
+  call_letters    TEXT,
+  created_at      TIMESTAMPTZ  DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX idx_stations_license ON stations(license_key_id);
 
 -- ── Mutation log — core sync table (existing table, amended) ─────────
 -- Amendments applied via migration SQL (see session notes 2026-05-15):
@@ -378,10 +388,17 @@ CREATE INDEX idx_mutations_pull_station
 CREATE INDEX idx_mutations_client_id
   ON mutations (client_id);
 
--- ── license_activations (existing, no structural change in v0) ────────
--- Serves as the installs registry per B-14. Existing columns:
+-- ── license_activations (existing, extended for seat management) ──────
+-- Serves as the installs + seats registry per B-14. Existing columns:
 --   id, license_key, machine_id, machine_name, os, ip_address,
 --   activated_at, last_seen
+-- ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS station_uuid    TEXT REFERENCES stations(uuid) ON DELETE SET NULL;
+-- ALTER TABLE license_activations ADD COLUMN IF NOT EXISTS deauthorized_at TIMESTAMPTZ;  -- NULL = active seat
+-- CREATE INDEX idx_activations_station ON license_activations(station_uuid);
+-- CREATE INDEX idx_activations_active  ON license_activations(license_key) WHERE deauthorized_at IS NULL;
+--
+-- Deactivation is soft — /licenses/:key/deactivate sets deauthorized_at = NOW().
+-- The seat-limit count in onboarding filters on deauthorized_at IS NULL.
 -- Future arc: ADD COLUMN client_id TEXT to link sync peer to activation.
 ```
 
@@ -392,10 +409,10 @@ CREATE INDEX idx_mutations_client_id
 These are not decisions for v0. They are tracked here so the design doc remains honest about what's deferred.
 
 **Tier semantics (deferred to future arc)**  
-The `tier` column exists on `accounts`. The specific values, what each tier unlocks, upgrade/downgrade flows, and how tiers map to subscription state are not yet designed. No code should gate on tier values until the tier arc is executed.
+The `licenses.plan` column ('free'/'pro'/'station') is the tier today. Pro+ features (multi-station, etc.) read this directly. A richer tier scheme (entitlements, add-ons) is deferred; if it lands it extends `licenses`, not a separate accounts table.
 
 **Stripe provisioning wiring (scaffolding task)**  
-`ether-backend` on Railway handles Stripe webhooks and Resend emails today. The scaffolding task is connecting the webhook handler to the Lightsail sync backend so it can write to `accounts` and `licenses`. The schema is already designed for this — no migration required.
+`ether-backend` on Railway handles Stripe webhooks and Resend emails today. The scaffolding task is connecting the webhook handler to the Lightsail sync backend so it can write to `licenses`. The schema is already designed for this — no migration required.
 
 **operator_id presence UX (future arc)**  
 `operator_id` is captured on the client, transmitted on the wire, and stored on the backend in v0 (per N-123). The presence UX — Jason/Alison edit badges, per-row activity feed — is a future arc. In v0 the field is queryable but no UI renders it.
