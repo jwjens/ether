@@ -3693,6 +3693,24 @@ ipcMain.handle('stations:delete', (_, id) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// ── Sync progress state (for OnboardingFlow Screen 4) ─────────
+// One-shot getter mirroring scheduler.getProgressState(). Renderer calls
+// this on mount to catch up on events that may have fired before its
+// subscription (event-fired-before-subscribe race). Returns a safe default
+// if the scheduler doesn't exist (sync disabled via station_config_kv).
+ipcMain.handle('sync:get-state', () => {
+  try {
+    const scheduler = app._syncScheduler;
+    if (!scheduler) {
+      return { initialComplete: false, appliedTotal: 0, byTable: {} };
+    }
+    return scheduler.getProgressState();
+  } catch (e) {
+    console.error('[sync:get-state]', e.message);
+    return { initialComplete: false, appliedTotal: 0, byTable: {} };
+  }
+});
+
 // ── Machine identity (for /account/* endpoints + Manage Devices) ─
 // machine_id = client_identity.client_id (seeded by migrate-mutations-phase-sync-3.js,
 // stable for the life of this install).

@@ -37,6 +37,17 @@ class SyncEngine {
    *                                              () => null (install-scoped only). Pass from
    *                                              main.js; SyncEngine does not query stations
    *                                              directly [single-station v1; multi-station safe].
+   * @param {(event: { applied: number; byTable: Record<string,number> }) => void} [opts.onProgress]
+   *                                              Optional. Invoked after each successful pull()
+   *                                              with the count of newly-applied mutations and a
+   *                                              per-table breakdown. Counts only outcome ===
+   *                                              'applied' (mutations that changed local state).
+   *                                              Idempotent / loser / held / quarantined / failed
+   *                                              outcomes are excluded. Skipped entirely when
+   *                                              applied === 0 (no signal worth firing for a
+   *                                              no-op pull). Engine stays transport-agnostic —
+   *                                              just invokes the callback if set, knows nothing
+   *                                              about Electron.
    */
   constructor(db, transport, opts = {}) {
     this._db           = db;
@@ -44,6 +55,7 @@ class SyncEngine {
     this._localSV      = opts.localSchemaVersion ?? this._readSchemaVersion();
     this._cursor       = this._loadCursor();
     this._getStationId = opts.getStationId ?? (() => null);
+    this._onProgress   = opts.onProgress   ?? null;
 
     this._causalQueue = new CausalOrderQueue();
     this._mergeEngine = new MergeEngine(db, {
@@ -117,11 +129,12 @@ class SyncEngine {
       });
     } catch (err) {
       console.error('[sync-engine] pull transport error:', err.message);
-      return { pulled: 0 };
+      return { pulled: 0, byTable: {} };
     }
 
     const mutations = result.mutations ?? [];
     const outcomes  = { applied: 0, loser: 0, idempotent: 0, held: 0, quarantined: 0, rejected: 0, conflicted: 0, failed: 0 };
+    const byTable   = {};
 
     if (mutations.length > 0) {
       // Disable FK enforcement for the duration of the replay batch [N-107].
@@ -147,6 +160,9 @@ class SyncEngine {
             continue;
           }
           outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+          if (outcome === 'applied') {
+            byTable[m.table_name] = (byTable[m.table_name] || 0) + 1;
+          }
 
           // After a successful apply, retry anything held on this mutation [N-104]
           if (outcome === 'applied' || outcome === 'loser') {
@@ -159,7 +175,16 @@ class SyncEngine {
     }
 
     this._saveCursor();
-    return { pulled: mutations.length, ...outcomes };
+
+    // Fire optional progress callback. Skipped when applied === 0 — no signal
+    // worth firing for a no-op pull. Failures in user-provided callback are
+    // logged and swallowed so they cannot break the sync cycle.
+    if (this._onProgress && outcomes.applied > 0) {
+      try { this._onProgress({ applied: outcomes.applied, byTable }); }
+      catch (err) { console.error('[sync-engine] onProgress callback threw:', err.message); }
+    }
+
+    return { pulled: mutations.length, byTable, ...outcomes };
   }
 
   // ── Sync cycle ────────────────────────────────────────────────────────────

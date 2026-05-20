@@ -186,6 +186,24 @@ contextBridge.exposeInMainWorld("ether", {
   identity: {
     get: () => ipcRenderer.invoke("identity:get"),
   },
+  // ── Sync progress (for OnboardingFlow Screen 4) ────────────
+  // Subscribe-returns-unsubscribe pattern — the return value of onProgress/
+  // onInitialComplete is the cleanup function, suitable as a useEffect
+  // teardown. Renderer should call getState() on mount to catch up on any
+  // event that may have already fired before subscription.
+  sync: {
+    getState: () => ipcRenderer.invoke("sync:get-state"),
+    onProgress: (cb) => {
+      const h = (_, event) => cb(event);
+      ipcRenderer.on("sync:progress", h);
+      return () => ipcRenderer.removeListener("sync:progress", h);
+    },
+    onInitialComplete: (cb) => {
+      const h = () => cb();
+      ipcRenderer.on("sync:initial-complete", h);
+      return () => ipcRenderer.removeListener("sync:initial-complete", h);
+    },
+  },
   // ── Typed sync handlers — all 34 namespaces wired (Phase 3.5) ──────────
   albums:                    handlers.albums,
   announcements:             handlers.announcements,
