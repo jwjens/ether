@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
-import type { VenueProfile } from "./FirstRunWizard";
+import type { VenueProfile, VenueType } from "./FirstRunWizard";
 
 // Replaces FirstRunWizard at the first_run_complete gate in App.tsx.
 // Implements the four screens of docs/onboarding-spec-v1.md with the
@@ -149,6 +149,110 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const [chosenExperience, setChosenExperience] = useState<string | null>(null);
   const [chosenVenue,      setChosenVenue]      = useState<string | null>(null);
   const [displayTagline,   setDisplayTagline]   = useState('');
+
+  // ── Resumption ───────────────────────────────────────────────
+  // True until the on-mount KV read completes. Renders an empty dark
+  // overlay (no content) during the few ms it takes to read flags —
+  // avoids a flash of the welcome screen before snapping to the
+  // resumed state.
+  const [resumeChecking, setResumeChecking] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        if (cancelled) return;
+        const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+        const get = (k: string) => rows.find(r => r.key === k)?.value;
+
+        // Pre-populate any fields that already live in KV. Bolted screens
+        // read these from component state, so this ensures their forms
+        // render with the user's prior input.
+        const lkSaved = get('license_key');
+        if (lkSaved) setLicenseKey(lkSaved);
+        const snSaved = get('station_name');
+        if (snSaved) setStnName(snSaved);
+        const tgSaved = get('station_tagline');
+        if (tgSaved) setDisplayTagline(tgSaved);
+        const expSaved = get('experience_mode');
+        if (expSaved) setChosenExperience(expSaved);
+        const venSaved = get('venue_type');
+        if (venSaved) setChosenVenue(venSaved);
+
+        // ── 1. Library pulled OR first-run already done → done ──
+        if (get('first_run_complete') === '1' || get('onboarding_library_pulled') === '1') {
+          setState('done');
+          setResumeChecking(false);
+          return;
+        }
+
+        // ── 2. Account joined → land on first bolted step not yet filled (or pulling) ──
+        if (get('onboarding_account_joined') === '1') {
+          if      (!expSaved) setState('experienceMode');
+          else if (!venSaved) setState('venueType');
+          else if (!snSaved)  setState('nameStation');
+          else                setState('pulling');
+          setResumeChecking(false);
+          return;
+        }
+
+        // ── 3. Connect path mid-pickStation → re-fetch /account/connect ──
+        if (get('onboarding_license_entered') === '1' && get('onboarding_path') === 'connect') {
+          if (!lkSaved) {
+            setState('welcome');
+            setResumeChecking(false);
+            return;
+          }
+          try {
+            const idResp = await (window as any).ether.identity.get();
+            if (!idResp?.ok) throw new Error(idResp?.error || 'identity.get() failed');
+            const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                license_key:  lkSaved,
+                machine_id:   idResp.machine_id,
+                machine_name: idResp.machine_name,
+              }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!cancelled && Array.isArray(data.stations)) {
+              setConnectAccountName(data.account_name || '');
+              setConnectStations(data.stations as OnboardingStation[]);
+              setState('pickStation');
+            } else if (!cancelled) {
+              // Re-fetch failed (seat_limit_reached, invalid_license_key, network) —
+              // fall back to welcome. User retries manually.
+              console.warn('[onboarding] resume /account/connect returned no stations; falling back to welcome', data);
+              setState('welcome');
+            }
+          } catch (err) {
+            console.error('[onboarding] resume /account/connect threw:', err);
+            if (!cancelled) setState('welcome');
+          }
+          if (!cancelled) setResumeChecking(false);
+          return;
+        }
+
+        // ── 4. Anything else (including the Create-path-mid-2a partial-write
+        //    edge case where license_entered=1 but account_joined=0 — should
+        //    never happen since /account/create writes both atomically — but
+        //    be defensive) → restart from welcome. ──
+        setState('welcome');
+        setResumeChecking(false);
+      } catch (e) {
+        console.error('[onboarding] resume check failed:', e);
+        if (!cancelled) {
+          setState('welcome');
+          setResumeChecking(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [stationId]);
 
   // Wipe per-flow form state when the user picks a path on welcome. Keeps
   // licenseKey (same value either path) but clears station fields and
@@ -408,12 +512,26 @@ export default function OnboardingFlow({ onComplete }: Props) {
     }
   };
 
-  // Stub for the done branch — wired in commits #7-9 once the bolted screens
-  // and Screen 4 collect venueType/name/tagline. Kept here so the onComplete
-  // prop is referenced and the call shape lines up with handleWizardComplete
-  // in App.tsx.
+  // Empty dark overlay while the on-mount KV read decides resume target.
+  // Beats flashing welcome then snapping to the resumed state.
+  if (resumeChecking) {
+    return <div style={OVERLAY_STYLE} />;
+  }
+
+  // Done — invoke onComplete with the values the bolted screens collected
+  // (or the values restored from KV via the resumption useEffect). Also writes
+  // first_run_complete=1 so App.tsx's gate flips on the next render. Task #9
+  // will own this branch more fully when Screen 4 lands; for now the resume
+  // path can hit this branch and needs accurate values.
   if (state === 'done') {
-    onComplete({ venueType: 'radio', name: '', tagline: '' });
+    (window as any).ether.stationConfigKv
+      .upsertByKey(stationId, 'first_run_complete', '1')
+      .catch((err: any) => console.error('[onboarding] write first_run_complete failed:', err));
+    onComplete({
+      venueType: (chosenVenue as VenueType | null) ?? 'radio',
+      name:      stnName.trim()      || 'My Station',
+      tagline:   displayTagline.trim(),
+    });
     return null;
   }
 
