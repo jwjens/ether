@@ -228,6 +228,7 @@ station_config_kv:
 
 | Flag | Set when |
 |---|---|
+| `onboarding_path` | `/account/create` or `/account/connect` succeeded — value is `'create'` or `'connect'` |
 | `onboarding_license_entered` | Screen 2a or 2b license validated |
 | `onboarding_account_joined` | Screen 2a submitted OR Screen 3 station picked/created |
 | `onboarding_library_pulled` | Screen 4 finishes |
@@ -237,6 +238,15 @@ On launch, if `first_run_complete !== "1"`, Ether routes to the
 appropriate screen based on which flags are set. A customer who
 closed Ether during library pull comes back to Screen 4 and the
 pull resumes from the last `since_seq`.
+
+**Why `onboarding_path`:** without it, a session that set
+`onboarding_license_entered` but not `onboarding_account_joined` is
+ambiguous on resume — the user could have been mid-2a (Create path,
+unusual since `/account/create` writes both flags atomically) or
+mid-pickStation (Connect path, the normal case). The path flag
+disambiguates: with `onboarding_path = 'connect'` the resume re-fetches
+the stations list via `/account/connect` and lands the user back on
+Screen 3.
 
 ---
 
