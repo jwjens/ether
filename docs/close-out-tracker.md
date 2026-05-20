@@ -94,6 +94,14 @@
 
 ---
 
+## Onboarding arc (OB-series)
+
+| # | Item | Notes |
+|---|------|-------|
+| OB1 | **`ETHER_BACKEND_URL` inlined in four components — hoist to `src/lib/etherBackend.ts`** | The Railway base URL is duplicated as a string constant in `OnboardingFlow.tsx`, `SubscriptionPanel.tsx`, `CloudBackup.tsx`, and `ShowPlus.tsx` — four copies of the same Railway URL. Should hoist to `src/lib/etherBackend.ts` after onboarding ships. Not blocking. |
+
+---
+
 ## Big arcs (future, no timeline)
 
 | Arc | Description |
