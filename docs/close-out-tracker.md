@@ -101,6 +101,7 @@
 | # | Item | Notes |
 |---|------|-------|
 | OB1 | **`ETHER_BACKEND_URL` inlined in four components — hoist to `src/lib/etherBackend.ts`** | The Railway base URL is duplicated as a string constant in `OnboardingFlow.tsx`, `SubscriptionPanel.tsx`, `CloudBackup.tsx`, and `ShowPlus.tsx` — four copies of the same Railway URL. Should hoist to `src/lib/etherBackend.ts` after onboarding ships. Not blocking. |
+| OB5 | **Playout-server still needs customer R2 credentials post-migration** | `electron/main.js:903-924` POSTs the customer's R2 credentials to a remote playout server (`44.244.52.207:3500/api/playout/r2config`) on every startup so the cloud playout service can fetch audio from R2. Once Phase 1.3h clears the credentials from `station_config_kv`, this auto-push hits its "credentials not configured" branch and no-ops silently — but the playout server still needs R2 credentials to operate. Downstream architectural gap: the playout service needs its own R2 provisioning (env vars on the playout host, or a separate backend-mediated config endpoint that the playout service polls). Not blocking Milestone B; logged so it doesn't get forgotten when the playout service is next touched. |
 
 ---
 
