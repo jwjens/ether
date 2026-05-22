@@ -3406,7 +3406,7 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
 
 // ── Library → R2 sync ─────────────────────────────────────────────────────────
 // Uploads every local song file to R2. Runs async; progress sent via IPC push.
-// Cancel by calling library:sync-r2:cancel before the job finishes.
+// Cancel by calling library:sync-r2:upload:cancel before the job finishes.
 
 // ── Live stream to Icecast ────────────────────────────────────────────────────
 // ffmpeg reads raw f32le stereo PCM from the Program Bus TCP socket exposed by
@@ -3829,9 +3829,9 @@ let _libSyncAbort = false;
 // audio sync; Solo (free) doesn't get anything cloud-related.
 //
 // Event contract preserved exactly from the legacy handler: per-file progress
-// on 'library:sync-r2:progress', terminal 'library:sync-r2:done'. Cancellation
-// via _libSyncAbort flag (still set by 'library:sync-r2:cancel' below).
-ipcMain.handle('library:sync-r2:start', async () => {
+// on 'library:sync-r2:upload:progress', terminal 'library:sync-r2:upload:done'. Cancellation
+// via _libSyncAbort flag (still set by 'library:sync-r2:upload:cancel' below).
+ipcMain.handle('library:sync-r2:upload', async () => {
   // Inlined per OB1 — six sites in C:\openair share this constant now.
   // Consolidate to src/lib/etherBackend.ts when OB1 is closed out.
   const ETHER_BACKEND_URL = 'https://ether-backend-production.up.railway.app';
@@ -3918,7 +3918,7 @@ ipcMain.handle('library:sync-r2:start', async () => {
       }
       done++;
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('library:sync-r2:progress', {
+        mainWindow.webContents.send('library:sync-r2:upload:progress', {
           done, total: songs.length, errors, current: fileKey,
         });
       }
@@ -3933,7 +3933,7 @@ ipcMain.handle('library:sync-r2:start', async () => {
     const aborted = _libSyncAbort;
     _libSyncAbort = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('library:sync-r2:done', {
+      mainWindow.webContents.send('library:sync-r2:upload:done', {
         done, total: songs.length, errors, aborted,
       });
     }
@@ -3941,14 +3941,14 @@ ipcMain.handle('library:sync-r2:start', async () => {
   })().catch(e => {
     console.error('[library:sync-r2] fatal:', e.message);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('library:sync-r2:done', { done: 0, total: songs.length, errors: 1, aborted: false });
+      mainWindow.webContents.send('library:sync-r2:upload:done', { done: 0, total: songs.length, errors: 1, aborted: false });
     }
   });
 
   return { ok: true, total: songs.length };
 });
 
-ipcMain.handle('library:sync-r2:cancel', () => {
+ipcMain.handle('library:sync-r2:upload:cancel', () => {
   _libSyncAbort = true;
   return { ok: true };
 });

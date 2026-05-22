@@ -394,7 +394,7 @@ async function triggerUpload() {
 let _dbPath = "";
 
 // Legacy export — consumed by main.js:3098 (r2:fetch-track) and main.js:3738
-// (library:sync-r2:start). Both are migrated in Phase 1.3i / 1.3g respectively.
+// (library:sync-r2:upload). Both are migrated in Phase 1.3i / 1.3g respectively.
 // Post-1.3f the credential fields are always empty strings; the legacy callers
 // already null-check and fall through to "R2 not configured" cleanly. Kept in
 // shape (with the resolvedEndpoint field) so neither call site needs a coordinated
