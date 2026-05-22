@@ -986,16 +986,13 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [backupStatus, setBackupStatus] = useState("");
   const [backupLoading, setBackupLoading] = useState(false);
 
-  // R2 Cloud Backup
+  // Cloud Backup — post-1.3h: customer no longer holds R2 credentials. Backend
+  // signs all backup uploads. Only the enable toggle, interval, and status
+  // are customer-facing here; credentials live on the backend server (Railway
+  // R2_* env vars). The legacy r2AccountId / r2AccessKeyId / r2HasSecret /
+  // r2SecretLast4 / r2NewSecret / r2EditSecret / r2ShowSecret / r2Bucket
+  // state hooks were removed in 1.3h alongside their UI.
   const [r2Enabled,      setR2Enabled]      = useState(false);
-  const [r2AccountId,    setR2AccountId]    = useState("");
-  const [r2AccessKeyId,  setR2AccessKeyId]  = useState("");
-  const [r2HasSecret,    setR2HasSecret]    = useState(false);
-  const [r2SecretLast4,  setR2SecretLast4]  = useState("");
-  const [r2NewSecret,    setR2NewSecret]    = useState("");
-  const [r2EditSecret,   setR2EditSecret]   = useState(false);
-  const [r2ShowSecret,   setR2ShowSecret]   = useState(false);
-  const [r2Bucket,       setR2Bucket]       = useState("ether-backups");
   const [r2Interval,     setR2Interval]     = useState(6);
   const [r2LastBackup,   setR2LastBackup]   = useState(0);
   const [r2LastStatus,   setR2LastStatus]   = useState("never");
@@ -1092,15 +1089,11 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     // Backups
     invoke<string[]>("list_backups").then(setBackups).catch(() => {});
 
-    // R2 cloud backup — use dedicated API so the call is explicit
+    // Cloud backup — post-1.3h reads only the customer-facing toggle/interval
+    // and status. Credential fields are gone (backend holds R2 access).
     (window as any).ether.cloudBackup.getR2Config().then((cfg: any) => {
       if (!cfg) return;
       setR2Enabled(!!cfg.enabled);
-      setR2AccountId(cfg.accountId || "");
-      setR2AccessKeyId(cfg.accessKeyId || "");
-      setR2HasSecret(!!cfg.hasSecret);
-      setR2SecretLast4(cfg.secretLast4 || "");
-      setR2Bucket(cfg.bucket || "ether-backups");
       setR2Interval(cfg.intervalHours || 6);
       setR2LastBackup(cfg.lastBackup || 0);
       setR2LastStatus(cfg.lastStatus || "never");
@@ -1177,24 +1170,16 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     setR2Saving(true);
     setR2SaveStatus("");
     try {
+      // Post-1.3h: only the toggle + interval are persisted client-side.
+      // Backend handles R2 access; cloud-backup.js's set-r2-config handler
+      // ignores credential fields if any older callers send them.
       const payload: any = {
-        accountId:    r2AccountId.trim(),
-        accessKeyId:  r2AccessKeyId.trim(),
-        bucket:       r2Bucket.trim() || "ether-backups",
-        enabled:      r2Enabled,
+        enabled:       r2Enabled,
         intervalHours: r2Interval,
       };
-      if (r2NewSecret.trim()) payload.secretAccessKey = r2NewSecret.trim();
-      // Use the dedicated cloudBackup API — avoids any generic-invoke arg marshaling
       const ether = (window as any).ether;
       const result: any = await ether.cloudBackup.setR2Config(payload);
-      setR2SaveStatus(result.ready ? "✓ Saved — R2 ready" : "✓ Saved — fill in all fields + enable to activate");
-      if (r2NewSecret.trim()) {
-        setR2HasSecret(true);
-        setR2SecretLast4(r2NewSecret.trim().slice(-4));
-        setR2EditSecret(false);
-        setR2NewSecret("");
-      }
+      setR2SaveStatus(result.ready ? "✓ Saved — backup enabled" : "✓ Saved — enable the toggle to activate");
     } catch (e) { setR2SaveStatus("Error saving: " + String(e)); }
     setR2Saving(false);
     setTimeout(() => setR2SaveStatus(""), 6000);
@@ -1770,13 +1755,13 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         {backups.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>No backups yet — click "Back up now" to create your first one</div>}
       </Section>
 
-      {/* ── R2 Cloud Backup ── */}
-      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="R2 Cloud Backup" description="Automatic off-site backup to Cloudflare R2 — zero egress fees, your data stays yours">
+      {/* ── Cloud Backup ── */}
+      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="Automatic encrypted off-site backup of your station database — included with your Ether subscription">
 
         {/* Enable toggle */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable automatic R2 backups</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable automatic cloud backup</div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Runs on the schedule below whenever Ether is open</div>
           </div>
           <button
@@ -1789,73 +1774,17 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           </button>
         </div>
 
-        {/* Fields */}
-        {([
-          { label: "Account ID", hint: "Found in R2 → Overview (e.g. a1b2c3d4e5…)", value: r2AccountId, set: setR2AccountId, placeholder: "Your Cloudflare Account ID" },
-          { label: "Access Key ID", hint: "R2 → Manage R2 API Tokens", value: r2AccessKeyId, set: setR2AccessKeyId, placeholder: "Access Key ID" },
-        ] as const).map(({ label, hint, value, set, placeholder }) => (
-          <div key={label} style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>{label}</div>
-            <input
-              value={value}
-              onChange={e => set(e.target.value)}
-              placeholder={placeholder}
-              style={{ width: "100%", boxSizing: "border-box" as any, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, fontFamily: "monospace", outline: "none" }}
-            />
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>{hint}</div>
-          </div>
-        ))}
-
-        {/* Secret Access Key */}
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>Secret Access Key</div>
-          {r2HasSecret && !r2EditSecret ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ flex: 1, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontFamily: "monospace", letterSpacing: "0.1em" }}>
-                ••••••••••••{r2SecretLast4}
-              </div>
-              <button
-                onClick={() => setR2EditSecret(true)}
-                style={{ padding: "7px 12px", fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap" as any }}>
-                Replace
-              </button>
-            </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type={r2ShowSecret ? "text" : "password"}
-                value={r2NewSecret}
-                onChange={e => setR2NewSecret(e.target.value)}
-                placeholder={r2HasSecret ? "Enter new secret to replace" : "Secret Access Key"}
-                style={{ flex: 1, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, fontFamily: "monospace", outline: "none" }}
-              />
-              <button
-                onClick={() => setR2ShowSecret(s => !s)}
-                title={r2ShowSecret ? "Hide" : "Show"}
-                style={{ padding: "7px 10px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 0 }}>
-                {r2ShowSecret ? "🙈" : "👁"}
-              </button>
-              {r2HasSecret && (
-                <button
-                  onClick={() => { setR2EditSecret(false); setR2NewSecret(""); }}
-                  style={{ padding: "7px 10px", fontSize: 11, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", borderRadius: 0 }}>
-                  Cancel
-                </button>
-              )}
-            </div>
-          )}
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>Never stored in plain text — persisted encrypted in station config</div>
-        </div>
-
-        {/* Bucket name */}
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>Bucket Name</div>
-          <input
-            value={r2Bucket}
-            onChange={e => setR2Bucket(e.target.value)}
-            placeholder="ether-backups"
-            style={{ width: "100%", boxSizing: "border-box" as any, padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, fontFamily: "monospace", outline: "none" }}
-          />
+        {/* Explainer — replaces the legacy R2-credential form removed in Phase 1.3h.
+            Customer no longer holds R2 credentials; backend signs all backup uploads. */}
+        <div style={{
+          marginBottom: 20, padding: "10px 12px",
+          background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+          fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5,
+        }}>
+          Cloud backup is handled by your Ether subscription — no R2 account
+          or credentials required. Backups are encrypted in transit, signed by
+          the Ether backend, and stored under your license-scoped prefix.
+          Requires Studio plan or higher.
         </div>
 
         {/* Backup interval */}
