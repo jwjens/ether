@@ -189,12 +189,19 @@ export default function OnboardingFlow({ onComplete }: Props) {
           return;
         }
 
-        // ── 2. Account joined → land on first bolted step not yet filled (or pulling) ──
+        // ── 2. Account joined → land on first unfinished step ──
+        // Order: bolted screens → pickAudioLocation → pulling. The audio-source
+        // check (B.3) sits between bolted screens and pulling; a customer who
+        // crashed before clicking a Screen 3.5 button lands back there. Once
+        // the source choice is recorded ('skip' | 'computer' | 'cloud') we
+        // trust it and advance to pulling, regardless of whether the action
+        // actually completed — see OB9 for the picker-cancel orphan edge.
         if (get('onboarding_account_joined') === '1') {
-          if      (!expSaved) setState('experienceMode');
-          else if (!venSaved) setState('venueType');
-          else if (!snSaved)  setState('nameStation');
-          else                setState('pulling');
+          if      (!expSaved)                                setState('experienceMode');
+          else if (!venSaved)                                setState('venueType');
+          else if (!snSaved)                                 setState('nameStation');
+          else if (!get('onboarding_library_source'))        setState('pickAudioLocation');
+          else                                               setState('pulling');
           setResumeChecking(false);
           return;
         }

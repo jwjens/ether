@@ -233,9 +233,7 @@ station_config_kv:
 | `onboarding_account_joined` | Screen 2a submitted OR Screen 3 station picked/created |
 | `onboarding_library_pulled` | Screen 4 finishes |
 | `onboarding_library_source` | Screen 3.5 button chosen (`skip` / `computer` / `cloud`) — written before the action fires so resumption knows the operator's intent if the app crashes mid-action |
-| `first_run_complete` (existing) | All three above are set |
-
-> **Resumption gap (B.3, 2026-05-22):** routing logic for the new `pickAudioLocation` state and `onboarding_library_source` key is deferred — a mid-state crash currently lands back at `pulling` per the existing resume rules. Follow-up commit needed if operators hit this edge.
+| `first_run_complete` (existing) | All prerequisite flags above are set and the customer reached `'done'` |
 
 On launch, if `first_run_complete !== "1"`, Ether routes to the
 appropriate screen based on which flags are set. A customer who
