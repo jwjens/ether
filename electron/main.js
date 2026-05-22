@@ -1139,8 +1139,58 @@ ipcMain.handle('sync:getStats', () => {
 });
 
 // Audio
-ipcMain.handle("audio:load", (_, deck, filePath, title, artist, gainDb, stationId) =>
-  audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId));
+// Phase 1.3k: extended with R2 fallback for Connect-path customers whose
+// library arrived via metadata sync but whose local file_path values point at
+// the source machine's directories. If the local file is missing AND a
+// file_key exists for this file_path in the songs table, fall through to
+// fetchR2Track (which gates on Network+ tier and uses the same r2-cache as
+// the auto-scheduler). If the fetch succeeds, audio.audioLoad is called with
+// the cachePath; if it fails (tier insufficient, no license, network down,
+// no such object), audio.audioLoad is called with the original file_path and
+// fails the same way it would have today — Rust worker reports the error,
+// deck enters error status, no regression vs pre-1.3k behavior.
+//
+// Per Option B: no songsUpdateById writeback. The r2-cache's existsSync
+// short-circuit makes subsequent loads fast; writing file_path back would
+// generate sync mutation noise for zero local benefit (each machine would
+// propagate its own cachePath to others, who'd just rewrite to their own).
+ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
+  // Fast path — file exists locally. Behave exactly as the pre-1.3k handler.
+  if (filePath && fs.existsSync(filePath)) {
+    return audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId);
+  }
+
+  // File missing. Look up file_key for this file_path. Exact match on the
+  // synced songs row — the renderer's loadToDeck calls pass next.filePath
+  // straight from songs/queue/cart objects, so the path here matches the
+  // row's file_path exactly.
+  let fileKey = null;
+  if (filePath) {
+    try {
+      const row = db.prepare("SELECT file_key FROM songs WHERE file_path = ? LIMIT 1").get(filePath);
+      fileKey = row?.file_key || null;
+    } catch (e) {
+      console.warn("[audio:load] file_key lookup failed:", e.message);
+    }
+  }
+
+  if (!fileKey) {
+    // No file_key registered. Fall through to legacy — the Rust audio worker
+    // will fail with "File not found" same as before 1.3k.
+    return audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId);
+  }
+
+  // Have a file_key — try the R2 fallback. Tier gate enforced inside fetchR2Track.
+  console.log(`[audio:load] local miss, attempting R2 fallback for file_key=${fileKey}`);
+  const fetched = await fetchR2Track(fileKey);
+  if (!fetched.ok) {
+    console.warn(`[audio:load] R2 fallback failed: ${fetched.error} — falling through to legacy path`);
+    return audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId);
+  }
+
+  console.log(`[audio:load] R2 fallback succeeded → ${fetched.filePath}`);
+  return audio.audioLoad(deck, fetched.filePath, title, artist, gainDb ?? 0, stationId);
+});
 
 ipcMain.handle("audio:play", (_, deck, stationId) => audio.audioPlay(deck, stationId));
 ipcMain.handle("audio:pause", (_, deck, stationId) => audio.audioPause(deck, stationId));
@@ -3092,20 +3142,20 @@ ipcMain.handle('captions:get-loopback-source', async () => {
 const R2_CACHE_DIR = path.join(app.getPath('userData'), 'r2-cache');
 fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
 
-// Phase 1.3i rewrite: customer no longer holds R2 credentials. Cache miss
-// path now POSTs /audio/download-url for a signed GET URL, then fetches the
-// bytes and writes to the same cache location. Cache layer (path, persistence,
-// no eviction) unchanged — only the fetch mechanism changes. Cache eviction
-// is tracked as OB7 in close-out-tracker (out of scope for 1.3i).
+// Fetch a track from R2 via the backend-signed flow. Returns the same shape
+// as the ipcMain.handle('r2:fetch-track') IPC contract — extracted as a
+// standalone function in Phase 1.3k so audio:load can call it directly from
+// main-process code without round-tripping through ipcMain. The IPC handler
+// below is a thin wrapper.
 //
-// Tier gate: Network+ (station rank or higher). Studio/Solo callers (rare —
-// loggen.ts is the only invoker today, and it only fires when generated_schedule
-// rows have file_key but empty file_path) receive { ok:false, error } and the
-// auto-scheduler's existing .filter(Boolean) silently skips the track.
-ipcMain.handle('r2:fetch-track', async (_, fileKey) => {
+// Tier gate (Network+) and license_key check live here, so callers (the
+// 'r2:fetch-track' handler AND audio:load's fallback path) get a single
+// source of truth for the gate. Cache layer unchanged — see OB7 for
+// unbounded growth; see OB8 for concurrent-fetch dedup.
+async function fetchR2Track(fileKey) {
   if (!fileKey) return { ok: false, error: 'No file_key' };
 
-  // Inlined per OB1 — seventh site in C:\openair sharing this constant.
+  // Inlined per OB1 — same constant as elsewhere in C:\openair.
   const ETHER_BACKEND_URL = 'https://ether-backend-production.up.railway.app';
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
@@ -3122,7 +3172,7 @@ ipcMain.handle('r2:fetch-track', async (_, fileKey) => {
   const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
   const cachePath = path.join(R2_CACHE_DIR, safeName);
 
-  // Cache hit path — unchanged
+  // Cache hit path — short-circuit
   if (fs.existsSync(cachePath)) return { ok: true, filePath: cachePath };
 
   try {
@@ -3146,19 +3196,23 @@ ipcMain.handle('r2:fetch-track', async (_, fileKey) => {
     const buf = Buffer.from(await getRes.arrayBuffer());
 
     // 3. Atomic write via temp+rename so an interrupted fetch doesn't leave a
-    //    partial file at cachePath (matches the legacy fs.unlink-on-error intent).
+    //    partial file at cachePath.
     const tempPath = cachePath + '.tmp';
     fs.writeFileSync(tempPath, buf);
     fs.renameSync(tempPath, cachePath);
 
-    console.log(`[r2:fetch-track] cached ${safeName} (${(buf.length / 1e6).toFixed(1)} MB)`);
+    console.log(`[fetchR2Track] cached ${safeName} (${(buf.length / 1e6).toFixed(1)} MB)`);
     return { ok: true, filePath: cachePath };
   } catch (e) {
     // Clean up any .tmp left from a failed write
     try { fs.unlinkSync(cachePath + '.tmp'); } catch {}
     return { ok: false, error: e.message };
   }
-});
+}
+
+// IPC wrapper — preserves the contract for loggen.ts:439 and any future
+// renderer callers. Logic lives in fetchR2Track above.
+ipcMain.handle('r2:fetch-track', async (_, fileKey) => fetchR2Track(fileKey));
 
 // ── Playout server config ─────────────────────────────────────────────────────
 ipcMain.handle('playout:get-server', () => {
