@@ -3734,33 +3734,57 @@ ipcMain.handle('identity:get', () => {
 
 let _libSyncAbort = false;
 
+// Phase 1.3g rewrite: customer no longer holds R2 credentials. Each song
+// upload goes through /audio/upload-url to get a signed PUT URL, then PUTs
+// the audio bytes directly to that URL. On success, file_key is written via
+// songsUpdateById (mutation-logged so other clients on the same license can
+// see it via sync) + r2_uploaded_at is written via raw UPDATE (local-only
+// per Phase 1.1's REGISTRY shape — each machine tracks its own upload state).
+//
+// Resume support: SELECT filters on r2_uploaded_at IS NULL, so re-running the
+// handler picks up where the previous run left off. Crucial for ~6k-song
+// libraries where a single sync run might be interrupted.
+//
+// Tier gate: Network+ (station rank or higher). Studio (pro) doesn't get
+// audio sync; Solo (free) doesn't get anything cloud-related.
+//
+// Event contract preserved exactly from the legacy handler: per-file progress
+// on 'library:sync-r2:progress', terminal 'library:sync-r2:done'. Cancellation
+// via _libSyncAbort flag (still set by 'library:sync-r2:cancel' below).
 ipcMain.handle('library:sync-r2:start', async () => {
-  const getR2Config = app._getR2Config;
-  if (!getR2Config) return { ok: false, error: 'Cloud Backup module not loaded' };
+  // Inlined per OB1 — six sites in C:\openair share this constant now.
+  // Consolidate to src/lib/etherBackend.ts when OB1 is closed out.
+  const ETHER_BACKEND_URL = 'https://ether-backend-production.up.railway.app';
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
-  const r2 = getR2Config();
-  if (!r2.resolvedEndpoint || !r2.accessKeyId || !r2.secretAccessKey) {
-    return { ok: false, error: 'R2 not configured — set up Cloud Backup credentials first' };
+  // Tier gate — Network+ only
+  const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
+  if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
+    return { ok: false, error: `Library sync to cloud requires Network (station) tier or higher — current: ${planTier}` };
   }
 
+  // License key required — set during onboarding / SubscriptionPanel validate
+  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' LIMIT 1").get())?.value;
+  if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
+
+  // Resume-aware SELECT: skip songs already uploaded on this machine.
+  // r2_uploaded_at is local-only (1.1), so each machine tracks its own
+  // upload state independently — two operators can upload different subsets.
   const songs = db.prepare(
     `SELECT id, file_path FROM songs
-     WHERE file_path IS NOT NULL AND file_path != ''`
+     WHERE file_path IS NOT NULL AND file_path != ''
+       AND r2_uploaded_at IS NULL`
   ).all();
 
-  if (!songs.length) return { ok: false, error: 'No local song files found in the library' };
+  if (!songs.length) {
+    return { ok: false, error: 'No songs to upload (all already synced from this machine, or no local audio files)' };
+  }
 
   _libSyncAbort = false;
 
   // Fire-and-forget — returns immediately so the renderer isn't blocked
   (async () => {
-    const { S3Client, PutObjectCommand, HeadObjectCommand } = require('@aws-sdk/client-s3');
-    const s3 = new S3Client({
-      region: 'auto',
-      endpoint: r2.resolvedEndpoint,
-      credentials: { accessKeyId: r2.accessKeyId, secretAccessKey: r2.secretAccessKey },
-    });
-
+    const { songsUpdateById } = require('./sync/handlers/songs');
     const CONCURRENCY = 3;
     let done = 0;
     let errors = 0;
@@ -3774,23 +3798,48 @@ ipcMain.handle('library:sync-r2:start', async () => {
 
     async function uploadOne(song) {
       if (_libSyncAbort) return;
-      const key = path.basename(song.file_path);
+      const fileKey = path.basename(song.file_path);
       try {
-        const data = require('fs').readFileSync(song.file_path);
-        await s3.send(new PutObjectCommand({
-          Bucket: r2.bucket,
-          Key:    key,
-          Body:   data,
-          ContentType: contentType(song.file_path),
-        }));
+        // 1. Request signed PUT URL from backend
+        const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/upload-url`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
+        });
+        const urlData = await urlRes.json().catch(() => ({}));
+        if (!urlRes.ok || !urlData.signed_url) {
+          throw new Error(urlData.error || urlData.detail || `signing failed (HTTP ${urlRes.status})`);
+        }
+
+        // 2. PUT audio bytes to the signed URL
+        const data = fs.readFileSync(song.file_path);
+        const putRes = await fetch(urlData.signed_url, {
+          method:  'PUT',
+          headers: {
+            'Content-Type':   contentType(song.file_path),
+            'Content-Length': String(data.length),
+          },
+          body: data,
+        });
+        if (!putRes.ok) {
+          const text = await putRes.text().catch(() => '');
+          throw new Error(`R2 PUT failed: HTTP ${putRes.status} — ${text.slice(0, 200)}`);
+        }
+
+        // 3. Mark success in DB:
+        //    - file_key via songsUpdateById → mutation-logged, syncs to other clients
+        //    - r2_uploaded_at via raw UPDATE → local-only marker (1.1 design)
+        songsUpdateById(db, song.id, { file_key: fileKey });
+        db.prepare('UPDATE songs SET r2_uploaded_at = ? WHERE id = ?')
+          .run(new Date().toISOString(), song.id);
       } catch (e) {
         errors++;
-        console.warn(`[library:sync-r2] SKIP ${key}: ${e.message}`);
+        console.warn(`[library:sync-r2] SKIP ${fileKey}: ${e.message}`);
       }
       done++;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:progress', {
-          done, total: songs.length, errors, current: key,
+          done, total: songs.length, errors, current: fileKey,
         });
       }
     }
