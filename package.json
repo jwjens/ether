@@ -19,7 +19,6 @@
         "test:sync": "electron --no-sandbox scripts/run-sync-tests.js"
     },
     "dependencies": {
-        "@aws-sdk/client-s3": "^3.1032.0",
         "@picovoice/porcupine-react": "^4.0.0",
         "@picovoice/web-voice-processor": "^4.0.9",
         "@sentry/electron": "^7.10.0",
