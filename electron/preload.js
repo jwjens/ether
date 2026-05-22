@@ -59,6 +59,19 @@ contextBridge.exposeInMainWorld("ether", {
   library: {
     writeTrack: (track) => ipcRenderer.invoke("library:writeTrack", track),
   },
+  // ── Library ↔ R2 sync (upload from this machine / download to this machine) ─
+  // Phase B.1-B.2. subscribe-returns-unsubscribe pattern matches `sync:` below.
+  // The returned function from on*Progress / on*Done is the useEffect cleanup.
+  libraryR2: {
+    upload:             ()    => ipcRenderer.invoke("library:sync-r2:upload"),
+    uploadCancel:       ()    => ipcRenderer.invoke("library:sync-r2:upload:cancel"),
+    download:           ()    => ipcRenderer.invoke("library:sync-r2:download"),
+    downloadCancel:     ()    => ipcRenderer.invoke("library:sync-r2:download:cancel"),
+    onUploadProgress:   (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:upload:progress", h);   return () => ipcRenderer.removeListener("library:sync-r2:upload:progress", h); },
+    onUploadDone:       (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:upload:done", h);       return () => ipcRenderer.removeListener("library:sync-r2:upload:done", h); },
+    onDownloadProgress: (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:download:progress", h); return () => ipcRenderer.removeListener("library:sync-r2:download:progress", h); },
+    onDownloadDone:     (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:download:done", h);     return () => ipcRenderer.removeListener("library:sync-r2:download:done", h); },
+  },
   db: {
     query: (sql, p) => ipcRenderer.invoke("db:query", sql, p),
     execute: (sql, p) => ipcRenderer.invoke("db:execute", sql, p),
@@ -240,7 +253,12 @@ contextBridge.exposeInMainWorld("ether", {
   shows:                     handlers.shows,
   smartScheduleRules:        handlers.smartScheduleRules,
   songMetadataValues:        handlers.songMetadataValues,
-  songs:                     handlers.songs,
+  songs: {
+    ...handlers.songs,
+    // Local-only file_path setter (Phase B.3) — bypasses the mutation log.
+    // See electron/main.js handler comment for why this isn't via songs:update.
+    setLocalFilePath: (id, fp) => ipcRenderer.invoke("songs:set-local-file-path", id, fp),
+  },
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
   stationProgramming:        handlers.stationProgramming,

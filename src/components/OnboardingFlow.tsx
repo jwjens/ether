@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { setPlanGlobally } from "../hooks/usePlan";
+import { setPlanGlobally, usePlan } from "../hooks/usePlan";
 import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
 
@@ -470,7 +470,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
     const kv = (window as any).ether.stationConfigKv;
     await kv.upsertByKey(stationId, 'station_name',    stnName.trim());
     await kv.upsertByKey(stationId, 'station_tagline', displayTagline.trim());
-    setState('pulling'); // Screen 4 (placeholder until task #9)
+    setState('pickAudioLocation');
   };
 
   const submitAddStation = async () => {
@@ -1023,6 +1023,19 @@ export default function OnboardingFlow({ onComplete }: Props) {
     );
   }
 
+  // ── Screen 3.5 — Audio library source picker (Milestone B / Phase B.3) ─
+  // Three buttons: Skip / From this computer / From the cloud. Sub-component
+  // so its scan-and-preview sub-state and the basename-match map are scoped
+  // to this branch's lifetime. Advances to 'pulling' when any handler resolves.
+  if (state === 'pickAudioLocation') {
+    return (
+      <PickAudioLocationScreen
+        stationId={stationId}
+        onContinue={() => setState('pulling')}
+      />
+    );
+  }
+
   // ── Screen 4 — Pulling library ───────────────────────────────────────
   // Real progress UI consuming the sync:* events shipped in task #8a.
   // Renders a PullingScreen subcomponent so its hooks (subscription +
@@ -1427,6 +1440,294 @@ function PullingScreen({ stationId, stationName, onContinue }: PullingScreenProp
       </div>
       <style>{ANIMATION_CSS}</style>
     </div>
+  );
+}
+
+// ── Screen 3.5 — Audio library source picker (Phase B.3) ─────────────────────
+// Three button paths. "From this computer" runs scan → preview → confirm, then
+// writes file_path per match via the local-only setLocalFilePath IPC (which
+// bypasses the mutation log — file_path resolution is per-machine). "From the
+// cloud" is fire-and-forget; the download proceeds in the background with the
+// persistent progress bar (B.4) taking over once onboarding completes.
+
+interface PickAudioLocationScreenProps {
+  stationId:   number;
+  onContinue:  () => void;
+}
+
+// Inline-shared with ImportDialog.tsx (Q7: do not extract — list is stable).
+const PAL_AUDIO_EXTS = [".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".aiff"];
+
+function PickAudioLocationScreen({ stationId, onContinue }: PickAudioLocationScreenProps) {
+  const { isStation } = usePlan();
+  type Sub = 'idle' | 'scanning' | 'preview' | 'applying';
+  const [sub, setSub]                   = useState<Sub>('idle');
+  const [scannedCount, setScannedCount] = useState(0);
+  const [matchedPairs, setMatchedPairs] = useState<Array<{ id: number; file_path: string }>>([]);
+  const [applyDone, setApplyDone]       = useState(0);
+  const [error, setError]               = useState<string | null>(null);
+
+  // Write the library source choice BEFORE acting on it. If the app crashes
+  // mid-action, next launch knows what the operator picked (resumption routing
+  // for this key is deferred — see commit body).
+  const writeSourceKv = async (value: 'skip' | 'computer' | 'cloud') => {
+    try {
+      await (window as any).ether.stationConfigKv
+        .upsertByKey(stationId, 'onboarding_library_source', value);
+    } catch (e) {
+      console.error(`[onboarding] write onboarding_library_source=${value} failed:`, e);
+    }
+  };
+
+  const handleSkip = async () => {
+    await writeSourceKv('skip');
+    onContinue();
+  };
+
+  const handleCloud = async () => {
+    if (!isStation) return; // disabled-but-visible — inert click
+    await writeSourceKv('cloud');
+    // Fire-and-forget. Downloads continue post-onboarding via the persistent
+    // progress bar (B.4). Network+ paid for cloud sync; don't ask twice.
+    (window as any).ether.libraryR2.download().catch((err: any) =>
+      console.error('[onboarding] libraryR2.download() invoke failed:', err)
+    );
+    onContinue();
+  };
+
+  const handleComputer = async () => {
+    setError(null);
+    await writeSourceKv('computer');
+
+    const folder = await (window as any).ether.dialog.openDirectory();
+    if (!folder) return; // picker cancelled — stay on idle; KV stays 'computer'
+
+    setSub('scanning');
+    try {
+      // Recursive folder scan (pattern from ImportDialog.tsx:62-80)
+      const files: string[] = [];
+      const scanDir = async (dirPath: string) => {
+        const entries = await (window as any).ether.fs.readDir(dirPath);
+        for (const entry of entries) {
+          const fullPath = dirPath + "/" + entry.name;
+          if (entry.isDir) {
+            await scanDir(fullPath);
+          } else {
+            const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
+            if (PAL_AUDIO_EXTS.includes(ext)) files.push(fullPath);
+          }
+        }
+      };
+      await scanDir(folder);
+
+      // Basename → song-id map from the DB. SELECTs bypass the db:execute
+      // guard (main.js:1275); skip fs.existsSync per Q6 — re-pointing a valid
+      // path to a different valid path is a no-op.
+      const dbRes = await (window as any).ether.db.query(
+        "SELECT id, file_path FROM songs WHERE file_path IS NOT NULL AND file_path != '' AND deleted_at IS NULL",
+        []
+      );
+      const rows: Array<{ id: number; file_path: string }> =
+        Array.isArray(dbRes) ? dbRes : (dbRes?.data ?? dbRes?.rows ?? []);
+      const byBasename = new Map<string, number>();
+      for (const r of rows) {
+        const bn = r.file_path.split(/[\\/]/).pop()?.toLowerCase();
+        if (bn) byBasename.set(bn, r.id);
+      }
+
+      // Compute matches
+      const pairs: Array<{ id: number; file_path: string }> = [];
+      for (const fp of files) {
+        const bn = fp.split(/[\\/]/).pop()?.toLowerCase();
+        if (bn && byBasename.has(bn)) {
+          pairs.push({ id: byBasename.get(bn)!, file_path: fp });
+        }
+      }
+
+      setScannedCount(files.length);
+      setMatchedPairs(pairs);
+      setSub('preview');
+    } catch (e: any) {
+      console.error('[onboarding] folder scan failed:', e);
+      setError(e?.message || 'Folder scan failed');
+      setSub('idle');
+    }
+  };
+
+  const handleConfirmApply = async () => {
+    setSub('applying');
+    setApplyDone(0);
+    for (let i = 0; i < matchedPairs.length; i++) {
+      const { id, file_path } = matchedPairs[i];
+      try {
+        await (window as any).ether.songs.setLocalFilePath(id, file_path);
+      } catch (e) {
+        console.warn('[onboarding] setLocalFilePath failed for song id', id, e);
+      }
+      setApplyDone(i + 1);
+    }
+    onContinue();
+  };
+
+  const handleCancelPreview = () => {
+    setMatchedPairs([]);
+    setScannedCount(0);
+    setError(null);
+    setSub('idle');
+  };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  return (
+    <div style={OVERLAY_STYLE}>
+      <div style={GLOW_STYLE} />
+      <div style={SHELL_STYLE}>
+        <div style={{ animation: "onb-in 0.4s ease both" }}>
+
+          {sub === 'idle' && (
+            <>
+              <div style={{ textAlign: "center", marginBottom: 32 }}>
+                <div style={LABEL_STYLE}>Setup</div>
+                <h1 style={HEADING_STYLE}>Where's your audio?</h1>
+                <p style={{ ...SUB_STYLE, marginTop: 8, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+                  Your song list is already synced. Now we need to find the audio files —
+                  on this computer, in the cloud, or skip for now and add them later.
+                </p>
+              </div>
+
+              {error && (
+                <div style={{
+                  maxWidth: 520, margin: "0 auto 16px",
+                  padding: "10px 14px", borderRadius: 0,
+                  background: "rgba(239,68,68,0.08)",
+                  border: "1px solid rgba(239,68,68,0.4)",
+                  color: "#fca5a5", fontSize: 12, lineHeight: 1.5,
+                }}>
+                  {error}
+                </div>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 12, maxWidth: 520, margin: "0 auto" }}>
+                <SourceCard
+                  title="From this computer"
+                  subtitle="Pick a folder. We match by filename and link the files we recognize."
+                  onClick={handleComputer}
+                />
+                <SourceCard
+                  title="From the cloud"
+                  subtitle={isStation
+                    ? "Download all R2-backed audio. Continues in the background."
+                    : "Upgrade to Network to sync from cloud"}
+                  onClick={handleCloud}
+                  disabled={!isStation}
+                />
+                <SourceCard
+                  title="Skip for now"
+                  subtitle="I'll add audio files later through Library → Import."
+                  onClick={handleSkip}
+                />
+              </div>
+            </>
+          )}
+
+          {sub === 'scanning' && (
+            <div style={{ textAlign: "center" }}>
+              <div style={LABEL_STYLE}>Setup</div>
+              <h1 style={HEADING_STYLE}>Scanning your folder…</h1>
+              <p style={{ ...SUB_STYLE, marginTop: 8 }}>
+                Looking for audio files and matching them to your library.
+              </p>
+            </div>
+          )}
+
+          {sub === 'preview' && (
+            <>
+              <div style={{ textAlign: "center", marginBottom: 32 }}>
+                <div style={LABEL_STYLE}>Setup</div>
+                <h1 style={HEADING_STYLE}>
+                  Matched {matchedPairs.length.toLocaleString()} of {scannedCount.toLocaleString()} songs
+                </h1>
+                <p style={{ ...SUB_STYLE, marginTop: 8, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
+                  Unmatched files will be ignored — you can add them later through
+                  Library → Import. Continue to link the matches we found.
+                </p>
+              </div>
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, maxWidth: 520, margin: "0 auto" }}>
+                <button
+                  onClick={handleCancelPreview}
+                  style={{
+                    padding: "12px 24px", borderRadius: 0,
+                    background: "transparent", color: "rgba(255,255,255,0.4)",
+                    border: "1px solid rgba(255,255,255,0.1)",
+                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    letterSpacing: "0.04em", cursor: "pointer",
+                  }}
+                >
+                  ← Choose a different folder
+                </button>
+                <PrimaryButton
+                  label={matchedPairs.length === 0 ? "No matches — continue anyway" : "Continue"}
+                  onClick={handleConfirmApply}
+                />
+              </div>
+            </>
+          )}
+
+          {sub === 'applying' && (
+            <div style={{ textAlign: "center" }}>
+              <div style={LABEL_STYLE}>Setup</div>
+              <h1 style={HEADING_STYLE}>Linking your audio…</h1>
+              <p style={{ ...SUB_STYLE, marginTop: 8 }}>
+                {applyDone.toLocaleString()} of {matchedPairs.length.toLocaleString()} files linked.
+              </p>
+              <div style={{ maxWidth: 520, margin: "24px auto 0", height: 4, background: "rgba(255,255,255,0.06)" }}>
+                <div style={{
+                  height: "100%",
+                  width: matchedPairs.length > 0 ? `${(applyDone / matchedPairs.length) * 100}%` : "0%",
+                  background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
+                  transition: "width 0.15s",
+                }} />
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+      <style>{ANIMATION_CSS}</style>
+    </div>
+  );
+}
+
+function SourceCard({ title, subtitle, onClick, disabled }: { title: string; subtitle: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? "Upgrade to Network to sync from cloud" : undefined}
+      style={{
+        ...CARD_STYLE,
+        opacity: disabled ? 0.4 : 1,
+        cursor:  disabled ? "default" : "pointer",
+      }}
+      onMouseEnter={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.borderColor = "#22d3ee";
+        e.currentTarget.style.background  = "rgba(34,211,238,0.06)";
+      }}
+      onMouseLeave={(e) => {
+        if (disabled) return;
+        e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+        e.currentTarget.style.background  = "rgba(255,255,255,0.03)";
+      }}
+    >
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
+          {title}
+        </div>
+        <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
+          {subtitle}
+        </div>
+      </div>
+    </button>
   );
 }
 

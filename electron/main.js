@@ -4055,3 +4055,25 @@ ipcMain.handle('library:sync-r2:download:cancel', () => {
   _libDownloadAbort = true;
   return { ok: true };
 });
+
+// ── Local-only file_path setter ───────────────────────────────────────────────
+// Phase B.3. Writes songs.file_path directly via db.prepare(), bypassing the
+// mutation log. file_path is per-machine truth (peer A's path is invalid on
+// peer B), so mutation-logging it would make every machine churn through
+// other machines' paths on sync. Mirrors the r2_uploaded_at write pattern at
+// the upload handler — narrow typed handler for local-only fields.
+//
+// Why this exists as a separate IPC: the db:execute guard above (~line 1272)
+// rejects synced-table writes; songs is in synced-tables. The renderer can't
+// run raw UPDATE songs through db:execute, so this main-process handler is
+// the required path for B.3's "From this computer" basename-match flow.
+ipcMain.handle('songs:set-local-file-path', (_, intId, filePath) => {
+  try {
+    const result = db.prepare(
+      'UPDATE songs SET file_path = ? WHERE id = ?'
+    ).run(filePath, intId);
+    return { ok: true, changes: result.changes };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
