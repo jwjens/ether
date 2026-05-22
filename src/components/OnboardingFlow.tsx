@@ -3,6 +3,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { setPlanGlobally, usePlan } from "../hooks/usePlan";
 import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
+import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 
 // Replaces FirstRunWizard at the first_run_complete gate in App.tsx.
 // Implements the four screens of docs/onboarding-spec-v1.md with the
@@ -10,8 +11,6 @@ import type { VenueProfile, VenueType } from "./FirstRunWizard";
 // station_tagline) bolted on between Screen 3/3b and Screen 4 so the
 // downstream readers in OnShiftScreen / SettingsPanel / App.tsx persona
 // labels keep working.
-
-const ETHER_BACKEND_URL = "https://ether-backend-production.up.railway.app";
 
 type OnboardingState =
   | 'welcome'            // Screen 1 — path picker

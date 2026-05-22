@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 
 // ── Stripe config ──
 const STRIPE_PK = "pk_live_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
 const PRICE_PRO     = "price_1TCwR6QJRnsdUhPM6RPqhjdA";
 const PRICE_STATION = "price_1TCwRZQJRnsdUhPMjwK0y9sA";
-const API_URL       = "https://ether-backend-production.up.railway.app";
 
 const PAYMENT_LINK_PRO            = "https://buy.stripe.com/aFa5kx6X2b8Nac78c79k402";
 const PAYMENT_LINK_STATION        = "https://buy.stripe.com/cNi14hgxC6Sx1FB2RN9k401";
@@ -120,7 +120,7 @@ export default function SubscriptionPanel() {
     setLoading(true);
     setLicenseError("");
     try {
-      const res = await fetch(`${API_URL}/validate`, {
+      const res = await fetch(`${ETHER_BACKEND_URL}/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ license_key: licenseKey.trim(), email: licenseEmail.trim() }),

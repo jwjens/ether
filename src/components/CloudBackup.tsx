@@ -12,8 +12,7 @@ import { useState, useEffect, useCallback } from "react";
 import { query, execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
 import { useActiveStation } from "../hooks/useActiveStation";
-
-const API_URL = "https://ether-backend-production.up.railway.app";
+import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -204,7 +203,7 @@ export default function CloudBackup() {
     if (!licenseKey || !stationId) return;
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/backup/list?station_id=${encodeURIComponent(stationId)}`, {
+      const res = await fetch(`${ETHER_BACKEND_URL}/backup/list?station_id=${encodeURIComponent(stationId)}`, {
         headers: { "x-license-key": licenseKey },
       });
       if (!res.ok) throw new Error(await res.text());
@@ -258,7 +257,7 @@ export default function CloudBackup() {
       formData.append("filename", filename);
       if (description.trim()) formData.append("description", description.trim());
 
-      const res = await fetch(`${API_URL}/backup/upload`, {
+      const res = await fetch(`${ETHER_BACKEND_URL}/backup/upload`, {
         method: "POST",
         headers: { "x-license-key": licenseKey },
         body: formData,
@@ -290,7 +289,7 @@ export default function CloudBackup() {
     setStatus({ msg: "Downloading backup...", type: "info" });
 
     try {
-      const res = await fetch(`${API_URL}/backup/download/${backup.id}`, {
+      const res = await fetch(`${ETHER_BACKEND_URL}/backup/download/${backup.id}`, {
         headers: { "x-license-key": licenseKey },
       });
       if (!res.ok) throw new Error("Download failed");
@@ -360,7 +359,7 @@ export default function CloudBackup() {
     if (!confirm("Delete this backup? This cannot be undone.")) return;
     setDeleting(backup.id);
     try {
-      const res = await fetch(`${API_URL}/backup/${backup.id}`, {
+      const res = await fetch(`${ETHER_BACKEND_URL}/backup/${backup.id}`, {
         method: "DELETE",
         headers: { "x-license-key": licenseKey },
       });

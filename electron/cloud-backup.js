@@ -20,10 +20,7 @@ const fs = require("fs");
 const path = require("path");
 const zlib = require("zlib");
 const crypto = require("crypto");
-
-// Backend base URL. Inlined per OB1 (four other sites in C:\openair have the
-// same constant — hoist to src/lib/etherBackend.ts when OB1 is closed out).
-const ETHER_BACKEND_URL = "https://ether-backend-production.up.railway.app";
+const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
 
 // Local copy of usePlan.tsx's TIER_RANK. Renderer can't be imported from
 // electron-main; keep in sync if PlanTier ever changes.

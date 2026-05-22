@@ -11,9 +11,10 @@
 // on next open.
 
 import { useEffect, useState } from "react";
+import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 
-const SUBMIT_URL = "https://ether-backend-production.up.railway.app/beta/apply";
-const FEEDBACK_URL = "https://ether-backend-production.up.railway.app/feedback";
+const SUBMIT_URL   = `${ETHER_BACKEND_URL}/beta/apply`;
+const FEEDBACK_URL = `${ETHER_BACKEND_URL}/feedback`;
 const EMAIL_FALLBACK = "hello@ether-technologies.com";
 
 interface BetaApp {

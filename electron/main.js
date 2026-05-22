@@ -101,6 +101,7 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
+const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
 if (global.__etherDiag) global.__etherDiag('POINT-1b: path/fs loaded OK');
 let Database;
 try { Database = require("better-sqlite3"); if (global.__etherDiag) global.__etherDiag('POINT-1c: better-sqlite3 loaded OK'); }
@@ -3155,8 +3156,6 @@ fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
 async function fetchR2Track(fileKey) {
   if (!fileKey) return { ok: false, error: 'No file_key' };
 
-  // Inlined per OB1 — same constant as elsewhere in C:\openair.
-  const ETHER_BACKEND_URL = 'https://ether-backend-production.up.railway.app';
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
   // Tier gate — Network+ only
@@ -3848,9 +3847,6 @@ let _libDownloadState = {
 // on 'library:sync-r2:upload:progress', terminal 'library:sync-r2:upload:done'. Cancellation
 // via _libSyncAbort flag (still set by 'library:sync-r2:upload:cancel' below).
 ipcMain.handle('library:sync-r2:upload', async () => {
-  // Inlined per OB1 — six sites in C:\openair share this constant now.
-  // Consolidate to src/lib/etherBackend.ts when OB1 is closed out.
-  const ETHER_BACKEND_URL = 'https://ether-backend-production.up.railway.app';
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
   // Tier gate — Network+ only

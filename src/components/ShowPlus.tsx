@@ -13,6 +13,7 @@ import VideoEnginePanel  from "./VideoEngine/VideoEnginePanel";
 import { useCaptions, CaptionsOverlay } from "./Captions";
 import StreamStatusPill from "./StreamStatusPill";
 import { QRCodeSVG } from "qrcode.react";
+import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -30,8 +31,6 @@ const SHARED_SESSION_TOKEN =
   Math.random().toString(36).slice(2, 10);
 
 const SHARED_ROOM_CODE = String(Math.floor(1000 + Math.random() * 9000));
-
-const ETHER_BACKEND_URL = "https://ether-backend-production.up.railway.app";
 
 async function getLicenseKey(stationId: string): Promise<string> {
   try {

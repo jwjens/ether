@@ -1,6 +1,7 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
+import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -628,7 +629,7 @@ export default function App() {
   // ── Remote command stream (emergency override + companion) ──
   // Replaced polling with SSE — instant delivery, zero idle traffic.
   useEffect(() => {
-    const STREAM_BASE = "https://ether-backend-production.up.railway.app/api/cmd-stream";
+    const STREAM_BASE = `${ETHER_BACKEND_URL}/api/cmd-stream`;
 
     const execCmd = async (cmd: string, data: any) => {
       try {
@@ -1208,7 +1209,7 @@ export default function App() {
     };
 
     // Push to Railway backend so /api/now-playing and /dashboard serve it
-    fetch("https://ether-backend-production.up.railway.app/api/now-playing", {
+    fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -2111,8 +2112,8 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         <Item separator />
         <Item label="Remote Dashboard ↗"  onClick={async () => {
           try {
-            await (window as any).ether.invoke("open_url", { url: "https://ether-backend-production.up.railway.app/dashboard" });
-          } catch { window.open("https://ether-backend-production.up.railway.app/dashboard", "_blank"); }
+            await (window as any).ether.invoke("open_url", { url: `${ETHER_BACKEND_URL}/dashboard` });
+          } catch { window.open(`${ETHER_BACKEND_URL}/dashboard`, "_blank"); }
         }} />
         <Item label="System Health"        onClick={() => set("health")} />
       </Menu>
