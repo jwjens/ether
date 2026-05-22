@@ -3092,44 +3092,70 @@ ipcMain.handle('captions:get-loopback-source', async () => {
 const R2_CACHE_DIR = path.join(app.getPath('userData'), 'r2-cache');
 fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
 
+// Phase 1.3i rewrite: customer no longer holds R2 credentials. Cache miss
+// path now POSTs /audio/download-url for a signed GET URL, then fetches the
+// bytes and writes to the same cache location. Cache layer (path, persistence,
+// no eviction) unchanged — only the fetch mechanism changes. Cache eviction
+// is tracked as OB7 in close-out-tracker (out of scope for 1.3i).
+//
+// Tier gate: Network+ (station rank or higher). Studio/Solo callers (rare —
+// loggen.ts is the only invoker today, and it only fires when generated_schedule
+// rows have file_key but empty file_path) receive { ok:false, error } and the
+// auto-scheduler's existing .filter(Boolean) silently skips the track.
 ipcMain.handle('r2:fetch-track', async (_, fileKey) => {
   if (!fileKey) return { ok: false, error: 'No file_key' };
 
-  const getR2Config = app._getR2Config;
-  if (!getR2Config) return { ok: false, error: 'R2 module not loaded' };
-  const r2 = getR2Config();
-  if (!r2.accessKeyId || !r2.secretAccessKey) return { ok: false, error: 'R2 not configured' };
+  // Inlined per OB1 — seventh site in C:\openair sharing this constant.
+  const ETHER_BACKEND_URL = 'https://ether-backend-production.up.railway.app';
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+
+  // Tier gate — Network+ only
+  const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
+  if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
+    return { ok: false, error: `Audio fetch from cloud requires Network (station) tier or higher — current: ${planTier}` };
+  }
+
+  // License key required
+  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' LIMIT 1").get())?.value;
+  if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
   const cachePath = path.join(R2_CACHE_DIR, safeName);
 
+  // Cache hit path — unchanged
   if (fs.existsSync(cachePath)) return { ok: true, filePath: cachePath };
 
   try {
-    const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-    const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-    const https = require('https');
-    const http  = require('http');
-
-    const s3  = new S3Client({
-      region: 'auto',
-      endpoint: r2.resolvedEndpoint || r2.endpoint || `https://${r2.accountId}.r2.cloudflarestorage.com`,
-      credentials: { accessKeyId: r2.accessKeyId, secretAccessKey: r2.secretAccessKey },
+    // 1. Request signed GET URL from backend
+    const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/download-url`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
     });
-    const url = await getSignedUrl(s3, new GetObjectCommand({ Bucket: r2.bucket || 'ether-audio', Key: fileKey }), { expiresIn: 300 });
+    const urlData = await urlRes.json().catch(() => ({}));
+    if (!urlRes.ok || !urlData.signed_url) {
+      throw new Error(urlData.error || urlData.detail || `signing failed (HTTP ${urlRes.status})`);
+    }
 
-    await new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(cachePath);
-      const get  = url.startsWith('https') ? https : http;
-      get.get(url, res => {
-        res.pipe(file);
-        file.on('finish', () => { file.close(); resolve(); });
-      }).on('error', err => { fs.unlink(cachePath, () => {}); reject(err); });
-    });
+    // 2. GET the bytes from the signed URL
+    const getRes = await fetch(urlData.signed_url);
+    if (!getRes.ok) {
+      const text = await getRes.text().catch(() => '');
+      throw new Error(`R2 GET failed: HTTP ${getRes.status} — ${text.slice(0, 200)}`);
+    }
+    const buf = Buffer.from(await getRes.arrayBuffer());
 
-    console.log(`[r2:fetch-track] cached ${safeName} (${(fs.statSync(cachePath).size / 1e6).toFixed(1)} MB)`);
+    // 3. Atomic write via temp+rename so an interrupted fetch doesn't leave a
+    //    partial file at cachePath (matches the legacy fs.unlink-on-error intent).
+    const tempPath = cachePath + '.tmp';
+    fs.writeFileSync(tempPath, buf);
+    fs.renameSync(tempPath, cachePath);
+
+    console.log(`[r2:fetch-track] cached ${safeName} (${(buf.length / 1e6).toFixed(1)} MB)`);
     return { ok: true, filePath: cachePath };
   } catch (e) {
+    // Clean up any .tmp left from a failed write
+    try { fs.unlinkSync(cachePath + '.tmp'); } catch {}
     return { ok: false, error: e.message };
   }
 });
