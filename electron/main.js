@@ -3815,6 +3815,21 @@ ipcMain.handle('identity:get', () => {
 let _libSyncAbort = false;
 let _libDownloadAbort = false;   // mirror flag for the B.2 download handler
 
+// Module-level snapshot of the current/last download run. Set synchronously
+// at the top of the library:sync-r2:download handler (before the IIFE fires)
+// so a getState() call between handler-return and the first progress event
+// returns the correct in-progress flag — closes the mount-mid-download race
+// that the B.4 progress bar otherwise hits when onboarding hands off mid-run.
+// in_progress flips false in the terminal done/fatal branches; other fields
+// retain their final values.
+let _libDownloadState = {
+  in_progress: false,
+  done:        0,
+  total:       0,
+  errors:      0,
+  started_at:  0,
+};
+
 // Phase 1.3g rewrite: customer no longer holds R2 credentials. Each song
 // upload goes through /audio/upload-url to get a signed PUT URL, then PUTs
 // the audio bytes directly to that URL. On success, file_key is written via
@@ -4006,6 +4021,16 @@ ipcMain.handle('library:sync-r2:download', async () => {
 
   _libDownloadAbort = false;
 
+  // SYNCHRONOUS state snapshot — set BEFORE the IIFE so getState() called
+  // between handler-return and first progress event returns in_progress=true.
+  _libDownloadState = {
+    in_progress: true,
+    done:        0,
+    total:       songs.length,
+    errors:      0,
+    started_at:  Date.now(),
+  };
+
   // Fire-and-forget — returns immediately so the renderer isn't blocked
   (async () => {
     const CONCURRENCY = 3;
@@ -4020,6 +4045,9 @@ ipcMain.handle('library:sync-r2:download', async () => {
         console.warn(`[library:sync-r2] download SKIP ${song.file_key}: ${res.error}`);
       }
       done++;
+      // Mirror local counters to the module-level snapshot for getState() (B.4).
+      _libDownloadState.done   = done;
+      _libDownloadState.errors = errors;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:download:progress', {
           done, total: songs.length, errors, current: song.file_key,
@@ -4035,6 +4063,7 @@ ipcMain.handle('library:sync-r2:download', async () => {
 
     const aborted = _libDownloadAbort;
     _libDownloadAbort = false;
+    _libDownloadState.in_progress = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('library:sync-r2:download:done', {
         done, total: songs.length, errors, aborted,
@@ -4043,6 +4072,7 @@ ipcMain.handle('library:sync-r2:download', async () => {
     console.log(`[library:sync-r2] download ${aborted ? 'Cancelled' : 'Done'} — ${done}/${songs.length} fetched, ${errors} errors`);
   })().catch(e => {
     console.error('[library:sync-r2] download fatal:', e.message);
+    _libDownloadState.in_progress = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('library:sync-r2:download:done', { done: 0, total: songs.length, errors: 1, aborted: false });
     }
@@ -4054,6 +4084,16 @@ ipcMain.handle('library:sync-r2:download', async () => {
 ipcMain.handle('library:sync-r2:download:cancel', () => {
   _libDownloadAbort = true;
   return { ok: true };
+});
+
+// Phase B.4. Returns the current download snapshot so the persistent progress
+// bar can render correct counts when it mounts mid-run. The race exists because
+// B.3's "From the cloud" button fires download() then immediately hands off to
+// the 'pulling' state — by the time App.tsx and the bar mount, the download is
+// already in flight. _libDownloadState is set synchronously above before the
+// IIFE, so any getState() call after handler-return sees in_progress=true.
+ipcMain.handle('library:sync-r2:download:get-state', () => {
+  return _libDownloadState;
 });
 
 // ── Local-only file_path setter ───────────────────────────────────────────────

@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld("ether", {
     uploadCancel:       ()    => ipcRenderer.invoke("library:sync-r2:upload:cancel"),
     download:           ()    => ipcRenderer.invoke("library:sync-r2:download"),
     downloadCancel:     ()    => ipcRenderer.invoke("library:sync-r2:download:cancel"),
+    getDownloadState:   ()    => ipcRenderer.invoke("library:sync-r2:download:get-state"),
     onUploadProgress:   (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:upload:progress", h);   return () => ipcRenderer.removeListener("library:sync-r2:upload:progress", h); },
     onUploadDone:       (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:upload:done", h);       return () => ipcRenderer.removeListener("library:sync-r2:upload:done", h); },
     onDownloadProgress: (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:download:progress", h); return () => ipcRenderer.removeListener("library:sync-r2:download:progress", h); },

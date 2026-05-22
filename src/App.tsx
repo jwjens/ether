@@ -1,5 +1,6 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
+import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -1826,6 +1827,7 @@ export default function App() {
           {switchToast}
         </div>
       )}
+      <LibrarySyncProgressBar />
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 52, display: "flex", alignItems: "center", padding: "0 10px", gap: 0, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
