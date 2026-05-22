@@ -64,7 +64,7 @@ Parallel async function alongside upload in `main.js`. Mirrors upload's structur
 
 - **Tier gate:** Network+ (same as upload). Reads `plan_tier` from `station_config_kv`.
 - **License key** from `station_config_kv` (same pattern).
-- **SELECT:** `songs WHERE file_path IS NOT NULL AND r2_uploaded_at IS NOT NULL`. Then filter in JS via `fs.existsSync` to skip songs already on disk.
+- **SELECT:** `songs WHERE file_key IS NOT NULL AND file_key != ''`. Then filter in JS via `fs.existsSync` to skip songs whose `file_path` already exists on local disk. (`file_key` is the cross-machine R2-marker, mutation-logged by the uploading machine; `r2_uploaded_at` is local-only per 1.1, so don't gate on it here — it'd return zero rows on the fresh second machine this handler serves. Original draft of this line said `r2_uploaded_at IS NOT NULL` — fixed in B.2 commit.)
 - **For each:** call `fetchR2Track(file_key)` — already extracted in 1.3k, available at module scope in main.js.
 - **On success: DO NOT write `file_path` back.** 1.3k's `audio:load` fallback handles load-time resolution via the cache. The download just pre-warms `<userData>/r2-cache/`. Same reasoning as Option B in 1.3k — writing file_path back generates sync-log churn.
 - **Emit** `library:sync-r2:download:progress` with shape `{ done, total, errors, current }`.

@@ -3813,6 +3813,7 @@ ipcMain.handle('identity:get', () => {
 });
 
 let _libSyncAbort = false;
+let _libDownloadAbort = false;   // mirror flag for the B.2 download handler
 
 // Phase 1.3g rewrite: customer no longer holds R2 credentials. Each song
 // upload goes through /audio/upload-url to get a signed PUT URL, then PUTs
@@ -3950,5 +3951,107 @@ ipcMain.handle('library:sync-r2:upload', async () => {
 
 ipcMain.handle('library:sync-r2:upload:cancel', () => {
   _libSyncAbort = true;
+  return { ok: true };
+});
+
+// ── Library ← R2 download ─────────────────────────────────────────────────────
+// Phase B.2: mirrors the upload handler with inverse direction. Used by Screen 4
+// of onboarding ("From the cloud") to pre-warm <userData>/r2-cache/ on a fresh
+// second machine that joined an existing license-sharing peer set.
+//
+// SELECT criterion: file_key IS NOT NULL AND file_key != ''. file_key is the
+// cross-machine R2 marker (mutation-logged by the uploading machine in the
+// upload handler above), so this catches every song R2 holds bytes for. We
+// then JS-filter to skip songs whose file_path already exists on local disk.
+//
+// Why not gate on r2_uploaded_at: that field is local-only per Phase 1.1 (each
+// machine tracks its own upload state), so it's always NULL on the fresh second
+// machine this handler serves — gating on it would return zero rows.
+//
+// Per-song fetch: delegates to fetchR2Track() — already has tier + license
+// checks, R2 cache short-circuit, and atomic temp+rename write. The handler-
+// level tier/license checks here duplicate fetchR2Track's, but they fast-bail
+// before iterating thousands of rows.
+//
+// Event contract: per-file progress on 'library:sync-r2:download:progress',
+// terminal 'library:sync-r2:download:done'. Cancellation via _libDownloadAbort
+// flag (set by 'library:sync-r2:download:cancel' below).
+//
+// Does NOT write file_path back on success. fetchR2Track populates the R2 cache
+// at <userData>/r2-cache/; audio:load's 1.3k fallback resolves cache hits at
+// play time. Writing file_path back would generate sync-log churn for every
+// song downloaded — same reasoning as Option B in 1.3k.
+ipcMain.handle('library:sync-r2:download', async () => {
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+
+  // Tier gate — Network+ only (duplicates fetchR2Track's gate for fast-bail)
+  const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
+  if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
+    return { ok: false, error: `Library download from cloud requires Network (station) tier or higher — current: ${planTier}` };
+  }
+
+  // License key required
+  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' LIMIT 1").get())?.value;
+  if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
+
+  const candidates = db.prepare(
+    `SELECT id, file_key, file_path FROM songs
+      WHERE file_key IS NOT NULL AND file_key != ''`
+  ).all();
+  const songs = candidates.filter(s => !(s.file_path && fs.existsSync(s.file_path)));
+
+  if (!songs.length) {
+    return { ok: false, error: 'Nothing to download (all R2 songs already present locally, or no songs in R2)' };
+  }
+
+  _libDownloadAbort = false;
+
+  // Fire-and-forget — returns immediately so the renderer isn't blocked
+  (async () => {
+    const CONCURRENCY = 3;
+    let done = 0;
+    let errors = 0;
+
+    async function downloadOne(song) {
+      if (_libDownloadAbort) return;
+      const res = await fetchR2Track(song.file_key);
+      if (!res.ok) {
+        errors++;
+        console.warn(`[library:sync-r2] download SKIP ${song.file_key}: ${res.error}`);
+      }
+      done++;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('library:sync-r2:download:progress', {
+          done, total: songs.length, errors, current: song.file_key,
+        });
+      }
+    }
+
+    // Download in batches of CONCURRENCY
+    for (let i = 0; i < songs.length; i += CONCURRENCY) {
+      if (_libDownloadAbort) break;
+      await Promise.all(songs.slice(i, i + CONCURRENCY).map(downloadOne));
+    }
+
+    const aborted = _libDownloadAbort;
+    _libDownloadAbort = false;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('library:sync-r2:download:done', {
+        done, total: songs.length, errors, aborted,
+      });
+    }
+    console.log(`[library:sync-r2] download ${aborted ? 'Cancelled' : 'Done'} — ${done}/${songs.length} fetched, ${errors} errors`);
+  })().catch(e => {
+    console.error('[library:sync-r2] download fatal:', e.message);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('library:sync-r2:download:done', { done: 0, total: songs.length, errors: 1, aborted: false });
+    }
+  });
+
+  return { ok: true, total: songs.length };
+});
+
+ipcMain.handle('library:sync-r2:download:cancel', () => {
+  _libDownloadAbort = true;
   return { ok: true };
 });
