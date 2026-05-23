@@ -101,6 +101,7 @@ try {
 }
 const path = require("path");
 const fs = require("fs");
+const semver = require("semver");
 const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
 if (global.__etherDiag) global.__etherDiag('POINT-1b: path/fs loaded OK');
 let Database;
@@ -1902,8 +1903,13 @@ ipcMain.handle("updater:check", async () => {
     if (!result?.updateInfo) return { available: false };
     const current = app.getVersion();
     const latest = result.updateInfo.version;
+    // Semver-aware comparison — `available: true` only when latest is STRICTLY
+    // GREATER than current. Defense against a stale latest.yml on GitHub
+    // Releases offering a downgrade (the bug that originally triggered the
+    // auto-updater disable). semver is required from electron-updater's
+    // transitive deps; it's the same module electron-updater uses internally.
     return {
-      available: latest !== current,
+      available: semver.gt(latest, current),
       version: latest,
       notes: result.updateInfo.releaseNotes ?? null,
       date: result.updateInfo.releaseDate ?? null,
