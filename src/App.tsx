@@ -1324,7 +1324,6 @@ export default function App() {
             </button>
           )}
           <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
-          {!viewport.veryNarrow && <UpdateBanner state={updater.state} onDownload={updater.download} onRestart={updater.restart} onDismiss={updater.dismiss} />}
           {currentPlan === "free" && (
             <button onClick={() => setPanel("subscription")} title="Upgrade to Pro" style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
