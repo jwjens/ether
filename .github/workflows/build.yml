@@ -103,18 +103,18 @@ jobs:
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_DRAFT: true
+          EP_DRAFT: false
 
       - name: Build and publish (Mac)
         if: matrix.platform == 'mac'
         run: npx electron-builder --mac --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_DRAFT: true
+          EP_DRAFT: false
 
       - name: Build and publish (Linux)
         if: matrix.platform == 'linux'
         run: npx electron-builder --linux --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_DRAFT: true
+          EP_DRAFT: false
