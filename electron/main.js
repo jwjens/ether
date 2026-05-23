@@ -1888,13 +1888,35 @@ ipcMain.handle("open_nowplaying_window", async () => {
 });
 
 // ── Auto-updater ──────────────────────────────────────────────
-// DISABLED — was offering stale downgrade versions and the notification
-// buttons (Dismiss, Later, ×) are non-functional. Re-enable after:
-//   1. Release channel fixed to track the correct latest version
-//   2. Updater.tsx button handlers verified working
-// With autoUpdater=null the IPC handlers below return { available: false }
-// so the renderer banner never shows.
+// Re-enabled after the load-bearing fixes that prompted the 2026-05-18
+// disable (99574df):
+//   - EP_DRAFT: false in build.yml — published releases reach
+//     electron-updater (drafts are invisible to its feed)
+//   - semver.gt compare in updater:check — a stale latest.yml can no
+//     longer trigger a downgrade offer
+//   - UpdateBanner mounted once in App.tsx with the dismissed flag
+//     respected; clicking "Later" actually hides the banner
+//
+// Config matches pre-disable: autoDownload=false so the renderer's
+// "Update Now" click is what triggers the download (vs autoDownload=true
+// which would start downloading immediately on check); autoInstallOnAppQuit
+// applies the staged update when the user next quits the app; logger=null
+// suppresses electron-updater's chatty per-event console output.
+//
+// The IPC handlers below retain their `if (!autoUpdater)` guards as
+// defense against the require() failing in sparse dev checkouts where
+// electron-updater might not be installed. With normal installs the
+// guards never fire and the handlers proceed to the real work.
 let autoUpdater = null;
+try {
+  const { autoUpdater: au } = require("electron-updater");
+  autoUpdater = au;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null;
+} catch (e) {
+  console.log("[UPDATER] electron-updater not available:", e.message);
+}
 
 ipcMain.handle("updater:check", async () => {
   if (!autoUpdater) return { available: false };
