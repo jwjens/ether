@@ -7,13 +7,16 @@
     "buildResources": "build-resources"
   },
   "asarUnpack": [
-    "node_modules/ffmpeg-static/**"
+    "node_modules/ffmpeg-static/**",
+    "watchdog/**"
   ],
   "files": [
     "dist/**/*",
     "electron/**/*",
     "scripts/**/*.js",
     "native/**/*.node",
+    "watchdog/**/*",
+    "!watchdog/test/**",
     "node_modules/**/*",
     "package.json"
   ],

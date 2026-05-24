@@ -1,0 +1,294 @@
+'use strict';
+/**
+ * Ether HA watchdog (Phase 2) — single-direction in-session process supervisor.
+ *
+ * Runs as a SEPARATE process via the bundled Electron-as-Node
+ * (ELECTRON_RUN_AS_NODE=1 electron watchdog/watchdog.js), spawns Ether as its
+ * child, and restarts it on crash or hang. Lives in the user's interactive
+ * session (audio + the per-user profile are session-scoped — see the HA
+ * architecture investigation; running Ether as a Windows Service is impossible).
+ *
+ * Restart triggers — conservative, biased AGAINST killing a healthy Ether:
+ *   • CRASH: child process exits unexpectedly (no clean-exit sentinel present).
+ *   • HANG:  GET /health fails maxConsecutiveMisses times in a row while the
+ *            process is still alive (frozen-but-alive).
+ *   NOT a trigger in v1: audio.alive === false. The output callback firing is
+ *   logged, but audio-thread recovery belongs to the dead-air watchdog, not the
+ *   process supervisor — killing the whole app for an audio blip is too blunt.
+ *
+ * Sentinel handshake with main.js (files in userData):
+ *   • .ether-clean-exit       → user quit; stand down, do not respawn.
+ *   • .ether-expected-restart → update/relaunch; wait for self-relaunch, only
+ *                               respawn if it never comes back within the grace.
+ *
+ * KNOWN GAP (v1, documented in README): "who watches the watchdog" — if THIS
+ * process dies, Ether keeps running unsupervised until the next logon restarts
+ * the watchdog. Mutual supervision (Ether relaunches a dead watchdog) is the
+ * Phase 2.5 follow-up. uncaughtException/unhandledRejection are trapped below so
+ * an unexpected throw can't take the watchdog down.
+ *
+ * Test seams (used by watchdog/test, never in prod):
+ *   WATCHDOG_USER_DATA  — override the userData dir (isolate sentinels/logs).
+ *   WATCHDOG_TEST_CMD   — spawn this instead of Ether (a mock).
+ *   WATCHDOG_TEST_ARGS  — space-separated args for the mock.
+ */
+const http  = require('http');
+const fs    = require('fs');
+const path  = require('path');
+const os    = require('os');
+const { spawn } = require('child_process');
+const { TUNABLES: T, readHaConfig } = require('./config');
+
+// ── Platform layer ───────────────────────────────────────────────────────────
+function loadPlatform() {
+  switch (process.platform) {
+    case 'win32':  return require('./platform/win32');
+    case 'darwin': return require('./platform/darwin');
+    case 'linux':  return require('./platform/linux');
+    default: throw new Error(`watchdog: unsupported platform ${process.platform}`);
+  }
+}
+const platform  = loadPlatform();
+const USER_DATA = process.env.WATCHDOG_USER_DATA || platform.userDataDir();
+
+// ── Paths ────────────────────────────────────────────────────────────────────
+const CLEAN_EXIT        = path.join(USER_DATA, '.ether-clean-exit');
+const EXPECTED_RESTART  = path.join(USER_DATA, '.ether-expected-restart');
+const ALARM_MARKER      = path.join(USER_DATA, '.ether-ha-alarm');
+const LOG_PATH          = path.join(USER_DATA, 'watchdog.log');
+const SENTINEL_FRESH_MS = 30000;
+
+// ── Logging (never throws) ─────────────────────────────────────────────────────
+function log(...parts) {
+  const line = `[${new Date().toISOString()}] ${parts.join(' ')}`;
+  console.log(line);
+  try {
+    try { if (fs.statSync(LOG_PATH).size > 2 * 1024 * 1024) fs.renameSync(LOG_PATH, LOG_PATH + '.1'); } catch { /* no log yet */ }
+    fs.mkdirSync(USER_DATA, { recursive: true });
+    fs.appendFileSync(LOG_PATH, line + os.EOL);
+  } catch { /* logging must never crash the watchdog */ }
+}
+
+// Returns true (and deletes the file) if a fresh sentinel is present.
+function consumeSentinel(file) {
+  try {
+    if (!fs.existsSync(file)) return false;
+    const ts = Number(fs.readFileSync(file, 'utf8').trim()) || fs.statSync(file).mtimeMs;
+    fs.unlinkSync(file);
+    return (Date.now() - ts) <= SENTINEL_FRESH_MS;
+  } catch { return false; }
+}
+
+// ── Spawn target (dev vs packaged vs test) ─────────────────────────────────────
+function etherSpawnSpec() {
+  if (process.env.WATCHDOG_TEST_CMD) {
+    return {
+      cmd:  process.env.WATCHDOG_TEST_CMD,
+      args: (process.env.WATCHDOG_TEST_ARGS || '').split(' ').filter(Boolean),
+      env:  { ...process.env },
+    };
+  }
+  // We run under the electron/Ether binary (ELECTRON_RUN_AS_NODE=1), so
+  // process.execPath is that binary. The child must boot as the APP, so strip
+  // ELECTRON_RUN_AS_NODE. Dev: electron lives in node_modules → `electron <root>`.
+  // Packaged: execPath IS Ether.exe → spawn it with no args.
+  const isDev = /node_modules[\\/]electron/i.test(process.execPath);
+  const appRoot = path.resolve(__dirname, '..');
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return { cmd: process.execPath, args: isDev ? [appRoot] : [], env };
+}
+
+// ── State ──────────────────────────────────────────────────────────────────────
+let child = null;
+let missCount = 0;
+let pollTimer = null;
+let halted = false;          // crash-loop tripped — quiescent
+let stopping = false;        // intentional watchdog shutdown
+let intentionalKill = false; // set when WE kill the child (hang); suppresses the
+                             // exit handler's crash-respawn so the hang path is
+                             // the sole respawner (avoids a double-spawn race)
+const restartTimes = [];  // ms timestamps of recent (re)spawns, for the crash-loop window
+
+function restartsInWindow() {
+  const cutoff = Date.now() - T.crashWindowMs;
+  while (restartTimes.length && restartTimes[0] < cutoff) restartTimes.shift();
+  return restartTimes.length;
+}
+
+// ── Health polling ──────────────────────────────────────────────────────────────
+function checkHealth() {
+  return new Promise((resolve) => {
+    const req = http.get(T.healthUrl, (res) => {
+      let body = '';
+      res.on('data', (d) => { body += d; });
+      res.on('end', () => {
+        if (res.statusCode !== 200) { resolve({ ok: false, reason: `http ${res.statusCode}` }); return; }
+        let audioAlive = null;
+        try { audioAlive = JSON.parse(body)?.audio?.alive ?? null; } catch { /* ignore */ }
+        resolve({ ok: true, audioAlive });
+      });
+    });
+    req.setTimeout(T.healthTimeoutMs, () => { req.destroy(); resolve({ ok: false, reason: 'timeout' }); });
+    req.on('error', (e) => resolve({ ok: false, reason: e.code || e.message }));
+  });
+}
+
+async function poll() {
+  if (!child || stopping || halted) return;
+  const h = await checkHealth();
+  if (!child || stopping || halted) return;
+  if (h.ok) {
+    if (missCount > 0) log(`health recovered after ${missCount} miss(es)`);
+    missCount = 0;
+    if (h.audioAlive === false) log('WARN /health ok but audio.alive=false (engine thread not firing) — logged, NOT a v1 restart trigger');
+    return;
+  }
+  missCount++;
+  log(`health miss ${missCount}/${T.maxConsecutiveMisses} (${h.reason})`);
+  if (missCount >= T.maxConsecutiveMisses) {
+    if (platform.isProcessAlive(child.pid)) {
+      log(`HANG declared — force-killing pid ${child.pid}`);
+      handleHang();
+    } else {
+      log('process already gone during hang check — child exit handler will respawn');
+    }
+  }
+}
+
+function startPolling() { stopPolling(); pollTimer = setInterval(() => { poll().catch((e) => log(`poll error ${e}`)); }, T.pollIntervalMs); }
+function stopPolling()  { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } }
+
+// ── Spawn / respawn ──────────────────────────────────────────────────────────────
+function spawnEther(reason) {
+  if (halted || stopping) return;
+  if (restartsInWindow() >= T.maxRestartsInWindow) { tripCrashLoop(); return; }
+  const { cmd, args, env } = etherSpawnSpec();
+  restartTimes.push(Date.now());
+  missCount = 0;
+  log(`spawning Ether (${reason}) — restarts in window: ${restartsInWindow()}/${T.maxRestartsInWindow}`);
+  try {
+    child = spawn(cmd, args, { env, stdio: 'ignore', detached: false });
+  } catch (e) {
+    log(`spawn threw: ${e.message} — retrying after backoff`);
+    scheduleCrashRespawn();
+    return;
+  }
+  const myPid = child.pid;
+  log(`Ether spawned pid ${myPid}`);
+  child.on('exit', (code, signal) => onChildExit(myPid, code, signal));
+  child.on('error', (e) => log(`child error: ${e.message}`));
+  startPolling();
+}
+
+function onChildExit(pid, code, signal) {
+  stopPolling();
+  if (stopping) return;
+  child = null;
+  if (intentionalKill) {
+    intentionalKill = false;
+    log(`Ether pid ${pid} killed by watchdog (hang) — respawn handled by the hang path`);
+    return;
+  }
+  log(`Ether pid ${pid} exited (code=${code} signal=${signal})`);
+
+  if (consumeSentinel(CLEAN_EXIT)) {
+    log('clean-exit sentinel → intentional user quit. Watchdog standing down.');
+    shutdown(0);
+    return;
+  }
+  if (consumeSentinel(EXPECTED_RESTART)) {
+    log('expected-restart sentinel → update/relaunch. Waiting for self-relaunch.');
+    waitForSelfRelaunch();
+    return;
+  }
+  log('unexpected exit → CRASH.');
+  scheduleCrashRespawn();
+}
+
+function scheduleCrashRespawn() {
+  const n = restartsInWindow();
+  if (n >= T.maxRestartsInWindow) { tripCrashLoop(); return; }
+  const delay = T.backoffMs[Math.min(n, T.backoffMs.length - 1)];
+  log(`respawning after crash in ${delay}ms`);
+  setTimeout(() => spawnEther('crash-restart'), delay);
+}
+
+function handleHang() {
+  stopPolling();
+  const pid = child && child.pid;
+  child = null;
+  intentionalKill = true; // tell onChildExit we own the respawn (no crash path)
+  platform.killHard(pid);
+  // Respawn only once the old process is gone AND :3400 refuses, so the new
+  // instance isn't bounced by requestSingleInstanceLock (main.js:144).
+  const deadline = Date.now() + T.killConfirmTimeoutMs;
+  (function confirm() {
+    if (stopping || halted) return;
+    const gone = !platform.isProcessAlive(pid);
+    checkHealth().then((h) => {
+      const portFree = !h.ok && h.reason !== 'timeout'; // refused/reset = nothing listening
+      if ((gone && portFree) || Date.now() > deadline) {
+        log(`kill confirmed (gone=${gone}, portFree=${portFree}, timedOut=${Date.now() > deadline}) — respawning after hang`);
+        scheduleHangRespawn();
+      } else {
+        setTimeout(confirm, 500);
+      }
+    });
+  })();
+}
+
+function scheduleHangRespawn() {
+  const n = restartsInWindow();
+  if (n >= T.maxRestartsInWindow) { tripCrashLoop(); return; }
+  const delay = T.backoffMs[Math.min(n, T.backoffMs.length - 1)];
+  log(`respawning after hang in ${delay}ms`);
+  setTimeout(() => spawnEther('hang-restart'), delay);
+}
+
+function waitForSelfRelaunch() {
+  const deadline = Date.now() + T.expectedRestartGraceMs;
+  (function wait() {
+    if (stopping || halted) return;
+    checkHealth().then((h) => {
+      if (h.ok) { log('app self-relaunched and healthy — resuming monitoring (no respawn)'); startPolling(); return; }
+      if (Date.now() > deadline) { log('expected restart never returned within grace — respawning'); spawnEther('relaunch-timeout'); return; }
+      setTimeout(wait, 2000);
+    });
+  })();
+}
+
+function tripCrashLoop() {
+  halted = true;
+  stopPolling();
+  log(`CRASH LOOP: >=${T.maxRestartsInWindow} restarts within ${T.crashWindowMs / 1000}s — HALTING auto-restart. Manual intervention required.`);
+  try { fs.writeFileSync(ALARM_MARKER, String(Date.now())); } catch { /* best effort */ }
+  // Stay alive but quiescent (a no-op keep-alive) so a startup mechanism doesn't
+  // immediately relaunch the watchdog into another loop. A human / Phase 4
+  // Settings clears the alarm and restarts.
+  setInterval(() => {}, 1 << 30);
+}
+
+function shutdown(code) {
+  stopping = true;
+  stopPolling();
+  process.exit(code);
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+function main() {
+  const cfg = readHaConfig(USER_DATA);
+  if (cfg.enabled === false) { log('HA disabled in ha-config.json — watchdog exiting.'); process.exit(0); }
+  try { fs.unlinkSync(ALARM_MARKER); } catch { /* none */ }      // clear stale alarm on fresh start
+  try { fs.unlinkSync(CLEAN_EXIT); } catch { /* none */ }        // don't let a stale sentinel mislead us
+  try { fs.unlinkSync(EXPECTED_RESTART); } catch { /* none */ }
+  log(`watchdog starting (platform=${process.platform}, userData=${USER_DATA})`);
+  process.on('SIGINT',  () => { log('SIGINT — stopping');  shutdown(0); });
+  process.on('SIGTERM', () => { log('SIGTERM — stopping'); shutdown(0); });
+  process.on('uncaughtException',  (e) => { try { log(`uncaughtException ${e && e.stack || e}`); } catch {} });
+  process.on('unhandledRejection', (e) => { try { log(`unhandledRejection ${e}`); } catch {} });
+  spawnEther('initial');
+}
+
+try { main(); }
+catch (e) { try { log(`FATAL ${e && e.stack || e}`); } catch {} process.exit(1); }

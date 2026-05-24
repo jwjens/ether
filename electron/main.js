@@ -1105,6 +1105,19 @@ app.whenReady().then(() => {
   });
 });
 
+// ── HA watchdog handshake (Phase 2) ───────────────────────────
+// The watchdog (separate process) reads these sentinels in userData on our exit
+// to decide whether to respawn us. Intentional quit → .ether-clean-exit (stand
+// down). Update/relaunch → .ether-expected-restart (wait for self-relaunch,
+// only respawn if it never returns). userData is the same dir the watchdog
+// computes independently — keep them in sync.
+let _haExpectedRestart = false;
+function writeHaSentinel(name) {
+  try { fs.writeFileSync(path.join(app.getPath("userData"), name), String(Date.now())); }
+  catch (e) { console.error("[HA] sentinel write failed:", name, e.message); }
+}
+function markHaExpectedRestart() { _haExpectedRestart = true; writeHaSentinel(".ether-expected-restart"); }
+
 app.on("window-all-closed", () => {
   // Keep running on Windows/Linux (app lives in tray)
   if (process.platform === "darwin") app.quit();
@@ -1123,6 +1136,10 @@ app.on("before-quit", () => {
   if (levelPushId) { clearInterval(levelPushId); levelPushId = null; }
   if (app._syncScheduler) { app._syncScheduler.stop(); app._syncScheduler = null; }
   app.isQuitting = true;
+  // HA: signal an intentional quit so the watchdog stands down — UNLESS we're
+  // intentionally relaunching (update), in which case the expected-restart
+  // sentinel is already written and we must NOT also write clean-exit.
+  if (!_haExpectedRestart) writeHaSentinel(".ether-clean-exit");
 });
 
 // ── IPC Handlers ──────────────────────────────────────────────
@@ -1768,7 +1785,7 @@ ipcMain.on("desk-send-to-queue", (_, payload) => {
 });
 
 // ── Relaunch ──────────────────────────────────────────────────
-ipcMain.handle("relaunch", () => { app.relaunch(); app.exit(0); });
+ipcMain.handle("relaunch", () => { markHaExpectedRestart(); app.relaunch(); app.exit(0); });
 
 // ── Multi-monitor pop-out windows — Tony Stark mode ──────────
 // Each popped panel gets a frameless BrowserWindow loading #popout/<panel>
@@ -1950,6 +1967,7 @@ ipcMain.handle("updater:download", async () => {
 });
 
 ipcMain.handle("updater:install", () => {
+  markHaExpectedRestart(); // HA: the watchdog must expect us back, not respawn us
   if (!autoUpdater) { app.relaunch(); app.exit(0); return; }
   autoUpdater.quitAndInstall();
 });
