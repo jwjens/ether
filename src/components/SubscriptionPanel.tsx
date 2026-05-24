@@ -212,6 +212,22 @@ export default function SubscriptionPanel() {
             {planLabel(currentPlan)}
           </span>
           {licenseSuccess && <span style={{ fontSize: 12, color: "#34d399", fontWeight: 600 }}>✓ License activated!</span>}
+          {currentPlan !== "free" && (
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent("ether:open-managedevices"))}
+              style={{
+                marginLeft: "auto",
+                padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600,
+                background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+                border: "1px solid var(--border-primary)", cursor: "pointer",
+                letterSpacing: "0.02em",
+              }}
+              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-cyan)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
+            >
+              Manage Devices →
+            </button>
+          )}
         </div>
       </div>
 

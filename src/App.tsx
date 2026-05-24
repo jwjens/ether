@@ -97,6 +97,7 @@ import ListenerAnalytics from "./components/ListenerAnalytics";
 import CloudBackup from "./components/CloudBackup";
 import MultiOutputPanel from "./components/MultiOutputPanel";
 import StationManager from "./components/StationManager";
+import ManageDevices from "./components/ManageDevices";
 import { usePlan, setPlanGlobally, PlanGate } from "./hooks/usePlan";
 import PhoneDesk from "./components/PhoneDesk";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
@@ -107,7 +108,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "aivoice" | "gselector" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "aivoice" | "gselector" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -636,6 +637,14 @@ export default function App() {
     const handler = () => setPanel("subscription");
     window.addEventListener("ether:open-subscription", handler);
     return () => window.removeEventListener("ether:open-subscription", handler);
+  }, []);
+
+  // Open the Manage Devices panel via custom event — fired from SubscriptionPanel
+  // or anywhere else that wants to route the customer to seat management.
+  useEffect(() => {
+    const handler = () => setPanel("managedevices");
+    window.addEventListener("ether:open-managedevices", handler);
+    return () => window.removeEventListener("ether:open-managedevices", handler);
   }, []);
 
   // ── Remote command stream (emergency override + companion) ──
@@ -1703,6 +1712,9 @@ export default function App() {
                 <PlanGate requires="operator" feature="Multi-Station Console">
                   <StationManager onStationSwitch={(id, name) => setStationName(name)} />
                 </PlanGate>
+              )}
+              {panel === "managedevices" && (
+                <ManageDevices />
               )}
               {panel === "smartschedule" && (
                 <SmartScheduler onClose={() => setPanel("live")} />
