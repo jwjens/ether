@@ -148,6 +148,15 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     serde_json::json!({ "a": la, "b": lb, "c": lc }).to_string()
 }
 
+// Epoch ms of the most recent audio output callback (engine-thread liveness),
+// or 0 if the engine has never produced a callback. Lock-free read of an atomic
+// — safe to call from the /health endpoint without risking a Mutex stall. f64
+// (not i64) so it crosses the napi bridge as a plain JS number, not a BigInt.
+#[napi]
+pub fn audio_last_callback_ms() -> f64 {
+    audio::last_audio_callback_ms()
+}
+
 #[napi]
 pub fn watchdog_set(active: bool, threshold_sec: f64, station_id: Option<u32>) -> bool {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);

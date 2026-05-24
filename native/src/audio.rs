@@ -1,8 +1,37 @@
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use ringbuf::{HeapRb, HeapProd, traits::{Producer, Consumer, Observer, Split}};
+
+// ── Audio-thread liveness (Phase 1 HA health signal) ──────────────────────────
+// Stamped on every cpal output callback (any station). A relaxed atomic store —
+// lock-free, safe on the real-time audio thread. Read by the napi getter
+// `audioLastCallbackMs` for the /health endpoint (and, later, the dead-air
+// watchdog). Value = epoch ms of the last output callback; 0 = never fired.
+// The cpal stream callbacks fire continuously while the output stream is alive
+// (even when idle/paused → silence), so this tracks ENGINE-THREAD liveness,
+// independent of play state.
+pub static LAST_AUDIO_CALLBACK_MS: AtomicU64 = AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Stamp "now" as the last audio-callback time. Called from the cpal output
+/// callback — relaxed store only, no locks/allocations in the hot path.
+#[inline]
+pub fn note_audio_callback() {
+    LAST_AUDIO_CALLBACK_MS.store(now_ms(), Ordering::Relaxed);
+}
+
+/// Epoch ms of the most recent output callback (0 if none yet). Lock-free read.
+pub fn last_audio_callback_ms() -> f64 {
+    LAST_AUDIO_CALLBACK_MS.load(Ordering::Relaxed) as f64
+}
 
 // ── Existing public types ─────────────────────────────────────────────────────
 
@@ -513,6 +542,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 &stream_config,
                 move |data: &mut [f32], _| {
                     mixer_callback(data, ch, &bus_cb, &fin_cb, &play_cb);
+                    note_audio_callback();
                 },
                 |err| eprintln!("[cpal] {}", err),
                 None,
@@ -741,7 +771,6 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
 }
 
 // ── Temporary rate diagnostics — remove after B1 sign-off ────────────────────
-use std::sync::atomic::AtomicU64;
 static SAMPLES_PUSHED:           AtomicU64  = AtomicU64::new(0);
 static LAST_REPORT_NS:           AtomicU64  = AtomicU64::new(0);
 static CB_COUNT:                 AtomicU64  = AtomicU64::new(0);

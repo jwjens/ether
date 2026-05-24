@@ -183,6 +183,7 @@ try {
     openUrl: () => true,
     openSoundSettings: () => true,
     watchdogSet: () => true,
+    audioLastCallbackMs: () => 0,
   };
 }
 
@@ -2660,6 +2661,42 @@ const irisHttpServer = require('http').createServer((req, res) => {
   // POST /api/macro/:id/run   — execute a macro by id
   // GET  /api/macros          — list all macros
   // GET  /api/gpio/status     — GPIO connection status
+
+  // GET /health — HA supervisor heartbeat (Phase 1). MUST stay lock-free and
+  // non-blocking: it reads only Node-native values + the atomic audio-liveness
+  // getter. It deliberately does NOT call audio.audioGetState() (that locks the
+  // per-station Mutex and could stall during a write). The watchdog's liveness
+  // decision uses just two things: that this responds at all (main process not
+  // hung) and audio.alive (engine thread still firing callbacks).
+  if (req.method === 'GET' && url === '/health') {
+    const now = Date.now();
+    let lastCb = 0;
+    try { lastCb = Number(audio.audioLastCallbackMs?.()) || 0; } catch {}
+    const staleMs = lastCb > 0 ? now - lastCb : null;
+    let sync = null;
+    try {
+      const sch = app._syncScheduler;
+      if (sch) {
+        const s = sch.getProgressState();
+        sync = { running: true, initialComplete: !!s.initialComplete, appliedTotal: s.appliedTotal || 0 };
+      }
+    } catch {}
+    let activeId = null;
+    try { activeId = getActiveStationId(); } catch {}
+    let memRssMb = null;
+    try { memRssMb = Math.round(process.memoryUsage().rss / (1024 * 1024)); } catch {}
+    res.end(JSON.stringify({
+      ok: true,
+      ts: now,
+      pid: process.pid,
+      uptimeSec: Math.round(process.uptime()),
+      audio: { lastCallbackMs: lastCb, staleMs, alive: staleMs !== null && staleMs < 2000 },
+      sync,
+      station: { activeId },
+      memRssMb,
+    }));
+    return;
+  }
 
   if (req.method === 'GET' && url === '/api/status') {
     let state = {};
