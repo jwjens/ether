@@ -55,6 +55,33 @@ function runWatchdog({ behavior, env, runMs }) {
   });
 }
 
+// Adopt harness: spawn a standalone healthy mock (the "already-running Ether"),
+// then start the watchdog with ETHER_ADOPT_PID pointing at it. The watchdog
+// should adopt + monitor it, never spawn. WATCHDOG_TEST_ARGS is set only so a
+// (wrongly) declined adopt would visibly spawn — making the regression fail loud.
+async function runAdopt({ runMs }) {
+  const userData = freshUserData();
+  const mock = spawn(NODE, [MOCK, 'healthy'], {
+    env: { ...process.env, WATCHDOG_USER_DATA: userData },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  await sleep(900); // let the mock bind :3400 before the watchdog health-checks it
+  const wd = spawn(NODE, [WD], {
+    env: {
+      ...process.env, ...FAST,
+      WATCHDOG_USER_DATA: userData,
+      ETHER_ADOPT_PID: String(mock.pid),
+      WATCHDOG_TEST_CMD: NODE,
+      WATCHDOG_TEST_ARGS: `${MOCK} healthy`,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  wd.stdout.on('data', d => out += d); wd.stderr.on('data', d => out += d);
+  await sleep(runMs);
+  return { out, mockPid: mock.pid, wdPid: wd.pid };
+}
+
 function check(name, cond, detail) {
   if (cond) { passed++; console.log(`  PASS  ${name}`); }
   else      { failed++; console.log(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`); }
@@ -122,6 +149,28 @@ function check(name, cond, detail) {
     check('crash-loop: tripped + halted', /CRASH LOOP: .* HALTING auto-restart/.test(out));
     check('crash-loop: alarm marker written', fs.existsSync(path.join(userData, '.ether-ha-alarm')));
     check('crash-loop: stopped respawning (<=3 spawns)', (out.match(/Ether spawned pid/g) || []).length <= 3);
+  }
+
+  // 7. Adopt (Phase 2.5): start watchdog with ETHER_ADOPT_PID pointing at a live,
+  //    healthy Ether → it must ADOPT (monitor) and NOT spawn a second instance.
+  {
+    const { out, mockPid, wdPid } = await runAdopt({ runMs: 3500 });
+    console.log('--- [adopt] ---'); process.stdout.write(indent(out));
+    check('adopt: adopted the live healthy instance', new RegExp(`adopted existing Ether pid ${mockPid} \\(healthy\\)`).test(out));
+    check('adopt: did NOT spawn a second instance', !/Ether spawned pid/.test(out));
+    killTree(wdPid); killTree(mockPid); await sleep(300);
+  }
+
+  // 8. No-storm regression: the app-relaunch→adopt case. Over many poll cycles a
+  //    healthy adopted instance must produce exactly ONE adopt, zero spawns, and
+  //    no crash/respawn loop (the storm that a fresh-spawn-on-adopt would cause).
+  {
+    const { out, mockPid, wdPid } = await runAdopt({ runMs: 5000 });
+    console.log('--- [no-storm] ---'); process.stdout.write(indent(out));
+    check('no-storm: adopted exactly once', (out.match(/adopted existing Ether pid/g) || []).length === 1);
+    check('no-storm: never spawned a duplicate', !/Ether spawned pid/.test(out));
+    check('no-storm: no crash/respawn loop', !/unexpected exit → CRASH/.test(out) && !/respawning after/.test(out));
+    killTree(wdPid); killTree(mockPid); await sleep(300);
   }
 
   console.log(`\n=== ${passed} passed, ${failed} failed ===`);

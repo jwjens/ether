@@ -64,6 +64,31 @@
 // published_episodes  src/components/PublishEpisode.tsx  ~line 428
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── HA watchdog self-dispatch (Phase 3) ──────────────────────────────────────
+// When launched as `Ether.exe --ether-watchdog` (the Scheduled Task at logon and
+// the Phase 2.5 relaunch both use this form), run the watchdog supervisor
+// instead of the app. MUST be the very first thing to execute — before the
+// single-instance lock, Sentry, DB, and window creation — so the watchdog never
+// contends the app's lock and stays a lean windowless background process.
+// watchdog.js uses only Node builtins (no electron `app`). Top-level `return` is
+// valid here (CommonJS module wrapper).
+if (process.argv.includes('--ether-watchdog')) {
+  require('../watchdog/watchdog.js');
+  return;
+}
+
+// ── HA bootstrap CLI flags (Phase 3) ─────────────────────────────────────────
+// `--enable-ha`  : register the per-user logon Scheduled Task + bring up a
+//                  watchdog that ADOPTS this process, then continue normal boot.
+// `--disable-ha` : unregister the task + kill the running watchdog (PID from
+//                  .ether-watchdog.pid), then continue boot. Smoke/manual cleanup.
+// Detected here near the top (per spec), but EXECUTED once /health is listening
+// (see handleHaBootstrapFlags, called from the :3400 listen callback): a watchdog
+// spawned before /health is up would fail to adopt, spawn a 2nd Ether, lose the
+// single-instance race, and look like a crash → respawn storm.
+const _haEnableHaFlag  = process.argv.includes('--enable-ha');
+const _haDisableHaFlag = process.argv.includes('--disable-ha');
+
 // ── DIAGNOSTIC — writes to %TEMP%\ether-diag.txt to pinpoint early crash ─────
 // Remove after the no-window bug is diagnosed.
 (function() {
@@ -1136,11 +1161,172 @@ app.on("before-quit", () => {
   if (levelPushId) { clearInterval(levelPushId); levelPushId = null; }
   if (app._syncScheduler) { app._syncScheduler.stop(); app._syncScheduler = null; }
   app.isQuitting = true;
+  stopWatchdogMonitor(); // don't relaunch a watchdog while we're shutting down
   // HA: signal an intentional quit so the watchdog stands down — UNLESS we're
   // intentionally relaunching (update), in which case the expected-restart
   // sentinel is already written and we must NOT also write clean-exit.
   if (!_haExpectedRestart) writeHaSentinel(".ether-clean-exit");
 });
+
+// ── HA mutual supervision (Phase 2.5) ─────────────────────────
+// The watchdog passes us its PID via ETHER_WATCHDOG_PID when it spawns or adopts
+// us. We watch that PID and relaunch the watchdog if it dies — closing the "who
+// watches the watchdog" gap so the keep-alive is bi-directional. The relaunched
+// watchdog is told to ADOPT us (ETHER_ADOPT_PID=our pid) instead of spawning a
+// second Ether, which would lose the single-instance race, quit, and look to the
+// watchdog like a crash → respawn storm. A storm guard caps relaunches/window.
+const HA_MONITOR_INTERVAL_MS = 10000;
+const HA_RELAUNCH_WINDOW_MS  = 5 * 60 * 1000;
+const HA_MAX_RELAUNCHES      = 3;
+let _haWatchdogPid  = Number(process.env.ETHER_WATCHDOG_PID) || 0;
+let _haMonitorTimer = null;
+let _haMonitorOff   = false; // set on intentional quit / ha:disable
+const _haRelaunchTimes = [];
+
+function _haIsAlive(pid) {
+  if (!pid) return false;
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+// Mirror of the watchdog's own dev/packaged spawn logic, inverted — WE launch
+// the watchdog. Packaged: execPath is Ether.exe → `Ether.exe --ether-watchdog`.
+// Dev: execPath is electron.exe → `electron <appRoot> --ether-watchdog`. Either
+// way the launched process self-dispatches into watchdog.js (main.js top).
+function _haWatchdogSpawnSpec() {
+  const isDev = /node_modules[\\/]electron/i.test(process.execPath);
+  const appRoot = path.resolve(__dirname, "..");
+  const args = isDev ? [appRoot, "--ether-watchdog"] : ["--ether-watchdog"];
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;           // launch as the app (it self-dispatches)
+  env.ETHER_ADOPT_PID = String(process.pid); // adopt us; do NOT spawn a 2nd Ether
+  return { cmd: process.execPath, args, env };
+}
+
+function _haRelaunchesInWindow() {
+  const cutoff = Date.now() - HA_RELAUNCH_WINDOW_MS;
+  while (_haRelaunchTimes.length && _haRelaunchTimes[0] < cutoff) _haRelaunchTimes.shift();
+  return _haRelaunchTimes.length;
+}
+
+// Spawn a fresh, DETACHED watchdog (it's our supervisor — it must outlive us, so
+// it can respawn the app if we crash next). Returns the new pid, or 0 on failure
+// / storm-guard trip.
+function relaunchWatchdog() {
+  if (_haMonitorOff || app.isQuitting) return 0;
+  if (_haRelaunchesInWindow() >= HA_MAX_RELAUNCHES) {
+    console.error(`[HA] watchdog relaunch storm guard tripped (>=${HA_MAX_RELAUNCHES} in ${HA_RELAUNCH_WINDOW_MS / 1000}s) — giving up until next launch`);
+    _haMonitorOff = true;
+    return 0;
+  }
+  try {
+    const { spawn } = require("child_process");
+    const { cmd, args, env } = _haWatchdogSpawnSpec();
+    _haRelaunchTimes.push(Date.now());
+    const child = spawn(cmd, args, { env, stdio: "ignore", detached: true });
+    child.unref(); // don't keep us alive for it, and don't let our exit kill it
+    _haWatchdogPid = child.pid;
+    console.log(`[HA] relaunched watchdog pid ${child.pid} (adopt ${process.pid})`);
+    return child.pid;
+  } catch (e) {
+    console.error("[HA] watchdog relaunch failed:", e.message);
+    return 0;
+  }
+}
+
+// Begin watching the watchdog PID. Called once /health is listening (so an
+// adopt-relaunch can succeed) and from ha:enable. No-op if we have no watchdog
+// PID (app launched directly, not under HA) — we never spawn an unsolicited one.
+function startWatchdogMonitor(pid) {
+  if (pid) _haWatchdogPid = pid;
+  _haMonitorOff = false;
+  if (!_haWatchdogPid || _haMonitorTimer) return;
+  console.log(`[HA] mutual supervision active — monitoring watchdog pid ${_haWatchdogPid}`);
+  _haMonitorTimer = setInterval(() => {
+    if (_haMonitorOff || app.isQuitting) return;
+    if (!_haIsAlive(_haWatchdogPid)) {
+      console.warn(`[HA] watchdog pid ${_haWatchdogPid} is gone — relaunching`);
+      relaunchWatchdog();
+    }
+  }, HA_MONITOR_INTERVAL_MS);
+  if (_haMonitorTimer.unref) _haMonitorTimer.unref();
+}
+
+function stopWatchdogMonitor() {
+  _haMonitorOff = true;
+  if (_haMonitorTimer) { clearInterval(_haMonitorTimer); _haMonitorTimer = null; }
+}
+
+// ── HA control surface (Phase 3/4 Settings + IPC) ─────────────
+// Loads the per-OS watchdog platform module (register/unregister/status of the
+// logon Scheduled Task). null on an unsupported platform → handlers degrade.
+function loadHaPlatform() {
+  try { return require(`../watchdog/platform/${process.platform}`); } catch { return null; }
+}
+function _haConfigPath() { return path.join(app.getPath("userData"), "ha-config.json"); }
+function readHaConfigFile() {
+  try { return JSON.parse(fs.readFileSync(_haConfigPath(), "utf8")); } catch { return { enabled: true }; }
+}
+function _haAlarmActive() {
+  try { return fs.existsSync(path.join(app.getPath("userData"), ".ether-ha-alarm")); } catch { return false; }
+}
+
+ipcMain.handle("ha:status", () => {
+  const plat = loadHaPlatform();
+  const startup = plat && plat.startupStatus ? plat.startupStatus() : { registered: false };
+  return {
+    platform: process.platform,
+    supported: !!(plat && plat.registerStartup && process.platform === "win32"),
+    config: readHaConfigFile(),
+    startup,
+    watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer },
+    alarm: _haAlarmActive(),
+  };
+});
+
+// ha:enable / ha:disable / ha:repair — deferred to Phase 4, where the customer-
+// facing Settings toggle lands. Phase 3 exposes ha:status only; HA is turned on
+// by the --enable-ha / --disable-ha CLI flags (handleHaBootstrapFlags), not a
+// runtime IPC toggle.
+
+function _haWatchdogPidFile() { return path.join(app.getPath("userData"), ".ether-watchdog.pid"); }
+function readWatchdogPidFile() {
+  try { return Number(fs.readFileSync(_haWatchdogPidFile(), "utf8").trim()) || 0; } catch { return 0; }
+}
+function removeWatchdogPidFile() { try { fs.unlinkSync(_haWatchdogPidFile()); } catch { /* none */ } }
+function _haKillWatchdog(pid) {
+  if (!pid) return;
+  // NO /T: the watchdog may have spawned US as its child, and /T takes the whole
+  // tree — which would kill this app. Kill only the watchdog process itself.
+  try { require("child_process").spawnSync("taskkill", ["/F", "/PID", String(pid)], { stdio: "ignore" }); } catch { /* best effort */ }
+}
+
+// Executes the --enable-ha / --disable-ha CLI flags. Called from the :3400 listen
+// callback so /health is already answering (the adopting spawn depends on it).
+function handleHaBootstrapFlags() {
+  const plat = loadHaPlatform();
+  if (_haDisableHaFlag) {
+    stopWatchdogMonitor(); // FIRST — don't relaunch the watchdog we're about to kill
+    let unreg = { ok: false, error: "platform unsupported" };
+    if (plat && plat.unregisterStartup) { try { unreg = plat.unregisterStartup(); } catch (e) { unreg = { ok: false, error: e.message }; } }
+    const pid = _haWatchdogPid || readWatchdogPidFile();
+    _haKillWatchdog(pid);
+    removeWatchdogPidFile();
+    _haWatchdogPid = 0;
+    console.log(`[HA] --disable-ha: unregister ok=${unreg.ok}${unreg.error ? " err=" + unreg.error : ""}, killed watchdog pid ${pid || "none"}`);
+    return;
+  }
+  if (_haEnableHaFlag) {
+    let reg = { ok: false, error: "platform unsupported" };
+    if (plat && plat.registerStartup) { try { reg = plat.registerStartup(); } catch (e) { reg = { ok: false, error: e.message }; } }
+    console.log(`[HA] --enable-ha: registerStartup ok=${reg.ok}${reg.error ? " err=" + reg.error : ""}, task=${reg.taskName || "?"}`);
+    // Bring a watchdog up for THIS session (adopting us) if none is supervising.
+    if (!_haIsAlive(_haWatchdogPid)) {
+      _haMonitorOff = false; _haRelaunchTimes.length = 0;
+      const pid = relaunchWatchdog();
+      console.log(`[HA] --enable-ha: spawned adopting watchdog pid ${pid || "FAILED"} (adopt ${process.pid})`);
+    }
+  }
+}
 
 // ── IPC Handlers ──────────────────────────────────────────────
 // These replace all Tauri invoke() calls
@@ -2838,6 +3024,11 @@ irisHttpServer.on('error', (err) => {
 });
 irisHttpServer.listen(3400, '0.0.0.0', () => {
   console.log('[API] REST server listening on http://0.0.0.0:3400');
+  // HA: /health can now answer, so a (re)spawned watchdog can adopt us instead of
+  // racing into a fresh spawn. Run the --enable-ha/--disable-ha bootstrap here,
+  // then begin mutual supervision (no-op unless launched under a watchdog).
+  handleHaBootstrapFlags();
+  startWatchdogMonitor();
 });
 
 // Mark Iris disconnected if no ping for 30 seconds

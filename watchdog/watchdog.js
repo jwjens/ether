@@ -55,6 +55,7 @@ const USER_DATA = process.env.WATCHDOG_USER_DATA || platform.userDataDir();
 const CLEAN_EXIT        = path.join(USER_DATA, '.ether-clean-exit');
 const EXPECTED_RESTART  = path.join(USER_DATA, '.ether-expected-restart');
 const ALARM_MARKER      = path.join(USER_DATA, '.ether-ha-alarm');
+const PID_FILE          = path.join(USER_DATA, '.ether-watchdog.pid'); // our pid, so `Ether --disable-ha` can find+kill us
 const LOG_PATH          = path.join(USER_DATA, 'watchdog.log');
 const SENTINEL_FRESH_MS = 30000;
 
@@ -96,11 +97,14 @@ function etherSpawnSpec() {
   const appRoot = path.resolve(__dirname, '..');
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.ETHER_ADOPT_PID;                    // our adopt hint must not leak to the app
+  env.ETHER_WATCHDOG_PID = String(process.pid);  // Phase 2.5: the app monitors us via this
   return { cmd: process.execPath, args: isDev ? [appRoot] : [], env };
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
-let child = null;
+let child = null;        // ChildProcess when WE spawned Ether; null when adopted
+let trackedPid = null;   // the pid under supervision (spawned child OR adopted app)
 let missCount = 0;
 let pollTimer = null;
 let halted = false;          // crash-loop tripped — quiescent
@@ -135,9 +139,9 @@ function checkHealth() {
 }
 
 async function poll() {
-  if (!child || stopping || halted) return;
+  if (!trackedPid || stopping || halted) return;
   const h = await checkHealth();
-  if (!child || stopping || halted) return;
+  if (!trackedPid || stopping || halted) return;
   if (h.ok) {
     if (missCount > 0) log(`health recovered after ${missCount} miss(es)`);
     missCount = 0;
@@ -146,13 +150,22 @@ async function poll() {
   }
   missCount++;
   log(`health miss ${missCount}/${T.maxConsecutiveMisses} (${h.reason})`);
-  if (missCount >= T.maxConsecutiveMisses) {
-    if (platform.isProcessAlive(child.pid)) {
-      log(`HANG declared — force-killing pid ${child.pid}`);
-      handleHang();
-    } else {
-      log('process already gone during hang check — child exit handler will respawn');
-    }
+  if (missCount < T.maxConsecutiveMisses) return;
+
+  if (platform.isProcessAlive(trackedPid)) {
+    // Alive but unresponsive → hang. Applies to both spawned and adopted.
+    log(`HANG declared — force-killing pid ${trackedPid}`);
+    handleHang();
+  } else if (child) {
+    // Spawned child already gone — its 'exit' event owns the respawn; don't
+    // double-handle here (that was the Phase 2 double-spawn bug).
+    log(`tracked child pid ${trackedPid} gone — exit handler will respawn`);
+  } else {
+    // ADOPTED process died: no ChildProcess → no exit event, so handle here.
+    log(`adopted pid ${trackedPid} gone (no exit event) → crash path`);
+    stopPolling();
+    trackedPid = null;
+    scheduleCrashRespawn();
   }
 }
 
@@ -168,23 +181,49 @@ function spawnEther(reason) {
   missCount = 0;
   log(`spawning Ether (${reason}) — restarts in window: ${restartsInWindow()}/${T.maxRestartsInWindow}`);
   try {
-    child = spawn(cmd, args, { env, stdio: 'ignore', detached: false });
+    // detached: the app must OUTLIVE the watchdog. If the watchdog process dies,
+    // a non-detached child would die with it (Windows job/parent teardown) —
+    // then Ether's own Phase 2.5 monitor could never relaunch the watchdog. We
+    // still keep the handle (no unref) so 'exit' fires for crash detection, and
+    // killHard (taskkill /T) still tears the app down on a hang.
+    child = spawn(cmd, args, { env, stdio: 'ignore', detached: true });
   } catch (e) {
     log(`spawn threw: ${e.message} — retrying after backoff`);
     scheduleCrashRespawn();
     return;
   }
   const myPid = child.pid;
+  trackedPid = myPid;
   log(`Ether spawned pid ${myPid}`);
   child.on('exit', (code, signal) => onChildExit(myPid, code, signal));
   child.on('error', (e) => log(`child error: ${e.message}`));
   startPolling();
 }
 
+// Adopt an already-running Ether (Phase 2.5 relaunch, or Settings-enable while
+// the app is already up) instead of spawning a new one — a fresh spawn would hit
+// requestSingleInstanceLock, quit, and look like a crash → respawn storm.
+// Adopted processes have no ChildProcess, so death is detected by the poll loop.
+async function adoptEther(adoptPid) {
+  const alive = platform.isProcessAlive(adoptPid);
+  const h = alive ? await checkHealth() : { ok: false, reason: 'not alive' };
+  if (alive && h.ok) {
+    child = null;
+    trackedPid = adoptPid;
+    missCount = 0;
+    log(`adopted existing Ether pid ${adoptPid} (healthy) — monitoring, not spawning`);
+    startPolling();
+    return true;
+  }
+  log(`adopt(${adoptPid}) declined (${alive ? 'unhealthy' : 'not alive'}) — spawning fresh`);
+  return false;
+}
+
 function onChildExit(pid, code, signal) {
   stopPolling();
   if (stopping) return;
   child = null;
+  trackedPid = null;
   if (intentionalKill) {
     intentionalKill = false;
     log(`Ether pid ${pid} killed by watchdog (hang) — respawn handled by the hang path`);
@@ -216,9 +255,15 @@ function scheduleCrashRespawn() {
 
 function handleHang() {
   stopPolling();
-  const pid = child && child.pid;
+  const pid = trackedPid;
+  const wasSpawned = !!child; // only a spawned child fires onChildExit
   child = null;
-  intentionalKill = true; // tell onChildExit we own the respawn (no crash path)
+  trackedPid = null;
+  // Suppress the spawned child's exit→crash path (this kill owns the respawn).
+  // For an ADOPTED process there's no ChildProcess/exit event, so arming the
+  // flag would leak onto the NEXT spawned child's real crash — only arm it when
+  // we actually had a child.
+  intentionalKill = wasSpawned;
   platform.killHard(pid);
   // Respawn only once the old process is gone AND :3400 refuses, so the new
   // instance isn't bounced by requestSingleInstanceLock (main.js:144).
@@ -272,6 +317,7 @@ function tripCrashLoop() {
 function shutdown(code) {
   stopping = true;
   stopPolling();
+  try { fs.unlinkSync(PID_FILE); } catch { /* none */ }
   process.exit(code);
 }
 
@@ -282,12 +328,22 @@ function main() {
   try { fs.unlinkSync(ALARM_MARKER); } catch { /* none */ }      // clear stale alarm on fresh start
   try { fs.unlinkSync(CLEAN_EXIT); } catch { /* none */ }        // don't let a stale sentinel mislead us
   try { fs.unlinkSync(EXPECTED_RESTART); } catch { /* none */ }
-  log(`watchdog starting (platform=${process.platform}, userData=${USER_DATA})`);
+  try { fs.mkdirSync(USER_DATA, { recursive: true }); fs.writeFileSync(PID_FILE, String(process.pid)); } catch { /* best effort */ }
+  log(`watchdog starting (platform=${process.platform}, userData=${USER_DATA}, pid=${process.pid})`);
   process.on('SIGINT',  () => { log('SIGINT — stopping');  shutdown(0); });
   process.on('SIGTERM', () => { log('SIGTERM — stopping'); shutdown(0); });
   process.on('uncaughtException',  (e) => { try { log(`uncaughtException ${e && e.stack || e}`); } catch {} });
   process.on('unhandledRejection', (e) => { try { log(`unhandledRejection ${e}`); } catch {} });
-  spawnEther('initial');
+
+  // If launched with an adopt hint (Phase 2.5 relaunch / Settings-enable while
+  // the app is already running), adopt that live instance instead of spawning a
+  // second one. Otherwise cold-start a fresh Ether.
+  const adoptPid = Number(process.env.ETHER_ADOPT_PID) || 0;
+  if (adoptPid) {
+    adoptEther(adoptPid).then((ok) => { if (!ok) spawnEther('initial'); }).catch(() => spawnEther('initial'));
+  } else {
+    spawnEther('initial');
+  }
 }
 
 try { main(); }
