@@ -1346,9 +1346,9 @@ export default function App() {
           )}
           <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
           {currentPlan === "free" && (
-            <button onClick={() => setPanel("subscription")} title="Upgrade to Pro" style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
+            <button onClick={() => setPanel("subscription")} title="Upgrade to Studio" style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              {!viewport.medium && "Pro"}
+              {!viewport.medium && "Studio"}
             </button>
           )}
           {panel !== "live" && (
@@ -3869,7 +3869,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           </button>
           {isStation
             ? <button onClick={() => setShowNexGen(!showNexGen)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showNexGen ? "Cancel" : "NexGen / ENCO"}</button>
-            : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Station plan required">🔒 NexGen / ENCO</button>
+            : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Network plan required">🔒 NexGen / ENCO</button>
           }
           <button onClick={() => { setShowCreateCat(p => !p); setShowImport(false); }} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: showCreateCat ? "var(--accent-purple)" : "var(--bg-secondary)", color: showCreateCat ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showCreateCat ? "Cancel" : "+ Category"}</button>
           <button onClick={() => { setShowImport(p => !p); setShowCreateCat(false); }} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>

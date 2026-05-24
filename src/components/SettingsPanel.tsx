@@ -898,7 +898,7 @@ function SyncSection() {
         </div>
       </div>
       <div style={{ padding: "16px 20px" }}>
-        <SettingRow label="Enable sync" hint="Pushes and pulls mutations every 5 seconds. Requires an active Pro or Station license.">
+        <SettingRow label="Enable sync" hint="Pushes and pulls mutations every 5 seconds. Requires an active Studio or Network license.">
           <Toggle value={enabled} onChange={toggle} label="" />
         </SettingRow>
 

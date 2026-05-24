@@ -68,7 +68,7 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
           }
           setOpen(o => !o);
         }}
-        title={stations.length > 1 ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Operator to manage multiple stations"}
+        title={stations.length > 1 ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Enterprise to manage multiple stations"}
         style={{
           display: "inline-flex", alignItems: "center", gap: 5,
           height: 32, padding: "0 10px", borderRadius: 0,

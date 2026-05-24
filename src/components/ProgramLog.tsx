@@ -897,7 +897,7 @@ export default function ProgramLog({ onClose }: Props) {
           </div>
           <button
             onClick={isPro ? exportPDF : () => window.dispatchEvent(new CustomEvent("ether:open-subscription"))}
-            title={isPro ? "Export professional PDF traffic report" : "Pro plan required"}
+            title={isPro ? "Export professional PDF traffic report" : "Studio plan required"}
             style={{
               padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700,
               cursor: "pointer",

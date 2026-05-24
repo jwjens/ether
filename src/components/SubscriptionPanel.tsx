@@ -161,11 +161,11 @@ export default function SubscriptionPanel() {
   };
 
   const planLabel = (plan: PlanTier) => {
-    if (plan === "pro")              return "Ether Creator";
-    if (plan === "station")          return "Ether Station";
-    if (plan === "pro_lifetime")     return "Creator Lifetime";
-    if (plan === "station_lifetime") return "Station Lifetime";
-    return "Free";
+    if (plan === "pro")              return "Studio";
+    if (plan === "station")          return "Network";
+    if (plan === "pro_lifetime")     return "Studio Lifetime";
+    if (plan === "station_lifetime") return "Network Lifetime";
+    return "Solo";
   };
 
   // ── Early Adopter ribbon (corner) ─────────────────────────────
@@ -338,14 +338,14 @@ export default function SubscriptionPanel() {
       {billingMode === "monthly" && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginBottom: 32 }}>
 
-          {/* Free */}
+          {/* Solo */}
           <div style={{
             background: "var(--bg-secondary)", borderRadius: 0,
             border: `1px solid ${currentPlan === "free" ? "#34d39940" : "var(--border-primary)"}`,
             padding: "24px 20px",
             boxShadow: currentPlan === "free" ? "0 0 24px rgba(52,211,153,0.08)" : "none",
           }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 12 }}>Free</div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 12 }}>Solo</div>
             <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "#34d399", marginBottom: 4 }}>$0</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>forever · no credit card</div>
             <div style={{ padding: "10px 0", borderRadius: 0, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", textAlign: "center" as const, fontSize: 12, fontWeight: 700, color: "#34d399", marginBottom: 20 }}>
@@ -363,7 +363,7 @@ export default function SubscriptionPanel() {
             </div>
           </div>
 
-          {/* Creator */}
+          {/* Studio */}
           <div style={{
             background: "var(--bg-secondary)", borderRadius: 0,
             border: `2px solid ${currentPlan === "pro" ? "#22d3ee" : "rgba(34,211,238,0.25)"}`,
@@ -371,7 +371,7 @@ export default function SubscriptionPanel() {
             boxShadow: "0 0 32px rgba(34,211,238,0.08)",
           }}>
             <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "#22d3ee", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Creator</div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Studio</div>
             <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>per month · solo creator / podcaster</div>
             {currentPlan === "pro" ? (
@@ -380,11 +380,11 @@ export default function SubscriptionPanel() {
               </button>
             ) : (
               <button onClick={() => openCheckout("pro")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "#22d3ee", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, boxShadow: "0 0 24px rgba(34,211,238,0.3)", fontFamily: "'Syne', sans-serif" }}>
-                {currentPlan === "station" ? "Downgrade to Creator" : "Upgrade to Creator →"}
+                {currentPlan === "station" ? "Downgrade to Studio" : "Upgrade to Studio →"}
               </button>
             )}
             <div style={{ display: "flex", flexDirection: "column" as const, gap: 7 }}>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Free, plus:</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Solo, plus:</div>
               {FEATURES.filter(f => f.pro).map(f => (
                 <div key={f.label} style={{ fontSize: 11, color: f.comingSoon ? "var(--text-tertiary)" : "var(--text-secondary)", display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <span style={{ color: "#22d3ee", flexShrink: 0 }}>✓</span>
@@ -396,14 +396,14 @@ export default function SubscriptionPanel() {
             </div>
           </div>
 
-          {/* Station */}
+          {/* Network */}
           <div style={{
             background: "var(--bg-secondary)", borderRadius: 0,
             border: `1px solid ${currentPlan === "station" ? "#a78bfa40" : "var(--border-primary)"}`,
             padding: "24px 20px",
             boxShadow: currentPlan === "station" ? "0 0 24px rgba(167,139,250,0.08)" : "none",
           }}>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#a78bfa", textTransform: "uppercase" as const, marginBottom: 12 }}>Station</div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#a78bfa", textTransform: "uppercase" as const, marginBottom: 12 }}>Network</div>
             <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$79</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>per month · commercial station</div>
             {currentPlan === "station" ? (
@@ -412,11 +412,11 @@ export default function SubscriptionPanel() {
               </button>
             ) : (
               <button onClick={() => openCheckout("station")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, fontFamily: "'Syne', sans-serif" }}>
-                {currentPlan === "pro" ? "Upgrade to Station →" : "Get Station →"}
+                {currentPlan === "pro" ? "Upgrade to Network →" : "Get Network →"}
               </button>
             )}
             <div style={{ display: "flex", flexDirection: "column" as const, gap: 7 }}>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Creator, plus:</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Studio, plus:</div>
               {FEATURES.filter(f => f.station && !f.pro).map(f => (
                 <div key={f.label} style={{ fontSize: 11, color: f.comingSoon ? "var(--text-tertiary)" : "var(--text-secondary)", display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <span style={{ color: "#a78bfa", flexShrink: 0 }}>✓</span>
@@ -449,7 +449,7 @@ export default function SubscriptionPanel() {
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 32, maxWidth: 820, margin: "0 auto 32px" }}>
 
-            {/* Creator Lifetime */}
+            {/* Studio Lifetime */}
             <div style={{
               background: "var(--bg-secondary)", borderRadius: 0,
               border: `1px solid ${currentPlan === "pro_lifetime" ? "#f59e0b" : "rgba(245,158,11,0.25)"}`,
@@ -464,7 +464,7 @@ export default function SubscriptionPanel() {
                 <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.14em", color: "#f59e0b" }}>LIFETIME</span>
               </div>
 
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#f59e0b", textTransform: "uppercase" as const, marginBottom: 6 }}>Creator Lifetime</div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#f59e0b", textTransform: "uppercase" as const, marginBottom: 6 }}>Studio Lifetime</div>
               <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 18, fontStyle: "italic" }}>Own it forever.</div>
 
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
@@ -475,14 +475,14 @@ export default function SubscriptionPanel() {
 
               {currentPlan === "pro_lifetime" ? (
                 <div style={{ width: "100%", padding: "11px 0", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", color: "#f59e0b", fontSize: 12, fontWeight: 700, textAlign: "center" as const, marginBottom: 8 }}>
-                  ✓ Creator Lifetime Active
+                  ✓ Studio Lifetime Active
                 </div>
               ) : (
                 <button
                   onClick={() => openCheckout("pro_lifetime")}
                   style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "#f59e0b", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 8, fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em" }}
                 >
-                  Get Creator Lifetime →
+                  Get Studio Lifetime →
                 </button>
               )}
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const, marginBottom: 24 }}>
@@ -490,7 +490,7 @@ export default function SubscriptionPanel() {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column" as const, gap: 7 }}>
-                <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Creator, forever:</div>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Studio, forever:</div>
                 {FEATURES.filter(f => f.pro).slice(0, 8).map(f => (
                   <div key={f.label} style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <span style={{ color: "#f59e0b", flexShrink: 0 }}>✓</span>{f.label}
@@ -505,7 +505,7 @@ export default function SubscriptionPanel() {
               </div>
             </div>
 
-            {/* Station Lifetime */}
+            {/* Network Lifetime */}
             <div style={{
               background: "linear-gradient(160deg, rgba(245,158,11,0.07) 0%, var(--bg-secondary) 60%)",
               borderRadius: 0,
@@ -530,7 +530,7 @@ export default function SubscriptionPanel() {
                 </div>
               </div>
 
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#f59e0b", textTransform: "uppercase" as const, marginBottom: 6 }}>Station Lifetime</div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#f59e0b", textTransform: "uppercase" as const, marginBottom: 6 }}>Network Lifetime</div>
               <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 18, fontStyle: "italic" }}>The professional choice.</div>
 
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
@@ -541,14 +541,14 @@ export default function SubscriptionPanel() {
 
               {currentPlan === "station_lifetime" ? (
                 <div style={{ width: "100%", padding: "11px 0", background: "rgba(245,158,11,0.1)", border: "1px solid rgba(245,158,11,0.3)", color: "#f59e0b", fontSize: 12, fontWeight: 700, textAlign: "center" as const, marginBottom: 8 }}>
-                  ✓ Station Lifetime Active
+                  ✓ Network Lifetime Active
                 </div>
               ) : (
                 <button
                   onClick={() => openCheckout("station_lifetime")}
                   style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "#f59e0b", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 8, fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", boxShadow: "0 0 28px rgba(245,158,11,0.35)" }}
                 >
-                  Get Station Lifetime →
+                  Get Network Lifetime →
                 </button>
               )}
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const, marginBottom: 24 }}>
@@ -556,7 +556,7 @@ export default function SubscriptionPanel() {
               </div>
 
               <div style={{ display: "flex", flexDirection: "column" as const, gap: 7 }}>
-                <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Station, forever:</div>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Network, forever:</div>
                 {FEATURES.filter(f => f.pro || f.station).slice(0, 10).map(f => (
                   <div key={f.label} style={{ fontSize: 11, color: "var(--text-secondary)", display: "flex", gap: 8, alignItems: "flex-start" }}>
                     <span style={{ color: "#f59e0b", flexShrink: 0 }}>✓</span>{f.label}
@@ -582,11 +582,11 @@ export default function SubscriptionPanel() {
       {currentPlan === "free" && billingMode === "monthly" && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "rgba(124,58,237,0.07)", border: "1px solid rgba(124,58,237,0.25)", borderRadius: 0, marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Syne', sans-serif" }}>You're on the Free plan</div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Creator for Iris AI assistant, cloud backup, remote dashboard, and more</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Syne', sans-serif" }}>You're on the Solo plan</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Studio for Iris AI assistant, cloud backup, remote dashboard, and more</div>
           </div>
           <button onClick={() => openCheckout("pro")} style={{ flexShrink: 0, marginLeft: 20, padding: "10px 20px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" as const }}>
-            Upgrade to Creator — $19/mo
+            Upgrade to Studio — $19/mo
           </button>
         </div>
       )}

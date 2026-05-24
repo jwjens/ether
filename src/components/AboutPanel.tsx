@@ -297,7 +297,7 @@ export default function AboutPanel({ onClose }: Props) {
               {/* Legal footer */}
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", lineHeight: 1.6, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 16 }}>
                 Ether is free and open-source software. The core platform will always be free.
-                Pro and Station plans fund continued development. © 2025–2026 Ether Technologies.
+                Studio and Network plans fund continued development. © 2025–2026 Ether Technologies.
                 Released under the MIT License.
               </div>
             </div>

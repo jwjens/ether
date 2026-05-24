@@ -269,7 +269,7 @@ export default function StationManager({ onStationSwitch }: Props) {
       {/* Header */}
       <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Operator</div>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Enterprise</div>
           <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Station Manager</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
             {stations.length} station{stations.length !== 1 ? "s" : ""} · {stations.find(s => s.is_active)?.name ?? "none"} active

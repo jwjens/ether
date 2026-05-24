@@ -551,7 +551,7 @@ export default function CloudBackup() {
 
           <div style={{ marginTop: 10, fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
             Backs up: play history, program logs, scheduling data.
-            {plan === "pro" ? ` Pro plan: last ${backupLimit ?? 30} backups stored.` : " Station plan: unlimited backups."}
+            {plan === "pro" ? ` Studio plan: last ${backupLimit ?? 30} backups stored.` : " Network plan: unlimited backups."}
           </div>
         </div>
 

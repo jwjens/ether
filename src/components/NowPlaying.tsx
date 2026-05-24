@@ -81,8 +81,8 @@ const WMO: Record<number, [string, string]> = {
 const MOCK_ADS = [
   { bg: "linear-gradient(135deg,#0f172a,#1e1b4b)", accent: "#a78bfa", logo: "⚡", headline: "Ether Technologies", sub: "Professional Broadcast Automation", tag: "FREE TO DOWNLOAD", url: "ether-technologies.com" },
   { bg: "linear-gradient(135deg,#0c1a0c,#052e16)", accent: "#34d399", logo: "📻", headline: "Broadcast Smarter", sub: "Replace RCS Zetta & WideOrbit — for $0", tag: "OPEN SOURCE", url: "github.com/jwjens/ether" },
-  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "#38bdf8", logo: "🎙️", headline: "Ether Pro", sub: "Cloud backup · Analytics · Remote dashboard", tag: "$19 / MONTH", url: "ether-technologies.com/#pricing" },
-  { bg: "linear-gradient(135deg,#1a0a2e,#2d1b69)", accent: "#c084fc", logo: "🏢", headline: "Ether Station", sub: "Multi-station · NexGen import · ASIO audio", tag: "$79 / MONTH", url: "ether-technologies.com/#pricing" },
+  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "#38bdf8", logo: "🎙️", headline: "Ether Studio", sub: "Cloud backup · Analytics · Remote dashboard", tag: "$19 / MONTH", url: "ether-technologies.com/#pricing" },
+  { bg: "linear-gradient(135deg,#1a0a2e,#2d1b69)", accent: "#c084fc", logo: "🏢", headline: "Ether Network", sub: "Multi-station · NexGen import · ASIO audio", tag: "$79 / MONTH", url: "ether-technologies.com/#pricing" },
 ];
 
 function MockAdRotator() {
@@ -315,7 +315,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
             {widgetType === "twitter" && (
               <div style={{ textAlign: "center" as const, padding: 48 }}>
                 <div style={{ fontSize: 72, marginBottom: 20, opacity: 0.12, fontFamily: "serif" }}>𝕏</div>
-                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.18)", lineHeight: 2 }}>Twitter / X Ticker<br/>Coming soon in Ether Pro</div>
+                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.18)", lineHeight: 2 }}>Twitter / X Ticker<br/>Coming soon in Ether Studio</div>
               </div>
             )}
           </div>

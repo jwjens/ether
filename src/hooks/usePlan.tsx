@@ -103,7 +103,7 @@ export function UpgradePrompt({ feature, required, compact = false, onUpgrade }:
   // Operator tier is enterprise-only — never show a self-serve upgrade prompt
   if (required === "operator") return null;
 
-  const label  = required === "pro" ? "Pro" : "Station";
+  const label  = required === "pro" ? "Studio" : "Network";
   const color  = required === "pro" ? "#22d3ee" : "#a78bfa";
   const price  = required === "pro" ? "$19/mo" : "$79/mo";
 
