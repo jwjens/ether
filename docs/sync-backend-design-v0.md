@@ -8,7 +8,7 @@
 
 ## 1. Scope and Purpose
 
-This document specifies the server-side architecture for the Ether Radio sync backend. It covers database design, multi-tenant model, auth, endpoint contracts, storage, and operations. It does **not** cover client-side merge logic, HLC semantics, or the mutation wire format — those are locked in sync-protocol-v0.md.
+This document specifies the server-side architecture for the Ether sync backend. It covers database design, multi-tenant model, auth, endpoint contracts, storage, and operations. It does **not** cover client-side merge logic, HLC semantics, or the mutation wire format — those are locked in sync-protocol-v0.md.
 
 The backend is an append log with filtered read access. It does not merge, resolve conflicts, or apply LWW — all of that is client-side. The server's job is:
 

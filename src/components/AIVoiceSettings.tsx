@@ -65,6 +65,9 @@ export default function AIVoiceSettings() {
   const [savedMsg, setSavedMsg] = useState("");
   const [testStatus, setTestStatus] = useState("");
   const [testAudio, setTestAudio]   = useState<string | null>(null);
+  // Customer's actual station name — used in the TTS test utterance so the
+  // demo says the customer's real station, not a placeholder.
+  const [stationName, setStationName] = useState<string>("");
 
   useEffect(() => {
     ether?.ai?.getConfig?.().then((c: Config) => {
@@ -72,6 +75,17 @@ export default function AIVoiceSettings() {
       if (c.provider !== "browser" && c.apiKey) loadVoices(c.provider, c.apiKey);
       if (c.provider === "browser") loadBrowserVoices();
     });
+    const sid = getActiveStationIdSync();
+    if (sid) {
+      (async () => {
+        try {
+          const result = await ether.stationConfigKv.list(sid);
+          const rows = result?.ok ? result.rows : [];
+          const sn = rows.find((r: any) => r.key === "station_name")?.value;
+          if (sn) setStationName(sn);
+        } catch {}
+      })();
+    }
   }, []);
 
   const loadBrowserVoices = () => {
@@ -119,7 +133,10 @@ export default function AIVoiceSettings() {
       await ether.ai.setConfig(config);
       if (config.provider === "browser") {
         // Browser TTS: use SpeechSynthesis directly
-        const u = new SpeechSynthesisUtterance("This is your AI DJ. Up next, the latest from Ether Radio.");
+        const text = stationName
+          ? `This is your AI DJ. Up next, the latest from ${stationName}.`
+          : "This is your AI DJ. Up next, your latest tracks.";
+        const u = new SpeechSynthesisUtterance(text);
         const v = window.speechSynthesis.getVoices().find(v => v.voiceURI === config.voiceId);
         if (v) u.voice = v;
         window.speechSynthesis.speak(u);
@@ -129,7 +146,7 @@ export default function AIVoiceSettings() {
       }
       const r = await ether.ai.generate({
         title: "Test clip",
-        script: "This is your AI DJ. Up next on Ether Radio, the freshest sound on the dial.",
+        script: "This is your AI DJ. Up next on {{stationName}}, the freshest sound on the dial.",
         stationId: getActiveStationIdSync(),
       });
       if (r?.ok) {

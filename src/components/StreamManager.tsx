@@ -99,7 +99,7 @@ export default function StreamManager() {
           mount: settings.mount,
           password: settings.password,
           bitrate: settings.bitrate,
-          station_name: settings.station_name || "Ether Radio",
+          station_name: settings.station_name || "",
         }
       });
       setStreaming(true);

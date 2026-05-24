@@ -773,7 +773,7 @@ export default function App() {
         if (rows.length > 0) widget = rows[0].value;
       } catch {}
       emit("now-playing-update", {
-        title: stA?.title || "Ether Radio", artist: stA?.artist || "",
+        title: stA?.title || "", artist: stA?.artist || "",
         position: stA?.positionSec || 0, duration: stA?.durationSec || 0,
         widget,
         upcoming: engine.getQueue().slice(0, 10).map(q => ({ title: q.title, artist: q.artist, duration: 0 })),

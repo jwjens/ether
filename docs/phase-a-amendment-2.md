@@ -235,7 +235,7 @@ capability. Out of scope for Phase A.
 ### OI-A2-4 — DNS / public hostname for Icecast
 
 The current Icecast URL is a bare IP address (`44.244.52.207`). Icecast stream metadata sent to
-listeners and embedded in stream headers uses this IP. A public hostname (e.g., `stream.ether.fm`
+listeners and embedded in stream headers uses this IP. A public hostname (e.g., `stream.ether-technologies.com`
 or `radio.ovbroadcast.com`) is needed before public listener URLs are shared.
 
 **Action**: Assign a DNS hostname to the Lightsail static IP. Update `icecast_admin_credentials`

@@ -263,7 +263,7 @@ function installAIVoice(ipcMain, database, opts = {}) {
       // First-time seed: drop in some sensible defaults if empty
       if (rows.length === 0) {
         const seeds = [
-          { name: "Time check",      kind: "evergreen", prompt: "It's {{time}} on Ether Radio." },
+          { name: "Time check",      kind: "evergreen", prompt: "It's {{time}} on {{stationName}}." },
           { name: "Weather report",  kind: "recurring", prompt: "Right now in {{city}} it's {{temperature}} degrees and {{conditions}}. Today's high {{high}}, low {{low}}." },
           { name: "Now playing intro", kind: "evergreen", prompt: "Coming up next on Ether, here's {{title}} by {{artist}}." },
           { name: "Station ID",       kind: "evergreen", prompt: "You're listening to {{stationName}} — your home for great music." },

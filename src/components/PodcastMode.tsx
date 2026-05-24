@@ -283,7 +283,7 @@ export function RemoteGuestWidget() {
     const token = Math.random().toString(36).substring(2, 10).toUpperCase();
     // In production this would hit a signaling server
     // For now we generate the URL structure that would work with a WebRTC relay
-    const url = `https://guest.etherradio.app/join/${token}?name=${encodeURIComponent(guestName)}`;
+    const url = `https://guest.ether-technologies.com/join/${token}?name=${encodeURIComponent(guestName)}`;
     setGuestUrl(url);
     setGenerating(false);
     // Simulate connection for UI (real WebRTC would use a signaling server)

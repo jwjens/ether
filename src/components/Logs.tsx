@@ -34,6 +34,21 @@ export default function Logs() {
   const [filter, setFilter] = useState<"today" | "week" | "month" | "all">("today");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // Customer's actual station name — used in CSV exports + printed traffic
+  // log header instead of a hardcoded placeholder. Empty until KV fetch
+  // resolves; headers and exports gracefully omit the prefix when empty.
+  const [stationName, setStationName] = useState<string>("");
+  useEffect(() => {
+    if (!stationId) return;
+    (async () => {
+      try {
+        const result = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows = result?.ok ? result.rows : [];
+        const sn = rows.find((r: any) => r.key === "station_name")?.value;
+        if (sn) setStationName(sn);
+      } catch {}
+    })();
+  }, [stationId]);
 
   const load = async () => {
     // station_id scoping: Strategy C — dynamic WHERE builder; station_id is the base condition
@@ -160,7 +175,7 @@ export default function Logs() {
       header = "Title,Artist,Date,Start Time,Duration (min),Source";
       rows = entries.map(e => {
         const d = new Date(e.played_at * 1000);
-        return [e.title, e.artist || "Unknown", (d.getMonth()+1)+"/"+d.getDate()+"/"+d.getFullYear(), d.toLocaleTimeString("en-US", { hour12: false }), "3.5", "Ether Radio"].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
+        return [e.title, e.artist || "Unknown", (d.getMonth()+1)+"/"+d.getDate()+"/"+d.getFullYear(), d.toLocaleTimeString("en-US", { hour12: false }), "3.5", stationName].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
       });
     } else {
       header = "Date,Time,Title,Artist,Category,Show,Clock,Deck";
@@ -190,7 +205,7 @@ export default function Logs() {
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ether — Traffic Log</title>
 <style>body{font-family:Arial,sans-serif;font-size:11px;color:#333;margin:20px}h1{font-size:18px;margin-bottom:4px}.meta{color:#666;font-size:10px;margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#1e293b;color:#fff;padding:6px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em}td{padding:5px 8px;border-bottom:1px solid #e5e7eb}</style>
 </head><body>
-<h1>Ether Radio — Traffic Log</h1>
+<h1>${stationName ? stationName + " — " : ""}Traffic Log</h1>
 <div class="meta">Period: ${dateRange} | Generated: ${new Date().toLocaleString()} | Total: ${entries.length} plays</div>
 <table><thead><tr><th>#</th><th>Date</th><th>Time</th><th>Title</th><th>Artist</th><th>Cat</th><th>Show</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;

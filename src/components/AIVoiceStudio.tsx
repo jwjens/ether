@@ -148,11 +148,30 @@ function ComposeTab({ templates, onGenerated }: { templates: Template[]; onGener
   const [status, setStatus]         = useState("");
   const [previewAudio, setPreviewAudio] = useState<string | null>(null);
 
+  // Customer's actual station name — read from install-level KV. Used as the
+  // default for the {{stationName}} template variable so generated audio says
+  // the customer's real station name, not a placeholder.
+  const [stationName, setStationName] = useState<string>("");
+  useEffect(() => {
+    const sid = getActiveStationIdSync();
+    if (!sid) return;
+    (async () => {
+      try {
+        const result = await ether.stationConfigKv.list(sid);
+        const rows = result?.ok ? result.rows : [];
+        const sn = rows.find((r: any) => r.key === "station_name")?.value;
+        if (sn) setStationName(sn);
+      } catch {}
+    })();
+  }, []);
+
   const selected = selectedId === "free" ? null : templates.find(t => t.id === selectedId);
   const promptText = selected?.prompt_template || freeText;
   const varNames = useMemo(() => selected ? extractVars(selected.prompt_template) : [], [selected]);
 
-  // Auto-fill some common vars on template select
+  // Auto-fill some common vars on template select. Re-runs when stationName
+  // resolves from the async KV fetch so the {{stationName}} default arrives
+  // even if the user picked a template before the fetch completed.
   useEffect(() => {
     if (!selected) return;
     const now = new Date();
@@ -160,12 +179,12 @@ function ComposeTab({ templates, onGenerated }: { templates: Template[]; onGener
     varNames.forEach(name => {
       if (name === "time")        initialVars[name] = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       else if (name === "hour")   initialVars[name] = now.toLocaleTimeString([], { hour: "numeric" });
-      else if (name === "stationName") initialVars[name] = "Ether Radio";
+      else if (name === "stationName") initialVars[name] = stationName;
       else initialVars[name] = vars[name] || "";
     });
     setVars(initialVars);
     if (!title) setTitle(selected.name + " — " + now.toLocaleString());
-  }, [selectedId]);
+  }, [selectedId, stationName]);
 
   const finalScript = selected ? renderTemplate(selected.prompt_template, vars) : freeText;
 

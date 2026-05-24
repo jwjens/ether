@@ -698,7 +698,7 @@ export default function ProgramLog({ onClose }: Props) {
   <!-- Footer -->
   <div class="report-footer">
     <span>${stationName} · Program Log · ${selectedDate}</span>
-    <span>Ether Technologies v1.5.2 · etherradio.app</span>
+    <span>Ether Technologies · ether-technologies.com</span>
     <span>CONFIDENTIAL — For internal use only</span>
   </div>
 

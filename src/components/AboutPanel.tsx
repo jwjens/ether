@@ -253,8 +253,8 @@ export default function AboutPanel({ onClose }: Props) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[
                     { label: "GitHub Repository", value: "github.com/jwjens/ether",   href: "https://github.com/jwjens/ether",          icon: "⌥", accent: "#22d3ee" },
-                    { label: "Legal & Licensing",  value: "legal@etherradio.app",      href: "mailto:legal@etherradio.app",              icon: "⚖", accent: "#a78bfa" },
-                    { label: "Support",            value: "support@etherradio.app",    href: "mailto:support@etherradio.app",            icon: "◎", accent: "#34d399" },
+                    { label: "Legal & Licensing",  value: "legal@ether-technologies.com",      href: "mailto:legal@ether-technologies.com",              icon: "⚖", accent: "#a78bfa" },
+                    { label: "Support",            value: "support@ether-technologies.com",    href: "mailto:support@ether-technologies.com",            icon: "◎", accent: "#34d399" },
                   ].map(link => (
                     <div key={link.label}
                       onClick={async () => {

@@ -2976,7 +2976,7 @@ ipcMain.handle("discogs:search", async (_, { title, artist }) => {
 
     const q = [title, artist].filter(Boolean).join(" ");
     const url = `https://api.discogs.com/database/search?type=release&q=${encodeURIComponent(q)}&per_page=5&key=${encodeURIComponent(key)}&secret=${encodeURIComponent(secret)}`;
-    const res = await fetch(url, { headers: { "User-Agent": "EtherRadio/1.0 +https://ether.fm" } });
+    const res = await fetch(url, { headers: { "User-Agent": "Ether/1.0 +https://ether-technologies.com" } });
     if (!res.ok) return { ok: false, error: `Discogs returned ${res.status}` };
     const data = await res.json();
 

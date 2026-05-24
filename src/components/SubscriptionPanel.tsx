@@ -604,7 +604,7 @@ export default function SubscriptionPanel() {
 
       {/* Footer */}
       <div style={{ marginTop: 20, fontSize: 11, color: "var(--text-tertiary)", textAlign: "center" as const, lineHeight: 1.7 }}>
-        Monthly plans include a 14-day free trial · Cancel anytime · Lifetime is a one-time charge, no renewals · Questions? <span style={{ color: "var(--accent-blue)" }}>legal@etherradio.app</span>
+        Monthly plans include a 14-day free trial · Cancel anytime · Lifetime is a one-time charge, no renewals · Questions? <span style={{ color: "var(--accent-blue)" }}>legal@ether-technologies.com</span>
       </div>
     </div>
   );
