@@ -134,17 +134,66 @@ These are not Claude-actionable — they require operator-level access to extern
 What shipped this session (newest last):
 
 - **v4.1.11 customer release** — already live (commit fbd9112).
-- **Debug panel (Phase 1 UI tooling)** — built & verified; **code still uncommitted** in the working tree (`DebugPanel.tsx`, `devGlobals.ts`, + hunks in `App.tsx`/`usePlan.tsx`/`main.tsx`). See §2. Needs its own commit.
+- **Debug panel (Phase 1 UI tooling)** — built, verified, **shipped** (commit 20d8efd: `DebugPanel.tsx`, `devGlobals.ts` + integration in `App.tsx`/`usePlan.tsx`/`main.tsx`). Dev-only, tree-shakes out of prod. Known minor (deferred, dev-only): Clear-Override doesn't dismiss the tier banner.
 - **OB18 — onboarding local-mirror fix** — submitAddStation/submitBindSeat now mirror backend station create/bind into the local stations table (commits 165f8d1 + e42ae26).
 - **EB17 — abandoned-onboarding cloud orphan** — cleanup tooling shipped (`ether-backend/scripts/delete-orphan-station.js`, commits 005d310 + 52de3f8; tracker entry 69ca965) **and executed** — orphan "Ether Radio" + its dangling seat binding deleted from Railway.
 - **Onboarding connect-path redesign** — returning customers pick an existing station and drop straight into the app (skip experience/venue/name/audio/pull); empty-account → add-station fallback (commit 2c3f61f).
 - **Manage Stations delete fix** — `stations:list`/`:get-active` now filter `deleted_at IS NULL` (bundled in 2c3f61f).
 - **Ghost "Station 1" soft-deleted at pick** — pragmatic interim; proper fix tracked as OB19 (bundled in 2c3f61f).
 - **Tier label rename (customer-facing)** — Free→Solo, Creator/Pro→Studio, Station→Network, Operator→Enterprise across both repos; internal code values unchanged (openair af1c786 + ether-backend fe1df59).
+- **HA Phase 1 — health signal** (commit 4ceaca9): `GET /health` on the :3400 server + a lock-free audio-liveness atomic (`audioLastCallbackMs`, stamped on every cpal callback; engine-thread liveness). Verified via curl + a node smoke test.
+- **HA Phase 2 — watchdog process** (commit 5a762b3): separate-process supervisor (bundled Electron-as-Node) that spawns Ether as a child and restarts on **crash** or **hang**; sentinel handshake in `main.js` (`.ether-clean-exit` / `.ether-expected-restart`); kill-confirm gate (hang) + crash-loop guard (`.ether-ha-alarm`). **Logic harness 16/16** (caught + fixed a double-respawn race on hang-kill). **Real-app smoke 9/9** — crash → respawn → new instance acquired `:3400` (real `requestSingleInstanceLock` verified). Windows implemented; mac/linux stubbed. Status vs the 8 required scenarios: **5/8 fully-green automated** (user-quit, crash, hang, update-relaunch, crash-loop), #3 hardened by the bug found, **#5 (watchdog self-crash) = documented Phase 2.5 gap**, **#7 real single-instance** verified by the smoke, **#8 (packaged build) deferred to Phase 3**.
 
 Parked for future arcs:
 
 - **OB19** — remove the auto-seeded "Station 1" entirely (audit `station_id=1` hardcodes, restructure default seed data). Multi-session arc.
 - **OB20** — pre-launch tier feature-gating audit, **blocked on the operator refreshing the website tier-feature list** (current list is stale). Includes the multi-station label/gate mismatch (labeled Enterprise, website says Network).
+- **HA Phase 2.5** — mutual supervision (Ether relaunches a dead watchdog); closes the "who watches the watchdog" gap. Small follow-up — see §9.
+- **HA Phase 3–5** — startup registration, auto-logon installer, health dashboard. Fully scoped in §9.
 
-**Next session entry point:** this file + the OB19/OB20 tracker entries in `docs/close-out-tracker.md`. First loose end: decide whether to commit the debug panel (still dirty).
+**Next session entry point:** this file. The HA arc continues at **Phase 3 (§9)** — open product decisions there need the operator's call before code. (Other parked work: OB19/OB20 in `docs/close-out-tracker.md`.)
+
+---
+
+## 9. HA arc — Phase 3–5 plan (scoped, not started)
+
+Context: Phase 1 (`/health`) + Phase 2 (crash/hang watchdog) shipped this session. The watchdog must currently be started by hand (`npm run watchdog:dev`). The remaining phases make HA automatic, survive unattended reboots, and surface health. Architecture rationale (why not a Windows Service: in-process session-scoped audio + per-user data) is in the watchdog README and the earlier investigation.
+
+### Phase 2.5 — Mutual supervision (small follow-up, do alongside Phase 3)
+- **What:** Ether's main process learns the watchdog's PID (passed as an env var at spawn) and relaunches the watchdog if it's gone; the watchdog already relaunches Ether. Bi-directional keep-alive.
+- **Why:** v1 gap — if the watchdog process itself dies, Ether runs unsupervised until next logon.
+- **Scope:** ~40–70 LOC. `watchdog/watchdog.js` (pass `ETHER_WATCHDOG_PID`/handshake), `electron/main.js` (periodic check + relaunch of the watchdog binary).
+- **Dependencies:** Phase 2 (done).
+- **Open decisions:** how Ether re-launches the watchdog in dev vs packaged (mirror the watchdog's own dev/packaged spawn logic); guard against a mutual-respawn storm.
+
+### Phase 3 — Startup registration (watchdog auto-launches at logon)
+- **What:** register the watchdog as a per-user logon item so it starts automatically whenever the operator logs in; it then spawns Ether. Implements `registerStartup`/`unregisterStartup` (currently stubbed in `platform/win32.js`). This is also where the **packaged-build validation (#8)** finally happens.
+- **Why:** without it, HA only runs when someone manually launches the watchdog. This makes "Ether is always running after logon" true out of the box.
+- **Scope:** ~80–150 LOC + a packaged build. `watchdog/platform/win32.js` (implement register/unregister), likely a small `watchdog/install/register.js` CLI the app/Settings invokes, a Settings toggle, `electron-builder.json` if a post-install hook is wanted.
+- **Dependencies:** Phase 2 (done); needs a **packaged build** to validate properly (dev spawn path already works).
+- **Open decisions (need your call):**
+  1. **Mechanism:** per-user **Scheduled Task** ("at log on", with restart-on-failure as a backstop) vs **HKCU\…\Run** key. Recommend Scheduled Task (delay-start, more control, a built-in backstop).
+  2. **Per-user (HKCU/no-admin) vs all-users (HKLM/admin).** Recommend per-user — matches the no-admin per-user install.
+  3. Confirm the **watchdog-as-parent** model (watchdog launched at logon → spawns Ether), vs the inverse.
+
+### Phase 4 — Auto-logon installer (the big arc)
+- **What:** opt-in, consented configuration that boots the machine straight into the operator session (so Ether returns after an unattended reboot), via the **LSA-secret** method (`AutoAdminLogon` + `DefaultUserName` in Winlogon, password stored encrypted via `LsaStorePrivateData` — the Sysinternals Autologon approach). Plus a Settings **enable/disable/repair** surface and **uninstall teardown**.
+- **Why:** covers unattended reboot (power loss, Windows Update, manual). Without auto-logon a reboot stops at the login screen and Ether never starts; the in-session watchdog can't help until a session exists.
+- **Scope:** ~300–500 LOC + an elevated helper. New `watchdog/install/ha-setup` (elevated helper: Winlogon keys + LSA secret + scheduled-task register/unregister), `build-resources/installer.nsh` (NSIS `customInstall`/`customUnInstall` + consent prompt), `electron-builder.json` (`nsis.include`), Settings UI (`SettingsPanel.tsx`) enable/disable/repair + status.
+- **Dependencies:** Phase 3 (auto-logon brings the session up; the startup item launches the watchdog). Needs the installer + elevation.
+- **Open decisions (need your call):**
+  1. **Consent + default:** opt-in, default OFF, with copy spelling out the physical-access tradeoff (machine boots into the operator account). (Locked earlier — reconfirm at build time.)
+  2. **Password capture:** the installer/helper must capture the Windows account password to store the LSA secret — which screen, and how it's handled.
+  3. **Elevation model:** per-user install + a one-time UAC-elevated `ha-setup` helper, vs a perMachine installer.
+  4. **Graceful degradation messaging** for machines where auto-logon can't apply (domain/Entra-joined, Windows Hello for Business, BitLocker boot PIN, GPO that strips AutoAdminLogon) — what the UI tells the customer.
+  5. **LSA helper implementation:** PowerShell calling `advapi32!LsaStorePrivateData`, a tiny native exe, or shelling to Sysinternals Autologon (licensing/redistribution check).
+  6. **Teardown scope:** uninstall + "disable HA" must clear `AutoAdminLogon`, the LSA secret, and the startup registration — confirm.
+
+### Phase 5 — Health dashboard UI + operational runbook
+- **What:** surface the existing `/health` data in-app (a Station Health panel: process uptime, audio-liveness, sync state, active station, memory; plus watchdog status / last restart / alarm) and write an operator runbook ("what to do when…").
+- **Why:** `/health` is rich but only curl-able today; operators need an at-a-glance view + documented recovery procedures. (Roadmap HA pieces 3 + 4.)
+- **Scope:** ~200–300 LOC UI + a doc. New `src/components/StationHealth.tsx` (poll `/health`), nav wiring; new `docs/ha-runbook.md`. Surfacing watchdog internals (restart count, alarm marker) needs a small watchdog→app channel (read `watchdog.log`/alarm file, or an IPC).
+- **Dependencies:** Phase 1 (`/health`, done) for the data — so Phase 5 is largely **independent** and could slot earlier if desired. Watchdog-status surfacing wants Phase 2/3.
+- **Open decisions:** standalone panel vs fold into Settings/Logs; how much watchdog internal state to surface (and the channel for it); runbook format/audience.
+
+**Suggested order:** Phase 3 (+ 2.5 alongside) → Phase 4 → Phase 5 (or pull Phase 5 earlier — it only needs `/health`). Phase 4 is the heaviest and most decision-laden; resolve its open decisions before coding.
