@@ -143,38 +143,36 @@ What shipped this session (newest last):
 - **Tier label rename (customer-facing)** — Free→Solo, Creator/Pro→Studio, Station→Network, Operator→Enterprise across both repos; internal code values unchanged (openair af1c786 + ether-backend fe1df59).
 - **HA Phase 1 — health signal** (commit 4ceaca9): `GET /health` on the :3400 server + a lock-free audio-liveness atomic (`audioLastCallbackMs`, stamped on every cpal callback; engine-thread liveness). Verified via curl + a node smoke test.
 - **HA Phase 2 — watchdog process** (commit 5a762b3): separate-process supervisor (bundled Electron-as-Node) that spawns Ether as a child and restarts on **crash** or **hang**; sentinel handshake in `main.js` (`.ether-clean-exit` / `.ether-expected-restart`); kill-confirm gate (hang) + crash-loop guard (`.ether-ha-alarm`). **Logic harness 16/16** (caught + fixed a double-respawn race on hang-kill). **Real-app smoke 9/9** — crash → respawn → new instance acquired `:3400` (real `requestSingleInstanceLock` verified). Windows implemented; mac/linux stubbed. Status vs the 8 required scenarios: **5/8 fully-green automated** (user-quit, crash, hang, update-relaunch, crash-loop), #3 hardened by the bug found, **#5 (watchdog self-crash) = documented Phase 2.5 gap**, **#7 real single-instance** verified by the smoke, **#8 (packaged build) deferred to Phase 3**.
+- **HA Phase 3 + 2.5 — startup registration + mutual supervision** (commit 13c01ad):
+  - **Startup registration (Phase 3):** per-user logon **Scheduled Task** (`EtherHAWatchdog`) via `schtasks /XML` in `watchdog/platform/win32.js` — no admin, `InteractiveToken`/`LeastPrivilege`, 15s logon delay + restart-on-failure backstop. Self-dispatch guard in `main.js` (`--ether-watchdog` runs the watchdog supervisor before the single-instance lock).
+  - **CLI bootstrap:** `Ether.exe --enable-ha` (register task + spawn an adopting watchdog) / `--disable-ha` (unregister + kill the watchdog via `.ether-watchdog.pid`). Executed in the `:3400` listen callback so the adopting spawn doesn't race `/health`. No customer-facing toggle yet — `ha:status` is the only HA IPC; enable/disable/repair deferred to Phase 4.
+  - **Mutual supervision (Phase 2.5):** Ether monitors `ETHER_WATCHDOG_PID` and relaunches a dead watchdog through the adopt path (`ETHER_ADOPT_PID`), with a 3/5-min storm guard. Closes the "who watches the watchdog" gap (Phase 2 scenario #5).
+  - **Bug the smoke caught:** the watchdog spawned the app `detached:false`, so the app died *with* its watchdog — making the 2.5 relaunch impossible in the normal logon path. Fixed: `spawnEther` now spawns `detached:true` so the app outlives the watchdog (symmetric with `relaunchWatchdog`).
+  - **Tests:** mock harness **21/21** (`npm run watchdog:test`, incl. adopt + no-storm), in-session smoke **11/11** (`node scripts/ha-smoke-phase3.js`). The smoke caught the detached bug the mock harness couldn't.
+  - **Manual logout/login checklist** exists at `watchdog/PHASE3-MANUAL-TEST.md` (packaged build only — validates watchdog auto-launch at logon). **Not yet run.**
 
 Parked for future arcs:
 
 - **OB19** — remove the auto-seeded "Station 1" entirely (audit `station_id=1` hardcodes, restructure default seed data). Multi-session arc.
 - **OB20** — pre-launch tier feature-gating audit, **blocked on the operator refreshing the website tier-feature list** (current list is stale). Includes the multi-station label/gate mismatch (labeled Enterprise, website says Network).
-- **HA Phase 2.5** — mutual supervision (Ether relaunches a dead watchdog); closes the "who watches the watchdog" gap. Small follow-up — see §9.
-- **HA Phase 3–5** — startup registration, auto-logon installer, health dashboard. Fully scoped in §9.
+- **HA Phase 4–5** — auto-logon installer, health dashboard. Fully scoped in §9. (Phase 2.5 + Phase 3 shipped 2026-05-24, commit 13c01ad — see §8.)
 
-**Next session entry point:** this file. The HA arc continues at **Phase 3 (§9)** — open product decisions there need the operator's call before code. (Other parked work: OB19/OB20 in `docs/close-out-tracker.md`.)
+**Next session entry point:** this file. The HA arc continues at **Phase 4 (§9) — auto-logon installer** (the heaviest, most decision-laden phase; resolve its open decisions before code). Phase 5 (health dashboard) is largely independent and could slot earlier. (Other parked work: OB19/OB20 in `docs/close-out-tracker.md`.)
 
 ---
 
-## 9. HA arc — Phase 3–5 plan (scoped, not started)
+## 9. HA arc — Phase 4–5 plan (Phase 1–3 + 2.5 SHIPPED)
 
-Context: Phase 1 (`/health`) + Phase 2 (crash/hang watchdog) shipped this session. The watchdog must currently be started by hand (`npm run watchdog:dev`). The remaining phases make HA automatic, survive unattended reboots, and surface health. Architecture rationale (why not a Windows Service: in-process session-scoped audio + per-user data) is in the watchdog README and the earlier investigation.
+Context: Phase 1 (`/health`), Phase 2 (crash/hang watchdog), **Phase 2.5 (mutual supervision)**, and **Phase 3 (startup registration)** are all shipped (see §8). HA now auto-launches at logon (per-user Scheduled Task) and the keep-alive is bi-directional. The **remaining** phases make HA survive unattended reboots (Phase 4) and surface health in-app (Phase 5). Architecture rationale (why not a Windows Service: in-process session-scoped audio + per-user data) is in the watchdog README and the earlier investigation.
 
-### Phase 2.5 — Mutual supervision (small follow-up, do alongside Phase 3)
-- **What:** Ether's main process learns the watchdog's PID (passed as an env var at spawn) and relaunches the watchdog if it's gone; the watchdog already relaunches Ether. Bi-directional keep-alive.
-- **Why:** v1 gap — if the watchdog process itself dies, Ether runs unsupervised until next logon.
-- **Scope:** ~40–70 LOC. `watchdog/watchdog.js` (pass `ETHER_WATCHDOG_PID`/handshake), `electron/main.js` (periodic check + relaunch of the watchdog binary).
-- **Dependencies:** Phase 2 (done).
-- **Open decisions:** how Ether re-launches the watchdog in dev vs packaged (mirror the watchdog's own dev/packaged spawn logic); guard against a mutual-respawn storm.
+### Phase 2.5 — Mutual supervision ✅ SHIPPED (commit 13c01ad, 2026-05-24)
+- **Delivered:** Ether reads `ETHER_WATCHDOG_PID` and relaunches a dead watchdog via the adopt path (`ETHER_ADOPT_PID`), with a 3/5-min storm guard (`relaunchWatchdog`/`startWatchdogMonitor` in `main.js`). Bi-directional keep-alive — closes the Phase 2 scenario-#5 gap.
+- **Resolved decisions:** dev vs packaged relaunch mirrors the watchdog's own spawn logic; storm guard caps relaunches per window; **both directions spawn `detached:true`** so neither process dies with the other (the bug the smoke caught — `spawnEther` was `detached:false`, killing the app with its watchdog).
 
-### Phase 3 — Startup registration (watchdog auto-launches at logon)
-- **What:** register the watchdog as a per-user logon item so it starts automatically whenever the operator logs in; it then spawns Ether. Implements `registerStartup`/`unregisterStartup` (currently stubbed in `platform/win32.js`). This is also where the **packaged-build validation (#8)** finally happens.
-- **Why:** without it, HA only runs when someone manually launches the watchdog. This makes "Ether is always running after logon" true out of the box.
-- **Scope:** ~80–150 LOC + a packaged build. `watchdog/platform/win32.js` (implement register/unregister), likely a small `watchdog/install/register.js` CLI the app/Settings invokes, a Settings toggle, `electron-builder.json` if a post-install hook is wanted.
-- **Dependencies:** Phase 2 (done); needs a **packaged build** to validate properly (dev spawn path already works).
-- **Open decisions (need your call):**
-  1. **Mechanism:** per-user **Scheduled Task** ("at log on", with restart-on-failure as a backstop) vs **HKCU\…\Run** key. Recommend Scheduled Task (delay-start, more control, a built-in backstop).
-  2. **Per-user (HKCU/no-admin) vs all-users (HKLM/admin).** Recommend per-user — matches the no-admin per-user install.
-  3. Confirm the **watchdog-as-parent** model (watchdog launched at logon → spawns Ether), vs the inverse.
+### Phase 3 — Startup registration ✅ SHIPPED (commit 13c01ad, 2026-05-24)
+- **Delivered:** per-user logon **Scheduled Task** (`EtherHAWatchdog`) via `schtasks /XML` — `registerStartup`/`unregisterStartup`/`startupStatus` implemented in `platform/win32.js`. Bootstrap via **`Ether.exe --enable-ha` / `--disable-ha`** CLI flags (not a Settings toggle — that's Phase 4). `ha:status` IPC reports registration + watchdog liveness.
+- **Resolved decisions:** (1) **Scheduled Task** chosen over `HKCU\…\Run` (logon delay + restart-on-failure backstop); (2) **per-user, no-admin** (`InteractiveToken`/`LeastPrivilege`); (3) **watchdog-as-parent** confirmed (logon task → watchdog → spawns Ether).
+- **Validation:** mock harness 21/21 + in-session smoke 11/11. **Packaged-build / logout-login validation (#8) is the one remaining manual step** — `watchdog/PHASE3-MANUAL-TEST.md`, not yet run.
 
 ### Phase 4 — Auto-logon installer (the big arc)
 - **What:** opt-in, consented configuration that boots the machine straight into the operator session (so Ether returns after an unattended reboot), via the **LSA-secret** method (`AutoAdminLogon` + `DefaultUserName` in Winlogon, password stored encrypted via `LsaStorePrivateData` — the Sysinternals Autologon approach). Plus a Settings **enable/disable/repair** surface and **uninstall teardown**.
@@ -196,4 +194,4 @@ Context: Phase 1 (`/health`) + Phase 2 (crash/hang watchdog) shipped this sessio
 - **Dependencies:** Phase 1 (`/health`, done) for the data — so Phase 5 is largely **independent** and could slot earlier if desired. Watchdog-status surfacing wants Phase 2/3.
 - **Open decisions:** standalone panel vs fold into Settings/Logs; how much watchdog internal state to surface (and the channel for it); runbook format/audience.
 
-**Suggested order:** Phase 3 (+ 2.5 alongside) → Phase 4 → Phase 5 (or pull Phase 5 earlier — it only needs `/health`). Phase 4 is the heaviest and most decision-laden; resolve its open decisions before coding.
+**Suggested order:** ~~Phase 3 (+ 2.5 alongside)~~ ✅ done → **Phase 4** (next) → Phase 5 (or pull Phase 5 earlier — it only needs `/health`). Phase 4 is the heaviest and most decision-laden; resolve its open decisions before coding.
