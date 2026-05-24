@@ -68,13 +68,31 @@ async function boot() {
     await runMigrations();
   }
 
+  // Dev-only console helpers + debug panel/banner mount. Both modules are
+  // tree-shaken out of prod builds — `import.meta.env.DEV` is a build-time
+  // constant that becomes `false` in prod, eliminating the entire branch.
+  const isMainApp = !isPopout && !isNowPlaying && !isDesk && !isCueEditor;
+  let DebugMount: React.ComponentType | null = null;
+  let DevTierBanner: React.ComponentType | null = null;
+  if (import.meta.env.DEV && isMainApp) {
+    const { initDevGlobals } = await import("./lib/devGlobals");
+    initDevGlobals();
+    const debugMod = await import("./components/DebugPanel");
+    DebugMount = debugMod.DebugMount;
+    DevTierBanner = debugMod.DevTierBanner;
+  }
+
+  const mainContent = isNowPlaying  ? <NowPlaying /> :
+                      isDesk        ? <ProducerDeskWindow /> :
+                      isCueEditor   ? <CueEditorWindow /> :
+                      isPopout      ? <PopoutRenderer panel={popoutPanel} /> :
+                      <App />;
+
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <RootBoundary>
-      {isNowPlaying  ? <NowPlaying /> :
-       isDesk        ? <ProducerDeskWindow /> :
-       isCueEditor   ? <CueEditorWindow /> :
-       isPopout      ? <PopoutRenderer panel={popoutPanel} /> :
-       <App />}
+      {DevTierBanner && <DevTierBanner />}
+      {mainContent}
+      {DebugMount && <DebugMount />}
     </RootBoundary>
   );
 }

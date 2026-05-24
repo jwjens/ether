@@ -519,6 +519,31 @@ export default function App() {
   const [showDeckConfig, setShowDeckConfig] = useState(false);
   const [deckConfigClosing, setDeckConfigClosing] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
+
+  // Footer version click handler. In prod: opens About immediately on click.
+  // In dev: counts clicks within 500ms; 3 in a row navigates to #debug
+  // instead of opening About. Single click still opens About (with ~350ms
+  // delay in dev to allow detection of the triple). Whole dev branch
+  // tree-shakes out in prod via the import.meta.env.DEV constant.
+  const versionClickCountRef = useRef(0);
+  const versionClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleVersionClick = () => {
+    if (!import.meta.env.DEV) { setShowAbout(true); return; }
+    versionClickCountRef.current++;
+    if (versionClickCountRef.current >= 3) {
+      versionClickCountRef.current = 0;
+      if (versionClickTimerRef.current) { clearTimeout(versionClickTimerRef.current); versionClickTimerRef.current = null; }
+      window.location.hash = "#debug";
+      return;
+    }
+    if (versionClickTimerRef.current) clearTimeout(versionClickTimerRef.current);
+    versionClickTimerRef.current = setTimeout(() => {
+      if (versionClickCountRef.current === 1) setShowAbout(true);
+      versionClickCountRef.current = 0;
+      versionClickTimerRef.current = null;
+    }, 350);
+  };
+
   // App version pulled from app.getVersion() in main process. Footer renders
   // `v${version}` always-visible; AboutPanel fetches its own copy separately
   // for clean component-level isolation (both calls hit the same cached value
@@ -645,6 +670,14 @@ export default function App() {
     const handler = () => setPanel("managedevices");
     window.addEventListener("ether:open-managedevices", handler);
     return () => window.removeEventListener("ether:open-managedevices", handler);
+  }, []);
+
+  // Open About via custom event — symmetric with subscription/managedevices.
+  // Used by the dev debug panel jump-to-screen action.
+  useEffect(() => {
+    const handler = () => setShowAbout(true);
+    window.addEventListener("ether:open-about", handler);
+    return () => window.removeEventListener("ether:open-about", handler);
   }, []);
 
   // ── Remote command stream (emergency override + companion) ──
@@ -1883,8 +1916,8 @@ export default function App() {
                 opacity: 0.55,
                 cursor: "pointer",
               }}
-              title="Click for About / version details"
-              onClick={() => setShowAbout(true)}
+              title={import.meta.env.DEV ? "Click for About — triple-click for debug panel" : "Click for About / version details"}
+              onClick={handleVersionClick}
             >
               v{version}
             </span>

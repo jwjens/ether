@@ -39,11 +39,29 @@ export function setPlanGlobally(plan: PlanTier) {
   notifyAll(plan);
 }
 
+// Dev panel override: marketing label → PlanTier. Mirrors TIER_BY_LABEL in
+// devGlobals.ts; duplicated here to keep usePlan free of dev-module imports
+// (the override branch tree-shakes out cleanly in prod via import.meta.env.DEV).
+const DEV_TIER_BY_LABEL: Record<string, PlanTier> = {
+  solo: "free", studio: "pro", network: "station", enterprise: "operator",
+};
+
 function loadFromStation1() {
   (async () => {
     try {
       const result = await (window as any).ether.stationConfigKv.list(1);
       const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
+
+      // Dev panel override wins over both env-var and real license. Gated on
+      // import.meta.env.DEV so the whole branch is dead code in prod builds.
+      if (import.meta.env.DEV) {
+        const override = rows.find((r) => r.key === 'plan_tier_dev_override')?.value;
+        if (override && override in DEV_TIER_BY_LABEL) {
+          notifyAll(DEV_TIER_BY_LABEL[override]);
+          return;
+        }
+      }
+
       const p = (rows.find((r: { key: string }) => r.key === 'plan_tier')?.value ?? "free") as PlanTier;
       notifyAll(p);
     } catch {
