@@ -403,9 +403,31 @@ export default function OnboardingFlow({ onComplete }: Props) {
       // onboarding_account_joined is set on Screen 3 (bind-seat / add-station),
       // not here — Connect path has not joined a station yet.
 
+      const stations = data.stations as OnboardingStation[];
       setConnectAccountName(data.account_name || '');
-      setConnectStations(data.stations as OnboardingStation[]);
+      setConnectStations(stations);
       setSubmitting(false);
+
+      if (stations.length === 0) {
+        // Account exists but has no stations (all deleted, or never registered
+        // server-side — EB16). The returning customer must create one: fall
+        // through to the add-station screen.
+        setState('addStation');
+        return;
+      }
+
+      // Pre-select the picker on the station this machine was last bound to
+      // (local KV station_uuid is this machine's own prior binding), else the
+      // oldest station (connect returns ORDER BY created_at ASC). The customer
+      // can still override on Screen 3.
+      let lastBound: string | undefined;
+      try {
+        const kvList = await (window as any).ether.stationConfigKv.list(stationId);
+        if (kvList?.ok) lastBound = kvList.rows.find((r: any) => r.key === 'station_uuid')?.value || undefined;
+      } catch { /* non-fatal — fall back to oldest */ }
+      setSelection(
+        lastBound && stations.some(s => s.uuid === lastBound) ? lastBound : stations[0].uuid
+      );
       setState('pickStation');
     } catch (e: any) {
       setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
@@ -445,21 +467,18 @@ export default function OnboardingFlow({ onComplete }: Props) {
       await kv.upsertByKey(stationId, 'station_uuid',              station_uuid);
       await kv.upsertByKey(stationId, 'onboarding_account_joined', '1');
 
-      // Mirror the seat binding locally: make the picked station active so the
-      // header badge + active-station-aware code reflect the choice (OB18). The
-      // station usually already exists in the local stations table (synced from
-      // a peer); if not (fresh 2nd machine before sync lands), insert it from
-      // the /account/connect data we already hold in connectStations, reusing
-      // the backend uuid so peer sync stays consistent. Non-fatal + no
-      // 'station-switched' dispatch — same rationale as submitAddStation.
+      const picked = connectStations.find(s => s.uuid === station_uuid);
+
+      // Mirror the seat binding locally + sweep the auto-seeded ghost.
       try {
         const list = await (window as any).ether.stations.list();
-        const local = Array.isArray(list)
-          ? list.find((s: any) => s.uuid === station_uuid)
-          : null;
-        let localId: number | undefined = local?.id;
+        let localId: number | undefined = Array.isArray(list)
+          ? list.find((s: any) => s.uuid === station_uuid)?.id
+          : undefined;
         if (!localId) {
-          const picked = connectStations.find(s => s.uuid === station_uuid);
+          // Fresh 2nd machine before sync lands: insert from the /account/connect
+          // data we already hold, reusing the backend uuid so peer sync stays
+          // consistent (OB18).
           const createRes = await (window as any).ether.stations.create({
             uuid:      station_uuid,
             name:      picked?.name         || 'Station',
@@ -469,13 +488,42 @@ export default function OnboardingFlow({ onComplete }: Props) {
           if (createRes?.ok && createRes.id) localId = createRes.id;
           else console.error('[onboarding] local station insert failed:', createRes?.error);
         }
-        if (localId) await (window as any).ether.stations.switch(localId);
+        if (localId) {
+          // Make the picked station active (no 'station-switched' dispatch —
+          // badge refreshes when the main UI mounts; same rationale as OB18).
+          await (window as any).ether.stations.switch(localId);
+
+          // Sweep the auto-seeded "Station 1" ghost: any local station whose
+          // uuid is NOT one of this account's stations was never on the backend
+          // (the fresh-install seed in seedFreshInstall is local-only), so it's
+          // a ghost. Soft-delete it — the deleted_at filter on stations:list
+          // then hides it from the header switcher and Manage Stations. We read
+          // the list AFTER the switch so the active picked station is is_active=1
+          // and never swept. Pragmatic interim for OB19 (proper fix removes the
+          // auto-seed entirely).
+          const accountUuids = new Set(connectStations.map(s => s.uuid));
+          const afterSwitch = await (window as any).ether.stations.list();
+          for (const s of (Array.isArray(afterSwitch) ? afterSwitch : [])) {
+            if (!accountUuids.has(s.uuid) && !s.is_active) {
+              await (window as any).ether.stations.delete(s.id);
+            }
+          }
+        }
       } catch (mirrorErr) {
-        console.error('[onboarding] local bind-seat mirror threw:', mirrorErr);
+        console.error('[onboarding] local bind-seat mirror/sweep threw:', mirrorErr);
       }
 
+      // Connect → pick existing is terminal: skip the bolted config screens
+      // (experience/venue/name), the audio-source picker, and the library-pull
+      // screen — the returning customer's library arrives via background sync.
+      // Carry the picked station's real name into onComplete for the header
+      // title, and write first_run_complete now so a crash before the 'done'
+      // render can't bounce the resume logic back into the bolted screens.
+      if (picked?.name) setStnName(picked.name);
+      await kv.upsertByKey(stationId, 'first_run_complete', '1');
+
       setSubmitting(false);
-      setState('experienceMode'); // first bolted screen (placeholder until task #7)
+      setState('done');
     } catch (e: any) {
       setFormError(e?.message || 'Could not reach the license server. Check your internet connection.');
       setSubmitting(false);

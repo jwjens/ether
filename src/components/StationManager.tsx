@@ -246,8 +246,11 @@ export default function StationManager({ onStationSwitch }: Props) {
     if (!confirm(
       `Delete station "${s?.name}"?\n\nAll station-scoped data (schedules, logs, library associations) will be permanently removed. This cannot be undone.`
     )) return;
-    await ether.stations.delete(id);
-    load();
+    const r = await ether.stations.delete(id);
+    if (!r?.ok) {
+      console.error("[StationManager] delete failed:", r?.error);
+    }
+    await load();
   };
 
   if (loading) {

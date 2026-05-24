@@ -3729,11 +3729,11 @@ ipcMain.handle('stream:get-all-status', () => {
 
 // ── Stations CRUD ─────────────────────────────────────────────
 ipcMain.handle('stations:list', () =>
-  db.prepare("SELECT * FROM stations ORDER BY id").all()
+  db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all()
 );
 
 ipcMain.handle('stations:get-active', () =>
-  db.prepare("SELECT * FROM stations WHERE is_active=1 LIMIT 1").get() ?? null
+  db.prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null
 );
 
 ipcMain.handle('stations:switch', (_, id) => {
