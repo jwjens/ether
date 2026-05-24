@@ -1,6 +1,6 @@
 # Session State — Roadmap Tracking
 
-**Updated:** 2026-05-23
+**Updated:** 2026-05-24
 **Purpose:** Snapshot of where the project actually is relative to `roadmap.md`, including in-flight detours that don't show up in the roadmap doc itself. Maintained so a fresh session (or a returning operator after time away) can pick up the actual current thread without reconstructing it from chat history.
 
 This doc supplements `roadmap.md` — it does not replace it. The roadmap is the long-arc plan; this doc is "what's actually happening right now."
@@ -23,7 +23,7 @@ Several arcs sit in front of Item 3's actual execution. None are in roadmap.md b
 
 ### UI tooling — Phase 1 (debug panel)
 
-**Status:** IN PROGRESS. Code written and uncommitted at time of this doc write. Verification by operator pending before commit.
+**Status:** Built & verified, BUT still uncommitted in the working tree as of 2026-05-24 — it was never folded into a commit this session (every commit deliberately worked around it). The 5 files below remain dirty/untracked. Commit it as its own change next session (or whenever convenient).
 
 **Scope:** Dev-only debug panel reached via `#debug` URL hash or footer-version triple-click. Three sections — tier override (Solo/Studio/Network/Enterprise marketing labels mapped to free/pro/station/operator code values), reset onboarding, jump-to-screen (Onboarding / Subscription / Manage Devices / About / Settings). Plus `window.__devSetTier/__devClearTier/__devResetOnboarding` console helpers. Three layers of gating (`import.meta.env.DEV` build-time + runtime) ensure zero footprint in packaged builds.
 
@@ -126,3 +126,25 @@ These are not Claude-actionable — they require operator-level access to extern
 - **Production licenses (Railway):** 4 active rows confirmed 2026-05-23 via `list-licenses.js` — 2× pro (sync-test@ether.dev, sync-test2@ether.dev), 2× station (djdeniro@gmail.com × 2). No unexpected plan values.
 - **Sync convergence:** proven 2026-05-19 (commit 36d92dc) — LIVE CONVERGENCE + LIVE-DATA FK-VALID.
 - **OV install:** running v4.1.11 against the active backend. No outstanding deployment.
+
+---
+
+## 8. Session close — 2026-05-24
+
+What shipped this session (newest last):
+
+- **v4.1.11 customer release** — already live (commit fbd9112).
+- **Debug panel (Phase 1 UI tooling)** — built & verified; **code still uncommitted** in the working tree (`DebugPanel.tsx`, `devGlobals.ts`, + hunks in `App.tsx`/`usePlan.tsx`/`main.tsx`). See §2. Needs its own commit.
+- **OB18 — onboarding local-mirror fix** — submitAddStation/submitBindSeat now mirror backend station create/bind into the local stations table (commits 165f8d1 + e42ae26).
+- **EB17 — abandoned-onboarding cloud orphan** — cleanup tooling shipped (`ether-backend/scripts/delete-orphan-station.js`, commits 005d310 + 52de3f8; tracker entry 69ca965) **and executed** — orphan "Ether Radio" + its dangling seat binding deleted from Railway.
+- **Onboarding connect-path redesign** — returning customers pick an existing station and drop straight into the app (skip experience/venue/name/audio/pull); empty-account → add-station fallback (commit 2c3f61f).
+- **Manage Stations delete fix** — `stations:list`/`:get-active` now filter `deleted_at IS NULL` (bundled in 2c3f61f).
+- **Ghost "Station 1" soft-deleted at pick** — pragmatic interim; proper fix tracked as OB19 (bundled in 2c3f61f).
+- **Tier label rename (customer-facing)** — Free→Solo, Creator/Pro→Studio, Station→Network, Operator→Enterprise across both repos; internal code values unchanged (openair af1c786 + ether-backend fe1df59).
+
+Parked for future arcs:
+
+- **OB19** — remove the auto-seeded "Station 1" entirely (audit `station_id=1` hardcodes, restructure default seed data). Multi-session arc.
+- **OB20** — pre-launch tier feature-gating audit, **blocked on the operator refreshing the website tier-feature list** (current list is stale). Includes the multi-station label/gate mismatch (labeled Enterprise, website says Network).
+
+**Next session entry point:** this file + the OB19/OB20 tracker entries in `docs/close-out-tracker.md`. First loose end: decide whether to commit the debug panel (still dirty).
