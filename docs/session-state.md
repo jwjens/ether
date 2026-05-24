@@ -150,18 +150,19 @@ What shipped this session (newest last):
   - **Bug the smoke caught:** the watchdog spawned the app `detached:false`, so the app died *with* its watchdog — making the 2.5 relaunch impossible in the normal logon path. Fixed: `spawnEther` now spawns `detached:true` so the app outlives the watchdog (symmetric with `relaunchWatchdog`).
   - **Tests:** mock harness **21/21** (`npm run watchdog:test`, incl. adopt + no-storm), in-session smoke **11/11** (`node scripts/ha-smoke-phase3.js`). The smoke caught the detached bug the mock harness couldn't.
   - **Manual logout/login checklist** exists at `watchdog/PHASE3-MANUAL-TEST.md` (packaged build only — validates watchdog auto-launch at logon). **Not yet run.**
+- **HA Phase 5 — health dashboard UI + runbook** (commit a22fd33): merged HA supervision state into the existing **System Health** panel (`HealthMonitor.tsx`) rather than a separate view. GREEN/AMBER/RED/INACTIVE rollup banner via pure `deriveHaRollup()` (`src/lib/haRollup.ts`, **11/11** unit tests); High Availability section (watchdog process, startup task, mutual supervision, crash-loop alarm, uptime, audio output, sync, memory) reusing `HealthRow`/`HealthDot`; Recent Events = on-demand `watchdog.log` tail. New IPC: `ha:dashboard` (= `buildHealthSnapshot()` + control-plane, one round-trip, 5s poll paused on `document.hidden`), `ha:alarmStatus` (cheap footer-dot check), `ha:readLog`; `/health` body extracted into shared `buildHealthSnapshot()` with **byte-identical** wire output (watchdog contract untouched); `schtasks /Query` cached 30s. Panel now popout-able (filled the dead `PopoutRenderer` `health` slot); footer NOMINAL dot turns red on a tripped alarm. Operator runbook at `docs/ha-runbook.md` (incl. "test HA without breaking your show") + engineer appendix. Verified: unit 11/11, `tsc` clean, prod `vite build` clean, runtime `/health` served the unchanged contract from the edited main (pid 5060). **Visual click-through (popout/banner colors/footer-red) pending interactive confirmation** — see manual script.
 
 Parked for future arcs:
 
 - **OB19** — remove the auto-seeded "Station 1" entirely (audit `station_id=1` hardcodes, restructure default seed data). Multi-session arc.
 - **OB20** — pre-launch tier feature-gating audit, **blocked on the operator refreshing the website tier-feature list** (current list is stale). Includes the multi-station label/gate mismatch (labeled Enterprise, website says Network).
-- **HA Phase 4–5** — auto-logon installer, health dashboard. Fully scoped in §9. (Phase 2.5 + Phase 3 shipped 2026-05-24, commit 13c01ad — see §8.)
+- **HA Phase 4** — auto-logon installer. Fully scoped in §9. **The only remaining HA arc** (Phase 1–3 + 2.5 + 5 all shipped — see §8). Phase 5 shipped 2026-05-24, commit a22fd33.
 
-**Next session entry point:** this file. The HA arc continues at **Phase 4 (§9) — auto-logon installer** (the heaviest, most decision-laden phase; resolve its open decisions before code). Phase 5 (health dashboard) is largely independent and could slot earlier. (Other parked work: OB19/OB20 in `docs/close-out-tracker.md`.)
+**Next session entry point:** this file. **Phase 4 (§9) — auto-logon installer is the only remaining HA arc** — the heaviest, most decision-laden phase; resolve its open decisions before code. (Other parked work: OB19/OB20 in `docs/close-out-tracker.md`.)
 
 ---
 
-## 9. HA arc — Phase 4–5 plan (Phase 1–3 + 2.5 SHIPPED)
+## 9. HA arc — Phase 4 plan (Phase 1–3 + 2.5 + 5 SHIPPED)
 
 Context: Phase 1 (`/health`), Phase 2 (crash/hang watchdog), **Phase 2.5 (mutual supervision)**, and **Phase 3 (startup registration)** are all shipped (see §8). HA now auto-launches at logon (per-user Scheduled Task) and the keep-alive is bi-directional. The **remaining** phases make HA survive unattended reboots (Phase 4) and surface health in-app (Phase 5). Architecture rationale (why not a Windows Service: in-process session-scoped audio + per-user data) is in the watchdog README and the earlier investigation.
 
@@ -187,11 +188,9 @@ Context: Phase 1 (`/health`), Phase 2 (crash/hang watchdog), **Phase 2.5 (mutual
   5. **LSA helper implementation:** PowerShell calling `advapi32!LsaStorePrivateData`, a tiny native exe, or shelling to Sysinternals Autologon (licensing/redistribution check).
   6. **Teardown scope:** uninstall + "disable HA" must clear `AutoAdminLogon`, the LSA secret, and the startup registration — confirm.
 
-### Phase 5 — Health dashboard UI + operational runbook
-- **What:** surface the existing `/health` data in-app (a Station Health panel: process uptime, audio-liveness, sync state, active station, memory; plus watchdog status / last restart / alarm) and write an operator runbook ("what to do when…").
-- **Why:** `/health` is rich but only curl-able today; operators need an at-a-glance view + documented recovery procedures. (Roadmap HA pieces 3 + 4.)
-- **Scope:** ~200–300 LOC UI + a doc. New `src/components/StationHealth.tsx` (poll `/health`), nav wiring; new `docs/ha-runbook.md`. Surfacing watchdog internals (restart count, alarm marker) needs a small watchdog→app channel (read `watchdog.log`/alarm file, or an IPC).
-- **Dependencies:** Phase 1 (`/health`, done) for the data — so Phase 5 is largely **independent** and could slot earlier if desired. Watchdog-status surfacing wants Phase 2/3.
-- **Open decisions:** standalone panel vs fold into Settings/Logs; how much watchdog internal state to surface (and the channel for it); runbook format/audience.
+### Phase 5 — Health dashboard UI + operational runbook ✅ SHIPPED (commit a22fd33, 2026-05-24)
+- **Delivered:** HA state **merged into the existing System Health panel** (`HealthMonitor.tsx`), not a separate view. Rollup banner (GREEN/AMBER/RED/INACTIVE) from pure `deriveHaRollup()` (`src/lib/haRollup.ts`, 11/11 unit tests); HA section reusing `HealthRow`/`HealthDot`; Recent Events = on-demand `watchdog.log` tail; popout-able (filled the dead `PopoutRenderer` `health` slot); footer NOMINAL dot reds on alarm. Operator runbook `docs/ha-runbook.md` + engineer appendix.
+- **Resolved decisions:** (1) **merge** into System Health (not standalone/Settings); (2) watchdog internals surfaced via a combined **`ha:dashboard`** IPC (health snapshot + control-plane) + **`ha:alarmStatus`** (footer dot) + **`ha:readLog`** (events) — `/health` left byte-identical via shared `buildHealthSnapshot()`; (3) `schtasks` cached 30s so the 5s poll never spawns a subprocess; (4) poll paused on `document.hidden` (not blur — second-monitor popouts keep updating); (5) runbook = operator-facing + engineer appendix.
+- **Validation:** unit 11/11, `tsc` clean, prod `vite build` clean (859 modules), runtime `/health` served the unchanged contract from the edited main (pid 5060). **Visual click-through (popout / banner colors / footer-red on alarm) pending interactive confirmation.**
 
-**Suggested order:** ~~Phase 3 (+ 2.5 alongside)~~ ✅ done → **Phase 4** (next) → Phase 5 (or pull Phase 5 earlier — it only needs `/health`). Phase 4 is the heaviest and most decision-laden; resolve its open decisions before coding.
+**Suggested order:** ~~Phase 3 (+ 2.5)~~ ✅ → ~~Phase 5~~ ✅ → **Phase 4 — auto-logon installer (the only remaining HA arc).** The heaviest and most decision-laden; resolve its open decisions before coding.
