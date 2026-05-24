@@ -152,6 +152,40 @@ Item 2 proves Milestone A (metadata sync). This item is the two pieces that buil
 
 ---
 
+### 9. Listener Platform
+
+**Status:** Not started. Independent of all current work — no dependency on the HA arc (Item 3) or anything else. Tier 1 could ship in parallel whenever listener experience is prioritized.
+
+Today every Ether station streams via Icecast (e.g. `44.244.52.207:8000/live` and equivalent per-customer streams). A listener who opens that URL gets whatever default UI their browser provides — usually a black screen with bare transport controls. There is no branded listener experience, no per-station UI, and no audience-discovery layer. The Listener Platform closes that gap: a branded, installable listener experience delivered across tiers, plus an Ether-owned discovery directory.
+
+**Competitive landscape** — Cirrus Streaming (cir.st) sells white-label native apps to stations, but with significant friction: ~$80/mo base plus listener-based pricing plus royalty bundling, and the customer must obtain their own Apple ($99/yr) and Google ($25) developer accounts, navigate the submission paperwork themselves, then hand credentials back to Cirrus to ship. Customization is limited. Ether's opening: a better branded listener experience, PWA-first so the small/mid-station tier carries zero submission friction, with a native-app pipeline reserved for Enterprise where the operational cost is justified.
+
+**Vision (maps to the existing Solo / Studio / Network / Enterprise pricing):**
+
+- **Tier 1 — PWA player at an Ether-hosted URL (Studio).** `listen.ether-technologies.com/<station-slug>`. Branded page (logo, colors, station name, now-playing, recent songs, schedule), installable to the home screen via "Add to Home Screen" so the listener gets a station icon that opens the player. Zero per-customer operational cost. The host URL is invisible once installed — listeners see the station's icon, name, and UI, not the domain — so a separate per-station domain solves a problem that does not exist at this tier.
+- **Tier 2 — PWA player on the customer's own domain (Network).** `listen.<customer-domain>.com` via a DNS CNAME to Ether. Same PWA, no Ether branding visible — a fully custom-domain experience.
+- **Tier 3 — Ether Radio directory app (cross-tier, Ether's own platform).** A native iOS/Android app in the app stores called "Ether Radio" where listeners discover stations they don't already know — the iHeartRadio / TuneIn-style discovery layer. Any station can opt into the directory; the gating model is TBD.
+- **Tier 4 — White-label native app (Enterprise).** Real app-store presence under the customer's station name — their listeners download "Power 95 Radio," not Ether. Ether provides tooling that makes Apple/Google submission less painful than Cirrus, an auto-update pipeline that rolls new underlying code out to every white-label app automatically, and customization through the Ether dashboard rather than back-and-forth email. Enterprise pricing justifies the operational cost.
+
+**Implementation order (ship listener value progressively):**
+1. PWA framework at the Ether-hosted URL (Tier 1) — the wedge product.
+2. Custom-domain support (Tier 2).
+3. Ether Radio directory app (Tier 3) — the platform play.
+4. White-label native-app pipeline (Tier 4) — upmarket, the biggest operational lift.
+
+**What this arc does NOT cover:** Royalty bundling. Ether stays out of BMI / ASCAP / SoundExchange filing — the customer files their own, and the existing disclaimer covers liability. Royalty bundling would require a legal team Ether does not have.
+
+**Open decisions (captured, not resolved):**
+- PWA hosting infrastructure — Cloudflare Pages, Railway, or separate hosting?
+- Custom-domain SSL / CNAME automation (Tier 2).
+- Per-station metadata API (now-playing feed, schedule, branding config) — needs new backend endpoints.
+- Directory-app opt-in model — Solo tier listed for free, or a paid feature?
+- Discovery / curation logic — genre, geography, featured.
+- Mobile platform priority — iOS first, Android first, or parallel?
+- Backend stack for the directory API.
+
+---
+
 ## Cross-Cutting Design Principles
 
 ### UX
@@ -197,3 +231,4 @@ Ideas worth preserving. Not committed to any roadmap item or timeline.
 | 2026-05-16 | Correction: previous roadmap update (after context compaction) incorrectly listed Step 5 (pull scope fix) as a remaining blocker. Step 5 was completed earlier the same day as commit 92eb50d — getStationId getter wired through SyncEngine.pull(), main.js passes getActiveStationId(). All 8 steps of Item 1 are complete. Item 2 (Deploy OV + 2nd Client) is unblocked. |
 | 2026-05-18 | AirLogger (Compliance Recorder) added as Item 7. No existing items renumbered. FCC/compliance recording, local-first disk archive, R2 offsite, traffic workflow UI, schema migration required. |
 | 2026-05-18 | Onboarding & Library Distribution added as Item 8. No existing items renumbered. Covers Milestone B (R2 audio distribution, per-song keys, download manager, air-eligibility gate) and the onboarding flow (new-station vs. connect-to-existing, single-credential path). Requires Item 2 (metadata sync). Open decision: how audio files reach R2 initially — unresolved. Full design in docs/onboarding-and-library-distribution-v0.md. |
+| 2026-05-24 | Listener Platform added as Item 9. No existing items renumbered. Branded listener experience across tiers: Tier 1 PWA at `listen.ether-technologies.com/<station-slug>` (Studio), Tier 2 PWA on custom domain (Network), Tier 3 "Ether Radio" discovery directory app (cross-tier), Tier 4 white-label native apps (Enterprise). PWA-first to undercut Cirrus's submission friction. Tier 1 host URL locked (invisible once installed — no separate per-station domain needed). Explicitly excludes royalty bundling. Independent of all current work — Tier 1 can ship in parallel. Open decisions captured (hosting, Tier-2 CNAME/SSL automation, per-station metadata API, directory gating, discovery logic, mobile platform priority, directory backend stack). |
