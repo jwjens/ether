@@ -445,6 +445,35 @@ export default function OnboardingFlow({ onComplete }: Props) {
       await kv.upsertByKey(stationId, 'station_uuid',              station_uuid);
       await kv.upsertByKey(stationId, 'onboarding_account_joined', '1');
 
+      // Mirror the seat binding locally: make the picked station active so the
+      // header badge + active-station-aware code reflect the choice (OB18). The
+      // station usually already exists in the local stations table (synced from
+      // a peer); if not (fresh 2nd machine before sync lands), insert it from
+      // the /account/connect data we already hold in connectStations, reusing
+      // the backend uuid so peer sync stays consistent. Non-fatal + no
+      // 'station-switched' dispatch — same rationale as submitAddStation.
+      try {
+        const list = await (window as any).ether.stations.list();
+        const local = Array.isArray(list)
+          ? list.find((s: any) => s.uuid === station_uuid)
+          : null;
+        let localId: number | undefined = local?.id;
+        if (!localId) {
+          const picked = connectStations.find(s => s.uuid === station_uuid);
+          const createRes = await (window as any).ether.stations.create({
+            uuid:      station_uuid,
+            name:      picked?.name         || 'Station',
+            callsign:  picked?.call_letters || '',
+            frequency: picked?.frequency    || '',
+          });
+          if (createRes?.ok && createRes.id) localId = createRes.id;
+          else console.error('[onboarding] local station insert failed:', createRes?.error);
+        }
+        if (localId) await (window as any).ether.stations.switch(localId);
+      } catch (mirrorErr) {
+        console.error('[onboarding] local bind-seat mirror threw:', mirrorErr);
+      }
+
       setSubmitting(false);
       setState('experienceMode'); // first bolted screen (placeholder until task #7)
     } catch (e: any) {
@@ -519,6 +548,32 @@ export default function OnboardingFlow({ onComplete }: Props) {
       const kv = (window as any).ether.stationConfigKv;
       await kv.upsertByKey(stationId, 'station_uuid',              data.station_uuid);
       await kv.upsertByKey(stationId, 'onboarding_account_joined', '1');
+
+      // Mirror the backend create in the local stations table so the new
+      // station shows in the header badge and active-station-aware code (OB18).
+      // Reuse the backend's station_uuid so peer sync treats the two rows as
+      // identical. create() is gated behind multistation_insert_audit_complete,
+      // which seedFreshInstall sets to 'true'. Non-fatal: the backend already
+      // succeeded, so a local-mirror failure logs and lets onboarding proceed.
+      // No 'station-switched' dispatch — the badge picks up the new active
+      // station when the main UI mounts after onComplete(); dispatching here
+      // would change stationId mid-flow and re-trigger the [stationId] resume
+      // effect.
+      try {
+        const createRes = await (window as any).ether.stations.create({
+          uuid:      data.station_uuid,
+          name:      stnName.trim(),
+          callsign:  callLetters.trim() || '',
+          frequency: frequency.trim()   || '',
+        });
+        if (createRes?.ok && createRes.id) {
+          await (window as any).ether.stations.switch(createRes.id);
+        } else {
+          console.error('[onboarding] local station create failed:', createRes?.error);
+        }
+      } catch (mirrorErr) {
+        console.error('[onboarding] local station create/switch threw:', mirrorErr);
+      }
 
       setSubmitting(false);
       setState('experienceMode'); // first bolted screen (placeholder until task #7)

@@ -3765,6 +3765,11 @@ ipcMain.handle('stations:create', (_, data) => {
   try {
     const { stationsCreate } = require('./sync/handlers/stations');
     const row = stationsCreate(db, {
+      // Forward an explicit uuid when the caller supplies one — OnboardingFlow
+      // passes the backend's station_uuid so peer sync treats the local row and
+      // the backend row as identical (no duplicate-uuid drift). See OB18.
+      // Other callers omit it → stationsCreate generates a fresh uuid.
+      uuid: data.uuid,
       name: data.name || 'New Station', callsign: data.callsign || '',
       frequency: data.frequency || '', city: data.city || '',
       state: data.state || '', country: data.country || 'US', website: data.website || '',
