@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld("ether", {
     openSoundSettings: () => ipcRenderer.invoke("system:openSoundSettings"),
     getAppDataDir: () => ipcRenderer.invoke("system:getAppDataDir"),
     getPlatform: () => ipcRenderer.invoke("system:getPlatform"),
+    getVersion: () => ipcRenderer.invoke("system:getVersion"),
   },
   autostart: {
     enable: () => ipcRenderer.invoke("autostart:enable"),

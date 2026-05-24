@@ -4,14 +4,11 @@
  * Triggered from Help → About Ether Technologies
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface Props {
   onClose: () => void;
 }
-
-const VERSION = "1.5.2";
-const BUILD_DATE = "March 2026";
 
 const CHANGELOG = [
   {
@@ -74,6 +71,16 @@ const TEAM = [
 export default function AboutPanel({ onClose }: Props) {
   const [tab, setTab] = useState<"about" | "changelog" | "credits">("about");
   const [ossExpanded, setOssExpanded] = useState(false);
+  // Version pulled from app.getVersion() in main process — single source of
+  // truth (package.json). Empty string until the IPC resolves; the badge
+  // renders briefly as just "v" before the value populates, typically
+  // imperceptible since the IPC is essentially synchronous on a cached value.
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    (window as any).ether.system.getVersion()
+      .then((v: string) => setVersion(v))
+      .catch(() => setVersion("?.?.?"));
+  }, []);
 
   return (
     <div style={{
@@ -150,10 +157,7 @@ export default function AboutPanel({ onClose }: Props) {
                   background: "rgba(34,211,238,0.1)",
                   border: "1px solid rgba(34,211,238,0.25)",
                   borderRadius: 0, padding: "2px 10px",
-                }}>v{VERSION}</span>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.25)", fontFamily: "'DM Mono', monospace" }}>
-                  {BUILD_DATE}
-                </span>
+                }}>v{version}</span>
               </div>
               <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
                 Broadcast Automation Platform
@@ -385,7 +389,7 @@ export default function AboutPanel({ onClose }: Props) {
         }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.15)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.06em" }}>
-              ETHER TECHNOLOGIES · v{VERSION} · MIT LICENSE
+              ETHER TECHNOLOGIES · v{version} · MIT LICENSE
             </span>
             <span style={{ fontSize: 9, color: "rgba(255,255,255,0.08)", fontFamily: "'DM Mono', monospace", letterSpacing: "0.1em" }}>
               BUILT BY DENIRO

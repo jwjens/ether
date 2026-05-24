@@ -1445,6 +1445,7 @@ ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
 ipcMain.handle("system:openSoundSettings", () => audio.openSoundSettings());
 ipcMain.handle("system:getAppDataDir", () => app.getPath("userData"));
 ipcMain.handle("system:getPlatform", () => process.platform);
+ipcMain.handle("system:getVersion", () => app.getVersion());
 
 // ── User / PIN security ──────────────────────────────────────
 const crypto = require("crypto");

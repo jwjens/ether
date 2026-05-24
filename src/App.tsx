@@ -517,6 +517,17 @@ export default function App() {
   });
   const [showDeckConfig, setShowDeckConfig] = useState(false);
   const [deckConfigClosing, setDeckConfigClosing] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+  // App version pulled from app.getVersion() in main process. Footer renders
+  // `v${version}` always-visible; AboutPanel fetches its own copy separately
+  // for clean component-level isolation (both calls hit the same cached value
+  // in main).
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    (window as any).ether.system.getVersion()
+      .then((v: string) => setVersion(v))
+      .catch(() => setVersion("?.?.?"));
+  }, []);
   const closeDeckConfig = useCallback(() => {
     setDeckConfigClosing(true);
     setTimeout(() => { setShowDeckConfig(false); setDeckConfigClosing(false); }, 200);
@@ -615,6 +626,7 @@ export default function App() {
       if (cmd === "view:mic") toggleVisible("mic");
       if (cmd === "help:shortcuts") window.dispatchEvent(new KeyboardEvent("keydown",{code:"Slash",shiftKey:true}));
       if (cmd === "help:check-updates") updater.checkForUpdate?.();
+      if (cmd === "nav:about") setShowAbout(true);
     });
     return () => (window as any).ether.off("menu-action", handler);
   }, []);
@@ -1828,6 +1840,7 @@ export default function App() {
         </div>
       )}
       <LibrarySyncProgressBar />
+      {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 52, display: "flex", alignItems: "center", padding: "0 10px", gap: 0, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
@@ -1846,7 +1859,25 @@ export default function App() {
             fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer",
           }}>{label}</button>
         ))}
-        <div style={{ flex: 1 }} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {/* Version — always-visible source-of-truth for "what am I running?" */}
+          {version && (
+            <span
+              style={{
+                fontSize: 10,
+                color: "var(--text-tertiary)",
+                fontFamily: "'DM Mono', monospace",
+                letterSpacing: "0.06em",
+                opacity: 0.55,
+                cursor: "pointer",
+              }}
+              title="Click for About / version details"
+              onClick={() => setShowAbout(true)}
+            >
+              v{version}
+            </span>
+          )}
+        </div>
         {/* LIVE nav — only when not on live panel */}
         {panel !== "live" && (
           <button onClick={() => setPanel("live")} title="Back to Live" style={{
