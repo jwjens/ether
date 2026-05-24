@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, Component, ReactNode } from "react";
 import { query, dbHealthCheck } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
+import { deriveHaRollup, type HaDashboard, type HaRollupLevel } from "../lib/haRollup";
+import { PopoutBtn } from "./PopoutShell";
 
 // ═══════════════════════════════════════════════════════════════
 // 1. ERROR BOUNDARY
@@ -182,6 +184,53 @@ function HealthRow({ label, value, status, sub }: { label: string; value: string
   );
 }
 
+const ROLLUP_COLOR: Record<HaRollupLevel, string> = {
+  healthy:  "var(--accent-green)",
+  degraded: "var(--accent-amber)",
+  alarm:    "var(--accent-red)",
+  inactive: "var(--text-tertiary)",
+  loading:  "var(--text-tertiary)",
+};
+
+function fmtUptime(sec: number): string {
+  if (!sec || sec < 0) return "—";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+// Big GREEN/AMBER/RED rollup banner at the top of the panel. Derived purely from
+// the dashboard via deriveHaRollup (unit-tested in haRollup.test.ts).
+function HaRollupBanner({ dash }: { dash: HaDashboard | null }) {
+  const rollup = deriveHaRollup(dash);
+  const color = ROLLUP_COLOR[rollup.level];
+  const pulse = rollup.level === "alarm" ? "onair-pulse 1s ease-in-out infinite"
+              : rollup.level === "healthy" ? "nominal-pulse 2.4s ease-in-out infinite"
+              : "none";
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 14,
+      padding: "16px 18px", marginTop: 20, marginBottom: 4,
+      borderRadius: 0,
+      background: rollup.level === "inactive" || rollup.level === "loading" ? "var(--bg-secondary)" : `${color}14`,
+      border: `1px solid ${rollup.level === "inactive" || rollup.level === "loading" ? "var(--border-primary)" : color}`,
+    }}>
+      <div style={{ width: 14, height: 14, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 10px ${color}`, animation: pulse }} />
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "0.04em", color, fontFamily: "'Syne', sans-serif" }}>
+          {rollup.label}
+        </div>
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.5 }}>
+          {rollup.reasons.length ? rollup.reasons.join(" ") : "High Availability — crash & hang supervision"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const engine = useAudioEngine();
   const [health, setHealth] = useState<HealthData | null>(null);
@@ -190,6 +239,49 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [exported, setExported] = useState(false);
   const [sessionStart] = useState(Date.now());
   const { stationId, isReady } = useActiveStation();
+
+  // ── HA dashboard (combined /health snapshot + watchdog control-plane) ──
+  const [dash, setDash] = useState<HaDashboard | null>(null);
+  const [events, setEvents] = useState<string[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const isPopout = typeof window !== "undefined" && window.location.hash.startsWith("#popout/");
+
+  // 5s poll, skipped while the panel isn't visible (minimized / occluded / hidden
+  // tab) via document.hidden — NOT on blur, so a popout left open on a second
+  // monitor keeps updating while the operator works in the main window. On
+  // becoming visible/focused again we refresh immediately.
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => {
+      if (document.hidden) return;
+      try {
+        const d = await (window as any).ether?.ha?.dashboard();
+        if (!stop && d) setDash(d);
+      } catch { /* IPC unavailable — keep last snapshot */ }
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    const onVisible = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      stop = true;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, []);
+
+  // watchdog.log tail — on-demand only (the log changes only on a restart event).
+  const loadEvents = useCallback(async () => {
+    setEventsLoading(true);
+    try {
+      const r = await (window as any).ether?.ha?.readLog(14);
+      setEvents(Array.isArray(r?.lines) ? r.lines : []);
+    } catch { setEvents([]); }
+    setEventsLoading(false);
+  }, []);
+  useEffect(() => { loadEvents(); }, [loadEvents]);
 
   const load = useCallback(async () => {
     if (!isReady) return;
@@ -289,16 +381,22 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               System Health
             </h2>
           </div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>✕</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {!isPopout && <PopoutBtn panel="health" label="Station Health" />}
+            <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>✕</button>
+          </div>
         </div>
         <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--text-tertiary)" }}>
-          Session uptime: {uptimeStr} · Auto-refreshes every 10 seconds
+          Session uptime: {uptimeStr} · Health auto-refreshes every 5 seconds
         </p>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto" as const, padding: "0 32px" }}>
+        {/* HA rollup banner */}
+        <HaRollupBanner dash={dash} />
+
         {/* Core systems */}
-        <div style={{ paddingTop: 20, marginBottom: 8 }}>
+        <div style={{ paddingTop: 16, marginBottom: 8 }}>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>Core Systems</div>
           {health ? (
             <>
@@ -311,6 +409,83 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           ) : (
             <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Loading...</div>
           )}
+        </div>
+
+        {/* ── High Availability ── */}
+        <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 4, marginBottom: 8 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>High Availability</div>
+          {dash ? (() => {
+            const ha = dash.ha; const hh = dash.health; const wd = ha.watchdog;
+            return (
+              <>
+                <HealthRow
+                  label="Watchdog Process"
+                  value={!ha.active ? "Not enabled" : wd.alive ? `Running · pid ${wd.pid}` : "Not running"}
+                  status={!ha.active ? "warn" : wd.alive ? "ok" : "error"}
+                  sub={!ha.active ? "App launched without HA supervision" : "Supervises crash & hang"}
+                />
+                <HealthRow
+                  label="Startup Task"
+                  value={ha.supported ? (ha.startup.registered ? "Registered" : "Not registered") : "N/A"}
+                  status={!ha.supported ? "warn" : ha.startup.registered ? "ok" : "warn"}
+                  sub={ha.startup.taskName ? `${ha.startup.taskName} · launches at logon` : "Survives reboot when registered"}
+                />
+                <HealthRow
+                  label="Mutual Supervision"
+                  value={wd.monitoring ? "Active" : "Off"}
+                  status={!ha.active ? "warn" : wd.monitoring ? "ok" : "warn"}
+                  sub="App relaunches the watchdog if it dies"
+                />
+                <HealthRow
+                  label="Crash-Loop Alarm"
+                  value={ha.alarm ? "TRIPPED" : "Clear"}
+                  status={ha.alarm ? "error" : "ok"}
+                  sub={ha.alarm ? "Auto-restart halted — see HA runbook" : "Trips after 5 restarts in 5 min"}
+                />
+                <HealthRow
+                  label="Process Uptime"
+                  value={fmtUptime(hh.uptimeSec)}
+                  status="ok"
+                  sub={`Main process pid ${hh.pid}`}
+                />
+                <HealthRow
+                  label="Audio Output"
+                  value={hh.audio.alive ? "Flowing" : "Idle"}
+                  status={hh.audio.alive ? "ok" : "warn"}
+                  sub={hh.audio.staleMs == null ? "No output callback yet" : `Last callback ${hh.audio.staleMs} ms ago`}
+                />
+                <HealthRow
+                  label="Sync Engine"
+                  value={hh.sync ? (hh.sync.initialComplete ? "Synced" : "Syncing…") : "Off"}
+                  status={hh.sync ? "ok" : "warn"}
+                  sub={hh.sync ? `${hh.sync.appliedTotal.toLocaleString()} mutations applied` : "Sync disabled (default)"}
+                />
+                <HealthRow
+                  label="Memory (RSS)"
+                  value={hh.memRssMb != null ? `${hh.memRssMb} MB` : "—"}
+                  status="ok"
+                  sub="Main process resident set"
+                />
+              </>
+            );
+          })() : (
+            <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Loading…</div>
+          )}
+
+          {/* Recent watchdog events (on-demand tail of watchdog.log) */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16, marginBottom: 8 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Recent Events</div>
+            <button onClick={loadEvents} disabled={eventsLoading} style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: eventsLoading ? "wait" : "pointer", textDecoration: "underline", padding: 0 }}>
+              {eventsLoading ? "…" : "Refresh"}
+            </button>
+          </div>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "10px 12px", maxHeight: 160, overflowY: "auto" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, lineHeight: 1.6, color: "var(--text-tertiary)" }}>
+            {events.length ? events.map((line, i) => (
+              <div key={i} style={{ whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const }}>{line}</div>
+            )) : (
+              <div>No watchdog log yet — HA may not be running on this machine.</div>
+            )}
+          </div>
         </div>
 
         {/* Last error if any */}
@@ -391,15 +566,18 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
 export function HealthStatusDot({ onClick, compact = false, height }: { onClick: () => void; compact?: boolean; height?: number }) {
   const [status, setStatus] = useState<"ok" | "warn" | "error">("ok");
+  const [alarm, setAlarm] = useState(false);
 
   useEffect(() => {
+    // DB liveness + HA crash-loop alarm. alarmStatus is a single fs.existsSync in
+    // main — cheap enough for this 15s tick and immune to stale dashboard state.
     const check = async () => {
-      try {
-        await query("SELECT 1");
-        setStatus("ok");
-      } catch {
-        setStatus("error");
-      }
+      let dbOk = true;
+      try { await query("SELECT 1"); } catch { dbOk = false; }
+      let alarmed = false;
+      try { const r = await (window as any).ether?.ha?.alarmStatus(); alarmed = !!r?.alarm; } catch { /* HA bridge absent → ignore */ }
+      setAlarm(alarmed);
+      setStatus(!dbOk || alarmed ? "error" : "ok");
     };
     check();
     const id = setInterval(check, 15000);
@@ -407,8 +585,8 @@ export function HealthStatusDot({ onClick, compact = false, height }: { onClick:
   }, []);
 
   const color = status === "ok" ? "var(--accent-green)" : status === "warn" ? "var(--accent-amber)" : "var(--accent-red)";
-  const label = status === "ok" ? "All systems normal" : status === "warn" ? "Warning" : "System error";
-  const shortLabel = status === "ok" ? "NOMINAL" : status === "warn" ? "WARN" : "ERROR";
+  const label = alarm ? "HA alarm — auto-restart halted" : status === "ok" ? "All systems normal" : status === "warn" ? "Warning" : "System error";
+  const shortLabel = alarm ? "ALARM" : status === "ok" ? "NOMINAL" : status === "warn" ? "WARN" : "ERROR";
 
   return (
     <button

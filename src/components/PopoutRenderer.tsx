@@ -9,6 +9,7 @@ import MicDeck from "./MicDeck";
 import PhoneDesk from "./PhoneDesk";
 import VoiceTracker from "./VoiceTracker";
 import UpNext from "./UpNext";
+import { HealthMonitor } from "./HealthMonitor";
 
 // ── StandaloneUpNext — wraps UpNext; syncs queue via broadcast relay ──
 // The main window emits "ether:broadcast" { channel: "queue:sync", data: queueLen }
@@ -40,6 +41,7 @@ const TITLES: Record<string, string> = {
   "upnext":    "Up Next",
   "phone":     "Phone Desk",
   "voicetrack":"Voice Tracker",
+  "health":    "Station Health",
 };
 
 export default function PopoutRenderer({ panel }: { panel: string }) {
@@ -64,6 +66,9 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       break;
     case "upnext":
       content = <StandaloneUpNext />;
+      break;
+    case "health":
+      content = <HealthMonitor onClose={() => window.close()} />;
       break;
     default:
       content = (

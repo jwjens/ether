@@ -112,6 +112,16 @@ contextBridge.exposeInMainWorld("ether", {
     disable: () => ipcRenderer.invoke("autostart:disable"),
     isEnabled: () => ipcRenderer.invoke("autostart:isEnabled"),
   },
+  // ── High Availability (watchdog supervision) ───────────────
+  // status: HA control-plane (watchdog/task/alarm). dashboard: health snapshot +
+  // control-plane in one round-trip (5s panel poll). alarmStatus: alarm-only,
+  // cheap (footer dot). readLog: watchdog.log tail, on-demand.
+  ha: {
+    status:      ()       => ipcRenderer.invoke("ha:status"),
+    dashboard:   ()       => ipcRenderer.invoke("ha:dashboard"),
+    alarmStatus: ()       => ipcRenderer.invoke("ha:alarmStatus"),
+    readLog:     (lines)  => ipcRenderer.invoke("ha:readLog", lines),
+  },
   iris: {
     // Fires when Iris sends a command — payload: { action, label }
     onCommand:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('iris:command-received', h); return h; },

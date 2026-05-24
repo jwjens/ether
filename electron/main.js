@@ -1270,17 +1270,100 @@ function _haAlarmActive() {
   try { return fs.existsSync(path.join(app.getPath("userData"), ".ether-ha-alarm")); } catch { return false; }
 }
 
+// schtasks /Query is a subprocess — cache its result so the 5s ha:dashboard poll
+// (and the footer dot) don't spawn it 12×/min. Task registration is a deliberate,
+// rare action, so a 30s TTL stays plenty fresh. ha:status + ha:dashboard share it.
+let _haStartupCache = { at: 0, val: null };
+function cachedStartupStatus() {
+  const now = Date.now();
+  if (_haStartupCache.val && (now - _haStartupCache.at) < 30000) return _haStartupCache.val;
+  const plat = loadHaPlatform();
+  const val = plat && plat.startupStatus ? plat.startupStatus() : { registered: false };
+  _haStartupCache = { at: now, val };
+  return val;
+}
+
+// Single source of truth for the /health payload — shared by the GET /health
+// route (the HA watchdog's poll) and the ha:dashboard IPC (the renderer's System
+// Health panel). MUST stay lock-free: reads only Node-native values + the atomic
+// audio-liveness getter; never calls audio.audioGetState() (that would lock the
+// per-station Mutex and could stall during a write).
+function buildHealthSnapshot() {
+  const now = Date.now();
+  let lastCb = 0;
+  try { lastCb = Number(audio.audioLastCallbackMs?.()) || 0; } catch {}
+  const staleMs = lastCb > 0 ? now - lastCb : null;
+  let sync = null;
+  try {
+    const sch = app._syncScheduler;
+    if (sch) {
+      const s = sch.getProgressState();
+      sync = { running: true, initialComplete: !!s.initialComplete, appliedTotal: s.appliedTotal || 0 };
+    }
+  } catch {}
+  let activeId = null;
+  try { activeId = getActiveStationId(); } catch {}
+  let memRssMb = null;
+  try { memRssMb = Math.round(process.memoryUsage().rss / (1024 * 1024)); } catch {}
+  return {
+    ok: true,
+    ts: now,
+    pid: process.pid,
+    uptimeSec: Math.round(process.uptime()),
+    audio: { lastCallbackMs: lastCb, staleMs, alive: staleMs !== null && staleMs < 2000 },
+    sync,
+    station: { activeId },
+    memRssMb,
+  };
+}
+
 ipcMain.handle("ha:status", () => {
   const plat = loadHaPlatform();
-  const startup = plat && plat.startupStatus ? plat.startupStatus() : { registered: false };
   return {
     platform: process.platform,
     supported: !!(plat && plat.registerStartup && process.platform === "win32"),
     config: readHaConfigFile(),
-    startup,
+    startup: cachedStartupStatus(),
     watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer },
     alarm: _haAlarmActive(),
   };
+});
+
+// ha:dashboard — combined health + HA control-plane snapshot for the System
+// Health panel's 5s poll. One round-trip. `startup` (schtasks) is cached 30s.
+// `active` distinguishes "HA running" from "app launched directly" so the UI can
+// show a neutral "HA Inactive" instead of a scary red when HA was never enabled.
+ipcMain.handle("ha:dashboard", () => {
+  const plat = loadHaPlatform();
+  return {
+    health: buildHealthSnapshot(),
+    ha: {
+      platform: process.platform,
+      supported: !!(plat && plat.registerStartup && process.platform === "win32"),
+      active: !!_haWatchdogPid,
+      config: readHaConfigFile(),
+      startup: cachedStartupStatus(),
+      watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer },
+      alarm: _haAlarmActive(),
+    },
+  };
+});
+
+// ha:alarmStatus — minimal alarm-only check for the footer NOMINAL dot. A single
+// fs.existsSync; no subprocess, no risk of the dot holding stale dashboard state.
+ipcMain.handle("ha:alarmStatus", () => ({ alarm: _haAlarmActive() }));
+
+// ha:readLog — last N lines of watchdog.log (on-demand, not polled). Main owns
+// the userData path; the renderer just asks for a tail.
+ipcMain.handle("ha:readLog", (_e, lines) => {
+  const n = Math.max(1, Math.min(Number(lines) || 40, 500));
+  try {
+    const p = path.join(app.getPath("userData"), "watchdog.log");
+    const all = fs.readFileSync(p, "utf8").split(/\r?\n/).filter(Boolean);
+    return { ok: true, lines: all.slice(-n) };
+  } catch (e) {
+    return { ok: false, error: e.code === "ENOENT" ? "no log yet" : e.message, lines: [] };
+  }
 });
 
 // ha:enable / ha:disable / ha:repair — deferred to Phase 4, where the customer-
@@ -2873,32 +2956,7 @@ const irisHttpServer = require('http').createServer((req, res) => {
   // decision uses just two things: that this responds at all (main process not
   // hung) and audio.alive (engine thread still firing callbacks).
   if (req.method === 'GET' && url === '/health') {
-    const now = Date.now();
-    let lastCb = 0;
-    try { lastCb = Number(audio.audioLastCallbackMs?.()) || 0; } catch {}
-    const staleMs = lastCb > 0 ? now - lastCb : null;
-    let sync = null;
-    try {
-      const sch = app._syncScheduler;
-      if (sch) {
-        const s = sch.getProgressState();
-        sync = { running: true, initialComplete: !!s.initialComplete, appliedTotal: s.appliedTotal || 0 };
-      }
-    } catch {}
-    let activeId = null;
-    try { activeId = getActiveStationId(); } catch {}
-    let memRssMb = null;
-    try { memRssMb = Math.round(process.memoryUsage().rss / (1024 * 1024)); } catch {}
-    res.end(JSON.stringify({
-      ok: true,
-      ts: now,
-      pid: process.pid,
-      uptimeSec: Math.round(process.uptime()),
-      audio: { lastCallbackMs: lastCb, staleMs, alive: staleMs !== null && staleMs < 2000 },
-      sync,
-      station: { activeId },
-      memRssMb,
-    }));
+    res.end(JSON.stringify(buildHealthSnapshot()));
     return;
   }
 
