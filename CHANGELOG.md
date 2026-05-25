@@ -1,3 +1,20 @@
+## [4.2.2] — 2026-05-25
+
+Listener page queue ordering fix.
+
+### Fixed — now-playing queue includes the cued standby-deck songs
+
+The public listener page's "Up Next" skipped the two songs already cued onto the
+standby decks (e.g. the song sitting on Deck C), jumping straight from the on-air
+track to the deeper queue — so the displayed order was off by the two deck slots.
+
+- The now-playing payload's `queue` now uses `engine.getQueue().slice(0, 12)` (the
+  full upcoming order) instead of `slice(2, …)`. `queue[0]`/`queue[1]` are the songs
+  cued onto the standby decks — the genuine next 1–2 tracks; the engine dequeues the
+  now-playing song so it never appears in the queue (no duplication).
+- The in-app Next Up panel keeps `slice(2, …)` because it shows those two on the deck
+  strips; the listener page has no deck strips, so it must include them.
+
 ## [4.2.1] — 2026-05-25
 
 Fix for the public listener page publishing wrong now-playing data.

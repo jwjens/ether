@@ -414,8 +414,11 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
 // title-change moments, so reading it could publish a stale "handoff gap" value
 // (playing=false / title=null) even while audio is playing. engine.getDeck().getState()
 // is the same source the [ROT] logs read, so it reflects what's actually on air.
-// The queue is sliced from index 2 to mirror the visible Next Up panel, which
-// skips the two items already cued onto standby decks (see UpNext.tsx).
+// The queue is sliced from index 0 — the FULL upcoming order. queue[0]/[1] are the
+// songs already cued onto the standby decks (the genuine next 1–2 tracks; the
+// engine dequeues the now-playing song, so it's never in the queue). The in-app
+// Next Up panel slices from index 2 because it shows those two on the deck strips,
+// but the listener page has no deck strips and must include them.
 function buildNowPlayingPayload(
   engine: ReturnType<typeof getEngine>,
   stationName: string,
@@ -441,8 +444,8 @@ function buildNowPlayingPayload(
     station_name: stationName,
     station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
     decks: { A: mkDeck(sA), B: mkDeck(sB), C: mkDeck(sC) },
-    // Mirror the visible Next Up panel (UpNext renders engine queue from index 2).
-    queue: engine.getQueue().slice(2, 12).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
+    // Full upcoming order incl. the two cued standby-deck songs (queue[0]/[1]).
+    queue: engine.getQueue().slice(0, 12).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
   };
 }
 
