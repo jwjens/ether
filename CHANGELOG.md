@@ -1,3 +1,41 @@
+## [4.2.0] — 2026-05-25
+
+A major reliability + reach release: the full High Availability arc and the first
+four phases of the Listener Platform, plus the onboarding redesign and the
+customer-facing tier rename shipped since 4.1.x.
+
+### High Availability — "Keep My Station On Air" (Phases 1–5, complete)
+
+Ether now supervises itself end to end so a station survives crashes, hangs, and
+reboots unattended.
+
+- **Health signal (P1):** lock-free `GET /health` on :3400 + an atomic audio-liveness getter (engine-thread heartbeat).
+- **Watchdog (P2):** a separate supervisor process restarts Ether on crash or hang (~15s hang detection), with a crash-loop guard + alarm marker.
+- **Mutual supervision (P2.5):** Ether relaunches a dead watchdog; each process outlives the other (detached spawn).
+- **Startup registration (P3):** per-user logon Scheduled Task (`EtherHAWatchdog`), no admin, via `--enable-ha` / `--disable-ha`.
+- **Auto-logon installer (P4):** opt-in Settings → "Keep My Station On Air" configures Windows auto-logon via a tiny native helper (`ha-setup.exe`: HKLM Winlogon + LSA `DefaultPassword` secret), one UAC prompt, full teardown on disable.
+- **Health dashboard + runbook (P5):** GREEN/AMBER/RED rollup in the System Health panel (watchdog, startup task, mutual supervision, alarm, uptime, audio, memory), popout-able; operator runbook at `docs/ha-runbook.md`.
+
+### Listener Platform — public listener pages (Phases 1–4)
+
+Foundation for branded, installable listener pages at `listen.ether-technologies.com/<slug>`.
+
+- **Per-station now-playing (P1):** `station_now_playing` live cache; the now-playing push now carries `station_uuid` so the backend keys state per station.
+- **Station metadata service (P2):** `station_metadata` + `station_slug_history`; authenticated endpoints for branding (slug, display name, logo, colors, description, socials) with slug validation + reserved denylist; logo upload via a public R2 bucket. New Settings → Station → "Public Listener Page".
+- **Public read + realtime (P3):** unauthenticated `GET /public/station/:slug` (metadata + now-playing) and an SSE `…/stream` that pushes now-playing on each song change; renamed slugs 301-redirect.
+- **Tier 1 listener PWA (P4):** new `ether-listener` app (Vite + React, installable PWA) — branding, now-playing with progress, up-next, social links, live audio with a big play button. Per-station Icecast `stream_url` configured in Ether; the live listener URL is shown in Settings with copy/open.
+
+### Onboarding & tiers
+
+- **Onboarding redesign:** reworked connect path + Manage Stations delete; local stations mirror backend create/bind (EB16/EB17 server-registration fixes).
+- **Tier rename (customer-facing):** Free→Solo, Creator/Pro→Studio, Station→Network, Operator→Enterprise (internal plan values unchanged).
+- **Dev:** Phase 1 debug panel (tier override, reset onboarding, jump-to-screen).
+
+### Notes
+
+- Schema changes are additive only (HA needs none; Listener Platform adds `station_now_playing`, `station_metadata`, `station_slug_history`, and a `stream_url` column — all idempotent in the backend's `initDB`).
+- Updates are operator-controlled: download anytime (no audio impact), restart to apply when off-air; the HA watchdog treats the update restart as expected (no respawn fight).
+
 ## [4.1.0] — 2026-05-08
 
 ### Phase 3.5 — Sync-Readiness Arc
