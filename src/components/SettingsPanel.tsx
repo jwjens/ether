@@ -1120,6 +1120,9 @@ const SOCIAL_FIELDS: { key: string; label: string; placeholder: string }[] = [
   { key: "youtube",   label: "YouTube",   placeholder: "https://youtube.com/@…" },
 ];
 
+// Where the listener PWA is served (Cloudflare Pages → listen.ether-technologies.com).
+const LISTENER_BASE_URL = "https://listen.ether-technologies.com";
+
 const EMPTY_PUBLIC_PAGE = {
   slug: "", display_name: "", logo_url: "", stream_url: "",
   color_primary: "#6040c0", color_secondary: "#38bdf8", description: "",
@@ -1137,6 +1140,7 @@ function PublicPageSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [logoBusy, setLogoBusy] = useState(false);
+  const [copied, setCopied]   = useState(false);
   const [msg, setMsg]         = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [slugState, setSlugState] = useState<{ status: "idle" | "checking" | "ok" | "bad"; reason?: string }>({ status: "idle" });
 
@@ -1236,9 +1240,24 @@ function PublicPageSettings() {
     setLogoBusy(false);
   };
 
+  // The live listener URL reflects what's actually PUBLISHED (last saved), not
+  // unsaved form edits — so we never advertise a URL that would 404.
+  const published = !!loaded?.public_enabled && !!loaded?.slug;
+  const liveUrl = published ? `${LISTENER_BASE_URL}/${loaded.slug}` : null;
+  const copyUrl = async () => {
+    if (!liveUrl) return;
+    try { await navigator.clipboard.writeText(liveUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
+  };
+  const openUrl = () => {
+    if (!liveUrl) return;
+    const sys = (window as any).ether?.system;
+    if (sys?.openUrl) sys.openUrl(liveUrl); else window.open(liveUrl, "_blank");
+  };
+
   if (!isReady) return null;
 
   const inputStyle = { padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: "100%", boxSizing: "border-box" as const };
+  const linkBtn = { padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" } as const;
   const slugColor = slugState.status === "ok" ? "var(--accent-green)" : slugState.status === "bad" ? "var(--accent-red)" : "var(--text-tertiary)";
   const slugMsg = slugState.status === "checking" ? "Checking…"
     : slugState.status === "ok" ? "Available"
@@ -1262,6 +1281,18 @@ function PublicPageSettings() {
               When on, anyone with your link can open your station's player. Requires an address below.
             </div>
           </div>
+
+          <SettingRow label="Your listener page">
+            {published ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+                <code style={{ fontSize: 12, fontFamily: "'DM Mono', monospace", color: "var(--accent-blue)", wordBreak: "break-all" as const }}>{liveUrl}</code>
+                <button onClick={copyUrl} style={linkBtn}>{copied ? "Copied!" : "Copy"}</button>
+                <button onClick={openUrl} style={linkBtn}>Open</button>
+              </div>
+            ) : (
+              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Enable above and set an address to publish your listener page.</span>
+            )}
+          </SettingRow>
 
           <SettingRow label="Address" hint="listen.ether-technologies.com/your-slug">
             <div style={{ width: 280 }}>
