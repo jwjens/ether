@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld("ether", {
   },
   station: {
     uploadLogo: () => ipcRenderer.invoke("station:uploadLogo"),
+    // Public listener page config (Phase 2) — talks to ether-backend via main.
+    metadata: {
+      get:        (uuid)             => ipcRenderer.invoke("station:metadata:get", uuid),
+      save:       (uuid, metadata)   => ipcRenderer.invoke("station:metadata:save", uuid, metadata),
+      checkSlug:  (slug, uuid)       => ipcRenderer.invoke("station:metadata:check-slug", slug, uuid),
+      uploadLogo: (uuid, bytes, ext) => ipcRenderer.invoke("station:metadata:upload-logo", uuid, bytes, ext),
+    },
   },
   spotify: {
     setCredentials:       (clientId, clientSecret) => ipcRenderer.invoke("spotify:setCredentials", { clientId, clientSecret }),

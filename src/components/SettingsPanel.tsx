@@ -11,6 +11,7 @@ import StreamStatusPill from "./StreamStatusPill";
 import PairMobileApp from "./PairMobileApp";
 import AIVoiceSettings from "./AIVoiceSettings";
 import BetaProgram from "./BetaProgram";
+import { validateSlug, slugify } from "../lib/slug";
 
 // ── Settings categories ──────────────────────────────────────
 // 6 buckets that cover all 18 Section components without any one category
@@ -1059,6 +1060,268 @@ function KeepOnAirSection() {
   );
 }
 
+// ── Public Listener Page config (Phase 2) ────────────────────
+// Writes station_metadata on the backend via ether.station.metadata.* (license-
+// key auth). Slug gets instant client validation + a debounced server check;
+// the backend is the gatekeeper on save. Logo is resized client-side (canvas)
+// then uploaded through main → R2. Save is blocked when the backend is
+// unreachable (error + retry; no offline queue).
+
+function publicPageErrText(code?: string): string {
+  switch (code) {
+    case "slug_taken": case "taken":        return "That address is already taken.";
+    case "slug_invalid": case "invalid":    return "Use 3–32 lowercase letters, numbers, or hyphens.";
+    case "slug_reserved": case "reserved":  return "That name is reserved — pick another.";
+    case "slug_required_for_public":        return "Choose an address before making the page public.";
+    case "station_not_found_or_not_owned":  return "This station isn't linked to your account.";
+    case "no_license": case "invalid_license_key": return "Reconnect your account to manage your public page.";
+    case "logo_storage_unconfigured":       return "Logo uploads aren't set up yet — try again later.";
+    case "network":                         return "Can't reach Ether — check your connection and try again.";
+    default: return code ? `Error: ${code}` : "Something went wrong.";
+  }
+}
+
+// Downscale to `max` px on the longest side, prefer WebP (PNG fallback).
+// Returns the bytes + extension for upload. Throws on >5MB or unsupported input.
+async function resizeLogo(file: File, max = 512): Promise<{ bytes: Uint8Array; ext: string }> {
+  if (file.size > 5 * 1024 * 1024) throw new Error("Image is too large (max 5 MB).");
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const i = new Image();
+      i.onload = () => res(i);
+      i.onerror = () => rej(new Error("That file isn't a supported image."));
+      i.src = url;
+    });
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Could not process image.");
+    ctx.drawImage(img, 0, 0, w, h);
+    let blob: Blob | null = await new Promise(res => canvas.toBlob(res, "image/webp", 0.9));
+    if (!blob) blob = await new Promise(res => canvas.toBlob(res, "image/png"));
+    if (!blob) throw new Error("Could not process image.");
+    const ext = blob.type === "image/webp" ? "webp" : "png";
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    return { bytes, ext };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+const SOCIAL_FIELDS: { key: string; label: string; placeholder: string }[] = [
+  { key: "website",   label: "Website",   placeholder: "https://yourstation.com" },
+  { key: "instagram", label: "Instagram", placeholder: "https://instagram.com/…" },
+  { key: "twitter",   label: "Twitter/X", placeholder: "https://x.com/…" },
+  { key: "facebook",  label: "Facebook",  placeholder: "https://facebook.com/…" },
+  { key: "youtube",   label: "YouTube",   placeholder: "https://youtube.com/@…" },
+];
+
+const EMPTY_PUBLIC_PAGE = {
+  slug: "", display_name: "", logo_url: "",
+  color_primary: "#6040c0", color_secondary: "#38bdf8", description: "",
+  socials: { website: "", instagram: "", twitter: "", facebook: "", youtube: "" } as Record<string, string>,
+  public_enabled: false,
+};
+
+function PublicPageSettings() {
+  const { stationUuid, stationName, isReady } = useActiveStation();
+  const ether = (window as any).ether;
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const [form, setForm]       = useState<any>(EMPTY_PUBLIC_PAGE);
+  const [loaded, setLoaded]   = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const [msg, setMsg]         = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [slugState, setSlugState] = useState<{ status: "idle" | "checking" | "ok" | "bad"; reason?: string }>({ status: "idle" });
+
+  // Initial load of the saved metadata.
+  useEffect(() => {
+    if (!isReady || !stationUuid) { setLoading(false); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setMsg(null);
+      const r = await ether?.station?.metadata?.get(stationUuid);
+      if (cancelled) return;
+      if (r?.ok) {
+        const m = r.metadata || {};
+        const norm = {
+          slug: m.slug || "", display_name: m.display_name || "", logo_url: m.logo_url || "",
+          color_primary: m.color_primary || "#6040c0", color_secondary: m.color_secondary || "#38bdf8",
+          description: m.description || "",
+          socials: { ...EMPTY_PUBLIC_PAGE.socials, ...(m.socials || {}) },
+          public_enabled: !!m.public_enabled,
+        };
+        setLoaded(norm);
+        // Suggest a slug if none set yet.
+        if (!norm.slug) {
+          const sug = slugify(norm.display_name || stationName || "");
+          setForm(validateSlug(sug).ok ? { ...norm, slug: sug } : norm);
+        } else {
+          setForm(norm);
+        }
+      } else {
+        setMsg({ kind: "err", text: publicPageErrText(r?.error) });
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [isReady, stationUuid]);
+
+  // Debounced slug check (client validate first, then server).
+  useEffect(() => {
+    const slug = (form.slug || "").trim().toLowerCase();
+    if (!slug) { setSlugState({ status: "idle" }); return; }
+    if (loaded && slug === loaded.slug) { setSlugState({ status: "ok" }); return; } // own current slug
+    const v = validateSlug(slug);
+    if (!v.ok) { setSlugState({ status: "bad", reason: v.reason }); return; }
+    setSlugState({ status: "checking" });
+    const t = setTimeout(async () => {
+      const r = await ether?.station?.metadata?.checkSlug(slug, stationUuid);
+      if (r?.ok) setSlugState(r.available ? { status: "ok" } : { status: "bad", reason: r.reason || "taken" });
+      else setSlugState({ status: "bad", reason: r?.error || "network" });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [form.slug, loaded, stationUuid]);
+
+  const dirty = !!loaded && JSON.stringify(form) !== JSON.stringify(loaded);
+  const slugOk = !form.slug || slugState.status === "ok";
+  const canSave = !saving && dirty && slugOk && (!form.public_enabled || !!form.slug);
+
+  const setField  = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+  const setSocial = (k: string, v: string) => setForm((f: any) => ({ ...f, socials: { ...f.socials, [k]: v } }));
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    const r = await ether?.station?.metadata?.save(stationUuid, {
+      slug: form.slug ? form.slug.trim().toLowerCase() : null,
+      display_name: form.display_name || null,
+      logo_url: form.logo_url || null,
+      color_primary: form.color_primary || null,
+      color_secondary: form.color_secondary || null,
+      description: form.description || null,
+      socials: form.socials,
+      public_enabled: !!form.public_enabled,
+    });
+    setSaving(false);
+    if (r?.ok) {
+      const m = r.metadata || {};
+      const norm = { ...form, slug: m.slug || "", logo_url: m.logo_url || form.logo_url };
+      setLoaded(norm); setForm(norm);
+      setMsg({ kind: "ok", text: "Saved" });
+      setTimeout(() => setMsg(m2 => (m2?.kind === "ok" ? null : m2)), 2500);
+    } else {
+      setMsg({ kind: "err", text: publicPageErrText(r?.error) });
+    }
+  };
+
+  const onLogoFile = async (file?: File) => {
+    if (!file) return;
+    setLogoBusy(true); setMsg(null);
+    try {
+      const { bytes, ext } = await resizeLogo(file, 512);
+      const r = await ether?.station?.metadata?.uploadLogo(stationUuid, bytes, ext);
+      if (r?.ok) setField("logo_url", `${r.public_url}?t=${Date.now()}`); // cache-bust the preview
+      else setMsg({ kind: "err", text: publicPageErrText(r?.error) });
+    } catch (e: any) {
+      setMsg({ kind: "err", text: e?.message || "Could not process image." });
+    }
+    setLogoBusy(false);
+  };
+
+  if (!isReady) return null;
+
+  const inputStyle = { padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: "100%", boxSizing: "border-box" as const };
+  const slugColor = slugState.status === "ok" ? "var(--accent-green)" : slugState.status === "bad" ? "var(--accent-red)" : "var(--text-tertiary)";
+  const slugMsg = slugState.status === "checking" ? "Checking…"
+    : slugState.status === "ok" ? "Available"
+    : slugState.status === "bad" ? publicPageErrText(slugState.reason)
+    : "";
+
+  return (
+    <Section
+      category="station"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
+      title="Public Listener Page"
+      description="A branded page your listeners can open and install — logo, colors, now-playing, links."
+    >
+      {loading ? (
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", padding: "8px 0" }}>Loading…</div>
+      ) : (
+        <>
+          <div style={{ marginBottom: 16 }}>
+            <Toggle value={form.public_enabled} onChange={(v: boolean) => setField("public_enabled", v)} label="Publish a public listener page" />
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 6, marginLeft: 52 }}>
+              When on, anyone with your link can open your station's player. Requires an address below.
+            </div>
+          </div>
+
+          <SettingRow label="Address" hint="listen.ether-technologies.com/your-slug">
+            <div style={{ width: 280 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>/</span>
+                <input value={form.slug} onChange={e => setField("slug", e.target.value.toLowerCase())} placeholder="your-station" style={inputStyle} />
+              </div>
+              {slugMsg && <div style={{ fontSize: 10, color: slugColor, marginTop: 4 }}>{slugMsg}</div>}
+            </div>
+          </SettingRow>
+
+          <SettingRow label="Display name" hint="Shown on the page (can differ from your station name)">
+            <input value={form.display_name} onChange={e => setField("display_name", e.target.value)} placeholder={stationName || "My Radio Station"} style={{ ...inputStyle, width: 280 }} />
+          </SettingRow>
+
+          <SettingRow label="Logo" hint="PNG/JPG/WebP — resized to 512px">
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              {form.logo_url
+                ? <img src={form.logo_url} alt="logo" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 0, border: "1px solid var(--border-primary)" }} />
+                : <div style={{ width: 48, height: 48, border: "1px dashed var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--text-tertiary)" }}>none</div>}
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => onLogoFile(e.target.files?.[0])} />
+              <button onClick={() => fileRef.current?.click()} disabled={logoBusy} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: logoBusy ? "wait" : "pointer" }}>
+                {logoBusy ? "Uploading…" : form.logo_url ? "Replace" : "Upload"}
+              </button>
+            </div>
+          </SettingRow>
+
+          <SettingRow label="Colors" hint="Primary and secondary brand colors">
+            <div style={{ display: "flex", gap: 16 }}>
+              {(["color_primary", "color_secondary"] as const).map(k => (
+                <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <input type="color" value={form[k]} onChange={e => setField(k, e.target.value)} style={{ width: 32, height: 28, padding: 0, border: "1px solid var(--border-primary)", background: "none", cursor: "pointer" }} />
+                  <input value={form[k]} onChange={e => setField(k, e.target.value)} style={{ ...inputStyle, width: 90 }} />
+                </div>
+              ))}
+            </div>
+          </SettingRow>
+
+          <SettingRow label="Description" hint="A short tagline for your station">
+            <textarea value={form.description} onChange={e => setField("description", e.target.value)} rows={2} placeholder="The best mix in town." style={{ ...inputStyle, width: 360, resize: "vertical" as const, fontFamily: "inherit" }} />
+          </SettingRow>
+
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, margin: "16px 0 8px" }}>Social Links</div>
+          {SOCIAL_FIELDS.map(s => (
+            <SettingRow key={s.key} label={s.label}>
+              <input value={form.socials[s.key] || ""} onChange={e => setSocial(s.key, e.target.value)} placeholder={s.placeholder} style={{ ...inputStyle, width: 360 }} />
+            </SettingRow>
+          ))}
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+            <button onClick={save} disabled={!canSave} style={{ padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: canSave ? "var(--accent-blue)" : "var(--bg-tertiary)", color: canSave ? "#fff" : "var(--text-tertiary)", border: "none", cursor: canSave ? "pointer" : "default" }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+            {dirty && !saving && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Unsaved changes</span>}
+            {msg && <span style={{ fontSize: 12, color: msg.kind === "ok" ? "var(--accent-green)" : "var(--accent-red)" }}>{msg.text}</span>}
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
@@ -1492,6 +1755,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 6, marginLeft: 52 }}>Recommended if you run a 24/7 station</div>
         </div>
       </Section>
+
+      {/* ── Public Listener Page (Phase 2) ── */}
+      <PublicPageSettings />
 
       {/* ── Audio ── */}
       <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="Choose where music plays and which mic to use for voice tracking">

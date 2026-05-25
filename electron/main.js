@@ -960,6 +960,14 @@ app.whenReady().then(() => {
     console.warn("[CLOUD-BACKUP] installCloudBackup failed:", e.message);
   }
 
+  // Station metadata (public listener page config — Phase 2). After initDb().
+  try {
+    const { installStationMetadata } = require("./station-metadata.js");
+    installStationMetadata(ipcMain, db);
+  } catch (e) {
+    console.warn("[STATION-METADATA] install failed:", e.message);
+  }
+
   // sync IPC handlers — all 30 typed handler sets via aggregator
   // (stations:* excluded from installAll — registered manually below with custom logic)
   console.log('[sync/handlers] ▶ installAll starting (phase-3.5)');
