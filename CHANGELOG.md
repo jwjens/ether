@@ -1,3 +1,25 @@
+## [4.2.1] — 2026-05-25
+
+Fix for the public listener page publishing wrong now-playing data.
+
+### Fixed — now-playing payload (Listener Platform P1 follow-up)
+
+The `/public/station/:slug` page showed `playing:false` / `title:null` with a queue
+that didn't match the on-screen Next Up panel, even while a deck was clearly on air.
+
+- **Decks read live, not from a React snapshot.** The payload's `playing`/`title`/`artist`
+  now come from `engine.getDeck().getState()` (the same source the `[ROT]` logs read)
+  instead of React deck state that was only sampled at title-change moments. This was
+  publishing a stale "handoff gap" value (no deck momentarily "playing") and never
+  refreshing it until the next song.
+- **Heartbeat + self-correct.** The backend POST now runs on a 3s heartbeat (deduped on a
+  content signature so steady playback and idle don't spam), so any transient corrects
+  within one tick. The local companion + Icecast/Shoutcast metadata fan-out stay on the
+  per-track cadence.
+- **Queue matches Next Up.** The published `queue` is now `engine.getQueue().slice(2, …)`,
+  mirroring the operator's visible Next Up panel (the two already-cued standby-deck items
+  are excluded), instead of the raw, offset, stale snapshot.
+
 ## [4.2.0] — 2026-05-25
 
 A major reliability + reach release: the full High Availability arc and the first

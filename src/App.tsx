@@ -409,6 +409,43 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
   return { onPointerDown, onPointerUp };
 }
 
+// Build the now-playing payload from LIVE engine state (decks + queue) at call
+// time — never from React snapshots. React deck state is only sampled at
+// title-change moments, so reading it could publish a stale "handoff gap" value
+// (playing=false / title=null) even while audio is playing. engine.getDeck().getState()
+// is the same source the [ROT] logs read, so it reflects what's actually on air.
+// The queue is sliced from index 2 to mirror the visible Next Up panel, which
+// skips the two items already cued onto standby decks (see UpNext.tsx).
+function buildNowPlayingPayload(
+  engine: ReturnType<typeof getEngine>,
+  stationName: string,
+  stationUuid: string,
+) {
+  const sA = engine.getDeck("A")?.getState?.() ?? null;
+  const sB = engine.getDeck("B")?.getState?.() ?? null;
+  const sC = engine.getDeck("C")?.getState?.() ?? null;
+  const live = [
+    { deck: "A", state: sA },
+    { deck: "B", state: sB },
+    { deck: "C", state: sC },
+  ].find(d => d.state?.status === "playing");
+  const mkDeck = (s: DeckState | null) =>
+    s ? { title: s.title, artist: s.artist, status: s.status, positionSec: s.positionSec, durationSec: s.durationSec } : null;
+  return {
+    playing:      !!live,
+    title:        live?.state?.title  || null,
+    artist:       live?.state?.artist || null,
+    position:     live?.state?.positionSec || 0,
+    duration:     live?.state?.durationSec || 0,
+    deck:         live?.deck || null,
+    station_name: stationName,
+    station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
+    decks: { A: mkDeck(sA), B: mkDeck(sB), C: mkDeck(sC) },
+    // Mirror the visible Next Up panel (UpNext renders engine queue from index 2).
+    queue: engine.getQueue().slice(2, 12).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
+  };
+}
+
 export default function App() {
   const { stationId, stationUuid, isReady: stationReady } = useActiveStation();
   // IMPORTANT: App() renders <AudioEngineProvider> in its JSX return, so App()
@@ -460,6 +497,7 @@ export default function App() {
   const durQueried = useRef(new Set<string>());
   const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
+  const lastNowPlaySig = useRef<string>(""); // dedupe backend now-playing POSTs on the heartbeat
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
@@ -1238,46 +1276,46 @@ export default function App() {
     return true;
   };
 
-  // Expose now-playing state for mobile companion via backend API
+  // Public listener page: POST live now-playing to the backend on a heartbeat.
+  // Reads LIVE engine state (not React deck snapshots) so playing/title can't
+  // latch a stale handoff-gap value, and any transient self-corrects within one
+  // tick. Deduped on a content signature so steady playback / idle don't spam the
+  // backend (position is derived from started_at server-side, so it's excluded
+  // from the signature). Only the backend fetch is on the heartbeat — the local
+  // companion + metadata fan-out stay on the per-track cadence (effect below) so
+  // Icecast/Shoutcast pushes aren't re-fired every tick.
   useEffect(() => {
-    const playing = [
-      { deck: "A", state: deckA },
-      { deck: "B", state: deckB },
-      { deck: "C", state: deckC },
-    ].find(d => d.state?.status === "playing");
-
-    const payload = {
-      playing:      !!playing,
-      title:        playing?.state?.title  || null,
-      artist:       playing?.state?.artist || null,
-      position:     playing?.state?.positionSec  || 0,
-      duration:     playing?.state?.durationSec  || 0,
-      deck:         playing?.deck || null,
-      station_name: stationName,
-      station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
-      decks: {
-        A: deckA ? { title: deckA.title, artist: deckA.artist, status: deckA.status, positionSec: deckA.positionSec, durationSec: deckA.durationSec } : null,
-        B: deckB ? { title: deckB.title, artist: deckB.artist, status: deckB.status, positionSec: deckB.positionSec, durationSec: deckB.durationSec } : null,
-        C: deckC ? { title: deckC.title, artist: deckC.artist, status: deckC.status, positionSec: deckC.positionSec, durationSec: deckC.durationSec } : null,
-      },
-      queue: engine.getQueue().slice(0, 10).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
+    const push = () => {
+      const payload = buildNowPlayingPayload(engine, stationName, stationUuid);
+      const sig = [
+        payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid,
+        payload.queue.map(q => q.title).join(""),
+      ].join("");
+      if (sig === lastNowPlaySig.current) return;
+      lastNowPlaySig.current = sig;
+      console.log(`[NOWPLAY] POST playing=${payload.playing} title=${JSON.stringify(payload.title)} deck=${payload.deck ?? "null"} q=${payload.queue.length}`);
+      fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKeyRef.current ? { "x-license-key": apiKeyRef.current } : {}),
+        },
+        body: JSON.stringify(payload),
+      }).catch(() => {});
     };
+    push();
+    const hb = setInterval(push, 3000);
+    return () => clearInterval(hb);
+  }, [engine, stationName, stationUuid]);
 
-    // Push to Railway backend so /api/now-playing and /dashboard serve it
-    fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(apiKeyRef.current ? { "x-license-key": apiKeyRef.current } : {}),
-      },
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-
-    // Also push via Tauri command for local companion
+  // Local companion + NowPlaying pop-out + stream metadata fan-out: fire once per
+  // track change (keeps Icecast/Shoutcast on a per-song cadence). Also reads live
+  // engine state so the pop-out and metadata targets stay consistent with the
+  // public page.
+  useEffect(() => {
+    const payload = buildNowPlayingPayload(engine, stationName, stationUuid);
     invoke("set_now_playing", { data: JSON.stringify(payload) }).catch(() => {});
-
-    // Only emit to NowPlaying window when the playing track actually changes
-    if (playing) {
+    if (payload.playing) {
       emit("now-playing-update", {
         title:       payload.title || "",
         artist:      payload.artist || "",
