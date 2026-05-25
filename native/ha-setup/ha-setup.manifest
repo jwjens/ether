@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!-- Explicit asInvoker. Windows' "installer detection" auto-elevates any exe
+       whose name contains "setup", which would (a) break `cargo test` and (b) be
+       implicit/surprising. We elevate deliberately instead: Ether launches this
+       helper via ShellExecute "runas" (electron/main.js → buildElevatePs), which
+       elevates regardless of this level. asInvoker keeps the test runner launchable. -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+</assembly>

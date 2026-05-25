@@ -117,10 +117,14 @@ contextBridge.exposeInMainWorld("ether", {
   // control-plane in one round-trip (5s panel poll). alarmStatus: alarm-only,
   // cheap (footer dot). readLog: watchdog.log tail, on-demand.
   ha: {
-    status:      ()       => ipcRenderer.invoke("ha:status"),
-    dashboard:   ()       => ipcRenderer.invoke("ha:dashboard"),
-    alarmStatus: ()       => ipcRenderer.invoke("ha:alarmStatus"),
-    readLog:     (lines)  => ipcRenderer.invoke("ha:readLog", lines),
+    status:      ()         => ipcRenderer.invoke("ha:status"),
+    dashboard:   ()         => ipcRenderer.invoke("ha:dashboard"),
+    alarmStatus: ()         => ipcRenderer.invoke("ha:alarmStatus"),
+    readLog:     (lines)    => ipcRenderer.invoke("ha:readLog", lines),
+    // Phase 4 auto-logon — each fires one UAC prompt in main via the elevated helper
+    enable:      (password) => ipcRenderer.invoke("ha:enable", password),
+    disable:     ()         => ipcRenderer.invoke("ha:disable"),
+    repair:      (password) => ipcRenderer.invoke("ha:repair", password),
   },
   iris: {
     // Fires when Iris sends a command — payload: { action, label }

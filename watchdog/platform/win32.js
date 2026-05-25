@@ -165,5 +165,6 @@ function startupStatus() {
 module.exports = {
   userDataDir, killHard, isProcessAlive,
   registerStartup, unregisterStartup, startupStatus,
+  currentUserId, // Phase 4: ha:enable passes DOMAIN\User to the auto-logon helper
   TASK_NAME, buildTaskXml, // exported for tests
 };

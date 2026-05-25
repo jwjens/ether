@@ -1,0 +1,23 @@
+[package]
+name = "ha-setup"
+version = "1.0.0"
+edition = "2021"
+description = "Ether HA auto-logon helper — elevated registry + LSA secret writer (Phase 4)"
+
+[[bin]]
+name = "ha-setup"
+path = "src/main.rs"
+
+[dependencies]
+winreg = "0.52"
+zeroize = "1"
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authentication_Identity",
+] }
+
+[profile.release]
+strip = true
+lto = true
+opt-level = "z"

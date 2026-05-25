@@ -933,6 +933,132 @@ function SyncSection() {
   );
 }
 
+// ── Keep My Station On Air (HA auto-logon — Phase 4) ─────────
+// Opt-in, default OFF. Enabling registers the per-user watchdog task AND
+// configures Windows auto-logon (one UAC prompt → elevated ha-setup.exe writes
+// the HKLM Winlogon values + the LSA password secret). Disabling clears all of it.
+// The password is sent to main over IPC and on to the helper via a named pipe;
+// Ether never writes it to disk.
+
+function StatusLine({ label, ok, on, off }: { label: string; ok: boolean; on: string; off: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+      <span style={{ color: "var(--text-tertiary)" }}>{label}</span>
+      <span style={{ color: ok ? "var(--accent-green)" : "var(--text-tertiary)" }}>{ok ? on : off}</span>
+    </div>
+  );
+}
+
+function KeepOnAirSection() {
+  const ether = (window as any).ether;
+  const [dash, setDash] = useState<any>(null);
+  const [entering, setEntering] = useState(false);   // password form is showing
+  const [repairing, setRepairing] = useState(false); // form was opened by Repair
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try { const d = await ether?.ha?.dashboard(); if (d) setDash(d); } catch { /* IPC unavailable */ }
+  }, [ether]);
+  useEffect(() => {
+    load();
+    const id = setInterval(() => { if (!document.hidden) load(); }, 5000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const ha = dash?.ha;
+  const supported = ha ? !!ha.supported : true;
+  const configured = !!ha?.config?.autologon;
+  const user = ha?.config?.user || ha?.currentUser || "your Windows account";
+  const toggleOn = configured || entering;
+
+  const onToggle = (v: boolean) => {
+    setError(null);
+    if (v) { if (!configured) { setRepairing(false); setEntering(true); } }
+    else if (configured) { doDisable(); }
+    else { setEntering(false); setPassword(""); }
+  };
+
+  const submit = async () => {
+    if (!password) { setError("Enter your Windows password."); return; }
+    setBusy(repairing ? "repair" : "enable"); setError(null);
+    const r = repairing ? await ether.ha.repair(password) : await ether.ha.enable(password);
+    setBusy(null);
+    if (r?.ok) { setPassword(""); setEntering(false); setRepairing(false); load(); }
+    else setError(r?.error || "Could not configure automatic logon.");
+  };
+
+  const doDisable = async () => {
+    setBusy("disable"); setError(null);
+    const r = await ether.ha.disable();
+    setBusy(null); setEntering(false); setPassword("");
+    if (!r?.ok) setError(r?.autologon?.error || r?.error || "Could not fully disable — check the status below.");
+    load();
+  };
+
+  const startRepair = () => { setError(null); setRepairing(true); setEntering(true); setPassword(""); };
+  const cancel = () => { setEntering(false); setRepairing(false); setPassword(""); setError(null); };
+
+  const inputStyle = { padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: 220 } as const;
+  const btn = (bg: string, fg = "#fff", border = "none") => ({ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: bg, color: fg, border, cursor: "pointer", opacity: busy ? 0.6 : 1 } as const);
+
+  return (
+    <Section
+      category="system"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>}
+      title="Keep My Station On Air"
+      description="Automatically restart after a crash, and log back in after a reboot."
+    >
+      {!supported ? (
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Automatic recovery is available on Windows only.</div>
+      ) : (
+        <>
+          <Toggle value={toggleOn} onChange={onToggle} label="Enable auto-recovery after reboot" />
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 6, marginLeft: 52 }}>
+            Restarts Ether if it crashes, and logs Windows back in automatically after a reboot so the station returns to air unattended.
+          </div>
+
+          {entering && (
+            <div style={{ marginTop: 14, marginLeft: 52 }}>
+              <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6 }}>Windows password for <code>{user}</code></div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Windows password"
+                  style={inputStyle} onKeyDown={e => { if (e.key === "Enter") submit(); }} autoFocus />
+                <button onClick={submit} disabled={!!busy} style={btn("var(--accent-blue)")}>
+                  {busy ? "Configuring…" : repairing ? "Re-apply" : "Enable"}
+                </button>
+                <button onClick={cancel} disabled={!!busy} style={btn("var(--bg-tertiary)", "var(--text-secondary)", "1px solid var(--border-primary)")}>Cancel</button>
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8, maxWidth: 470, lineHeight: 1.5 }}>
+                Used once to set up automatic logon. Ether never stores it — it's written to Windows' encrypted secret store. ⚠ Anyone who reboots this PC will then land in your logged-in Windows session without a password.
+              </div>
+            </div>
+          )}
+
+          {error && <div style={{ marginTop: 12, marginLeft: 52, fontSize: 12, color: "var(--accent-red)" }}>{error}</div>}
+
+          {ha && (
+            <div style={{ marginTop: 16, marginLeft: 52, display: "flex", flexDirection: "column", gap: 6, maxWidth: 380 }}>
+              <StatusLine label="Automatic logon" ok={configured} on="Configured" off="Not configured" />
+              <StatusLine label="Startup task" ok={!!ha.startup?.registered} on="Registered" off="Not registered" />
+              <StatusLine label="Watchdog" ok={!!ha.watchdog?.alive} on="Running" off="Not running" />
+              {ha.alarm && <div style={{ fontSize: 12, color: "var(--accent-red)" }}>⚠ Crash-loop alarm tripped — see Station Health.</div>}
+            </div>
+          )}
+
+          {configured && !entering && (
+            <div style={{ marginTop: 16, marginLeft: 52, display: "flex", gap: 8 }}>
+              <button onClick={startRepair} disabled={!!busy} style={btn("var(--bg-tertiary)", "var(--text-secondary)", "1px solid var(--border-primary)")}>Repair</button>
+              <button onClick={doDisable} disabled={!!busy} style={btn("var(--accent-red)")}>{busy === "disable" ? "Disabling…" : "Disable"}</button>
+            </div>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
 // ── Main Settings Panel ──────────────────────────────────────
 
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
@@ -1727,6 +1853,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         )}
         <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>Also strips leading timestamp prefixes like <code>1776659272680_</code> and collapses double/trailing underscores.</div>
       </Section>
+
+      {/* ── Keep My Station On Air (HA auto-logon) ── */}
+      <KeepOnAirSection />
 
       {/* ── Backup ── */}
       <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">

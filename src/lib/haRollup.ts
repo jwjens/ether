@@ -18,10 +18,11 @@ export interface HaControlPlane {
   platform: string;
   supported: boolean;
   active: boolean;
-  config: { enabled?: boolean };
+  config: { enabled?: boolean; autologon?: boolean; user?: string | null };
   startup: { registered: boolean; taskName?: string };
   watchdog: { pid: number | null; alive: boolean; monitoring: boolean };
   alarm: boolean;
+  currentUser?: string;   // Phase 4: current logged-in account (for the auto-logon form)
 }
 
 export interface HaDashboard {

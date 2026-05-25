@@ -1345,6 +1345,10 @@ ipcMain.handle("ha:dashboard", () => {
       startup: cachedStartupStatus(),
       watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer },
       alarm: _haAlarmActive(),
+      // Current logged-in account (env, no subprocess) — the Settings auto-logon
+      // form shows it as the account that will be configured. config.user holds
+      // the account actually configured (once enabled).
+      currentUser: `${process.env.USERDOMAIN || "."}\\${process.env.USERNAME || ""}`,
     },
   };
 });
@@ -1366,10 +1370,129 @@ ipcMain.handle("ha:readLog", (_e, lines) => {
   }
 });
 
-// ha:enable / ha:disable / ha:repair — deferred to Phase 4, where the customer-
-// facing Settings toggle lands. Phase 3 exposes ha:status only; HA is turned on
-// by the --enable-ha / --disable-ha CLI flags (handleHaBootstrapFlags), not a
-// runtime IPC toggle.
+// ── Phase 4: auto-logon installer (ha:enable / ha:disable / ha:repair) ─────────
+// The customer-facing Settings toggle lands here. Two things need admin — the
+// HKLM Winlogon values and the LSA "DefaultPassword" secret — so they're done by
+// an elevated native helper (native/ha-setup → ha-setup.exe) launched via one UAC
+// prompt. Everything else (the per-user Scheduled Task, ha-config.json, the live
+// watchdog) is done here, unelevated. The password reaches the helper over a
+// named pipe — never an argument, never on disk.
+const { buildElevatePs } = require("./ha-elevate");
+
+function haSetupExePath() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "ha-setup.exe")
+    : path.join(__dirname, "..", "native", "ha-setup", "target", "release", "ha-setup.exe");
+}
+
+function writeHaConfigFile(cfg) {
+  try { fs.writeFileSync(_haConfigPath(), JSON.stringify(cfg, null, 2)); }
+  catch (e) { console.error("[HA] write ha-config.json:", e.message); }
+}
+
+// Launch the elevated helper for `verb`. If `password` is provided (enable), open
+// a one-shot named pipe and hand the password over once the helper connects.
+// Returns the helper's structured result JSON ({ ok, step, error }) + exit code.
+function runHaSetup(verb, password) {
+  return new Promise((resolve) => {
+    const net = require("net");
+    const crypto = require("crypto");
+    const os = require("os");
+    const { spawn } = require("child_process");
+
+    const pipeName = `\\\\.\\pipe\\ether-ha-${crypto.randomBytes(8).toString("hex")}`;
+    const resultPath = path.join(os.tmpdir(), `ether-ha-result-${process.pid}-${Date.now()}.json`);
+    const user = (loadHaPlatform()?.currentUserId?.() ) || `${process.env.USERDOMAIN || "."}\\${process.env.USERNAME || ""}`;
+
+    let server = null;
+    const cleanup = () => { try { if (server) server.close(); } catch {} };
+
+    const finish = (code) => {
+      cleanup();
+      let result = { ok: code === 0, step: "spawn", error: code === 0 ? null : `helper exit ${code}` };
+      try { result = JSON.parse(fs.readFileSync(resultPath, "utf8")); } catch {}
+      try { fs.unlinkSync(resultPath); } catch {}
+      resolve({ ...result, exitCode: code });
+    };
+
+    const launch = () => {
+      const args = [verb, "--result", resultPath, "--user", user];
+      if (password != null) args.push("--pipe", pipeName);
+      const ps = buildElevatePs(haSetupExePath(), args);
+      const child = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { windowsHide: true });
+      child.on("exit", (code) => finish(code == null ? -1 : code));
+      child.on("error", (e) => { console.error("[HA] helper spawn error:", e.message); finish(-1); });
+    };
+
+    if (password != null) {
+      // Pipe server delivers the password to the elevated helper, then closes.
+      server = net.createServer((sock) => { sock.end(password + "\n"); });
+      server.on("error", (e) => { console.error("[HA] pipe error:", e.message); finish(-1); });
+      server.listen(pipeName, () => launch());
+    } else {
+      launch();
+    }
+  });
+}
+
+// Full enable: per-user task (no elevation) → elevated auto-logon (one UAC) →
+// persist config → bring supervision up for this session. ha:repair re-runs this
+// (re-prompts for the password), which fixes any partial/legacy state in one go.
+async function haEnable(password) {
+  if (process.platform !== "win32") return { ok: false, error: "Auto-recovery is only supported on Windows." };
+  if (!password) return { ok: false, error: "A Windows password is required to set up automatic logon." };
+  const plat = loadHaPlatform();
+  if (!plat || !plat.registerStartup) return { ok: false, error: "HA platform support unavailable." };
+
+  // a. Per-user logon Scheduled Task (Phase 3) — no elevation.
+  let reg;
+  try { reg = plat.registerStartup(); } catch (e) { reg = { ok: false, error: e.message }; }
+  if (!reg.ok) return { ok: false, step: "task", error: reg.stderr || reg.error || "could not register startup task" };
+
+  // b. Elevated auto-logon (registry + LSA secret) — one UAC prompt.
+  const r = await runHaSetup("enable", password);
+  if (!r.ok) {
+    try { plat.unregisterStartup(); } catch {}   // roll the task back so we don't leave a half-enabled state
+    return { ok: false, step: r.step || "autologon", error: r.error || `helper exit ${r.exitCode}` };
+  }
+
+  // c. Persist the configured state.
+  const user = (plat.currentUserId && plat.currentUserId()) || null;
+  writeHaConfigFile({ enabled: true, autologon: true, user });
+
+  // d. Bring a watchdog up for this session (adopts us) if none is supervising.
+  if (!_haIsAlive(_haWatchdogPid)) {
+    _haMonitorOff = false; _haRelaunchTimes.length = 0;
+    relaunchWatchdog();
+  }
+  _haStartupCache = { at: 0, val: null };   // bust the schtasks cache so status reflects the new task
+  return { ok: true };
+}
+
+ipcMain.handle("ha:enable", (_e, password) => haEnable(password));
+ipcMain.handle("ha:repair", (_e, password) => haEnable(password));
+
+ipcMain.handle("ha:disable", async () => {
+  if (process.platform !== "win32") return { ok: false, error: "Auto-recovery is only supported on Windows." };
+  stopWatchdogMonitor();   // FIRST — don't relaunch the watchdog we're about to kill
+  const plat = loadHaPlatform();
+
+  // a. Clear auto-logon (registry + LSA secret) — one UAC prompt.
+  const r = await runHaSetup("disable", null);
+
+  // b. Remove the per-user task and kill the live watchdog.
+  let unreg = { ok: false, error: "platform unsupported" };
+  if (plat && plat.unregisterStartup) { try { unreg = plat.unregisterStartup(); } catch (e) { unreg = { ok: false, error: e.message }; } }
+  const pid = _haWatchdogPid || readWatchdogPidFile();
+  _haKillWatchdog(pid);
+  removeWatchdogPidFile();
+  _haWatchdogPid = 0;
+
+  // c. Persist the off state.
+  writeHaConfigFile({ enabled: false, autologon: false, user: null });
+  _haStartupCache = { at: 0, val: null };
+  return { ok: r.ok && unreg.ok, autologon: r, task: unreg };
+});
 
 function _haWatchdogPidFile() { return path.join(app.getPath("userData"), ".ether-watchdog.pid"); }
 function readWatchdogPidFile() {

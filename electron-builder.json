@@ -25,6 +25,10 @@
       "from": "native",
       "to": "native",
       "filter": ["**/*.node"]
+    },
+    {
+      "from": "native/ha-setup/target/release/ha-setup.exe",
+      "to": "ha-setup.exe"
     }
   ],
   "win": {
@@ -55,7 +59,8 @@
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
-    "createStartMenuShortcut": true
+    "createStartMenuShortcut": true,
+    "include": "build-resources/installer.nsh"
   },
   "publish": {
     "provider": "github",
