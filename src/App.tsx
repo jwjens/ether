@@ -410,7 +410,7 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
 }
 
 export default function App() {
-  const { stationId, isReady: stationReady } = useActiveStation();
+  const { stationId, stationUuid, isReady: stationReady } = useActiveStation();
   // IMPORTANT: App() renders <AudioEngineProvider> in its JSX return, so App()
   // sits ABOVE the context boundary. useAudioEngine() here would always read the
   // default context value (station 1). getEngine(stationId) bypasses context and
@@ -1254,6 +1254,7 @@ export default function App() {
       duration:     playing?.state?.durationSec  || 0,
       deck:         playing?.deck || null,
       station_name: stationName,
+      station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
       decks: {
         A: deckA ? { title: deckA.title, artist: deckA.artist, status: deckA.status, positionSec: deckA.positionSec, durationSec: deckA.durationSec } : null,
         B: deckB ? { title: deckB.title, artist: deckB.artist, status: deckB.status, positionSec: deckB.positionSec, durationSec: deckB.durationSec } : null,
@@ -1286,7 +1287,7 @@ export default function App() {
         upcoming:    payload.queue,
       }).catch(() => {});
     }
-  }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName]);
+  }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName, stationUuid]);
 
   // Tell the engine which music decks are enabled, so auto-advance only
   // rotates through them. If a deck the user disabled is currently playing

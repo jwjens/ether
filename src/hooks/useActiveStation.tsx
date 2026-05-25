@@ -16,6 +16,7 @@ import { useState, useEffect } from "react";
 interface ActiveStation {
   id: number;
   name: string;
+  uuid: string;
 }
 
 export interface UseActiveStationResult {
@@ -23,6 +24,10 @@ export interface UseActiveStationResult {
   stationId: number;
   /** Active station display name. Empty string while loading. */
   stationName: string;
+  /** Active station's backend UUID (== local stations.uuid for onboarded
+   *  stations, per OB18). Empty string while loading or if unset. Used by the
+   *  now-playing push to key per-station state on the backend. */
+  stationUuid: string;
   /** False until the first IPC response arrives. Gate queries behind this. */
   isReady: boolean;
 }
@@ -53,14 +58,14 @@ async function loadActiveStation(): Promise<void> {
     const row = await (window as any).ether.stations.getActive();
     if (v !== _version) return; // superseded by a newer load (e.g. rapid station switch)
     if (row?.id) {
-      notifyAll({ id: row.id, name: row.name ?? "" }, true);
+      notifyAll({ id: row.id, name: row.name ?? "", uuid: row.uuid ?? "" }, true);
     } else {
       // No active station found — fall back to id=1, mark not-ready so callers wait
-      notifyAll({ id: 1, name: "" }, false);
+      notifyAll({ id: 1, name: "", uuid: "" }, false);
     }
   } catch {
     if (v !== _version) return;
-    notifyAll({ id: 1, name: "" }, false);
+    notifyAll({ id: 1, name: "", uuid: "" }, false);
   }
 }
 
@@ -105,10 +110,11 @@ export function useActiveStation(): UseActiveStationResult {
 
   const stationId   = station?.id ?? 1;
   const stationName = station?.name ?? "";
+  const stationUuid = station?.uuid ?? "";
 
   if (ready && !station?.id) {
     console.error("useActiveStation: ready but no station id — migration incomplete?");
   }
 
-  return { stationId, stationName, isReady: ready };
+  return { stationId, stationName, stationUuid, isReady: ready };
 }
