@@ -1121,7 +1121,7 @@ const SOCIAL_FIELDS: { key: string; label: string; placeholder: string }[] = [
 ];
 
 const EMPTY_PUBLIC_PAGE = {
-  slug: "", display_name: "", logo_url: "",
+  slug: "", display_name: "", logo_url: "", stream_url: "",
   color_primary: "#6040c0", color_secondary: "#38bdf8", description: "",
   socials: { website: "", instagram: "", twitter: "", facebook: "", youtube: "" } as Record<string, string>,
   public_enabled: false,
@@ -1152,6 +1152,7 @@ function PublicPageSettings() {
         const m = r.metadata || {};
         const norm = {
           slug: m.slug || "", display_name: m.display_name || "", logo_url: m.logo_url || "",
+          stream_url: m.stream_url || "",
           color_primary: m.color_primary || "#6040c0", color_secondary: m.color_secondary || "#38bdf8",
           description: m.description || "",
           socials: { ...EMPTY_PUBLIC_PAGE.socials, ...(m.socials || {}) },
@@ -1205,6 +1206,7 @@ function PublicPageSettings() {
       color_primary: form.color_primary || null,
       color_secondary: form.color_secondary || null,
       description: form.description || null,
+      stream_url: form.stream_url || null,
       socials: form.socials,
       public_enabled: !!form.public_enabled,
     });
@@ -1273,6 +1275,17 @@ function PublicPageSettings() {
 
           <SettingRow label="Display name" hint="Shown on the page (can differ from your station name)">
             <input value={form.display_name} onChange={e => setField("display_name", e.target.value)} placeholder={stationName || "My Radio Station"} style={{ ...inputStyle, width: 280 }} />
+          </SettingRow>
+
+          <SettingRow label="Stream URL" hint="Icecast stream URL — e.g. http://stream.yourstation.com:8000/live">
+            <div style={{ width: 360 }}>
+              <input value={form.stream_url} onChange={e => setField("stream_url", e.target.value)} placeholder="https://stream.yourstation.com/live" style={inputStyle} />
+              {/^http:\/\//i.test(form.stream_url || "") && (
+                <div style={{ fontSize: 10, color: "var(--accent-amber)", marginTop: 4, lineHeight: 1.4 }}>
+                  Use an https URL — http streams won't play on the public page (browsers block insecure audio on a secure page).
+                </div>
+              )}
+            </div>
           </SettingRow>
 
           <SettingRow label="Logo" hint="PNG/JPG/WebP — resized to 512px">
