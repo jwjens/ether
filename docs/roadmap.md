@@ -54,7 +54,7 @@ Once the smoke test passes, the first real deployment: one live Ether install (O
 
 ### 3. High Availability Architecture
 
-**Status:** In progress. **Phase 1** (`/health`), **Phase 2** (crash/hang watchdog), **Phase 2.5** (mutual supervision), and **Phase 3** (startup registration — per-user logon Scheduled Task, `--enable-ha` CLI bootstrap) all shipped (latest: commit 13c01ad, 2026-05-24). **Phase 4** (auto-logon installer) and **Phase 5** (health dashboard) remain. Full phase plan + remaining open decisions in `docs/session-state.md §9`. Design captured 2026-05-15 (RCS HA research, 5-phase failover sequence). Formerly called "Rust watchdog."
+**Status:** ✅ COMPLETE (2026-05-24). All phases shipped: **Phase 1** (`/health`), **Phase 2** (crash/hang watchdog), **Phase 2.5** (mutual supervision), **Phase 3** (startup registration — per-user logon Scheduled Task), **Phase 5** (health dashboard UI + runbook, commit a22fd33), and **Phase 4** (auto-logon installer — Settings "Keep My Station On Air", native `ha-setup.exe` for the LSA secret + Winlogon keys, commit 16414c4). Remaining is manual validation only (packaged-build logout/login + the elevated enable/disable round-trip). Full phase history in `docs/session-state.md §8–§9`. Design captured 2026-05-15 (RCS HA research, 5-phase failover sequence). Formerly called "Rust watchdog."
 
 The original Rust watchdog concept (crash recovery for the Ether main process) has been absorbed into a broader HA arc. The scope is: what does it take for a live station to stay on air through a process crash, OS restart, hardware failure, or Railway downtime?
 
