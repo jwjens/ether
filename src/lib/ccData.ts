@@ -14,12 +14,13 @@ export async function pushCcData(
 ): Promise<void> {
   if (!licenseKey || !stationUuid) return;
   try {
-    await fetch(`${ETHER_BACKEND_URL}/api/account/data/sync`, {
+    const res = await fetch(`${ETHER_BACKEND_URL}/api/account/data/sync`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
       body: JSON.stringify({ station_uuid: stationUuid, table, rows }),
     });
-  } catch { /* best-effort — dashboard view just won't refresh */ }
+    console.log(`[CCPUSH] ${table} sync → HTTP ${res.status}`);
+  } catch (e) { console.log(`[CCPUSH] ${table} sync error:`, (e as any)?.message ?? e); }
 }
 
 // Gather a table's live rows via the typed sync handlers and push them. Only categories
@@ -32,12 +33,15 @@ export async function pushCcTable(
 ): Promise<void> {
   if (!licenseKey || !stationUuid) return;
   const ether = (window as any).ether;
-  let rows: unknown[] = [];
+  let res: any;
   try {
-    if (table === "categories") rows = await ether.categories.list(stationId);
+    if (table === "categories") res = await ether.categories.list(stationId);
     else return;
-  } catch { return; }
-  await pushCcData(licenseKey, stationUuid, table, rows || []);
+  } catch (e) { console.log(`[CCPUSH] ${table} list failed:`, (e as any)?.message ?? e); return; }
+  // IPC list handlers return { rows: [...] } (or { ok, rows }), NOT a bare array.
+  const rows: unknown[] = Array.isArray(res) ? res : ((res && res.rows) || []);
+  console.log(`[CCPUSH] ${table}: ${rows.length} rows from station ${stationId}`);
+  await pushCcData(licenseKey, stationUuid, table, rows);
 }
 
 // Whitelist of tables the dashboard may edit -> the preload namespace that owns them.

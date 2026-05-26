@@ -1,3 +1,18 @@
+## [4.2.6] — 2026-05-25
+
+Fix: Control Center categories push sent zero rows (wrong return shape).
+
+### Fixed — categories push mishandled the list result
+
+`ether.categories.list()` returns `{ rows: [...] }` (the IPC list convention), not a
+bare array, so the categories push was sending the wrapped object as `rows`; the
+backend saw "not an array" and stored nothing — the dashboard Categories panel
+stayed empty. (The users push was unaffected — it reads via `query()`, a real array.)
+
+- `ccData.ts` now unwraps `.rows` from list results before pushing.
+- Added a `[CCPUSH]` console line (row count + sync HTTP status) so the push is
+  self-verifying in the field.
+
 ## [4.2.5] — 2026-05-25
 
 Fix: Control Center categories never pushed to the dashboard.
