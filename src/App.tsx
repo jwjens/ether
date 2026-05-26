@@ -653,7 +653,7 @@ export default function App() {
         // global plan cache (which would hide the operator badge).
         if (p) { setCurrentPlan(p); if (stationId === 1) setPlanGlobally(p); }
         const apiKey = get('license_key');
-        if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); pushCcTable(apiKey, stationUuid, stationId, "categories"); }
+        if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
       } catch {}
@@ -661,6 +661,17 @@ export default function App() {
       consoleLog("system", "ether started — engine ready");
     })();
   }, [stationId, stationReady]);
+
+  // Mirror install-owned Control Center data (categories…) up once BOTH the license
+  // key and the active station's UUID are known. Keyed on firstRunChecked so it runs
+  // AFTER the config effect above has populated apiKeyRef — and uses the persisted
+  // apiKeyRef.current (same reliable source as the now-playing push), not the per-pass
+  // license_key, which only exists under station 1's config. (Phase 2b read-path fix.)
+  useEffect(() => {
+    if (firstRunChecked && apiKeyRef.current && stationUuid) {
+      pushCcTable(apiKeyRef.current, stationUuid, stationId, "categories");
+    }
+  }, [stationId, stationUuid, firstRunChecked]);
 
   // Keep apiKeyRef live if user enters license mid-session
   useEffect(() => {

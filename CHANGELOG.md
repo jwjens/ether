@@ -1,3 +1,19 @@
+## [4.2.5] — 2026-05-25
+
+Fix: Control Center categories never pushed to the dashboard.
+
+### Fixed — CC categories push gated on the wrong license source
+
+The categories push was inside the boot block gated on the *current station's*
+`license_key` config value — but the key lives under station 1's config, so on a
+station whose active id ≠ 1 the block (and the push) was skipped. The dashboard
+Categories panel stayed empty even though the install had categories. (The users
+push and now-playing were unaffected — they use the persisted `apiKeyRef`.)
+
+- Moved the categories push to a dedicated effect keyed on `firstRunChecked` that
+  uses `apiKeyRef.current` (the same reliable source as now-playing) + the active
+  station UUID, firing once both are known and on station switch.
+
 ## [4.2.4] — 2026-05-25
 
 Control Center Phase 2 — remote category editing (write-back channel).
