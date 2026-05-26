@@ -65,6 +65,8 @@ export async function pushLibrary(
     rows = await query(
       `SELECT
          s.uuid          AS uuid,
+         s.id            AS song_id,
+         sp.uuid         AS sp_uuid,
          s.title         AS title,
          ar.name         AS artist,
          al.title        AS album,
@@ -90,6 +92,9 @@ export async function pushLibrary(
       [stationId],
     );
   } catch (e) { console.log(`[CCPUSH] library query failed:`, (e as any)?.message ?? e); return; }
+  // Stamp the station's local id on each row so the dashboard can create a
+  // station_programming row (song_id + station_id) when editing treatment.
+  for (const r of rows) r.station_id = stationId;
   console.log(`[CCPUSH] library: ${rows.length} songs for station ${stationId}`);
   await pushCcData(licenseKey, stationUuid, "library", rows);
 }
@@ -102,7 +107,16 @@ const NS: Record<string, string> = {
   clocks: "clocks",
   clock_slots: "clockSlots",
   shows: "shows",
+  songs: "songs",
+  station_programming: "stationProgramming",
+  artists: "artists",
+  albums: "albums",
 };
+
+// Edits to these tables change a song's row in the per-station library VIEW, so after
+// applying we re-push pushLibrary() (the synthesized "library" mirror) rather than the
+// raw table. Everything else re-pushes its own table.
+const LIBRARY_TABLES = new Set(["songs", "station_programming", "artists", "albums"]);
 
 // Apply a remote dashboard edit to the local DB via the existing typed sync handlers
 // (they wrap writes in withMutation -> HLC mutation -> syncs), then re-push the changed
@@ -123,5 +137,11 @@ export async function applyDbMutation(
     console.error("[db:apply] handler failed:", data.table, data.op, e);
     return;
   }
-  if (data.station_uuid) await pushCcTable(licenseKey, data.station_uuid, data.station_id as number, data.table);
+  if (data.station_uuid) {
+    if (LIBRARY_TABLES.has(data.table)) {
+      await pushLibrary(licenseKey, data.station_uuid, data.station_id as number);
+    } else {
+      await pushCcTable(licenseKey, data.station_uuid, data.station_id as number, data.table);
+    }
+  }
 }
