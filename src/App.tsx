@@ -3,6 +3,7 @@ import KeyboardHelp from "./components/KeyboardHelp";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
+import { pushCcTable, applyDbMutation } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -652,7 +653,7 @@ export default function App() {
         // global plan cache (which would hide the operator badge).
         if (p) { setCurrentPlan(p); if (stationId === 1) setPlanGlobally(p); }
         const apiKey = get('license_key');
-        if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); }
+        if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); pushCcTable(apiKey, stationUuid, stationId, "categories"); }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
       } catch {}
@@ -765,6 +766,10 @@ export default function App() {
             break;
           case "mic_on":
             (engine as any).openMic?.();
+            break;
+          case "db:apply":
+            // Control Center remote edit → apply via local sync handlers, then re-push.
+            await applyDbMutation(apiKeyRef.current, data);
             break;
           default:
             console.log("[RemoteCmd] Unknown command:", cmd);

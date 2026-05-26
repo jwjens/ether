@@ -1,3 +1,23 @@
+## [4.2.4] — 2026-05-25
+
+Control Center Phase 2 — remote category editing (write-back channel).
+
+### Added — Control Center data mirror + command bus
+
+First slice of remote *editing* from the dashboard. The install now mirrors its
+categories up so the dashboard can view them, and applies remote edits sent back
+over the command bus — proving the general write-back channel on the smallest domain.
+
+- `src/lib/ccData.ts`: pushes a table's live rows to `POST /api/account/data/sync`
+  (license-key authed; categories wired) on boot + on station switch; and an
+  `applyDbMutation` that routes a remote `db:apply` command to the existing typed
+  sync handlers (`categories.create/update/delete` → withMutation → HLC mutation →
+  syncs), then re-pushes the changed table so the dashboard reflects it.
+- App.tsx `execCmd` gains the `db:apply` command (whitelisted tables only).
+- Backend-paired (ether-backend): generic `station_cc_data` mirror, `/api/account/data/sync`
+  (push) + `/api/account/station/:uuid/data` (read), `/api/cmd` now JWT-admin-capable,
+  and the command offline-queue is now per-license.
+
 ## [4.2.3] — 2026-05-25
 
 Control Center (Roadmap Item 5) — install users can sign in remotely.
