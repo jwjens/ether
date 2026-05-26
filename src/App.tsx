@@ -3,7 +3,7 @@ import KeyboardHelp from "./components/KeyboardHelp";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, applyDbMutation } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -672,6 +672,7 @@ export default function App() {
       for (const t of ["categories", "clocks", "clock_slots", "shows"]) {
         pushCcTable(apiKeyRef.current, stationUuid, stationId, t);
       }
+      pushLibrary(apiKeyRef.current, stationUuid, stationId);
     }
   }, [stationId, stationUuid, firstRunChecked]);
 
