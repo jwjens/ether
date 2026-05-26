@@ -99,6 +99,57 @@ export async function pushLibrary(
   await pushCcData(licenseKey, stationUuid, "library", rows);
 }
 
+// Control Center 2d-3 — create a song from a dashboard upload. The audio is already in
+// R2 under `file_key` (uploaded straight from the dashboard via a signed PUT); here we
+// create the install-side record so it's playable (the engine fetches R2 audio on demand
+// at play time via fetchR2Track). Find-or-create the artist, create the song with the
+// file_key + browser-read duration, add it to THIS station's rotation, then re-push the
+// library view. IPC create/find handlers return { ok, row }.
+export async function addLibrarySong(
+  licenseKey: string | null | undefined,
+  data: {
+    file_key?: string; title?: string; artist?: string;
+    category_id?: number | null; duration_ms?: number | null;
+    station_id?: number; station_uuid?: string;
+  },
+): Promise<void> {
+  const ether = (window as any).ether;
+  const { file_key, title, artist, category_id, duration_ms, station_id, station_uuid } = data;
+  if (!file_key || !title || station_id == null) {
+    console.warn("[addSong] missing file_key/title/station_id — skipped");
+    return;
+  }
+  try {
+    let artist_id: number | null = null;
+    if (artist && artist.trim()) {
+      const a = await ether.artists.findOrCreateByName(artist.trim());
+      artist_id = a?.row?.id ?? a?.id ?? null;
+    }
+    const songRes = await ether.songs.create({
+      title: String(title).trim(),
+      artist_id,
+      file_key,
+      category_id: category_id ?? null,
+      duration_ms: duration_ms ?? null,
+      rotation_status: "active",
+      daypart_mask: 16777215,
+    });
+    const songId = songRes?.row?.id ?? songRes?.id ?? null;
+    if (songId != null) {
+      await ether.stationProgramming.create({
+        song_id: songId, station_id, category_id: category_id ?? null, rotation_status: "active",
+      });
+    } else {
+      console.warn("[addSong] no song id returned — skipped station_programming");
+    }
+    console.log(`[addSong] created "${title}" file_key=${file_key} song_id=${songId}`);
+  } catch (e) {
+    console.error("[addSong] failed:", (e as any)?.message ?? e);
+    return;
+  }
+  await pushLibrary(licenseKey, station_uuid, station_id);
+}
+
 // Whitelist of CC-mirrored tables -> the window.ether preload namespace that owns them.
 // Used for both the read push (list) and the write (create/update/delete). Add a domain
 // by adding one entry here (+ pushing it on boot below + a dashboard editor).

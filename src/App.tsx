@@ -3,7 +3,7 @@ import KeyboardHelp from "./components/KeyboardHelp";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -784,6 +784,11 @@ export default function App() {
           case "db:apply":
             // Control Center remote edit → apply via local sync handlers, then re-push.
             await applyDbMutation(apiKeyRef.current, data);
+            break;
+          case "library:addSong":
+            // Control Center remote upload → create the song (artist + record + station
+            // rotation) for the R2-uploaded file_key, then re-push the library view.
+            await addLibrarySong(apiKeyRef.current, data);
             break;
           default:
             console.log("[RemoteCmd] Unknown command:", cmd);
