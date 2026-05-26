@@ -1,0 +1,75 @@
+# Dependabot — tuned for low noise.
+#
+# Routine minor/patch bumps are GROUPED into a single weekly PR per ecosystem, so
+# dependency upkeep is one low-effort review instead of scattered PRs. MAJOR bumps
+# stay as their own PRs (they can be breaking, so they deserve individual review).
+#
+# Security updates are NOT throttled by this file — Dependabot opens those promptly,
+# on their own, the moment an advisory affects a dependency. So keeping the routine
+# cadence weekly never delays a security fix.
+#
+# Note: this config does NOT auto-merge anything. Merge PRs at a natural break (not
+# mid-release); the release routine fetches main before tagging so a merged bump is
+# never left out of a release.
+version: 2
+updates:
+  # ── App dependencies (root) ─────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── Playout service (nested npm package) ────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/scripts/playout-service"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      playout-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── Native HA setup helper (Rust / Cargo) ───────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/native/ha-setup"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── CI / release workflows (GitHub Actions) ─────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      github-actions:
+        patterns: ["*"]
