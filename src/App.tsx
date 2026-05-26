@@ -798,7 +798,14 @@ export default function App() {
     const connect = () => {
       if (destroyed) return;
       const key = apiKeyRef.current;
-      if (!key) return;   // no license key yet — skip until key is available
+      if (!key) {
+        // License key loads a beat after boot (async config read). connect() runs
+        // once at mount and there's no key-arrival trigger otherwise, so retry until
+        // the key is present — without this the command channel never connects and
+        // no dashboard/companion command (incl. Control Center db:apply) ever arrives.
+        reconnectTimer = setTimeout(connect, 1500);
+        return;
+      }
 
       const url = `${STREAM_BASE}?key=${encodeURIComponent(key)}`;
       es = new EventSource(url);

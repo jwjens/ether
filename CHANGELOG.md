@@ -1,3 +1,17 @@
+## [4.2.7] — 2026-05-26
+
+Fix: Control Center remote edits (and companion commands) never reached the install.
+
+### Fixed — SSE command channel never connected on boot
+
+The desktop's remote-command stream — which carries dashboard edits *and* companion-app
+commands to the install — checked for the license key once at startup and gave up if it
+wasn't loaded yet. The key loads asynchronously a moment after boot, so the channel never
+connected, and no dashboard command (e.g. a Control Center category create/edit) ever
+applied. It now retries until the key is available.
+
+Unblocks the Control Center write path (Phase 2b) and remote/companion commands generally.
+
 ## [4.2.6] — 2026-05-25
 
 Fix: Control Center categories push sent zero rows (wrong return shape).
