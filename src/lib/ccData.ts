@@ -23,8 +23,8 @@ export async function pushCcData(
   } catch (e) { console.log(`[CCPUSH] ${table} sync error:`, (e as any)?.message ?? e); }
 }
 
-// Gather a table's live rows via the typed sync handlers and push them. Only categories
-// is wired for the Phase 2 categories loop; extend the switch per domain.
+// Gather a table's live rows via the typed sync handlers and push them. Any table in the
+// NS map below is supported (categories, clocks, clock_slots, shows).
 export async function pushCcTable(
   licenseKey: string | null | undefined,
   stationUuid: string | null | undefined,
@@ -32,11 +32,12 @@ export async function pushCcTable(
   table: string,
 ): Promise<void> {
   if (!licenseKey || !stationUuid) return;
+  const nsName = NS[table];
+  if (!nsName) return;
   const ether = (window as any).ether;
   let res: any;
   try {
-    if (table === "categories") res = await ether.categories.list(stationId);
-    else return;
+    res = await ether[nsName].list(stationId);
   } catch (e) { console.log(`[CCPUSH] ${table} list failed:`, (e as any)?.message ?? e); return; }
   // IPC list handlers return { rows: [...] } (or { ok, rows }), NOT a bare array.
   const rows: unknown[] = Array.isArray(res) ? res : ((res && res.rows) || []);
@@ -44,8 +45,15 @@ export async function pushCcTable(
   await pushCcData(licenseKey, stationUuid, table, rows);
 }
 
-// Whitelist of tables the dashboard may edit -> the preload namespace that owns them.
-const NS: Record<string, string> = { categories: "categories" };
+// Whitelist of CC-mirrored tables -> the window.ether preload namespace that owns them.
+// Used for both the read push (list) and the write (create/update/delete). Add a domain
+// by adding one entry here (+ pushing it on boot below + a dashboard editor).
+const NS: Record<string, string> = {
+  categories: "categories",
+  clocks: "clocks",
+  clock_slots: "clockSlots",
+  shows: "shows",
+};
 
 // Apply a remote dashboard edit to the local DB via the existing typed sync handlers
 // (they wrap writes in withMutation -> HLC mutation -> syncs), then re-push the changed

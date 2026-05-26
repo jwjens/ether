@@ -669,7 +669,9 @@ export default function App() {
   // license_key, which only exists under station 1's config. (Phase 2b read-path fix.)
   useEffect(() => {
     if (firstRunChecked && apiKeyRef.current && stationUuid) {
-      pushCcTable(apiKeyRef.current, stationUuid, stationId, "categories");
+      for (const t of ["categories", "clocks", "clock_slots", "shows"]) {
+        pushCcTable(apiKeyRef.current, stationUuid, stationId, t);
+      }
     }
   }, [stationId, stationUuid, firstRunChecked]);
 
