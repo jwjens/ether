@@ -1,0 +1,29 @@
+name: Sync roadmap to wiki
+
+# Keeps the wiki's Roadmap page in lockstep with docs/roadmap.md (the source of
+# truth). Edit docs/roadmap.md as normal; this mirrors it to the wiki on push.
+on:
+  push:
+    branches: [main]
+    paths: ["docs/roadmap.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Mirror docs/roadmap.md -> wiki Roadmap page
+        run: |
+          set -e
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" wiki
+          cp docs/roadmap.md wiki/Roadmap.md
+          cd wiki
+          git add Roadmap.md
+          git diff --staged --quiet || git commit -m "Sync Roadmap from docs/roadmap.md@${GITHUB_SHA::7}"
+          git push
