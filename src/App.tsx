@@ -2,6 +2,7 @@ import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
+import { pushInstallUsers } from "./lib/syncUsers";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -651,7 +652,7 @@ export default function App() {
         // global plan cache (which would hide the operator badge).
         if (p) { setCurrentPlan(p); if (stationId === 1) setPlanGlobally(p); }
         const apiKey = get('license_key');
-        if (apiKey) apiKeyRef.current = apiKey;
+        if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
       } catch {}
@@ -666,10 +667,15 @@ export default function App() {
       const result = await (window as any).ether.stationConfigKv.list(stationId);
       const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
       const key = rows.find((r: any) => r.key === 'license_key')?.value;
-      if (key) apiKeyRef.current = key;
+      if (key) { apiKeyRef.current = key; pushInstallUsers(key); }
     };
+    const pushUsers = () => pushInstallUsers(apiKeyRef.current);
     window.addEventListener('ether:license-changed', reload);
-    return () => window.removeEventListener('ether:license-changed', reload);
+    window.addEventListener('ether:users-changed', pushUsers);
+    return () => {
+      window.removeEventListener('ether:license-changed', reload);
+      window.removeEventListener('ether:users-changed', pushUsers);
+    };
   }, [stationId]);
 
   // Native menu IPC handler

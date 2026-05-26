@@ -1,3 +1,22 @@
+## [4.2.3] — 2026-05-25
+
+Control Center (Roadmap Item 5) — install users can sign in remotely.
+
+### Added — push local console users to the Control Center
+
+This install's local users (Settings → Users & Security) now mirror up to the
+backend so the same people can sign into the dashboard (app.ether-technologies.com)
+with their same name + PIN.
+
+- New `src/lib/syncUsers.ts`: pushes local users (those with a PIN) to the backend
+  `POST /api/account/users/sync`, license-key authenticated (same as now-playing).
+  No-PIN console logins stay local-only. One-way (install → backend), best-effort.
+- Fires on boot (once the license key is loaded) and after any change in
+  Settings → Users & Security (add / edit / delete / set / remove PIN).
+- The backend stores the PIN in this app's existing `salt:sha256` format, so a remote
+  login verifies identically; it reconciles deletions (a user removed, or whose PIN
+  is cleared, is revoked from the dashboard) and never touches dashboard-created users.
+
 ## [4.2.2] — 2026-05-25
 
 Listener page queue ordering fix.

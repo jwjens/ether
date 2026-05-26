@@ -2539,12 +2539,14 @@ function UserManagement() {
     await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor]);
     setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("#22d3ee");
     loadUsers();
+    window.dispatchEvent(new Event("ether:users-changed"));
   };
 
   const handleEditUser = async () => {
     if (!editUser || !editUser.name.trim()) return;
     await execute("UPDATE users SET name = ?, role = ?, color = ? WHERE id = ?", [editUser.name.trim(), editUser.role, editUser.color, editUser.id]);
     setEditUser(null); loadUsers();
+    window.dispatchEvent(new Event("ether:users-changed"));
   };
 
   const handleDeleteUser = async (u: ManagedUser) => {
@@ -2553,6 +2555,7 @@ function UserManagement() {
     if (!confirm(`Delete user "${u.name}"?`)) return;
     await execute("DELETE FROM users WHERE id = ?", [u.id]);
     loadUsers();
+    window.dispatchEvent(new Event("ether:users-changed"));
   };
 
   const handleChangePin = async () => {
@@ -2568,12 +2571,14 @@ function UserManagement() {
     await execute("UPDATE users SET pin_hash = ? WHERE id = ?", [pinHash, pinModal.id]);
     setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError("");
     loadUsers();
+    window.dispatchEvent(new Event("ether:users-changed"));
   };
 
   const handleRemovePin = async (u: ManagedUser) => {
     if (!confirm(`Remove PIN for "${u.name}"? They can log in without a PIN.`)) return;
     await execute("UPDATE users SET pin_hash = NULL WHERE id = ?", [u.id]);
     loadUsers();
+    window.dispatchEvent(new Event("ether:users-changed"));
   };
 
   const inputStyle: React.CSSProperties = { padding: "6px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", width: "100%" };
