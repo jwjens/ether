@@ -1,13 +1,15 @@
 # Ether Development Roadmap
 
-**Status:** Locked 2026-05-15  
-**Source of truth:** This document supersedes any roadmap references in chat memory or session notes.
+**Status:** Updated 2026-05-25  
+**Source of truth:** This document supersedes any roadmap references in chat memory or session notes. Mirrored to the GitHub wiki Roadmap page automatically (`.github/workflows/sync-roadmap-wiki.yml`).
 
 ---
 
 ## Current Phase
 
-Sync backend implementation (Item 1) is fully complete as of 2026-05-16 — all 8 steps done, 38/38 tests green. Roadmap Item 2 (Deploy OV + 2nd Client) is now unblocked.
+**Active arc: Multi-Tenant Control Center (Item 5), Phase 2 — remote editing.** Phase 1 (auth, dashboard, live station view, remote sign-in for the install's own users) is complete and in production at `app.ether-technologies.com`. Phase 2a (remote station/branding settings) shipped; Phase 2b (remote category editing — the first install-authoritative write-back) is shipping / under verification on OV.
+
+Completed since the 2026-05-15 lock: **Sync backend** (Item 1, ✅), **High Availability** (Item 3, ✅), and **Listener Platform Tier 1** (Item 9 — branded PWA + per-station now-playing, ✅ live at `listen.ether-technologies.com/<slug>`). **OV is deployed and in active production** on the v4.2.x line.
 
 ---
 
@@ -42,7 +44,7 @@ The sync engine is a CRDT mutation log backed by PostgreSQL on Railway. Every lo
 
 ### 2. Deploy OV + 2nd Client
 
-**Status:** Ready to start. Item 1 (sync backend) is fully complete as of 2026-05-16.
+**Status:** OV deployed and in active production (v4.2.x) — pushing live state (now-playing, users, Control Center data) to the backend daily. The formal exit criterion below — a second cold-start install converging on identical local state via full CRDT pull — has **not yet been run**; the full sync engine remains off-by-default, and production cloud pushes currently use the lighter per-table push pattern (now-playing/users/CC mirror). Two-client CRDT convergence is the remaining gate for this item.
 
 Once the smoke test passes, the first real deployment: one live Ether install (OV station) pushes mutations to Railway; a second install pulls and replays them. This is the first time the sync engine runs against real broadcast data with two live clients.
 
@@ -90,7 +92,7 @@ Iris evolves from a voice-track generator into a named-content-type platform. Th
 
 ### 5. Multi-Tenant Control Center
 
-**Status:** Not started. Requires Item 1 (sync solid) and Item 2 (second client live).
+**Status:** In active development — **Phase 1 complete and in production**, Phase 2 (remote editing) underway. Live at `app.ether-technologies.com`. (Did not wait on Item 2's two-client convergence: the CC arc deliberately rides the lighter push + command-bus pattern rather than the full CRDT pull, so it's decoupled from the sync engine's on/off state — see Architecture below.)
 
 The Control Center is a web dashboard giving an account owner visibility and control across all their licensed Ether installs. Distinct from the Ether desktop app UI — this is a browser-based admin surface.
 
@@ -99,6 +101,21 @@ The accounts table added in Item 1's schema migration (B-05) exists specifically
 **Why sync must be solid first:** Control Center reads are pulled from the same mutation log. If the pull scope (Item 1 Step 5), quarantine (Step 6), and transformer replay (Step 7) have bugs, Control Center state will be stale or incorrect. There is no point building a display layer until the data layer is reliable.
 
 **Scope this arc covers:** Account login and dashboard, per-install status (last seen, sync cursor, schema version), cross-install analytics (combined play logs, scheduling reports), remote command dispatch via the existing SSE cmd-stream, and license management.
+
+**Phases & status (2026-05-25):**
+
+- **Phase 1 — Foundation (✅ complete, in production).** Backend per-license operators (`account_users` table) + JWT auth; **self-service admin bootstrap** (paste license key → create first admin, no manual provisioning); `ether-dashboard` (React/Vite on Cloudflare Pages) at `app.ether-technologies.com`. Operator login (PIN), all-stations view with **live now-playing**, and a read-only Users tab. The install's existing console users (Settings → Users & Security) **mirror up** so the same people sign into the dashboard with the same name + PIN — single source of truth is the install.
+- **Phase 2 — Remote editing (in progress).** Two halves: a **read path** (the install pushes its tables to a generic backend mirror so the dashboard can view install-owned data) and a **write path** (the dashboard issues commands over the SSE command bus; the install applies them through its existing sync handlers, producing normal HLC mutations, then re-pushes).
+  - **2a — Station / public-page settings (✅ shipped).** Display name, slug (with live availability), colors, logo upload, stream URL, socials, public on/off. Backend-authoritative (`station_metadata`) → live on the listener page instantly; no install round-trip.
+  - **2b — Rotation categories (shipping / verifying on OV).** First install-authoritative write-back — proves the general channel end to end.
+  - **2c+ — Clocks/dayparts, then the song library.** Full functional parity with the desktop is the goal (Jeff, 2026-05-25). Same channel, domain by domain. The song library is the heaviest (audio via the existing R2 signed-URL model; the per-table push must switch to bulk INSERT at library scale — OV is ~5,600 songs).
+- **Phase 3 — Cross-install analytics; Phase 4 — Billing/subscription UI.** Later.
+
+**Architecture (locked 2026-05-25):**
+- **Read path** — install pushes CC-relevant tables to a generic backend mirror table (`station_cc_data`: `station_uuid, table_name, row_uuid, payload JSONB, deleted_at`) the same way now-playing and users are pushed. Decoupled from the full Phase-F sync engine (which stays off by default), so the CC works regardless of sync state.
+- **Write path** — dashboard (admin only) issues `db:apply` commands via `POST /api/cmd` (the existing SSE command bus, now JWT-admin-capable; offline queue is per-license). The install routes them to its existing typed sync handlers (`<table>.create/update/delete`) which wrap writes in `withMutation` → HLC mutation → syncs; then re-pushes the changed table so the dashboard reflects it.
+- **Gotcha (recorded):** the `window.ether.<table>.list()` IPC handlers return `{ rows: [...] }`, not a bare array — unwrap `.rows` before pushing (this silently zeroed the categories mirror until v4.2.6).
+- **Repos:** `ether-dashboard` (frontend, Cloudflare Pages), `ether-backend` (API, Railway). Releases on the v4.2.x line.
 
 ---
 
@@ -154,7 +171,7 @@ Item 2 proves Milestone A (metadata sync). This item is the two pieces that buil
 
 ### 9. Listener Platform
 
-**Status:** Not started. Independent of all current work — no dependency on the HA arc (Item 3) or anything else. Tier 1 could ship in parallel whenever listener experience is prioritized.
+**Status:** **Tier 1 SHIPPED (2026-05-25).** The branded PWA player (`ether-listener`, React/Vite on Cloudflare Pages) is live at `listen.ether-technologies.com/<station-slug>` with per-station branding (logo, colors, name, now-playing, up-next) and the backend per-station metadata + now-playing service (unauthenticated `GET /public/station/:slug` + an SSE stream that pushes on each song change). Now-playing reliability hardened across v4.2.1–v4.2.6 (live deck reads, full upcoming-order queue, and a backend INTEGER-column bug that had silently dropped every `playing=true` report). **Tiers 2–4** (custom domain, "Ether Radio" directory app, white-label native apps) — not started. Several Tier-1 open decisions below are now resolved (hosting = Cloudflare Pages; per-station metadata API = built).
 
 Today every Ether station streams via Icecast (e.g. `44.244.52.207:8000/live` and equivalent per-customer streams). A listener who opens that URL gets whatever default UI their browser provides — usually a black screen with bare transport controls. There is no branded listener experience, no per-station UI, and no audience-discovery layer. The Listener Platform closes that gap: a branded, installable listener experience delivered across tiers, plus an Ether-owned discovery directory.
 
@@ -232,3 +249,6 @@ Ideas worth preserving. Not committed to any roadmap item or timeline.
 | 2026-05-18 | AirLogger (Compliance Recorder) added as Item 7. No existing items renumbered. FCC/compliance recording, local-first disk archive, R2 offsite, traffic workflow UI, schema migration required. |
 | 2026-05-18 | Onboarding & Library Distribution added as Item 8. No existing items renumbered. Covers Milestone B (R2 audio distribution, per-song keys, download manager, air-eligibility gate) and the onboarding flow (new-station vs. connect-to-existing, single-credential path). Requires Item 2 (metadata sync). Open decision: how audio files reach R2 initially — unresolved. Full design in docs/onboarding-and-library-distribution-v0.md. |
 | 2026-05-24 | Listener Platform added as Item 9. No existing items renumbered. Branded listener experience across tiers: Tier 1 PWA at `listen.ether-technologies.com/<station-slug>` (Studio), Tier 2 PWA on custom domain (Network), Tier 3 "Ether Radio" discovery directory app (cross-tier), Tier 4 white-label native apps (Enterprise). PWA-first to undercut Cirrus's submission friction. Tier 1 host URL locked (invisible once installed — no separate per-station domain needed). Explicitly excludes royalty bundling. Independent of all current work — Tier 1 can ship in parallel. Open decisions captured (hosting, Tier-2 CNAME/SSL automation, per-station metadata API, directory gating, discovery logic, mobile platform priority, directory backend stack). |
+| 2026-05-25 | **Listener Platform Tier 1 SHIPPED.** `ether-listener` PWA (React/Vite, Cloudflare Pages) live at `listen.ether-technologies.com/<slug>`; backend per-station metadata + now-playing (public `GET /public/station/:slug` + SSE), now-playing keyed by `station_uuid`. Now-playing reliability fixes v4.2.1–v4.2.6: live deck reads (not React snapshots); queue = full upcoming order incl. cued standby decks; and the backend bug that silently dropped every `playing=true` report (fractional position/duration rejected by INTEGER columns — now rounded). |
+| 2026-05-25 | **Control Center (Item 5) → active development; Phase 1 complete + in production.** `account_users` + JWT; self-service license-key admin bootstrap; `ether-dashboard` on Cloudflare Pages (`app.ether-technologies.com`); operator login, live all-stations view, read-only Users tab; install console users mirror up for remote sign-in (same name + PIN). Deliberately decoupled from the full sync engine — uses a lighter per-table push + the SSE command bus — so it did NOT require Item 2's two-client convergence first. |
+| 2026-05-25 | **Control Center Phase 2 (remote editing) underway.** 2a station/branding settings shipped (backend-authoritative `station_metadata`, JWT-gated). 2b rotation categories — the write-back channel (dashboard → `/api/cmd` SSE → install sync handlers → HLC → re-push via the `station_cc_data` mirror) — shipped and under verification on OV. Full functional parity with the desktop (clocks/dayparts/library) is the stated goal; library push must use bulk INSERT at ~5,600-song scale. Releases v4.2.1–v4.2.6. |
