@@ -75,6 +75,7 @@ export async function pushLibrary(
          s.bpm           AS bpm,
          s.is_explicit   AS is_explicit,
          s.file_key      AS file_key,
+         CASE WHEN s.file_path IS NOT NULL AND s.file_path != '' THEN 1 ELSE 0 END AS has_local,
          COALESCE(sp.category_id,     s.category_id)     AS category_id,
          c.code          AS category_code,
          c.name          AS category_name,
@@ -143,6 +144,9 @@ export async function addLibrarySong(
       console.warn("[addSong] no song id returned — skipped station_programming");
     }
     console.log(`[addSong] created "${title}" file_key=${file_key} song_id=${songId}`);
+    // Materialize: pull the audio down to local + set file_path so the song enters
+    // automation rotation (fire-and-forget; the download re-pushes the view when done).
+    try { await ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
   } catch (e) {
     console.error("[addSong] failed:", (e as any)?.message ?? e);
     return;

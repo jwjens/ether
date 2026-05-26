@@ -4461,7 +4461,12 @@ ipcMain.handle('library:sync-r2:upload:cancel', () => {
 // at <userData>/r2-cache/; audio:load's 1.3k fallback resolves cache hits at
 // play time. Writing file_path back would generate sync-log churn for every
 // song downloaded — same reasoning as Option B in 1.3k.
-ipcMain.handle('library:sync-r2:download', async () => {
+ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
+  // 2d-4: when materialize=true, write file_path back on each success so a cloud song
+  // becomes a first-class LOCAL track (the automation picker requires file_path — see
+  // loggen.ts). Default false preserves the onboarding pre-warm behavior (cache only,
+  // no sync-log churn).
+  const materialize = !!(opts && opts.materialize);
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
   // Tier gate — Network+ only (duplicates fetchR2Track's gate for fast-bail)
@@ -4499,6 +4504,7 @@ ipcMain.handle('library:sync-r2:download', async () => {
   // Fire-and-forget — returns immediately so the renderer isn't blocked
   (async () => {
     const CONCURRENCY = 3;
+    const { songsUpdateById } = require('./sync/handlers/songs');
     let done = 0;
     let errors = 0;
 
@@ -4508,6 +4514,11 @@ ipcMain.handle('library:sync-r2:download', async () => {
       if (!res.ok) {
         errors++;
         console.warn(`[library:sync-r2] download SKIP ${song.file_key}: ${res.error}`);
+      } else if (materialize && res.filePath) {
+        // Write file_path (mutation-logged) so the automation picker treats this cloud
+        // song as a rotation-eligible local track.
+        try { songsUpdateById(db, song.id, { file_path: res.filePath }); }
+        catch (e) { console.warn(`[library:sync-r2] materialize file_path failed ${song.file_key}: ${e.message}`); }
       }
       done++;
       // Mirror local counters to the module-level snapshot for getState() (B.4).

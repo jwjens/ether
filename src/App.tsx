@@ -676,6 +676,16 @@ export default function App() {
     }
   }, [stationId, stationUuid, firstRunChecked]);
 
+  // When a cloud→local download finishes (materialize writes file_path), re-push the
+  // library view so the dashboard's local/cloud status reflects the new local files.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    const off = ether?.libraryR2?.onDownloadDone?.(() => {
+      if (apiKeyRef.current && stationUuid) pushLibrary(apiKeyRef.current, stationUuid, stationId);
+    });
+    return typeof off === "function" ? off : undefined;
+  }, [stationId, stationUuid]);
+
   // Keep apiKeyRef live if user enters license mid-session
   useEffect(() => {
     const reload = async () => {
@@ -789,6 +799,11 @@ export default function App() {
             // Control Center remote upload → create the song (artist + record + station
             // rotation) for the R2-uploaded file_key, then re-push the library view.
             await addLibrarySong(apiKeyRef.current, data);
+            break;
+          case "library:syncDownload":
+            // Control Center "Pull from cloud" → download cloud-only songs to local and
+            // set file_path (materialize) so they enter automation rotation.
+            try { await (window as any).ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
             break;
           default:
             console.log("[RemoteCmd] Unknown command:", cmd);
