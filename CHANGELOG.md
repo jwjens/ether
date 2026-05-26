@@ -1,3 +1,16 @@
+## [4.2.8] — 2026-05-26
+
+Live update notifications — find out about updates without restarting.
+
+### Added — periodic update check while running
+
+Ether already had an in-app update banner (Update Now / progress / Restart & Update),
+but it only checked once at startup, so an update published *while you were on the air*
+wouldn't surface until you happened to restart. It now also checks **every 30 minutes
+while running**, so a new version pops the banner **live**. You still choose when to
+download and when to restart — nothing interrupts playout until you click. Only re-checks
+while idle, so an in-progress download or a dismissed banner is never clobbered.
+
 ## [4.2.7] — 2026-05-26
 
 Fix: Control Center remote edits (and companion commands) never reached the install.

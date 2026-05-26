@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const relaunch = () => (window as any).ether.invoke("relaunch");
 const checkForUpdates = () => (window as any).ether.invoke("updater:check");
@@ -41,10 +41,22 @@ export function useUpdater() {
     }
   }, []);
 
-  // Check on startup after 10s delay (don't slow down boot)
+  // Track the current phase in a ref so the polling interval reads it without
+  // re-subscribing every render.
+  const phaseRef = useRef(state.phase);
+  useEffect(() => { phaseRef.current = state.phase; }, [state.phase]);
+
+  // Check on startup (10s delay so boot isn't slowed) AND every 30 min while the
+  // app is running — so an update published mid-session surfaces LIVE in the banner
+  // without needing a restart. Only re-check while idle, so an in-progress download
+  // or an already-shown banner is never clobbered (a dismissed banner leaves the
+  // phase non-idle, so the operator isn't re-nagged within the session).
   useEffect(() => {
-    const t = setTimeout(checkForUpdate, 10_000);
-    return () => clearTimeout(t);
+    const startup = setTimeout(checkForUpdate, 10_000);
+    const poll = setInterval(() => {
+      if (phaseRef.current === "idle") checkForUpdate();
+    }, 30 * 60 * 1000);
+    return () => { clearTimeout(startup); clearInterval(poll); };
   }, [checkForUpdate]);
 
   const download = useCallback(async () => {
