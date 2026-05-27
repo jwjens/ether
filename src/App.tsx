@@ -27,7 +27,7 @@ import { queryScoped } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
 import { DeckState, rotLog } from "./audio/engine-rodio";
-import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor } from "./audio/loggen";
+import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor, getFormatCategoryIds } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
@@ -923,8 +923,13 @@ export default function App() {
   useEffect(() => {
     if (!stationId) return;
     engine.setRefillCallback(async () => {
-      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500", [], stationId, { skipScoping: true });
-      return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined }));
+      // Route continuous refill through the SAME guarded scheduler as the main fill
+      // (clock → SmartRule → on-format random) so it honors rotation_status, dayparts,
+      // separation, and the on-format category universe. This previously did a raw
+      // whole-library random pull, which leaked off-format/seasonal songs (e.g. Christmas
+      // — "Feliz Navidad") straight into the daypart queue when the queue ran dry.
+      await fillQueueFromSchedule();
+      return [];
     });
   }, [stationId]);
 
@@ -1229,11 +1234,21 @@ export default function App() {
       if (engine.getQueue().length === 0) {
         const count = await fillQueueFromSchedule();
         if (count === 0) {
-          engine.setRefillCallback(async () => {
-            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 500", [], stationId, { skipScoping: true });
-            return rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 }));
-          });
-          const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", [], stationId, { skipScoping: true });
+          // Continuous refill → guarded scheduler (never a raw whole-library pull).
+          engine.setRefillCallback(async () => { await fillQueueFromSchedule(); return []; });
+          // One-time emergency seed when the scheduler found nothing: pull rotation-eligible
+          // songs restricted to the ON-FORMAT category universe + current daypart — never the
+          // whole library (that leaked seasonal categories like Christmas). Empty is better
+          // than off-format; the guarded refill above keeps retrying.
+          const fmt = await getFormatCategoryIds(stationId);
+          const seedHour = new Date().getHours();
+          const catClause = fmt.length ? `AND s.category_id IN (${fmt.map(() => "?").join(",")})` : "";
+          const rows = await queryScoped<SongRow>(
+            `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+             WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+               AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
+             ORDER BY RANDOM() LIMIT 100`,
+            fmt.length ? [seedHour, ...fmt] : [seedHour], stationId, { skipScoping: true });
           const items = rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }));
           engine.addToQueue(items); setQueueLen(items.length);
           window.dispatchEvent(new CustomEvent('ether:queue-changed'));
