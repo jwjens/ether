@@ -8,6 +8,7 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { playClick } from "../lib/uiSound";
 
 interface Props {
   label: string;
@@ -50,6 +51,10 @@ export default function ConsoleStrip({
   const engine = useAudioEngine();
   const midi = useMidiState();
   const [dragging, setDragging] = useState(false);
+  // Local drag value: the knob follows the pointer instantly off this, instead of waiting
+  // for the audio-engine state to round-trip back into `volume` (which ticks, so the knob
+  // would skip between positions). Null when not dragging → fall back to the real volume.
+  const [dragVol, setDragVol] = useState<number | null>(null);
   const [pflActive, setPflActive] = useState(false);
   // trackRef: the invisible full-area mouse capture overlay
   const trackRef = useRef<HTMLDivElement>(null);
@@ -163,7 +168,8 @@ export default function ConsoleStrip({
 
   // Top offset of the knob cap — dB-linear taper so scale marks are evenly spaced.
   // 0 dB → knobY=0 (top); −60 dB → knobY=faderH−KNOB_H (bottom).
-  const volDb = volume > 0.001 ? 20 * Math.log10(volume) : -DB_FLOOR;
+  const effVol = dragVol ?? volume; // pointer-driven while dragging, real volume otherwise
+  const volDb = effVol > 0.001 ? 20 * Math.log10(effVol) : -DB_FLOOR;
   const knobY = (Math.max(-DB_FLOOR, Math.min(0, volDb)) / -DB_FLOOR) * (faderH - KNOB_H);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -181,20 +187,25 @@ export default function ConsoleStrip({
     };
     const onMove = (ev: PointerEvent) => {
       const rect = track.getBoundingClientRect();
-      onVolumeChange(posToVol(ev.clientY, rect));
+      const v = posToVol(ev.clientY, rect);
+      setDragVol(v);          // knob follows the pointer instantly
+      onVolumeChange(v);      // engine gets the value too
     };
     const onUp = () => {
       setDragging(false);
+      setDragVol(null);       // hand the knob back to the real volume
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("pointerup", onUp);
     };
     el.addEventListener("pointermove", onMove);
     el.addEventListener("pointerup", onUp);
     const rect = track.getBoundingClientRect();
-    onVolumeChange(posToVol(e.clientY, rect));
+    const v0 = posToVol(e.clientY, rect);
+    setDragVol(v0);
+    onVolumeChange(v0);
   }, [onVolumeChange]);
 
-  const db = volume > 0.001 ? (20 * Math.log10(volume)).toFixed(0) : "−∞";
+  const db = effVol > 0.001 ? (20 * Math.log10(effVol)).toFixed(0) : "−∞";
   const vuH = Math.min(1, level * (isOn ? 1 : 0.05));
   const vuColor = level > 0.85 ? "var(--accent-red)" : level > 0.6 ? "var(--accent-amber)" : color;
 
@@ -425,19 +436,19 @@ export default function ConsoleStrip({
         {db} dB
       </div>
 
-      {/* ── Pot buttons — round illuminated, Wheatstone L-Series style ── */}
+      {/* ── ON / PFL — horizontal, full-width illuminated buttons ── */}
       <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center",
-        gap: 8, padding: "10px 0 12px",
+        display: "flex", flexDirection: "row", alignItems: "stretch",
+        gap: 8, padding: "10px 8px 12px",
         background: "var(--strip-readout-bg, transparent)", borderTop: "1px solid var(--strip-divider, #303040)",
       }}>
 
         {/* ON / OFF — blue glow when active */}
-        <button onClick={onToggleOn} style={{
-          width: 44, height: 44, borderRadius: 0,
+        <button onClick={() => { playClick(); onToggleOn(); }} style={{
+          flex: 1, height: 38, borderRadius: 4,
           background: isOn
-            ? `radial-gradient(circle at 40% 35%, ${isPlaying ? "#5090ff" : "#3060aa"}, ${isPlaying ? "#2060cc" : "#1a3060"})`
-            : "radial-gradient(circle at 40% 35%, #333, #1a1a1a)",
+            ? `linear-gradient(180deg, ${isPlaying ? "#5090ff" : "#3060aa"}, ${isPlaying ? "#2060cc" : "#1a3060"})`
+            : "linear-gradient(180deg, #333, #1a1a1a)",
           border: `2px solid ${isOn ? (isPlaying ? "#4080ee" : "#2a5090") : "#333"}`,
           boxShadow: isOn
             ? `0 0 ${isPlaying ? 16 : 8}px ${isPlaying ? "#3070dd60" : "#20409030"}, inset 0 1px 2px rgba(255,255,255,0.15)`
@@ -447,18 +458,18 @@ export default function ConsoleStrip({
           transition: "all 0.15s",
         }}>
           <span style={{
-            fontSize: 7, fontWeight: 800, letterSpacing: "0.1em",
-            color: isOn ? "#fff" : "#555",
+            fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
+            color: isOn ? "#fff" : "#666",
             textShadow: isOn ? "0 0 4px rgba(255,255,255,0.5)" : "none",
           }}>ON</span>
         </button>
 
         {/* PFL / CUE — amber glow when active */}
-        <button onClick={() => { setPflActive(!pflActive); onPfl?.(); }} style={{
-          width: 44, height: 44, borderRadius: 0,
+        <button onClick={() => { playClick(); setPflActive(!pflActive); onPfl?.(); }} style={{
+          flex: 1, height: 38, borderRadius: 4,
           background: pflActive
-            ? "radial-gradient(circle at 40% 35%, #ddaa30, #886610)"
-            : "radial-gradient(circle at 40% 35%, #333, #1a1a1a)",
+            ? "linear-gradient(180deg, #ddaa30, #886610)"
+            : "linear-gradient(180deg, #333, #1a1a1a)",
           border: `2px solid ${pflActive ? "#aa8820" : "#333"}`,
           boxShadow: pflActive
             ? "0 0 12px rgba(221,170,48,0.4), inset 0 1px 2px rgba(255,255,255,0.15)"
@@ -468,8 +479,8 @@ export default function ConsoleStrip({
           transition: "all 0.15s",
         }}>
           <span style={{
-            fontSize: 6, fontWeight: 800, letterSpacing: "0.1em",
-            color: pflActive ? "#fff" : "#555",
+            fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
+            color: pflActive ? "#fff" : "#666",
             textShadow: pflActive ? "0 0 4px rgba(255,255,255,0.5)" : "none",
           }}>PFL</span>
         </button>
