@@ -12,7 +12,7 @@
 import { query } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { getEngine } from "./engine-registry";
-import { fillQueueFromSchedule } from "./loggen";
+import { fillQueueFromSchedule, getActiveShowClock } from "./loggen";
 
 interface ShowRow {
   id: number;
@@ -91,15 +91,35 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
   //    already sees the new show's hour at this point.
   let count = await fillQueueFromSchedule(20);
 
-  // Fallback: if no smart rules matched, pull any rotation-eligible tracks
+  // Fallback: if the schedule pickers came up empty, pull rotation-eligible tracks —
+  // but stay ON FORMAT. Restrict to the active clock's music categories (e.g. Daytime →
+  // Drivetime) so seasonal/off-rotation categories like Christmas never leak in. Only if
+  // there's no active clock at all do we widen to "any category used by some clock"
+  // (still keeps un-scheduled songs out), and never the whole library.
   if (count === 0) {
     const stationId = getActiveStationIdSync();
+    const hour = new Date().getHours();
+    const clock = await getActiveShowClock(stationId);
+    let cats: number[] = [];
+    if (clock) {
+      const catRows = await query<{ category_id: number }>(
+        `SELECT DISTINCT category_id FROM clock_slots
+          WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL`,
+        [clock.clockId]
+      );
+      cats = catRows.map(r => r.category_id).filter(c => c != null);
+    }
+    const catClause = cats.length
+      ? `s.category_id IN (${cats.map(() => "?").join(",")})`
+      : `s.category_id IN (SELECT DISTINCT category_id FROM clock_slots WHERE category_id IS NOT NULL AND deleted_at IS NULL)`;
     const rows = await query<{ file_path: string; title: string; artist_name: string }>(
       `SELECT s.file_path, s.title, a.name AS artist_name
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
        WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+         AND ((s.daypart_mask >> ?) & 1) = 1
+         AND ${catClause}
        ORDER BY RANDOM() LIMIT 20`,
-      []
+      cats.length ? [hour, ...cats] : [hour]
     );
     engine.addToQueue(rows.map(r => ({
       filePath: r.file_path,
@@ -107,6 +127,7 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
       artist:   r.artist_name || "",
     })));
     count = rows.length;
+    console.log(`[showClock] fallback filled ${count} on-format track(s)` + (clock ? ` from clock "${clock.showName}" (${cats.length} cats)` : ` (no active clock — in-rotation cats)`));
   }
 
   if (count === 0) {

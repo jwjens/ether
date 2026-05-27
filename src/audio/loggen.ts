@@ -238,11 +238,19 @@ async function pickRandom(
   count: number,
   sep: SepRules,
   blockExplicit: boolean,
-  stationId: number
+  stationId: number,
+  categoryIds?: number[]
 ): Promise<Song[]> {
   const hour = new Date().getHours();
   const params: any[] = [];
-  const conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
+  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
+  // Stay ON FORMAT: when given a category set (the active clock's categories, or the
+  // in-rotation categories), the last-resort random pull is restricted to them so
+  // seasonal / off-rotation categories like Christmas never leak into the queue.
+  if (categoryIds && categoryIds.length) {
+    conditions += ` AND s.category_id IN (${categoryIds.map(() => "?").join(",")})`;
+    params.push(...categoryIds);
+  }
   params.push(count);
 
   return query<Song>(
@@ -264,7 +272,7 @@ async function pickRandom(
 
 interface ClockSlotRow { category_id: number; }
 
-async function getActiveShowClock(stationId: number): Promise<{ clockId: number; showName: string } | null> {
+export async function getActiveShowClock(stationId: number): Promise<{ clockId: number; showName: string } | null> {
   try {
     const hour = new Date().getHours();
     const day  = String(new Date().getDay());
@@ -481,11 +489,28 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
       }
     }
 
-    // ── Priority 4: filtered random ───────────────────────────
+    // ── Priority 4: filtered random — but STAY ON FORMAT ──────
     if (songs.length < targetCount / 2) {
-      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit, stationId);
+      // Restrict the random top-up to the active clock's music categories (or, with no
+      // active clock, any category used by some clock) so it never sweeps in seasonal /
+      // off-rotation categories like Christmas. This is the path that was leaking.
+      let fallbackCats: number[] = [];
+      if (showClock) {
+        const cr = await query<{ category_id: number }>(
+          `SELECT DISTINCT category_id FROM clock_slots WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL`,
+          [showClock.clockId]
+        );
+        fallbackCats = cr.map(r => r.category_id).filter(c => c != null);
+      }
+      if (!fallbackCats.length) {
+        const cr = await query<{ category_id: number }>(
+          `SELECT DISTINCT category_id FROM clock_slots WHERE category_id IS NOT NULL AND deleted_at IS NULL`, []
+        );
+        fallbackCats = cr.map(r => r.category_id).filter(c => c != null);
+      }
+      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit, stationId, fallbackCats);
       songs = [...songs, ...extra];
-      if (songs.length > 0 && source === "random") source = "random (no show/rules matched)";
+      if (songs.length > 0 && source === "random") source = "random (on-format)";
     }
 
     console.log(`[loggen] fillQueue: source=${source} | hour=${hour} | artistSep=${sep.artist_sep_sec / 60}min`);
