@@ -183,12 +183,21 @@ async function pickSongsForRule(
   count: number,
   sep: SepRules,
   blockExplicit: boolean,
-  stationId: number
+  stationId: number,
+  categoryIds?: number[]
 ): Promise<Song[]> {
   const hour = new Date().getHours();
   const params: any[] = [];
 
   let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
+
+  // Stay ON FORMAT: restrict to the rotation category universe (active clock's cats, or
+  // the categories of active-show clocks) so a SmartRule top-up can't pull off-rotation
+  // categories like Christmas from a dormant seasonal clock.
+  if (categoryIds && categoryIds.length) {
+    conditions += ` AND s.category_id IN (${categoryIds.map(() => "?").join(",")})`;
+    params.push(...categoryIds);
+  }
 
   // Energy filter
   const ef = energyFilter(rule.energyLevel);
@@ -323,6 +332,36 @@ export async function getActiveShowClock(stationId: number): Promise<{ clockId: 
     console.error("[loggen] getActiveShowClock error:", e);
     return null;
   }
+}
+
+// ── On-format category universe ───────────────────────────────
+//
+// The set of category_ids the auto-filler is allowed to pull from when it falls back
+// past the active clock (SmartRule top-up, filtered random, hour-boundary fallback).
+//   • With an active clock now → that clock's own music categories.
+//   • Otherwise → categories from clocks that an ACTIVE SHOW actually uses. This is the
+//     fix for the Christmas leak: a dormant seasonal clock (e.g. a "Christmas" clock with
+//     no scheduled show) must NOT contribute its category to the rotation universe — so
+//     Christmas only airs when a Christmas show is genuinely scheduled. (The old code used
+//     `DISTINCT category_id FROM clock_slots` across ALL clocks, dormant ones included.)
+export async function getFormatCategoryIds(stationId: number, clockId?: number): Promise<number[]> {
+  try {
+    const rows = clockId
+      ? await query<{ category_id: number }>(
+          `SELECT DISTINCT category_id FROM clock_slots
+           WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL
+             AND deleted_at IS NULL AND station_id = ?`,
+          [clockId, stationId])
+      : await query<{ category_id: number }>(
+          `SELECT DISTINCT cs.category_id FROM clock_slots cs
+           WHERE cs.slot_type = 'music' AND cs.category_id IS NOT NULL AND cs.deleted_at IS NULL
+             AND cs.station_id = ?
+             AND cs.clock_id IN (
+               SELECT clock_id FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?
+             )`,
+          [stationId, stationId]);
+    return rows.map(r => r.category_id).filter(c => c != null);
+  } catch { return []; }
 }
 
 async function pickSongsFromClock(
@@ -479,11 +518,16 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
       source = `clock "${showClock.showName}"`;
     }
 
+    // On-format category universe for the fallback paths below: the active clock's cats,
+    // or (no active clock) the cats of clocks that ACTIVE SHOWS use — never a dormant
+    // seasonal clock. Empty = station isn't using clocks → no restriction (legacy behavior).
+    const formatCats = await getFormatCategoryIds(stationId, showClock?.clockId);
+
     // ── Priority 3: localStorage SmartRules ───────────────────
     if (songs.length < targetCount / 2) {
       const rule = getActiveRule();
       if (rule) {
-        const ruleSongs = await pickSongsForRule(rule, targetCount - songs.length, sep, blockExplicit, stationId);
+        const ruleSongs = await pickSongsForRule(rule, targetCount - songs.length, sep, blockExplicit, stationId, formatCats);
         songs = [...songs, ...ruleSongs];
         source = showClock ? `${source} + rule "${rule.description}"` : `rule "${rule.description}"`;
       }
@@ -491,27 +535,11 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
 
     // ── Priority 4: filtered random — but STAY ON FORMAT ──────
     if (songs.length < targetCount / 2) {
-      // Restrict the random top-up to the active clock's music categories (or, with no
-      // active clock, any category used by some clock) so it never sweeps in seasonal /
-      // off-rotation categories like Christmas. This is the path that was leaking.
-      let fallbackCats: number[] = [];
-      if (showClock) {
-        const cr = await query<{ category_id: number }>(
-          `SELECT DISTINCT category_id FROM clock_slots WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL`,
-          [showClock.clockId]
-        );
-        fallbackCats = cr.map(r => r.category_id).filter(c => c != null);
-      }
-      if (!fallbackCats.length) {
-        const cr = await query<{ category_id: number }>(
-          `SELECT DISTINCT category_id FROM clock_slots WHERE category_id IS NOT NULL AND deleted_at IS NULL`, []
-        );
-        fallbackCats = cr.map(r => r.category_id).filter(c => c != null);
-      }
-      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit, stationId, fallbackCats);
+      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit, stationId, formatCats);
       songs = [...songs, ...extra];
       if (songs.length > 0 && source === "random") source = "random (on-format)";
     }
+    console.log(`[loggen] on-format categories: [${formatCats.join(", ") || "unrestricted"}] (clock=${showClock?.clockId ?? "none"})`);
 
     console.log(`[loggen] fillQueue: source=${source} | hour=${hour} | artistSep=${sep.artist_sep_sec / 60}min`);
 

@@ -12,7 +12,7 @@
 import { query } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { getEngine } from "./engine-registry";
-import { fillQueueFromSchedule, getActiveShowClock } from "./loggen";
+import { fillQueueFromSchedule, getActiveShowClock, getFormatCategoryIds } from "./loggen";
 
 interface ShowRow {
   id: number;
@@ -100,24 +100,17 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
     const stationId = getActiveStationIdSync();
     const hour = new Date().getHours();
     const clock = await getActiveShowClock(stationId);
-    let cats: number[] = [];
-    if (clock) {
-      const catRows = await query<{ category_id: number }>(
-        `SELECT DISTINCT category_id FROM clock_slots
-          WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL`,
-        [clock.clockId]
-      );
-      cats = catRows.map(r => r.category_id).filter(c => c != null);
-    }
-    const catClause = cats.length
-      ? `s.category_id IN (${cats.map(() => "?").join(",")})`
-      : `s.category_id IN (SELECT DISTINCT category_id FROM clock_slots WHERE category_id IS NOT NULL AND deleted_at IS NULL)`;
+    // On-format universe: active clock's cats, else the cats of clocks that ACTIVE SHOWS
+    // use (never a dormant seasonal clock like "Christmas"). Empty → station isn't using
+    // clocks, so don't restrict by category.
+    const cats = await getFormatCategoryIds(stationId, clock?.clockId);
+    const catClause = cats.length ? `AND s.category_id IN (${cats.map(() => "?").join(",")})` : "";
     const rows = await query<{ file_path: string; title: string; artist_name: string }>(
       `SELECT s.file_path, s.title, a.name AS artist_name
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
        WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
          AND ((s.daypart_mask >> ?) & 1) = 1
-         AND ${catClause}
+         ${catClause}
        ORDER BY RANDOM() LIMIT 20`,
       cats.length ? [hour, ...cats] : [hour]
     );
