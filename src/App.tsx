@@ -493,9 +493,6 @@ export default function App() {
     panelRef.current = panel;
     if (panel === "library") window.dispatchEvent(new Event("ether:tour-library-opened"));
   }, [panel]);
-  const [onAir, setOnAir] = useState(false);
-  const [onAirOverride, setOnAirOverride] = useState(false);
-  const onAirOverrideRef = useRef(false); // ref avoids stale closure in engine.on
   const { goLive, stopLive } = useStreaming();
   const prevDeckStatus = useRef<Record<string, string>>({}); // track status transitions for console logging
   const lastLoggedStatus = useRef<Record<string, string>>({});
@@ -1083,17 +1080,8 @@ export default function App() {
       // Fire tour events
       if (id === "A" && st.filePath) window.dispatchEvent(new Event("ether:tour-deck-loaded"));
       if (st.status === "playing") window.dispatchEvent(new Event("ether:tour-deck-playing"));
-      // Auto-set ON AIR when any deck starts playing (unless manually overridden)
-      if (st.status === "playing" && !onAirOverrideRef.current) {
-        setOnAir(true);
-      }
-      // Auto-clear ON AIR when all decks stop (unless manually overridden)
-      if (!onAirOverrideRef.current) {
-        const anyPlaying = engine.getDeck("A")?.getState().status === "playing"
-          || engine.getDeck("B")?.getState().status === "playing"
-          || engine.getDeck("C")?.getState().status === "playing";
-        if (!anyPlaying) setOnAir(false);
-      }
+      // (ON-AIR is no longer tied to playback — it reflects the real Icecast stream
+      // status via StreamStatusContext; the GlobalOnAirBadge starts/stops the stream.)
 
       // Play logging — fires on every transition into "playing" on a music deck
       const prevStatus = lastLoggedStatus.current[id];
@@ -1536,40 +1524,8 @@ export default function App() {
           </button>
 
           <GlobalOnAirBadge
-            onAir={onAir}
-            onClick={async () => {
-              if (onAir) {
-                // OFF transition — set override BEFORE state change so the
-                // engine listener is already locked when React re-renders
-                onAirOverrideRef.current = true;
-                setOnAir(false);
-                setOnAirOverride(true);
-                await stopLive(stationId);
-                // Release override after engine has time to settle
-                setTimeout(() => {
-                  onAirOverrideRef.current = false;
-                  setOnAirOverride(false);
-                }, 1500);
-              } else {
-                // ON transition — set override BEFORE state change so the
-                // engine listener cannot immediately revert to off-air
-                onAirOverrideRef.current = true;
-                setOnAir(true);
-                setOnAirOverride(false);
-                const res = await goLive(stationId);
-                if (!res.ok) {
-                  // Stream failed — revert the optimistic UI update
-                  setOnAir(false);
-                  onAirOverrideRef.current = false;
-                  console.error('[ON AIR] Stream failed to start:', res.error);
-                  return;
-                }
-                // Release override after engine has time to settle
-                setTimeout(() => {
-                  onAirOverrideRef.current = false;
-                }, 1500);
-              }
-            }}
+            onGoLive={() => { goLive(stationId); }}
+            onStopLive={() => { stopLive(stationId); }}
           />
         </div>
 

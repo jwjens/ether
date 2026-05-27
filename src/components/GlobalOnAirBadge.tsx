@@ -1,31 +1,36 @@
-import { useGlobalStatus } from "../contexts/StreamStatusContext";
+import { useStreamStatus } from "../contexts/StreamStatusContext";
 
 interface Props {
-  onAir:     boolean;
-  onClick:   () => void;
-  style?:    React.CSSProperties;
+  onGoLive:   () => void;
+  onStopLive: () => void;
+  style?:     React.CSSProperties;
 }
 
-export default function GlobalOnAirBadge({ onAir, onClick, style }: Props) {
-  const { anyLive, liveCount } = useGlobalStatus();
-  const streaming = anyLive;
+// The On-Air badge reflects the REAL Icecast stream status only — never playback — so
+// the light never lies: OFF AIR (idle) → GOING LIVE… (connecting) → ON AIR (streaming).
+// Clicking it starts or stops the actual stream.
+export default function GlobalOnAirBadge({ onGoLive, onStopLive, style }: Props) {
+  const { dests, global } = useStreamStatus();
+  const live = global.anyLive;
+  const connecting = !live && Object.values(dests).some((d) => d.state === "connecting");
+  const active = live || connecting;
 
-  // Color logic: red if mic on-air, green if streaming but not on-air, gray otherwise
-  const bg     = onAir   ? "#ef4444"
-               : streaming ? "rgba(34,197,94,0.15)"
-               : "var(--bg-tertiary)";
-  const color  = onAir   ? "#fff"
-               : streaming ? "#4ade80"
-               : "var(--text-tertiary)";
-  const shadow = onAir   ? "0 0 16px rgba(239,68,68,0.5)"
-               : streaming ? "0 0 8px rgba(34,197,94,0.25)"
-               : "none";
-  const outline = streaming && !onAir ? "1px solid rgba(34,197,94,0.4)" : "none";
+  const label = connecting
+    ? "GOING LIVE…"
+    : live
+      ? `ON AIR${global.liveCount > 1 ? ` (${global.liveCount})` : ""}`
+      : "OFF AIR";
+
+  const bg      = live ? "#ef4444" : connecting ? "rgba(245,158,11,0.18)" : "var(--bg-tertiary)";
+  const color   = live ? "#fff"    : connecting ? "#fbbf24"               : "var(--text-tertiary)";
+  const shadow  = live ? "0 0 16px rgba(239,68,68,0.5)" : connecting ? "0 0 10px rgba(245,158,11,0.35)" : "none";
+  const outline = connecting ? "1px solid rgba(245,158,11,0.45)" : "none";
 
   return (
     <button
       data-tour="onair-btn"
-      onClick={onClick}
+      onClick={() => (active ? onStopLive() : onGoLive())}
+      title={active ? "Click to stop broadcasting" : "Click to go on air (start streaming)"}
       style={{
         height: 48, padding: "0 24px", borderRadius: 0, border: "none", cursor: "pointer",
         fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
@@ -35,8 +40,7 @@ export default function GlobalOnAirBadge({ onAir, onClick, style }: Props) {
         ...style,
       }}
     >
-      {onAir || streaming ? "● " : ""}
-      {onAir ? "ON AIR" : streaming ? `LIVE (${liveCount})` : "OFF AIR"}
+      {active ? "● " : ""}{label}
     </button>
   );
 }
