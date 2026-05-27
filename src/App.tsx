@@ -3,7 +3,7 @@ import KeyboardHelp from "./components/KeyboardHelp";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -674,6 +674,16 @@ export default function App() {
       }
       pushLibrary(apiKeyRef.current, stationUuid, stationId);
     }
+  }, [stationId, stationUuid, firstRunChecked]);
+
+  // Push play history for analytics (Phase 3a): catch up on boot, then every 3 min so
+  // the dashboard's Analytics view stays current. Incremental + deduped server-side.
+  useEffect(() => {
+    if (!firstRunChecked || !apiKeyRef.current || !stationUuid) return;
+    const push = () => pushPlayHistory(apiKeyRef.current, stationUuid, stationId);
+    push();
+    const id = setInterval(push, 3 * 60 * 1000);
+    return () => clearInterval(id);
   }, [stationId, stationUuid, firstRunChecked]);
 
   // When a cloud→local download finishes (materialize writes file_path), re-push the

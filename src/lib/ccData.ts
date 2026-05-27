@@ -100,6 +100,49 @@ export async function pushLibrary(
   await pushCcData(licenseKey, stationUuid, "library", rows);
 }
 
+// Push new play_log rows for analytics (Phase 3a). Append-only + incremental: a
+// per-station localStorage cursor tracks the highest play_log id already pushed from
+// THIS machine; the backend dedupes by row_uuid. Batched so a first-run backfill of a
+// long history doesn't block. Called on boot + on a periodic timer.
+export async function pushPlayHistory(
+  licenseKey: string | null | undefined,
+  stationUuid: string | null | undefined,
+  stationId: number,
+): Promise<void> {
+  if (!licenseKey || !stationUuid) return;
+  const cursorKey = `ether_ph_cursor_${stationId}`;
+  const BATCH = 1000;
+  const MAX_BATCHES = 60; // safety cap per run (~60k rows)
+  try {
+    for (let b = 0; b < MAX_BATCHES; b++) {
+      const cursor = Number(localStorage.getItem(cursorKey) || "0");
+      const rows: any[] = await query(
+        `SELECT id, uuid, title, artist, duration_ms, played_at, category_code, show_name
+           FROM play_log
+          WHERE station_id = ? AND id > ? AND deleted_at IS NULL
+          ORDER BY id LIMIT ?`,
+        [stationId, cursor, BATCH],
+      );
+      if (!rows.length) break;
+      const payload = rows.map((r) => ({
+        row_uuid: r.uuid || `lid-${stationId}-${r.id}`,
+        title: r.title, artist: r.artist, duration_ms: r.duration_ms,
+        played_at: r.played_at, category_code: r.category_code, show_name: r.show_name,
+      }));
+      const res = await fetch(`${ETHER_BACKEND_URL}/api/account/play-history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
+        body: JSON.stringify({ station_uuid: stationUuid, rows: payload }),
+      });
+      if (!res.ok) { console.log(`[PHPUSH] HTTP ${res.status} — stopping`); break; }
+      const maxId = rows[rows.length - 1].id;
+      localStorage.setItem(cursorKey, String(maxId));
+      console.log(`[PHPUSH] pushed ${rows.length} rows (through id ${maxId})`);
+      if (rows.length < BATCH) break; // caught up
+    }
+  } catch (e) { console.log("[PHPUSH] error:", (e as any)?.message ?? e); }
+}
+
 // Control Center 2d-3 — create a song from a dashboard upload. The audio is already in
 // R2 under `file_key` (uploaded straight from the dashboard via a signed PUT); here we
 // create the install-side record so it's playable (the engine fetches R2 audio on demand
