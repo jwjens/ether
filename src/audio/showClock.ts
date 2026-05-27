@@ -144,6 +144,7 @@ async function executeTransition(showName: string, newHour: number): Promise<voi
       title:      `[Show Transition: ${showName}]`,
       artist:     "",
       deck:       "AUTO",
+      played_at:  Math.floor(Date.now() / 1000),
       session_id: `show-${newHour}`,
     });
   } catch { /* non-critical */ }

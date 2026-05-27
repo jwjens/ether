@@ -130,6 +130,10 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     artist,
     deck,
     duration_ms: durationMs ?? null,
+    // Set played_at explicitly — the synced create handler inserts NULL otherwise (the
+    // column's unixepoch() DEFAULT never fires), so the Play History (sorted by played_at)
+    // never surfaced new plays even though rows were being written.
+    played_at:   Math.floor(Date.now() / 1000),
     session_id:  getSessionId(),
   });
 }

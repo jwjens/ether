@@ -1053,7 +1053,17 @@ export default function App() {
         engine.clearQueue();
         const count = await fillQueueFromSchedule();
         if (count === 0) {
-          const rows = await query<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", []);
+          // Startup fallback — stay ON FORMAT (rotation-eligible + on-format categories +
+          // current daypart), never a raw whole-library pull (that leaked Christmas).
+          const fmt = await getFormatCategoryIds(stationId);
+          const suHour = new Date().getHours();
+          const catClause = fmt.length ? `AND s.category_id IN (${fmt.map(() => "?").join(",")})` : "";
+          const rows = await queryScoped<SongRow>(
+            `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+             WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+               AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
+             ORDER BY RANDOM() LIMIT 100`,
+            fmt.length ? [suHour, ...fmt] : [suHour], stationId, { skipScoping: true });
           const items = rows.filter((s: SongRow) => s.file_path).map((s: SongRow) => ({ filePath: s.file_path!, title: s.title, artist: (s as any).artist_name || "", durationMs: s.duration_ms ?? 0 }));
           engine.addToQueue(items);
         }
@@ -1120,7 +1130,11 @@ export default function App() {
       const prevStatus = lastLoggedStatus.current[id];
       if (st.status === 'playing' && prevStatus !== 'playing') {
         const cfg = deckConfigsRef.current.find(c => c.slot === id);
-        if (cfg?.type === 'music' && st.title) {
+        // Log any on-air PROGRAM deck. Default to logging when there's no config (not yet
+        // loaded / station mismatch); only skip explicit mic/guest/video. The old strict
+        // `cfg?.type === 'music'` gate silently dropped logging whenever configs weren't ready.
+        const nonProgram = cfg ? (cfg.type === 'mic' || cfg.type === 'guest' || cfg.type === 'video') : false;
+        if (!nonProgram && st.title) {
           logPlay(st.title, st.artist || '', id, undefined, stationId).catch(e => console.error('Log write error:', e));
           try { (window as any).ether.emit("iris:nowplaying", { title: st.title, artist: st.artist || '' }); } catch {}
           try {
@@ -1226,7 +1240,18 @@ export default function App() {
       } else if (autoAdv) {
         await fillQueueFromSchedule().then(async (count) => {
           if (count === 0) {
-            const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_path IS NOT NULL ORDER BY RANDOM() LIMIT 100", [], stationId, { skipScoping: true });
+            // Dead-air recovery fallback — stay ON FORMAT (rotation-eligible + on-format
+            // categories + current daypart), NEVER a raw whole-library pull. This was the
+            // last unguarded path that could drop seasonal songs (Christmas) into the queue.
+            const fmt = await getFormatCategoryIds(stationId);
+            const drHour = new Date().getHours();
+            const catClause = fmt.length ? `AND s.category_id IN (${fmt.map(() => "?").join(",")})` : "";
+            const rows = await queryScoped<SongRow>(
+              `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+               WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+                 AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
+               ORDER BY RANDOM() LIMIT 100`,
+              fmt.length ? [drHour, ...fmt] : [drHour], stationId, { skipScoping: true });
             engine.addToQueue(rows.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 })));
           }
           const q2 = engine.getQueue();

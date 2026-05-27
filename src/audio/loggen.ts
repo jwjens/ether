@@ -440,6 +440,12 @@ interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
 
 async function readGeneratedSchedule(count: number, stationId: number): Promise<ScheduledTrack[]> {
   const nowTs = Math.floor(Date.now() / 1000);
+  // Stay ON FORMAT even from a pre-generated log: skip any entry whose song is in an
+  // off-rotation category (one no active show's clock uses — e.g. a stale Christmas entry
+  // from an old generation). Uncategorized entries pass; empty fmt (no clocks) = no filter.
+  const fmt = await getFormatCategoryIds(stationId);
+  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const params = fmt.length ? [_schedCursor, stationId, nowTs, ...fmt, count] : [_schedCursor, stationId, nowTs, count];
   const rows = await query<ScheduledTrackRow>(
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
             s.file_path, s.intro_end, s.outro_start, s.duration_ms
@@ -447,9 +453,10 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
      LEFT JOIN songs s ON s.id = gs.song_id
      WHERE gs.id > ? AND gs.station_id = ?
        AND gs.scheduled_at >= ? - 300
+       ${catClause}
      ORDER BY gs.scheduled_at
      LIMIT ?`,
-    [_schedCursor, stationId, nowTs, count]
+    params
   );
   if (rows.length > 0) {
     _schedCursor = rows[rows.length - 1].row_id;
