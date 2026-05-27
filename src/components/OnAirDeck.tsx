@@ -7,6 +7,7 @@ import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { fetchArt } from "./UpNext";
+import { getLocalArt } from "../lib/albumArt";
 
 interface Props {
   deck: DeckState | null;
@@ -103,7 +104,11 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
     const key = `${title}::${artist}`;
     if (albumArtFetchedFor.current === key) return;
     albumArtFetchedFor.current = key;
-    fetchArt(title, artist).then(url => setAlbumArtUrl(url));
+    // Local-first: embedded cover art from the on-air file, iTunes as the fallback.
+    (async () => {
+      const local = await getLocalArt((deck as any)?.filePath);
+      setAlbumArtUrl(local || await fetchArt(title, artist));
+    })();
   }, [title, artist]);
 
   // ── Artist photo (Wikipedia/iTunes artist) for blurred bg ──────────────

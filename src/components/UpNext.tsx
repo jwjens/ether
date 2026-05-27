@@ -4,6 +4,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { getLocalArt } from "../lib/albumArt";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -80,9 +81,12 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     queue.forEach(item => {
       const key = `${item.title}::${item.artist}`;
       if (artUrls[key] !== undefined) return;
-      fetchArt(item.title || "", item.artist || "").then(url => {
+      // Local-first: embedded cover art from the file, then iTunes as the fallback.
+      (async () => {
+        const local = await getLocalArt((item as any).filePath);
+        const url = local || await fetchArt(item.title || "", item.artist || "");
         if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
-      });
+      })();
     });
   }, [queueLen]);
 

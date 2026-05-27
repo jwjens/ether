@@ -964,6 +964,8 @@ app.whenReady().then(() => {
   try {
     const { installStationMetadata } = require("./station-metadata.js");
     installStationMetadata(ipcMain, db);
+    const { installNowPlayingArt } = require("./now-playing-art.js");
+    installNowPlayingArt(ipcMain, db);
   } catch (e) {
     console.warn("[STATION-METADATA] install failed:", e.message);
   }
@@ -1619,6 +1621,30 @@ ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => audio.audioSet
 ipcMain.handle("audio:getState", (_, stationId) => JSON.parse(audio.audioGetState(stationId)));
 ipcMain.handle("audio:getLevels", (_, stationId) => JSON.parse(audio.audioGetLevels(stationId)));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
+// Embedded cover art straight from the audio file (local-first artwork — primary source;
+// iTunes is the caller's fallback). music-metadata is ESM-only (v11), so it's loaded via
+// dynamic import. Returns a data: URL of the first embedded picture, or null. Cached by
+// filePath (bounded FIFO) so repeated requests / replays don't re-parse the file.
+const _embeddedArtCache = new Map();
+const _EMBEDDED_ART_CACHE_MAX = 150;
+ipcMain.handle("audio:embeddedArt", async (_, filePath) => {
+  if (!filePath || typeof filePath !== "string") return null;
+  if (_embeddedArtCache.has(filePath)) return _embeddedArtCache.get(filePath);
+  let result = null;
+  try {
+    const mm = await import("music-metadata");
+    const meta = await mm.parseFile(filePath, { duration: false });
+    const pic = meta.common && meta.common.picture && meta.common.picture[0];
+    if (pic && pic.data && pic.data.length) {
+      result = `data:${pic.format || "image/jpeg"};base64,${Buffer.from(pic.data).toString("base64")}`;
+    }
+  } catch (e) { /* unreadable/missing/no-tags → null, caller falls back to iTunes */ }
+  if (_embeddedArtCache.size >= _EMBEDDED_ART_CACHE_MAX) {
+    _embeddedArtCache.delete(_embeddedArtCache.keys().next().value);
+  }
+  _embeddedArtCache.set(filePath, result);
+  return result;
+});
 ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => audio.watchdogSet(active, thresholdSec, stationId));
 // EQ — sends 10 band gains (f32[]) to the station's EQ chain in the BusMixer.
 ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {

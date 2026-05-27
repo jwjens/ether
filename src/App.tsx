@@ -443,6 +443,8 @@ function buildNowPlayingPayload(
     position:     live?.state?.positionSec || 0,
     duration:     live?.state?.durationSec || 0,
     deck:         live?.deck || null,
+    filePath:     live?.state?.filePath || null, // on-air file → embedded-art lookup (not stored)
+    art_url:      null as string | null,         // resolved from embedded cover art before POST
     station_name: stationName,
     station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
     decks: { A: mkDeck(sA), B: mkDeck(sB), C: mkDeck(sC) },
@@ -1338,10 +1340,14 @@ export default function App() {
   // companion + metadata fan-out stay on the per-track cadence (effect below) so
   // Icecast/Shoutcast pushes aren't re-fired every tick.
   useEffect(() => {
-    const push = () => {
+    const push = async () => {
       const payload = buildNowPlayingPayload(engine, stationName, stationUuid);
+      // Embedded cover art of the on-air file → R2 public (primary listener artwork).
+      // Cached URL returns immediately, or null while the upload is in flight; it's part
+      // of the signature so the next heartbeat re-POSTs once the art is ready.
+      try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(stationUuid, payload.filePath)) || null; } catch { /* ignore */ }
       const sig = [
-        payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid,
+        payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url,
         payload.queue.map(q => q.title).join(""),
       ].join("");
       if (sig === lastNowPlaySig.current) return;

@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("ether", {
     getState: (stationId) => ipcRenderer.invoke("audio:getState", stationId),
     getLevels: (stationId) => ipcRenderer.invoke("audio:getLevels", stationId),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
+    embeddedArt: (fp) => ipcRenderer.invoke("audio:embeddedArt", fp),
     watchdogSet: (a, t, stationId) => ipcRenderer.invoke("audio:watchdogSet", a, t, stationId),
     setEq: (deck, bands, stationId) => ipcRenderer.invoke("audio:setEq", deck, bands, stationId),
     listOutputDevices: () => ipcRenderer.invoke("audio:listOutputDevices"),
@@ -32,6 +33,9 @@ contextBridge.exposeInMainWorld("ether", {
       checkSlug:  (slug, uuid)       => ipcRenderer.invoke("station:metadata:check-slug", slug, uuid),
       uploadLogo: (uuid, bytes, ext) => ipcRenderer.invoke("station:metadata:upload-logo", uuid, bytes, ext),
     },
+    // Embedded cover art of the on-air file → R2 public, for the listener page.
+    // Returns the cached art_url (or null) — call on each now-playing push.
+    nowPlayingArt: (uuid, filePath) => ipcRenderer.invoke("nowPlayingArt:ensure", uuid, filePath),
   },
   spotify: {
     setCredentials:       (clientId, clientSecret) => ipcRenderer.invoke("spotify:setCredentials", { clientId, clientSecret }),
