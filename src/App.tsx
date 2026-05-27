@@ -2650,6 +2650,25 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const engine = useAudioEngine();
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();
+  // Resizable bottom dock (carts / programming panels): drag the divider against the
+  // decks to see more decks or more panel. Persisted; clamped so the decks stay visible.
+  const [dockHeight, setDockHeight] = useState<number>(() => {
+    try { const v = parseInt(localStorage.getItem("ether_dock_height") || "320"); return isNaN(v) ? 320 : Math.max(110, v); } catch { return 320; }
+  });
+  useEffect(() => { try { localStorage.setItem("ether_dock_height", String(dockHeight)); } catch {} }, [dockHeight]);
+  const dockResizeRef = useRef<{ startY: number; startH: number } | null>(null);
+  const startDockResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    dockResizeRef.current = { startY: e.clientY, startH: dockHeight };
+    const onMove = (ev: MouseEvent) => {
+      if (!dockResizeRef.current) return;
+      const dy = dockResizeRef.current.startY - ev.clientY; // drag up → taller dock
+      setDockHeight(Math.max(110, Math.min(window.innerHeight - 240, dockResizeRef.current.startH + dy)));
+    };
+    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); dockResizeRef.current = null; };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [dockHeight]);
   // Master Output collapse state — persisted; auto-collapses below 1200px unless user opted in
   const [masterUserExpanded, setMasterUserExpanded] = useState<boolean>(() => {
     try { return localStorage.getItem("ether_master_user_expanded") === "1"; } catch { return false; }
@@ -3090,21 +3109,31 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         </div>
       )}
 
-      {/* On-air programming dock — pushes the decks up (queue untouched), like carts.
-          Hosts the live Shows & Dayparts / Clocks / Rotation Categories editors so the
-          operator can program while watching the decks above. */}
-      {progPanel && (
-        <div style={{ flex: "1.6 1 0", minHeight: 170, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-secondary)", borderTop: "2px solid var(--accent-blue)" }}>
-          <Scheduler defaultTab={progPanel} embedded />
-        </div>
-      )}
-
-      {/* Cart wall — shown when CARTS active (and not while a programming dock is open). */}
-      {showCarts && !progPanel && !deckConfigs?.some(d => d.type === "cart" && d.enabled) && (
-        <div style={{ flexShrink: 0, height: 150, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)" }}>
-          <BoutiqueCartWall deckSlot="C" variant="strip" />
-        </div>
-      )}
+      {/* Bottom dock — carts OR a programming editor. Pushes the decks up (queue
+          untouched). The divider above it is draggable up/down to give more room to the
+          decks or to the dock — its height is shared + persisted across carts/programming. */}
+      {(() => {
+        const cartOpen = showCarts && !progPanel && !deckConfigs?.some(d => d.type === "cart" && d.enabled);
+        if (!progPanel && !cartOpen) return null;
+        return (
+          <>
+            {/* Drag handle / divider */}
+            <div
+              onMouseDown={startDockResize}
+              title="Drag to resize — more decks ↑ / more panel ↓"
+              style={{ flexShrink: 0, height: 10, cursor: "ns-resize", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)" }}
+            >
+              <div style={{ width: 48, height: 3, borderRadius: 2, background: "var(--border-secondary)", pointerEvents: "none" }} />
+            </div>
+            {/* Dock body — user-resizable height */}
+            <div style={{ flexShrink: 0, height: dockHeight, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-secondary)", borderTop: progPanel ? "2px solid var(--accent-blue)" : "none" }}>
+              {progPanel
+                ? <Scheduler defaultTab={progPanel} embedded />
+                : <BoutiqueCartWall deckSlot="C" variant="strip" />}
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 
