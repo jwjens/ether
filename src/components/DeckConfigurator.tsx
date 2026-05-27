@@ -462,9 +462,10 @@ const CART_COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","#38bdf8","#a78bfa"
 interface CartProps {
   deckSlot: string;
   compact?: boolean;
+  variant?: "grid" | "strip"; // "strip" = single row of 8 square carts + side VU
 }
 
-export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
+export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
   const engine = useAudioEngine();
   const [carts, setCarts] = useState<CartSlot[]>(
     DEFAULT_CART_KEYS.map((k, i) => ({
@@ -548,6 +549,56 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
     const label = (fp.split(/[\\/]/).pop() || fp).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
     setCarts(p => p.map(c => c.key === key ? { ...c, label, filePath: fp } : c));
   };
+
+  // Strip layout (#4 refinement): one row of even SQUARE carts + a side VU. Lives docked
+  // below the decks (decks-width), pushing them up — see App.tsx decksPanel.
+  if (variant === "strip") {
+    return (
+      <div style={{ height: "100%", display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
+        <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
+        {carts.slice(0, 8).map(cart => (
+          <div
+            key={cart.key}
+            onClick={() => { if (cart.filePath) fireCart(cart.key); else assignCart(cart.key); }}
+            onDoubleClick={() => editLabel(cart.key)}
+            onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
+            onDragLeave={() => setDragOver(null)}
+            onDrop={e => handleDrop(e, cart.key)}
+            title={cart.filePath ? cart.label : "Empty — click to assign"}
+            style={{
+              flex: 1, aspectRatio: "1", minWidth: 0, maxWidth: 130, alignSelf: "center",
+              borderRadius: 4,
+              background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",
+              border: `1px solid ${cart.playing ? cart.color + "90" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
+              boxShadow: cart.playing ? `0 0 10px ${cart.color}55` : "none",
+              animation: cart.playing ? "ether-cart-flash 0.9s ease-in-out infinite" : undefined,
+              cursor: "pointer", transition: "all 0.1s",
+              position: "relative" as const, overflow: "hidden",
+              display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center",
+              textAlign: "center" as const, padding: 4, gap: 3,
+            }}
+          >
+            <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.playing || cart.filePath ? cart.color : "var(--text-tertiary)" }}>{cart.key}</span>
+            <span style={{
+              fontSize: 9, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.2,
+              color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
+              overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+              fontStyle: cart.filePath ? "normal" : "italic", wordBreak: "break-word" as const, maxWidth: "100%",
+            }}>{cart.filePath ? cart.label : "Empty"}</span>
+            {cart.playing && remainingMs > 0 && (
+              <span style={{ position: "absolute" as const, bottom: 3, fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.color }}>{fmtRemain(remainingMs)}</span>
+            )}
+          </div>
+        ))}
+        {/* VU meter — side */}
+        <div style={{ width: 14, alignSelf: "stretch", flexShrink: 0, display: "flex", flexDirection: "column" as const, padding: "2px 0" }}>
+          <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
+            <div style={{ width: "100%", height: `${Math.min(100, Math.round(vu * 100))}%`, background: vu > 0.85 ? "#ef4444" : vu > 0.6 ? "#fbbf24" : "#4ade80", transition: "height 0.08s linear" }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" as const, fontFamily: "'Inter', system-ui, sans-serif" }}>
