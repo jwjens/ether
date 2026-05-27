@@ -4,6 +4,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { getActiveShowClock } from "../audio/loggen";
 import { getLocalArt } from "../lib/albumArt";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -49,6 +50,21 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [artUrls, setArtUrls]         = useState<Record<string, string>>({});
 
   const [anyPlaying, setAnyPlaying] = useState(false);
+
+  // The active show/daypart whose clock is ACTUALLY filling the queue right now — the
+  // real rotation source (same getActiveShowClock the queue filler uses), not decorative.
+  const [currentShow, setCurrentShow] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isReady) return;
+    let cancelled = false;
+    const resolve = async () => {
+      try { const sc = await getActiveShowClock(stationId); if (!cancelled) setCurrentShow(sc?.showName ?? null); }
+      catch { if (!cancelled) setCurrentShow(null); }
+    };
+    resolve();
+    const id = setInterval(resolve, 30000); // shows change on hour boundaries; 30s is plenty
+    return () => { cancelled = true; clearInterval(id); };
+  }, [stationId, isReady, queueLen]);
 
   const topTitleRef            = useRef<HTMLDivElement>(null);
   const [topScrollPx, setTopScrollPx] = useState(0);
@@ -204,8 +220,14 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     >
       {/* ── NEXT UP header ── */}
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="next-up-glow" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.1em", color: "#f97316", textTransform: "uppercase" as const, lineHeight: 1 }}>Next Up</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+          {currentShow && (
+            <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.18em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, lineHeight: 1 }}>Next Up · On Air</span>
+          )}
+          <span className="next-up-glow" title={currentShow ? `Rotation source: ${currentShow}` : undefined}
+            style={{ fontSize: currentShow ? 17 : 20, fontWeight: 700, letterSpacing: "0.08em", color: "#f97316", textTransform: "uppercase" as const, lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {currentShow || "Next Up"}
+          </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
