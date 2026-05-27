@@ -472,6 +472,36 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
     }))
   );
   const [dragOver, setDragOver] = useState<string | null>(null);
+  const playingKeyRef = useRef<string | null>(null);
+  const [remainingMs, setRemainingMs] = useState(0);
+  const [vu, setVu] = useState(0);
+
+  // Drive the playing flash + countdown off the cart deck's REAL state (not a fixed
+  // timeout), and the VU off the audio levels — so a fired cart flashes for its true
+  // length, shows time remaining, and you can see audio moving.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    const lv = ether?.audio?.onLevels?.((l: { a?: number; b?: number; c?: number }) => {
+      setVu(l[deckSlot.toLowerCase() as "a" | "b" | "c"] ?? 0);
+    });
+    const id = setInterval(() => {
+      if (!playingKeyRef.current) return;
+      const st = engine.getDeck(deckSlot)?.getState();
+      if (st?.status === "playing") {
+        setRemainingMs(Math.max(0, ((st.durationSec || 0) - (st.positionSec || 0)) * 1000));
+      } else {
+        playingKeyRef.current = null;
+        setRemainingMs(0);
+        setCarts(p => p.map(c => c.playing ? { ...c, playing: false } : c));
+      }
+    }, 200);
+    return () => { clearInterval(id); if (lv) ether?.audio?.offLevels?.(lv); };
+  }, [deckSlot, engine]);
+
+  const fmtRemain = (ms: number) => {
+    const s = Math.ceil(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -492,8 +522,8 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
     try {
       await engine.loadToDeck(deckSlot, cart.filePath, cart.label, "");
       engine.getDeck(deckSlot)?.play();
-      setCarts(p => p.map(c => c.key === key ? { ...c, playing: true } : c));
-      setTimeout(() => setCarts(p => p.map(c => c.key === key ? { ...c, playing: false } : c)), 2000);
+      playingKeyRef.current = key;
+      setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
     } catch {}
   };
 
@@ -566,11 +596,13 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
           ))}
         </div>
       ) : (
-      <div style={{
-        flex: 1, padding: 12, overflowY: "auto" as const,
-        display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8,
-        alignContent: "start",
-      }}>
+      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
+        <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
+        <div style={{
+          flex: 1, padding: 12, overflowY: "auto" as const,
+          display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8,
+          alignContent: "start",
+        }}>
         {carts.map(cart => (
           <div
             key={cart.key}
@@ -585,7 +617,8 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
               border: `1px solid ${cart.playing ? cart.color + "80" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "28" : "var(--border-primary)"}`,
               cursor: "pointer",
               transition: "all 0.1s",
-              boxShadow: cart.playing ? `0 0 8px ${cart.color}40` : "none",
+              boxShadow: cart.playing ? `0 0 10px ${cart.color}55` : "none",
+              animation: cart.playing ? "ether-cart-flash 0.9s ease-in-out infinite" : undefined,
               position: "relative" as const,
               overflow: "hidden",
               display: "flex",
@@ -610,6 +643,13 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
               </span>
             </div>
 
+            {/* Countdown — bottom-left, while this cart is playing */}
+            {cart.playing && remainingMs > 0 && (
+              <div style={{ position: "absolute" as const, bottom: 3, left: 6, fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.color }}>
+                {fmtRemain(remainingMs)}
+              </div>
+            )}
+
             {/* Key badge — top-right */}
             <div style={{
               position: "absolute" as const, top: 6, right: 5,
@@ -623,6 +663,20 @@ export function BoutiqueCartWall({ deckSlot, compact }: CartProps) {
             }}>{cart.key}</div>
           </div>
         ))}
+        </div>
+
+        {/* VU meter — right side, shows cart audio level */}
+        <div style={{ width: 18, flexShrink: 0, padding: "12px 8px 12px 0", display: "flex", flexDirection: "column" as const }}>
+          <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
+            <div style={{
+              width: "100%",
+              height: `${Math.min(100, Math.round(vu * 100))}%`,
+              background: vu > 0.85 ? "#ef4444" : vu > 0.6 ? "#fbbf24" : "#4ade80",
+              transition: "height 0.08s linear",
+            }} />
+          </div>
+          <div style={{ fontSize: 7, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textAlign: "center" as const, marginTop: 4 }}>VU</div>
+        </div>
       </div>
       )}
     </div>

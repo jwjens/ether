@@ -515,6 +515,7 @@ export default function App() {
   const [queueLen, setQueueLen] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
+  const [showCartDrawer, setShowCartDrawer] = useState(false); // bottom slide-up cart drawer (#4)
   const [globalSearch, setGlobalSearch] = useState("");
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
@@ -1954,7 +1955,7 @@ export default function App() {
         {/* View tabs */}
         {([
           { label: "DECKS",  active: showDeckConfig,        fn: () => { setPanel("live"); setShowDeckConfig(true); } },
-          { label: "CARTS",  active: panel === "cartwall", fn: () => setPanel("cartwall") },
+          { label: "CARTS",  active: showCartDrawer,        fn: () => setShowCartDrawer(s => !s) },
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
@@ -2055,6 +2056,26 @@ export default function App() {
     </EtherErrorBoundary>
     </AudioEngineProvider>
     </MidiProvider>
+    {/* ── Carts: slide-up drawer from the bottom (decks stay visible) (#4) ── */}
+    {showCartDrawer && (
+      <div style={{
+        position: "fixed", left: 0, right: 0, bottom: 0, height: "46vh", zIndex: 60,
+        background: "var(--bg-secondary)", borderTop: "2px solid #fbbf24",
+        boxShadow: "0 -10px 30px rgba(0,0,0,0.55)",
+        display: "flex", flexDirection: "column",
+        animation: "ether-cart-drawer-up 200ms ease-out",
+      }}>
+        <style>{`@keyframes ether-cart-drawer-up { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.14em", color: "#fbbf24" }}>● CARTS</span>
+          <button onClick={() => setShowCartDrawer(false)} title="Close carts" style={{ background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", borderRadius: 0, width: 26, height: 26, cursor: "pointer", fontSize: 13 }}>✕</button>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+          <BoutiqueCartWall deckSlot="C" />
+        </div>
+      </div>
+    )}
+
     <StreamStatusToast />
     </StreamStatusProvider>
   );
