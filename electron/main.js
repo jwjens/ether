@@ -1646,6 +1646,10 @@ ipcMain.handle("audio:embeddedArt", async (_, filePath) => {
   return result;
 });
 ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => audio.watchdogSet(active, thresholdSec, stationId));
+// Broadcast (profanity) delay + dump — delay lives on the stream path only.
+ipcMain.handle("audio:setBroadcastDelay", (_, seconds, stationId) => audio.audioSetBroadcastDelay(seconds, stationId));
+ipcMain.handle("audio:dump", (_, stationId) => audio.audioDump(stationId));
+ipcMain.handle("audio:broadcastDelayState", (_, stationId) => { try { return JSON.parse(audio.audioBroadcastDelayState(stationId)); } catch { return { armed: false, delaySec: 0, bufferedSec: 0, fillPct: 0 }; } });
 // EQ — sends 10 band gains (f32[]) to the station's EQ chain in the BusMixer.
 ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
   try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(stationId ?? 1, JSON.stringify(bands)); }

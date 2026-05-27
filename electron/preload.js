@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld("ether", {
     getLevels: (stationId) => ipcRenderer.invoke("audio:getLevels", stationId),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
     embeddedArt: (fp) => ipcRenderer.invoke("audio:embeddedArt", fp),
+    // Broadcast (profanity) delay + dump.
+    setBroadcastDelay: (seconds, stationId) => ipcRenderer.invoke("audio:setBroadcastDelay", seconds, stationId),
+    dump: (stationId) => ipcRenderer.invoke("audio:dump", stationId),
+    broadcastDelayState: (stationId) => ipcRenderer.invoke("audio:broadcastDelayState", stationId),
     watchdogSet: (a, t, stationId) => ipcRenderer.invoke("audio:watchdogSet", a, t, stationId),
     setEq: (deck, bands, stationId) => ipcRenderer.invoke("audio:setEq", deck, bands, stationId),
     listOutputDevices: () => ipcRenderer.invoke("audio:listOutputDevices"),

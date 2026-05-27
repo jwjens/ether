@@ -520,6 +520,28 @@ export default function App() {
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
   const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks">(null);
+  // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
+  // operator can dump before audio airs; DUMP becomes active once the buffer is full.
+  const DELAY_SEC = 8;
+  const [delayArmed, setDelayArmed] = useState(false);
+  const [delayFill, setDelayFill] = useState(0); // 0..1 buffer fill
+  useEffect(() => {
+    if (!delayArmed) { setDelayFill(0); return; }
+    const id = setInterval(async () => {
+      try { const st = await (window as any).ether?.audio?.broadcastDelayState?.(stationId); setDelayFill(st?.fillPct ?? 0); } catch {}
+    }, 500);
+    return () => clearInterval(id);
+  }, [delayArmed, stationId]);
+  const toggleDelay = () => {
+    const next = !delayArmed;
+    setDelayArmed(next);
+    (window as any).ether?.audio?.setBroadcastDelay?.(next ? DELAY_SEC : 0, stationId);
+  };
+  const doDump = () => {
+    (window as any).ether?.audio?.dump?.(stationId);
+    setDelayArmed(false); // dump collapses the delay to 0; re-arm to rebuild the cushion
+    setDelayFill(0);
+  };
   const [globalSearch, setGlobalSearch] = useState("");
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
@@ -2024,6 +2046,34 @@ export default function App() {
             LIVE
           </button>
         )}
+        {/* Broadcast (profanity) delay — arm builds the cushion; bar shows buffer fill */}
+        <button onClick={toggleDelay} title={delayArmed ? "Broadcast delay armed — click to disarm" : "Arm broadcast (profanity) delay"} style={{
+          height: 36, padding: "0 12px", borderRadius: 0, marginRight: 2,
+          border: `1px solid ${delayArmed ? "#f59e0b" : "var(--border-primary)"}`,
+          background: delayArmed ? "rgba(245,158,11,0.14)" : "transparent",
+          color: delayArmed ? "#f59e0b" : "var(--text-secondary)",
+          fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", cursor: "pointer",
+          display: "flex", alignItems: "center", gap: 7,
+        }}>
+          DELAY{delayArmed ? ` ${DELAY_SEC}s` : ""}
+          {delayArmed && (
+            <span style={{ width: 30, height: 4, background: "rgba(255,255,255,0.15)", borderRadius: 2, overflow: "hidden", display: "inline-block" }}>
+              <span style={{ display: "block", height: "100%", width: `${Math.round(delayFill * 100)}%`, background: delayFill >= 1 ? "#22c55e" : "#f59e0b", transition: "width 0.4s linear" }} />
+            </span>
+          )}
+        </button>
+        {/* DUMP — active only once the delay buffer is full */}
+        <button onClick={doDump} disabled={!delayArmed || delayFill < 1}
+          title={!delayArmed ? "Arm the delay first" : delayFill < 1 ? "Delay still building…" : "DUMP — drop the buffered audio and splice to live"}
+          style={{
+            height: 36, padding: "0 16px", borderRadius: 0, marginRight: 8,
+            background: (delayArmed && delayFill >= 1) ? "#dc2626" : "#3f1212",
+            border: `1px solid ${(delayArmed && delayFill >= 1) ? "#ef4444" : "#5b1a1a"}`,
+            color: (delayArmed && delayFill >= 1) ? "#fff" : "#7f5555",
+            fontSize: 12, fontWeight: 900, letterSpacing: "0.1em",
+            cursor: (delayArmed && delayFill >= 1) ? "pointer" : "not-allowed",
+          }}>DUMP</button>
+
         {/* XFADE — far right, red fill */}
         <button onClick={handleXfade} style={{
           height: 36, padding: "0 18px", borderRadius: 0,

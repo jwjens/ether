@@ -24,7 +24,7 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
     let engines = ENGINES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = engines.lock().unwrap();
     if !map.contains_key(&station_id) {
-        let (sender, is_playing, levels, finished, program_bus_port) =
+        let (sender, is_playing, levels, finished, program_bus_port, delay) =
             start_station_mixer(station_id, device_name);
         let state: SharedAudioState = Arc::new(Mutex::new(AudioState {
             deck_a: DeckMeta::new(),
@@ -37,6 +37,7 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
             sender,
             is_playing,
             levels,
+            delay,
             finished,
             watchdog_active: false,
             watchdog_threshold_sec: 10.0,
@@ -150,6 +151,48 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         Err(_)  => (0.0, 0.0, 0.0, 0.0),
     };
     serde_json::json!({ "a": la, "b": lb, "c": lc, "cart": lcart }).to_string()
+}
+
+// ── Broadcast (profanity) delay + dump ────────────────────────────────────────
+// Arms/sets the stream delay in seconds (0 = off). The delay lives on the stream path
+// only; the local monitor stays live so the operator can DUMP before audio airs.
+#[napi]
+pub fn audio_set_broadcast_delay(seconds: f64, station_id: Option<u32>) -> bool {
+    let engine = get_or_create_engine(station_id.unwrap_or(1), None);
+    let Ok(audio) = engine.lock() else { return false };
+    let samples = (seconds.max(0.0) * 44100.0 * 2.0) as usize;
+    audio.delay.target_samples.store(samples, std::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+// One-shot DUMP: flush the buffered (not-yet-aired) audio and splice the stream to live,
+// then drop the delay to 0 (off) until the operator re-arms.
+#[napi]
+pub fn audio_dump(station_id: Option<u32>) -> bool {
+    let engine = get_or_create_engine(station_id.unwrap_or(1), None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.delay.dump_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+    audio.delay.target_samples.store(0, std::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+#[napi]
+pub fn audio_broadcast_delay_state(station_id: Option<u32>) -> String {
+    let engine = get_or_create_engine(station_id.unwrap_or(1), None);
+    let Ok(audio) = engine.lock() else {
+        return r#"{"armed":false,"delaySec":0,"bufferedSec":0,"fillPct":0}"#.to_string();
+    };
+    use std::sync::atomic::Ordering::Relaxed;
+    let target   = audio.delay.target_samples.load(Relaxed);
+    let buffered = audio.delay.buffered_samples.load(Relaxed);
+    let per_sec  = 44100.0 * 2.0;
+    let fill = if target > 0 { (buffered as f64 / target as f64).min(1.0) } else { 0.0 };
+    serde_json::json!({
+        "armed": target > 0,
+        "delaySec": target as f64 / per_sec,
+        "bufferedSec": buffered as f64 / per_sec,
+        "fillPct": fill,
+    }).to_string()
 }
 
 // Epoch ms of the most recent audio output callback (engine-thread liveness),

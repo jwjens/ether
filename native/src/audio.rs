@@ -89,6 +89,30 @@ pub struct AudioLevels {
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
 
+// ── Broadcast (profanity) delay control ───────────────────────────────────────
+// Shared between the NAPI layer and the program-bus drain thread. The delay lives
+// on the STREAM path only (drain → ffmpeg → Icecast); the local monitor stays live,
+// so the operator hears live and can DUMP before the buffered audio airs.
+//   • target_samples > 0  → stream lags live by that many interleaved f32 samples.
+//   • dump_flag           → one-shot: flush the buffered (not-yet-aired) audio and
+//                           splice straight to live (then target is set to 0 = off).
+//   • buffered_samples    → current FIFO fill, published for the UI meter.
+pub struct DelayControl {
+    pub target_samples:   std::sync::atomic::AtomicUsize,
+    pub dump_flag:        AtomicBool,
+    pub buffered_samples: std::sync::atomic::AtomicUsize,
+}
+impl DelayControl {
+    pub fn new() -> Self {
+        DelayControl {
+            target_samples:   std::sync::atomic::AtomicUsize::new(0),
+            dump_flag:        AtomicBool::new(false),
+            buffered_samples: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+pub type SharedDelay = Arc<DelayControl>;
+
 #[derive(Clone)]
 pub struct FinishedFlags {
     pub a: Arc<AtomicBool>,
@@ -166,6 +190,7 @@ pub struct AudioState {
     pub sender: std::sync::mpsc::Sender<AudioCmd>,
     pub is_playing: Arc<Mutex<bool>>,
     pub levels: SharedLevels,
+    pub delay: SharedDelay,
     pub finished: FinishedFlags,
     pub watchdog_active: bool,
     pub watchdog_threshold_sec: f64,
@@ -481,6 +506,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     SharedLevels,
     FinishedFlags,
     u16,  // Program Bus TCP port
+    SharedDelay,  // broadcast-delay / dump control
 ) {
     use std::net::TcpListener;
 
@@ -491,6 +517,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let levels_clone     = levels.clone();
     let finished         = FinishedFlags::new();
     let finished_clone   = finished.clone();
+    let delay: SharedDelay = Arc::new(DelayControl::new());
+    let delay_drain        = delay.clone();
 
     // Ring buffer: producer lives in cpal callback, consumer in TCP drain thread.
     let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
@@ -509,7 +537,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     eprintln!("[RUST] Station {} Program Bus on TCP port {}", station_id, tcp_port);
 
     std::thread::spawn(move || {
-        drain_program_bus(station_id, listener, ring_cons);
+        drain_program_bus(station_id, listener, ring_cons, delay_drain);
     });
 
     // ── Audio dispatch thread ─────────────────────────────────────────────────
@@ -709,7 +737,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         }
     });
 
-    (tx, is_playing, levels, finished, tcp_port)
+    (tx, is_playing, levels, finished, tcp_port, delay)
 }
 
 // ── Helpers called from start_station_mixer ───────────────────────────────────
@@ -968,8 +996,10 @@ fn drain_program_bus(
     station_id: u32,
     listener:   std::net::TcpListener,
     mut cons:   ringbuf::HeapCons<f32>,
+    delay:      SharedDelay,
 ) {
     use std::io::Write;
+    use std::collections::VecDeque;
 
     static DRAIN_BYTES_TOTAL:     AtomicU64 = AtomicU64::new(0);
     static DRAIN_ZERO_FILL_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -996,6 +1026,10 @@ fn drain_program_bus(
                 // Sized for ~50ms burst headroom (352800 * 0.05 / 4 = 4410 samples).
                 let mut sample_buf: Vec<f32> = Vec::with_capacity(8820);
                 let mut out_bytes:   Vec<u8>  = Vec::with_capacity(8820 * 4);
+                // Broadcast-delay FIFO: live program audio is pushed in; output is taken
+                // only once the FIFO exceeds the target delay, so the stream lags live.
+                let mut delay_fifo: VecDeque<f32> = VecDeque::with_capacity(PROGRAM_RATE as usize * 2 * 12);
+                const DELAY_FIFO_CAP: usize = PROGRAM_RATE as usize * 2 * 15; // 15s hard safety cap
 
                 loop {
                     let elapsed_secs = wall_start.elapsed().as_secs_f64();
@@ -1013,18 +1047,35 @@ fn drain_program_bus(
                     if deficit > 0 {
                         let max_samples = deficit / 4;
 
+                        // Pull whatever live program audio is available into the delay FIFO.
                         sample_buf.clear();
                         sample_buf.resize(max_samples, 0.0f32);
                         let popped = cons.pop_slice(&mut sample_buf);
 
-                        let real_byte_count = popped * 4;
-                        let zero_byte_count = deficit - real_byte_count;
+                        // DUMP — discard the buffered (not-yet-aired) audio and splice to live.
+                        if delay.dump_flag.swap(false, Ordering::Relaxed) {
+                            delay_fifo.clear();
+                        }
+                        for &s in &sample_buf[..popped] { delay_fifo.push_back(s); }
+                        while delay_fifo.len() > DELAY_FIFO_CAP { delay_fifo.pop_front(); } // safety
+
+                        // Output only the samples beyond the target delay; while the FIFO is
+                        // still filling to the target, the remainder is silence (delay building).
+                        let gate = delay.target_samples.load(Ordering::Relaxed);
+                        let avail_over = delay_fifo.len().saturating_sub(gate);
+                        let to_output = avail_over.min(max_samples);
 
                         out_bytes.clear();
-                        for &s in &sample_buf[..popped] {
-                            out_bytes.extend_from_slice(&s.to_le_bytes());
+                        for _ in 0..to_output {
+                            if let Some(s) = delay_fifo.pop_front() {
+                                out_bytes.extend_from_slice(&s.to_le_bytes());
+                            }
                         }
-                        out_bytes.resize(deficit, 0u8); // zero-fill remainder (whole samples only)
+                        let real_byte_count = to_output * 4;
+                        let zero_byte_count = deficit - real_byte_count;
+                        out_bytes.resize(deficit, 0u8); // zero-fill remainder (delay building / underrun)
+
+                        delay.buffered_samples.store(delay_fifo.len(), Ordering::Relaxed);
 
                         if stream.write_all(&out_bytes).is_err() {
                             STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
