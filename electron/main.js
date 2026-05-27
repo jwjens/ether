@@ -1124,7 +1124,9 @@ app.whenReady().then(() => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       try {
         const levels = JSON.parse(audio.audioGetLevels());
-        levels.master = Math.max(levels.a || 0, levels.b || 0, levels.c || 0);
+        // Real program peak from the engine (post-EQ master). Fall back to max-of-decks
+        // only if the native master field is absent (older addon).
+        if (typeof levels.master !== "number") levels.master = Math.max(levels.a || 0, levels.b || 0, levels.c || 0);
         sendToAllWindows("audio:levels", levels);
       } catch {}
     }, 33);

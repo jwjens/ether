@@ -85,6 +85,7 @@ pub struct AudioLevels {
     pub level_b: f32,
     pub level_c: f32,
     pub level_cart: f32,
+    pub level_master: f32,
 }
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
@@ -246,6 +247,10 @@ pub struct BusState {
     pub eq:          crate::eq::SharedEq,
     pub ring_prod:   HeapProd<f32>,
     pub sample_rate: u32,
+    /// REAL post-fader peak per deck (0..1, 1.0 = 0 dBFS) + the program/master peak,
+    /// written by mixer_callback each buffer with VU release ballistics; read by GetLevel.
+    pub peaks:       [f32; 7],
+    pub master_peak: f32,
 }
 
 impl BusState {
@@ -259,6 +264,8 @@ impl BusState {
             eq,
             ring_prod,
             sample_rate,
+            peaks:       [0.0; 7],
+            master_peak: 0.0,
         }
     }
 }
@@ -687,28 +694,17 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 }
                             }
                             AudioCmd::GetLevel => {
+                                // REAL levels — the mixer callback writes true post-fader peaks
+                                // (per deck) + the post-EQ program peak (master) into bus.peaks;
+                                // surface them as-is (0..1, 1.0 = 0 dBFS). No more fake bouncing.
                                 if let (Ok(bus), Ok(mut lvl)) =
                                     (bus_cmd.lock(), levels_clone.lock())
                                 {
-                                    for i in 0..3 {
-                                        // Only produce non-zero levels when Rust is actually
-                                        // decoding audio — source=None means CPAL is skipping
-                                        // this deck silently; active flag alone is not enough.
-                                        let active = bus.decks[i].active
-                                            && !bus.decks[i].paused
-                                            && bus.decks[i].source.is_some();
-                                        let v = if active { 0.5 + rand_level() * 0.5 } else { 0.0 };
-                                        match i {
-                                            0 => lvl.level_a = v,
-                                            1 => lvl.level_b = v,
-                                            _ => lvl.level_c = v,
-                                        }
-                                    }
-                                    // Dedicated cart channel (slot 6) — its own VU level.
-                                    let cart_active = bus.decks[6].active
-                                        && !bus.decks[6].paused
-                                        && bus.decks[6].source.is_some();
-                                    lvl.level_cart = if cart_active { 0.5 + rand_level() * 0.5 } else { 0.0 };
+                                    lvl.level_a      = bus.peaks[0];
+                                    lvl.level_b      = bus.peaks[1];
+                                    lvl.level_c      = bus.peaks[2];
+                                    lvl.level_cart   = bus.peaks[6];
+                                    lvl.level_master = bus.master_peak;
                                 }
                             }
                             AudioCmd::SwitchDevice(name) => {
@@ -871,6 +867,7 @@ fn mixer_callback(
     let mut mix_r = vec![0f32; prog_frames];
     let mut any_playing = false;
     let mut exhausted   = [false; 7];
+    let mut frame_peaks = [0.0f32; 7]; // this-buffer post-fader peak per deck
 
     for (i, deck) in bus.decks.iter_mut().enumerate() {
         if !deck.active || deck.paused { continue; }
@@ -881,17 +878,24 @@ fn mixer_callback(
             continue;
         };
         any_playing = true;
+        let vol = deck.volume;
+        let mut pk = 0.0f32;
         for f in 0..prog_frames {
             // Source is always stereo (UniformSourceIterator built with 2 ch)
             match src.next() {
                 Some(l) => {
                     let r = src.next().unwrap_or(0.0);
-                    mix_l[f] += l * deck.volume;
-                    mix_r[f] += r * deck.volume;
+                    let lv = l * vol;
+                    let rv = r * vol;
+                    mix_l[f] += lv;
+                    mix_r[f] += rv;
+                    let a = lv.abs().max(rv.abs());
+                    if a > pk { pk = a; }
                 }
                 None => { exhausted[i] = true; break; }
             }
         }
+        frame_peaks[i] = pk;
     }
 
     for (i, done) in exhausted.iter().enumerate() {
@@ -932,6 +936,12 @@ fn mixer_callback(
         let active_count = bus.decks.iter().filter(|d| d.active && !d.paused).count();
         eprintln!("[RUST] Mixer peak: {:.4}  active_decks={}", peak, active_count);
     }
+
+    // Publish REAL VU levels — post-fader peak per deck + post-EQ program (master) peak,
+    // with VU release ballistics (instant rise, smooth ~50ms fall). Read by GetLevel.
+    const VU_RELEASE: f32 = 0.82;
+    for i in 0..7 { bus.peaks[i] = frame_peaks[i].max(bus.peaks[i] * VU_RELEASE); }
+    bus.master_peak = peak.max(bus.master_peak * VU_RELEASE);
 
     // Program Bus: write 44100 Hz samples directly — ffmpeg always reads 44100 Hz
     if STREAM_CLIENT_CONNECTED.load(Ordering::Relaxed) {

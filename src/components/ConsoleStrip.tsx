@@ -9,6 +9,7 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { playClick } from "../lib/uiSound";
+import { vuHeight, vuColor as vuZoneColor } from "../lib/vuMeter";
 
 interface Props {
   label: string;
@@ -141,15 +142,16 @@ export default function ConsoleStrip({
         const fill = vuFillRef.current;
         const peak = vuPeakRef.current;
         if (!fill) return;
-        const vuH = pendingH;
-        const c = colorRef.current;
-        const vuColor = vuH > 0.85 ? "var(--accent-red)" : vuH > 0.6 ? "var(--accent-amber)" : c;
-        fill.style.height  = `${vuH * 100}%`;
-        fill.style.opacity = isOnRef.current ? "0.9" : "0.04";
+        const lvl = pendingH;                          // real linear peak (0..1)
+        const vuH = vuHeight(lvl);                      // dB-scaled bar height
+        const col = vuZoneColor(lvl, colorRef.current); // green → amber → red by real dBFS
+        fill.style.height     = `${vuH * 100}%`;
+        fill.style.background  = col;
+        fill.style.opacity    = isOnRef.current ? "0.9" : "0.04";
         if (peak) {
           peak.style.bottom     = `${vuH * 100}%`;
-          peak.style.background = vuColor;
-          peak.style.boxShadow  = `0 0 6px ${vuColor}`;
+          peak.style.background = col;
+          peak.style.boxShadow  = `0 0 6px ${col}`;
           peak.style.display    = isOnRef.current && vuH > 0.02 ? "block" : "none";
         }
       });
@@ -206,8 +208,8 @@ export default function ConsoleStrip({
   }, [onVolumeChange]);
 
   const db = effVol > 0.001 ? (20 * Math.log10(effVol)).toFixed(0) : "−∞";
-  const vuH = Math.min(1, level * (isOn ? 1 : 0.05));
-  const vuColor = level > 0.85 ? "var(--accent-red)" : level > 0.6 ? "var(--accent-amber)" : color;
+  const vuH = vuHeight(isOn ? level : level * 0.05);
+  const vuColor = vuZoneColor(level, color);
 
   return (
     <div style={{

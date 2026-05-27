@@ -146,11 +146,11 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         let _ = audio.sender.send(AudioCmd::GetLevel);
         audio.levels.clone()
     };
-    let (la, lb, lc, lcart): (f32, f32, f32, f32) = match levels_arc.lock() {
-        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart),
-        Err(_)  => (0.0, 0.0, 0.0, 0.0),
+    let (la, lb, lc, lcart, lmaster): (f32, f32, f32, f32, f32) = match levels_arc.lock() {
+        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master),
+        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0),
     };
-    serde_json::json!({ "a": la, "b": lb, "c": lc, "cart": lcart }).to_string()
+    serde_json::json!({ "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster }).to_string()
 }
 
 // ── Broadcast (profanity) delay + dump ────────────────────────────────────────
