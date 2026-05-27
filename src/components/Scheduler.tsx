@@ -66,17 +66,31 @@ function fmtHour(h: number): string {
 
 interface SchedulerProps {
   defaultTab?: "shows" | "categories" | "clocks";
+  /** Embedded mode for the on-air push-up docks: render ONLY the active tab's content
+   *  (each tab has its own header + actions). The footer buttons drive the tab via
+   *  defaultTab, so the wrapper chrome (title, Create-Show, tab bar) is omitted. */
+  embedded?: boolean;
 }
 
 const SCHEDULER_TABS: ("shows" | "categories" | "clocks")[] = ["shows", "categories", "clocks"];
 
-export default function Scheduler({ defaultTab = "shows" }: SchedulerProps) {
+export default function Scheduler({ defaultTab = "shows", embedded = false }: SchedulerProps) {
   const [tab, setTab] = useState<"shows" | "categories" | "clocks">(defaultTab);
   const [showWizard, setShowWizard] = useState(false);
   const [wizardKey, setWizardKey] = useState(0); // force ShowsTab reload after wizard
 
   // Sync when parent navigation changes the requested tab
   useEffect(() => { setTab(defaultTab); }, [defaultTab]);
+
+  if (embedded) {
+    return (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 12 }}>
+        {tab === "shows" && <ShowsTab />}
+        {tab === "categories" && <CategoriesTab />}
+        {tab === "clocks" && <ClocksTab />}
+      </div>
+    );
+  }
 
   const swipe = useSwipe(useCallback((dir: 'left' | 'right') => {
     setTab(cur => {

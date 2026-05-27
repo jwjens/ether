@@ -517,6 +517,9 @@ export default function App() {
   const [queueLen, setQueueLen] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
+  // On-air programming push-up docks (like carts): one editor at a time, mutually
+  // exclusive with the cart strip. null = closed.
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks">(null);
   const [globalSearch, setGlobalSearch] = useState("");
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
@@ -1728,7 +1731,8 @@ export default function App() {
                   autoAdv={autoAdv} shuffle={shuffle}
                   toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
                   queueLen={queueLen} showCarts={showCarts}
-                  toggleCarts={() => setShowCarts(!showCarts)}
+                  toggleCarts={() => { setShowCarts(!showCarts); setProgPanel(null); }}
+                  progPanel={progPanel}
                   inputDevice={inputDevice}
                   visiblePanels={visiblePanels}
                   deckConfigs={visibleEnabledDecks}
@@ -1960,7 +1964,11 @@ export default function App() {
         {/* View tabs */}
         {([
           { label: "DECKS",  active: showDeckConfig,        fn: () => { setPanel("live"); setShowDeckConfig(true); } },
-          { label: "CARTS",  active: showCarts,             fn: () => setShowCarts(s => !s) },
+          { label: "CARTS",  active: showCarts,             fn: () => { setShowCarts(s => !s); setProgPanel(null); } },
+          // On-air programming docks — push up over the decks (queue untouched), like carts.
+          { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
+          { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
+          { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
@@ -2599,11 +2607,12 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
+  progPanel: null | "shows" | "categories" | "clocks";
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
@@ -3066,8 +3075,17 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         </div>
       )}
 
-      {/* Cart wall — shown when CARTS active or when a deck is configured as cart */}
-      {showCarts && !deckConfigs?.some(d => d.type === "cart" && d.enabled) && (
+      {/* On-air programming dock — pushes the decks up (queue untouched), like carts.
+          Hosts the live Shows & Dayparts / Clocks / Rotation Categories editors so the
+          operator can program while watching the decks above. */}
+      {progPanel && (
+        <div style={{ flex: "1.6 1 0", minHeight: 170, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-secondary)", borderTop: "2px solid var(--accent-blue)" }}>
+          <Scheduler defaultTab={progPanel} embedded />
+        </div>
+      )}
+
+      {/* Cart wall — shown when CARTS active (and not while a programming dock is open). */}
+      {showCarts && !progPanel && !deckConfigs?.some(d => d.type === "cart" && d.enabled) && (
         <div style={{ flexShrink: 0, height: 150, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)" }}>
           <BoutiqueCartWall deckSlot="C" variant="strip" />
         </div>
