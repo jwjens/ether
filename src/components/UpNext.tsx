@@ -46,7 +46,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories]   = useState<CategoryInfo[]>([]);
   const [artUrls, setArtUrls]         = useState<Record<string, string>>({});
-  const [totalDuration, setTotalDuration] = useState(0);
 
   const [anyPlaying, setAnyPlaying] = useState(false);
 
@@ -85,7 +84,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
         if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
       });
     });
-    setTotalDuration(queue.reduce((s, q) => s + ((q as any).durationMs || 0), 0));
   }, [queueLen]);
 
   useEffect(() => {
@@ -195,12 +193,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     }
   };
 
-  const totalDurStr = totalDuration > 0
-    ? (Math.floor(totalDuration / 3600000) > 0
-        ? `${Math.floor(totalDuration / 3600000)}h ${Math.floor((totalDuration % 3600000) / 60000)}m`
-        : `${Math.floor(totalDuration / 60000)}m ${Math.floor((totalDuration % 60000) / 1000)}s`)
-    : null;
-
   return (
     <div
       style={{ background: "var(--bg-primary)", border: "none", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }}
@@ -210,10 +202,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className="next-up-glow" style={{ fontSize: 20, fontWeight: 700, letterSpacing: "0.1em", color: "#f97316", textTransform: "uppercase" as const, lineHeight: 1 }}>Next Up</span>
-          <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>({queueLen})</span>
-          {totalDurStr && (
-            <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", background: "var(--bg-secondary)", padding: "1px 6px" }}>{totalDurStr}</span>
-          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <button
