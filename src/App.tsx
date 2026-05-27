@@ -1997,7 +1997,7 @@ export default function App() {
         <HealthStatusDot onClick={() => setPanel("health")} height={36} />
         {/* View tabs */}
         {([
-          { label: "DECKS",  active: panel === "live",     fn: () => setPanel("live") },
+          { label: "DECKS",  active: showDeckConfig,        fn: () => { setPanel("live"); setShowDeckConfig(true); } },
           { label: "CARTS",  active: panel === "cartwall", fn: () => setPanel("cartwall") },
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
