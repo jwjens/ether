@@ -165,14 +165,14 @@ pub fn audio_set_broadcast_delay(seconds: f64, station_id: Option<u32>) -> bool 
     true
 }
 
-// One-shot DUMP: flush the buffered (not-yet-aired) audio and splice the stream to live,
-// then drop the delay to 0 (off) until the operator re-arms.
+// One-shot DUMP: flush the buffered (not-yet-aired) audio and splice the stream to live.
+// The delay stays ARMED — the drain rebuilds the cushion back to target imperceptibly
+// (resampling through quiet), so no manual re-arm is needed (Phase 2).
 #[napi]
 pub fn audio_dump(station_id: Option<u32>) -> bool {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);
     let Ok(audio) = engine.lock() else { return false };
     audio.delay.dump_flag.store(true, std::sync::atomic::Ordering::Relaxed);
-    audio.delay.target_samples.store(0, std::sync::atomic::Ordering::Relaxed);
     true
 }
 

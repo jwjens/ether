@@ -539,7 +539,8 @@ export default function App() {
   };
   const doDump = () => {
     (window as any).ether?.audio?.dump?.(stationId);
-    setDelayArmed(false); // dump collapses the delay to 0; re-arm to rebuild the cushion
+    // Stays armed — the cushion rebuilds itself (Phase 2). The fill bar drops to ~0 then
+    // climbs back as the delay re-establishes; DUMP re-enables once it's full again.
     setDelayFill(0);
   };
   const [globalSearch, setGlobalSearch] = useState("");

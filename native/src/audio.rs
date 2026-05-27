@@ -1030,18 +1030,23 @@ fn drain_program_bus(
                 // only once the FIFO exceeds the target delay, so the stream lags live.
                 let mut delay_fifo: VecDeque<f32> = VecDeque::with_capacity(PROGRAM_RATE as usize * 2 * 12);
                 const DELAY_FIFO_CAP: usize = PROGRAM_RATE as usize * 2 * 15; // 15s hard safety cap
+                // Fractional read cursor (in stereo frames) for the rebuild resampler — when
+                // below the target delay during quiet, we consume source slightly slower than we
+                // emit (linear interp), growing the delay imperceptibly. 0 at steady state.
+                let mut resample_pos: f64 = 0.0;
 
                 loop {
                     let elapsed_secs = wall_start.elapsed().as_secs_f64();
                     let target_bytes = (elapsed_secs * TARGET_BYTES_PER_SEC) as u64;
 
-                    // CRITICAL: align deficit to a multiple of 4 (one complete f32 sample).
-                    // Windows sleep granularity means elapsed_secs is never exactly N×5ms,
-                    // so the raw deficit can be non-multiple-of-4. Writing an odd number of
-                    // bytes permanently misaligns the f32le stream, producing stream-wide static.
+                    // CRITICAL: align deficit to a whole stereo FRAME (8 bytes = 2 f32).
+                    // Windows sleep granularity means elapsed_secs is never exactly N×5ms, so the
+                    // raw deficit can be a non-multiple; an unaligned write permanently misaligns
+                    // the f32le stream (static). Frame alignment also keeps L/R interleave correct
+                    // for the rebuild resampler below.
                     let deficit = {
                         let raw = target_bytes.saturating_sub(bytes_written) as usize;
-                        (raw / 4) * 4
+                        (raw / 8) * 8
                     };
 
                     if deficit > 0 {
@@ -1055,25 +1060,48 @@ fn drain_program_bus(
                         // DUMP — discard the buffered (not-yet-aired) audio and splice to live.
                         if delay.dump_flag.swap(false, Ordering::Relaxed) {
                             delay_fifo.clear();
+                            resample_pos = 0.0;
                         }
                         for &s in &sample_buf[..popped] { delay_fifo.push_back(s); }
                         while delay_fifo.len() > DELAY_FIFO_CAP { delay_fifo.pop_front(); } // safety
 
-                        // Output only the samples beyond the target delay; while the FIFO is
-                        // still filling to the target, the remainder is silence (delay building).
-                        let gate = delay.target_samples.load(Ordering::Relaxed);
-                        let avail_over = delay_fifo.len().saturating_sub(gate);
-                        let to_output = avail_over.min(max_samples);
+                        let target      = delay.target_samples.load(Ordering::Relaxed);
+                        let want_frames = max_samples / 2; // deficit is frame-aligned → even
+
+                        // Consume ratio = source frames consumed per emitted frame.
+                        //   • delay off, or at/above target → 1.0 (exact passthrough).
+                        //   • below target → rebuild, but ONLY stretch through near-silence
+                        //     (consume <1.0) so the delay grows imperceptibly; passthrough on
+                        //     audible audio so nothing is pitch-shifted.
+                        let ratio: f64 = if target == 0 || delay_fifo.len() >= target {
+                            1.0
+                        } else {
+                            let probe = max_samples.min(delay_fifo.len());
+                            let mut peak = 0.0f32;
+                            for i in 0..probe { let v = delay_fifo[i].abs(); if v > peak { peak = v; } }
+                            if peak < 0.02 { 0.80 } else { 1.0 }
+                        };
 
                         out_bytes.clear();
-                        for _ in 0..to_output {
-                            if let Some(s) = delay_fifo.pop_front() {
-                                out_bytes.extend_from_slice(&s.to_le_bytes());
-                            }
+                        let avail_frames = delay_fifo.len() / 2;
+                        for _ in 0..want_frames {
+                            let idx = resample_pos.floor() as usize;
+                            if idx + 1 >= avail_frames { break; } // underrun → silence-fill remainder
+                            let frac = (resample_pos - idx as f64) as f32;
+                            let l = delay_fifo[idx * 2]     + (delay_fifo[idx * 2 + 2] - delay_fifo[idx * 2])     * frac;
+                            let r = delay_fifo[idx * 2 + 1] + (delay_fifo[idx * 2 + 3] - delay_fifo[idx * 2 + 1]) * frac;
+                            out_bytes.extend_from_slice(&l.to_le_bytes());
+                            out_bytes.extend_from_slice(&r.to_le_bytes());
+                            resample_pos += ratio;
                         }
-                        let real_byte_count = to_output * 4;
-                        let zero_byte_count = deficit - real_byte_count;
-                        out_bytes.resize(deficit, 0u8); // zero-fill remainder (delay building / underrun)
+                        // Pop the whole frames we've fully consumed; carry the fraction.
+                        let consume = (resample_pos.floor() as usize).min(delay_fifo.len() / 2);
+                        for _ in 0..(consume * 2) { delay_fifo.pop_front(); }
+                        resample_pos -= consume as f64;
+
+                        let real_byte_count = out_bytes.len();
+                        out_bytes.resize(deficit, 0u8); // zero-fill remainder (rebuild underrun)
+                        let zero_byte_count = deficit.saturating_sub(real_byte_count);
 
                         delay.buffered_samples.store(delay_fifo.len(), Ordering::Relaxed);
 
