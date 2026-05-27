@@ -127,7 +127,7 @@ export default function ConsoleStrip({
     const ether = (window as any).ether;
     if (!ether?.audio?.onLevels) return;
     let rafId = 0;
-    let pendingH = 0;
+    let smoothed = 0; // smoothed bar HEIGHT (0..1): fast attack, slow release (VU ballistic)
     const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; master?: number }) => {
       const id = deckId.toUpperCase();
       let raw = id === "A" ? (lvl.a ?? 0)
@@ -135,24 +135,24 @@ export default function ConsoleStrip({
               : id === "C" ? (lvl.c ?? 0)
               : (lvl.master ?? 0);
       if (id === "MIC") raw = isOnRef.current ? (lvl.master ?? 0) * 0.6 : 0;
-      raw = isPlayingRef.current ? raw : raw * 0.05;
-      pendingH = Math.min(1, raw);
+      raw = isPlayingRef.current ? raw : 0;
+      const targetH = vuHeight(Math.min(1, raw));   // dB-scaled target height
+      // Snap up to peaks (track the music), ease down — kills the flickery top edge.
+      smoothed += (targetH - smoothed) * (targetH > smoothed ? 0.5 : 0.12);
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
-        const fill = vuFillRef.current;
+        const mask = vuFillRef.current;
         const peak = vuPeakRef.current;
-        if (!fill) return;
-        const lvl = pendingH;                          // real linear peak (0..1)
-        const vuH = vuHeight(lvl);                      // dB-scaled bar height
-        const col = vuZoneColor(lvl, colorRef.current); // green → amber → red by real dBFS
-        fill.style.height     = `${vuH * 100}%`;
-        fill.style.background  = col;
-        fill.style.opacity    = isOnRef.current ? "0.9" : "0.04";
+        if (!mask) return;
+        // Mask uncovers the gradient from the bottom up to the (smoothed) level.
+        mask.style.height = `${(1 - smoothed) * 100}%`;
         if (peak) {
-          peak.style.bottom     = `${vuH * 100}%`;
+          // Edge line colored by the zone it sits in (height thresholds = the dB marks).
+          const col = smoothed >= 0.9375 ? "var(--accent-red)" : smoothed >= 0.75 ? "var(--accent-amber)" : colorRef.current;
+          peak.style.bottom     = `${smoothed * 100}%`;
           peak.style.background = col;
-          peak.style.boxShadow  = `0 0 6px ${col}`;
-          peak.style.display    = isOnRef.current && vuH > 0.02 ? "block" : "none";
+          peak.style.boxShadow  = `0 0 5px ${col}`;
+          peak.style.display    = isOnRef.current && smoothed > 0.02 ? "block" : "none";
         }
       });
     });
@@ -399,19 +399,26 @@ export default function ConsoleStrip({
           boxShadow: "inset 0 2px 6px rgba(0,0,0,0.4)",
           position: "relative", overflow: "hidden", zIndex: 1,
         }}>
-          {/* Meter fill — ref-updated at 30Hz when deckId is set, JSX-driven otherwise */}
-          <div ref={deckId ? vuFillRef : undefined} style={{
-            position: "absolute", bottom: 0, left: 0, right: 0,
-            height: deckId ? "0%" : `${vuH * 100}%`,
-            background: `linear-gradient(to top, ${color} 0%, ${color} 50%, var(--accent-amber) 75%, var(--accent-red) 92%)`,
-            opacity: deckId ? (isOn ? 0.9 : 0.04) : (isOn ? 0.9 : 0.04),
-            transition: "height 0.06s linear",
+          {/* Fixed zoned gradient pinned to the dB SCALE — green up to −12 dBFS (75%),
+              amber −12…−3 (75–94%), red above −3. Always full height; the mask below
+              uncovers it from the bottom, so only the lit portion shows its zone color. */}
+          <div style={{
+            position: "absolute", inset: 0,
+            background: `linear-gradient(to top, ${color} 0%, ${color} 75%, var(--accent-amber) 75%, var(--accent-amber) 94%, var(--accent-red) 94%, var(--accent-red) 100%)`,
+            opacity: isOn ? 0.92 : 0.05,
           }} />
-          {/* Peak hold line — always rendered; display toggled via ref when deckId is set */}
+          {/* Mask — covers the UNLIT portion above the level. ref-updated at 30Hz (smoothed)
+              when deckId is set; JSX-driven otherwise. */}
+          <div ref={deckId ? vuFillRef : undefined} style={{
+            position: "absolute", top: 0, left: 0, right: 0,
+            height: deckId ? "100%" : `${(1 - vuH) * 100}%`,
+            background: "var(--vu-meter-bg, #0a0a0f)",
+          }} />
+          {/* Smooth leading-edge line at the level */}
           <div ref={deckId ? vuPeakRef : undefined} style={{
             position: "absolute", bottom: deckId ? "0%" : `${vuH * 100}%`, left: 0, right: 0,
             height: 2, background: deckId ? color : vuColor,
-            boxShadow: deckId ? `0 0 6px ${color}` : `0 0 6px ${vuColor}`,
+            boxShadow: deckId ? `0 0 5px ${color}` : `0 0 5px ${vuColor}`,
             display: deckId ? "none" : (isOn && level > 0.02 ? "block" : "none"),
           }} />
           {/* dB reference marks on meter */}
