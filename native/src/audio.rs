@@ -84,6 +84,7 @@ pub struct AudioLevels {
     pub level_a: f32,
     pub level_b: f32,
     pub level_c: f32,
+    pub level_cart: f32,
 }
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
@@ -96,6 +97,7 @@ pub struct FinishedFlags {
     pub d: Arc<AtomicBool>,
     pub e: Arc<AtomicBool>,
     pub f: Arc<AtomicBool>,
+    pub cart: Arc<AtomicBool>,
 }
 
 impl FinishedFlags {
@@ -107,6 +109,7 @@ impl FinishedFlags {
             d: Arc::new(AtomicBool::new(false)),
             e: Arc::new(AtomicBool::new(false)),
             f: Arc::new(AtomicBool::new(false)),
+            cart: Arc::new(AtomicBool::new(false)),
         }
     }
     pub fn flag(&self, deck: &str) -> Option<&Arc<AtomicBool>> {
@@ -117,6 +120,7 @@ impl FinishedFlags {
             "D" => Some(&self.d),
             "E" => Some(&self.e),
             "F" => Some(&self.f),
+            "CART" => Some(&self.cart),
             _ => None,
         }
     }
@@ -156,6 +160,9 @@ pub struct AudioState {
     pub deck_d: DeckMeta,
     pub deck_e: DeckMeta,
     pub deck_f: DeckMeta,
+    /// Dedicated cart channel — mixer slot 6, never in the assignable deck pool.
+    /// Always summed to the program bus so carts fire out of master over the music.
+    pub deck_cart: DeckMeta,
     pub sender: std::sync::mpsc::Sender<AudioCmd>,
     pub is_playing: Arc<Mutex<bool>>,
     pub levels: SharedLevels,
@@ -210,7 +217,7 @@ impl DeckSlot {
 // Six decks: index 0=A, 1=B, 2=C, 3=D, 4=E, 5=F.
 
 pub struct BusState {
-    pub decks:       [DeckSlot; 6],
+    pub decks:       [DeckSlot; 7],
     pub eq:          crate::eq::SharedEq,
     pub ring_prod:   HeapProd<f32>,
     pub sample_rate: u32,
@@ -222,6 +229,7 @@ impl BusState {
             decks: [
                 DeckSlot::new(), DeckSlot::new(), DeckSlot::new(),
                 DeckSlot::new(), DeckSlot::new(), DeckSlot::new(),
+                DeckSlot::new(), // slot 6 = dedicated cart channel ("CART")
             ],
             eq,
             ring_prod,
@@ -241,6 +249,7 @@ pub fn deck_index(deck: &str) -> Option<usize> {
         "D" => Some(3),
         "E" => Some(4),
         "F" => Some(5),
+        "CART" => Some(6), // dedicated cart channel — not user-assignable
         _   => None,
     }
 }
@@ -667,6 +676,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             _ => lvl.level_c = v,
                                         }
                                     }
+                                    // Dedicated cart channel (slot 6) — its own VU level.
+                                    let cart_active = bus.decks[6].active
+                                        && !bus.decks[6].paused
+                                        && bus.decks[6].source.is_some();
+                                    lvl.level_cart = if cart_active { 0.5 + rand_level() * 0.5 } else { 0.0 };
                                 }
                             }
                             AudioCmd::SwitchDevice(name) => {
@@ -828,7 +842,7 @@ fn mixer_callback(
     let mut mix_l = vec![0f32; prog_frames];
     let mut mix_r = vec![0f32; prog_frames];
     let mut any_playing = false;
-    let mut exhausted   = [false; 6];
+    let mut exhausted   = [false; 7];
 
     for (i, deck) in bus.decks.iter_mut().enumerate() {
         if !deck.active || deck.paused { continue; }

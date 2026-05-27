@@ -467,6 +467,11 @@ interface CartProps {
 
 export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
   const engine = useAudioEngine();
+  // Carts ALWAYS fire on the dedicated cart channel (native mixer slot "CART") — never
+  // an assignable deck (A–F may be a mic/guest/video). It's summed to master, so carts
+  // play out over the music regardless of how the decks are configured. deckSlot is now
+  // only a label/positioning hint.
+  const CART_CHANNEL = "CART";
   const [carts, setCarts] = useState<CartSlot[]>(
     DEFAULT_CART_KEYS.map((k, i) => ({
       key: k, label: `Cart ${i + 1}`, color: CART_COLORS[i % CART_COLORS.length], playing: false,
@@ -482,12 +487,12 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
   // length, shows time remaining, and you can see audio moving.
   useEffect(() => {
     const ether = (window as any).ether;
-    const lv = ether?.audio?.onLevels?.((l: { a?: number; b?: number; c?: number }) => {
-      setVu(l[deckSlot.toLowerCase() as "a" | "b" | "c"] ?? 0);
+    const lv = ether?.audio?.onLevels?.((l: { a?: number; b?: number; c?: number; cart?: number }) => {
+      setVu(l.cart ?? 0);
     });
     const id = setInterval(() => {
       if (!playingKeyRef.current) return;
-      const st = engine.getDeck(deckSlot)?.getState();
+      const st = engine.getDeck(CART_CHANNEL)?.getState();
       if (st?.status === "playing") {
         setRemainingMs(Math.max(0, ((st.durationSec || 0) - (st.positionSec || 0)) * 1000));
       } else {
@@ -497,7 +502,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
       }
     }, 200);
     return () => { clearInterval(id); if (lv) ether?.audio?.offLevels?.(lv); };
-  }, [deckSlot, engine]);
+  }, [engine]);
 
   const fmtRemain = (ms: number) => {
     const s = Math.ceil(ms / 1000);
@@ -521,8 +526,8 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     const cart = carts.find(c => c.key === key);
     if (!cart?.filePath) return;
     try {
-      await engine.loadToDeck(deckSlot, cart.filePath, cart.label, "");
-      engine.getDeck(deckSlot)?.play();
+      await engine.loadToDeck(CART_CHANNEL, cart.filePath, cart.label, "");
+      engine.getDeck(CART_CHANNEL)?.play();
       playingKeyRef.current = key;
       setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
     } catch {}

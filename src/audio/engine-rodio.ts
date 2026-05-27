@@ -74,6 +74,9 @@ export class AudioEngine {
   private stateA: DeckState = makeState("A", {});
   private stateB: DeckState = makeState("B", {});
   private stateC: DeckState = makeState("C", {});
+  // Dedicated cart channel (native slot "CART") — fires out of master, over the music.
+  // Tracked only for the cart UI's countdown/VU; never participates in queue advance.
+  private stateCart: DeckState = makeState("C", {});
 
   private pollTimer: any = null;
   private lastPollTime = Date.now();
@@ -156,6 +159,17 @@ export class AudioEngine {
       this.checkEndByPosition("C", posC, durC, prevC, rustEndedC);
       // Reset per-tick end gate — only one deck end is processed per 250ms poll cycle.
       this.processingEnd = false;
+
+      // Dedicated cart channel — track position/duration for the cart UI only.
+      // Deliberately NOT run through checkEndByPosition: a finished cart must never
+      // advance the music queue. The cart UI polls getDeck("CART").getState() directly.
+      if (s.deckCart) {
+        const durCart = this.stateCart.durationSec;
+        const posCart = (this.stateCart.status === "playing")
+          ? Math.min(this.stateCart.positionSec + elapsed, durCart || 9999)
+          : this.stateCart.positionSec;
+        this.stateCart = { ...makeState("C", s.deckCart), durationSec: durCart, positionSec: posCart };
+      }
 
     } catch (e) {
       console.error("[ENGINE] Poll error:", e);
@@ -331,13 +345,15 @@ export class AudioEngine {
 
   getDeck(id: DeckId | string) {
     const deckId = id as DeckId;
-    const getState = () => deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
+    const isCart = id === "CART";
+    const getState = () => isCart ? this.stateCart : deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
     return {
       getState,
       play: () => {
-        if (deckId === "A") this.stateA = { ...this.stateA, status: "playing" };
-        if (deckId === "B") this.stateB = { ...this.stateB, status: "playing" };
-        if (deckId === "C") this.stateC = { ...this.stateC, status: "playing" };
+        if (isCart) this.stateCart = { ...this.stateCart, status: "playing" };
+        else if (deckId === "A") this.stateA = { ...this.stateA, status: "playing" };
+        else if (deckId === "B") this.stateB = { ...this.stateB, status: "playing" };
+        else if (deckId === "C") this.stateC = { ...this.stateC, status: "playing" };
         this.endTriggered.delete(deckId);
         return invoke("audio_play", { deck: deckId, stationId: this.stationId });
       },
@@ -367,12 +383,14 @@ export class AudioEngine {
     if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
     if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
     if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; this.listeners.forEach(l => l("C", this.stateC)); }
+    if (id === "CART") { this.stateCart = { ...this.stateCart, ...newState }; }
     this.endTriggered.delete(id as DeckId);
     invoke("get_file_duration", { filePath }).then((dur: number) => {
       if (dur > 0) {
         if (id === "A") { this.stateA = { ...this.stateA, durationSec: dur }; this.listeners.forEach(l => l("A", this.stateA)); }
         if (id === "B") { this.stateB = { ...this.stateB, durationSec: dur }; this.listeners.forEach(l => l("B", this.stateB)); }
         if (id === "C") { this.stateC = { ...this.stateC, durationSec: dur }; this.listeners.forEach(l => l("C", this.stateC)); }
+        if (id === "CART") { this.stateCart = { ...this.stateCart, durationSec: dur }; }
       }
     }).catch((e: unknown) => { console.warn('[ENGINE] get_file_duration failed', id, filePath, e); });
     // NOTE: playStartCallbacks are NOT fired here — loadToDeck is also used for

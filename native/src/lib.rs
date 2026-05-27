@@ -33,6 +33,7 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
             deck_d: DeckMeta::new(),
             deck_e: DeckMeta::new(),
             deck_f: DeckMeta::new(),
+            deck_cart: DeckMeta::new(),
             sender,
             is_playing,
             levels,
@@ -115,12 +116,14 @@ pub fn audio_get_state(station_id: Option<u32>) -> String {
     let fin_d = audio.finished.take("D");
     let fin_e = audio.finished.take("E");
     let fin_f = audio.finished.take("F");
+    let fin_cart = audio.finished.take("CART");
     if fin_a { audio.deck_a.status = "ended".to_string(); }
     if fin_b { audio.deck_b.status = "ended".to_string(); }
     if fin_c { audio.deck_c.status = "ended".to_string(); }
     if fin_d { audio.deck_d.status = "ended".to_string(); }
     if fin_e { audio.deck_e.status = "ended".to_string(); }
     if fin_f { audio.deck_f.status = "ended".to_string(); }
+    if fin_cart { audio.deck_cart.status = "ended".to_string(); }
     serde_json::json!({
         "deckA": audio.deck_a.info("A", fin_a),
         "deckB": audio.deck_b.info("B", fin_b),
@@ -128,6 +131,7 @@ pub fn audio_get_state(station_id: Option<u32>) -> String {
         "deckD": audio.deck_d.info("D", fin_d),
         "deckE": audio.deck_e.info("E", fin_e),
         "deckF": audio.deck_f.info("F", fin_f),
+        "deckCart": audio.deck_cart.info("CART", fin_cart),
     }).to_string()
 }
 
@@ -141,11 +145,11 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         let _ = audio.sender.send(AudioCmd::GetLevel);
         audio.levels.clone()
     };
-    let (la, lb, lc): (f32, f32, f32) = match levels_arc.lock() {
-        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c),
-        Err(_)  => (0.0, 0.0, 0.0),
+    let (la, lb, lc, lcart): (f32, f32, f32, f32) = match levels_arc.lock() {
+        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart),
+        Err(_)  => (0.0, 0.0, 0.0, 0.0),
     };
-    serde_json::json!({ "a": la, "b": lb, "c": lc }).to_string()
+    serde_json::json!({ "a": la, "b": lb, "c": lc, "cart": lcart }).to_string()
 }
 
 // Epoch ms of the most recent audio output callback (engine-thread liveness),
@@ -347,6 +351,7 @@ fn deck_meta_mut<'a>(audio: &'a mut AudioState, deck: &str) -> &'a mut DeckMeta 
         "D" => &mut audio.deck_d,
         "E" => &mut audio.deck_e,
         "F" => &mut audio.deck_f,
+        "CART" => &mut audio.deck_cart,
         _   => &mut audio.deck_b,
     }
 }
