@@ -278,9 +278,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
               {/* Main content */}
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, padding: "10px 10px 10px 8px", minWidth: 0 }}>
-                {/* Position */}
-                {i > 0 && <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 12, textAlign: "right" as any, flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{i + 3}</span>}
-
                 {/* Album art thumbnail */}
                 <div style={{ width: i === 0 ? 48 : 36, height: i === 0 ? 48 : 36, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
                   {artUrls[artKey] && (
