@@ -14,8 +14,13 @@
 //   • Cart channel + crossfade/EQ live in the addon and are unchanged.
 
 const path = require("path");
+const crypto = require("crypto");
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const loggen = require("./loggen");
+const playlog = require("./playlog");
+
+// One play-log session id per daemon process (mirrors the renderer's getSessionId()).
+const SESSION = crypto.randomUUID();
 
 function makeState(id, s = {}) {
   return {
@@ -223,6 +228,10 @@ class DaemonEngine {
   _fireStart(deckId) {
     const st = this._deckState(deckId);
     this.emit("playstart", { stationId: this.stationId, deck: deckId, title: st.title, artist: st.artist, filePath: st.filePath });
+    // Item 10 Phase 2 Step 4: the daemon owns play logging in daemon-driven mode (the
+    // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
+    // throws into the playout path.
+    try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION }); } catch {}
   }
 
   // ── operator/queue API (called from daemon command handlers) ──

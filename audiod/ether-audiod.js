@@ -16,6 +16,7 @@ const os = require("os");
 const PIPE = process.env.ETHER_AUDIOD_PIPE || "\\\\.\\pipe\\ether-audiod";
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const { DaemonEngine } = require("./engine");
+const { StreamSupervisor } = require("./stream");
 
 // Stations we're metering (added on first init/load), so the event loop knows what to poll.
 const stations = new Set();
@@ -34,14 +35,27 @@ function getDb() {
   if (_db) return _db;
   const { DatabaseSync } = require("node:sqlite");
   const dbPath = process.env.ETHER_DB_PATH || path.join(os.homedir(), "AppData", "Roaming", "com.ether.radio", "openair.db");
-  _db = new DatabaseSync(dbPath, { readOnly: true });
-  log("opened library (read-only): " + dbPath);
+  // Read-WRITE: the daemon reads the library (loggen) AND writes the play log (Step 4).
+  // WAL + busy_timeout makes cross-process contention with the app's better-sqlite3 a
+  // microsecond wait, not a failure (proven by spike-write-contention.js).
+  _db = new DatabaseSync(dbPath, { readOnly: false });
+  try { _db.exec("PRAGMA journal_mode = WAL"); _db.exec("PRAGMA busy_timeout = 5000"); _db.exec("PRAGMA foreign_keys = ON"); } catch {}
+  log("opened library (read-write): " + dbPath);
   return _db;
 }
 function getEngine(stationId) {
   let e = engines.get(stationId);
   if (!e) { e = new DaemonEngine(stationId, getDb(), (event, payload) => broadcast({ event, ...payload })); engines.set(stationId, e); stations.add(stationId); }
   return e;
+}
+
+// Step 5 — Icecast streamer per station. Reads the station's program-bus port; status events
+// broadcast as { event: "stream", ... } → main → renderer.
+const streams = new Map(); // stationId → StreamSupervisor
+function getStream(stationId) {
+  let s = streams.get(stationId);
+  if (!s) { s = new StreamSupervisor(stationId, () => { try { return A.audioGetProgramBusPort(stationId); } catch { return 0; } }, (st) => broadcast({ event: "stream", ...st })); streams.set(stationId, s); }
+  return s;
 }
 
 // ── Command surface (addon-backed) ────────────────────────────────────────────
@@ -71,6 +85,10 @@ const handlers = {
   automationStart:    (m) => getEngine(m.stationId).start(),                  // fill (if empty) + play + preload
   automationStop:     (m) => { const e = engines.get(m.stationId); if (e) e.stop(); return true; },
   skip:               (m) => getEngine(m.stationId).skip(),                    // force-advance to next track
+  // Step 5 — streaming (ffmpeg → Icecast) inside the daemon, off the daemon's program bus.
+  startStream:        (m) => getStream(m.stationId).start(m.config || {}),
+  stopStream:         (m) => { const s = streams.get(m.stationId); return s ? s.stop() : { ok: true }; },
+  streamStatus:       (m) => { const s = streams.get(m.stationId); return s ? s.status() : { stationId: m.stationId, state: "idle" }; },
 
   fill:               (m) => { const e = getEngine(m.stationId); return e.refillIfNeeded().then(() => e.getQueue()); },
   getQueue:           (m) => { const e = engines.get(m.stationId); return e ? e.getQueue() : []; },
@@ -134,8 +152,9 @@ server.on("error", (e) => {
 server.listen(PIPE, () => log("listening on " + PIPE + " (node " + process.version + ")"));
 
 function shutdown() {
-  log("shutting down — stopping engines + decks + closing pipe");
+  log("shutting down — stopping streams + engines + decks + closing pipe");
   clearInterval(eventTimer);
+  for (const s of streams.values()) { try { s.stop(); } catch {} }
   for (const e of engines.values()) { try { e.stop(); } catch {} }
   for (const sid of stations) { try { A.audioStop("A", sid); A.audioStop("B", sid); A.audioStop("C", sid); } catch {} }
   try { if (_db) _db.close(); } catch {}

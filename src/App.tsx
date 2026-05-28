@@ -1193,7 +1193,10 @@ export default function App() {
         // `cfg?.type === 'music'` gate silently dropped logging whenever configs weren't ready.
         const nonProgram = cfg ? (cfg.type === 'mic' || cfg.type === 'guest' || cfg.type === 'video') : false;
         if (!nonProgram && st.title) {
-          logPlay(st.title, st.artist || '', id, undefined, stationId).catch(e => console.error('Log write error:', e));
+          // Item 10 Phase 2 Step 4: in daemon-driven mode the daemon writes the play log
+          // (survives a UI/app restart) — the renderer must not also log (double-log). The
+          // now-playing emits below stay in the app (Step 7).
+          if (!engine.isDaemonDriven) logPlay(st.title, st.artist || '', id, undefined, stationId).catch(e => console.error('Log write error:', e));
           try { (window as any).ether.emit("iris:nowplaying", { title: st.title, artist: st.artist || '' }); } catch {}
           try {
             const file_key = st.filePath ? st.filePath.replace(/\\/g, '/').split('/').pop() : '';

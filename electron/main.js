@@ -237,6 +237,10 @@ if (AUDIO_DAEMON) {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
+      } else if (m.event === "stream") {
+        // Step 5: daemon Icecast status → the renderer's existing stream channels.
+        sendToAllWindows("stream:status", { stationId: m.stationId, live: m.state === "live", error: m.errorMsg || undefined });
+        sendToAllWindows("stream:status:dest", { destId: `icecast:${m.stationId}`, label: `Icecast (${m.stationId})`, state: m.state, speed: m.speed, bitrate: m.bitrate, uptimeSec: m.uptimeSec, errorMsg: m.errorMsg, speedHistory: [] });
       }
     } catch {}
   });
@@ -4162,10 +4166,23 @@ function _spawnStream(stationId, args, label) {
 
 ipcMain.handle('stream:go-live', async (_, args = {}) => {
   try {
-    // Item 10 Phase 2: when the daemon owns the engine, the program bus lives in the daemon —
-    // main's addon has none to encode. Moving the ffmpeg→Icecast encoder into the daemon is
-    // Step 5; until then, refuse here rather than spawn ffmpeg against an empty bus.
-    if (AUDIO_DAEMON) return { ok: false, error: 'Streaming via the audio daemon is not wired yet (Item 10 Phase 2 Step 5).' };
+    // Item 10 Phase 2 Step 5: when the daemon owns the engine, the program bus lives in the
+    // daemon — so the encoder runs there too (and survives a UI restart). Resolve the Icecast
+    // config from the DB here, then hand it to the daemon's startStream; status flows back as
+    // `stream` events (forwarded below). The renderer's stream:* surface is unchanged.
+    if (AUDIO_DAEMON) {
+      const stationId = args.stationId ?? getActiveStationId();
+      const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
+      if (!station) return { ok: false, error: `station ${stationId} not found` };
+      const server = station.icecast_server_url?.trim() || '44.244.52.207';
+      const pw     = station.icecast_password?.trim()   || 'hackme';
+      const mount  = station.icecast_mount?.trim()      || '/live';
+      const bitrate = station.icecast_bitrate || 128;
+      try { await audiodClient.cmd('startStream', { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: 8000 } }); }
+      catch (e) { return { ok: false, error: 'daemon startStream failed: ' + e.message }; }
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });
+      return { ok: true, server, mount, stationId };
+    }
     const stationId = args.stationId ?? getActiveStationId();
     const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
     if (!station) return { ok: false, error: `station ${stationId} not found` };
@@ -4205,8 +4222,13 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
   }
 });
 
-ipcMain.handle('stream:stop-live', (_, args = {}) => {
+ipcMain.handle('stream:stop-live', async (_, args = {}) => {
   const stationId = args.stationId ?? getActiveStationId();
+  if (AUDIO_DAEMON) {
+    try { await audiodClient.cmd('stopStream', { stationId }); } catch {}
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', { stationId, live: false });
+    return { ok: true, stationId };
+  }
   const state     = _getStreamState(stationId);
   state.armed = false;
   state.failureCount = 0;
