@@ -70,6 +70,7 @@
   "publish": {
     "provider": "github",
     "owner": "jwjens",
-    "repo": "ether"
+    "repo": "ether",
+    "releaseType": "release"
   }
 }
