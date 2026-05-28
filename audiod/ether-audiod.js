@@ -14,6 +14,10 @@ const path = require("path");
 const os = require("os");
 
 const PIPE = process.env.ETHER_AUDIOD_PIPE || "\\\\.\\pipe\\ether-audiod";
+// Test seam (never set in production; mirrors the watchdog's WATCHDOG_TEST_* seams): exit
+// immediately to simulate a daemon that can't start, so the app's audio-backend fallback
+// (electron/main.js setupAudioBackend → in-process engine) can be verified deterministically.
+if (process.env.ETHER_AUDIOD_DIE === "1") { console.error("[audiod] ETHER_AUDIOD_DIE — exiting to simulate an unstartable daemon"); process.exit(1); }
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const { DaemonEngine } = require("./engine");
 const { StreamSupervisor } = require("./stream");

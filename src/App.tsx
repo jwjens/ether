@@ -1102,7 +1102,10 @@ export default function App() {
     if (autoAdv) {
       autoStartTimer = setTimeout(async () => {
         if (engine.getDeck("A")?.getState().status === "playing") return;
-        // Item 10 Phase 2 Step 2: daemon-driven → the daemon fills + plays + advances itself.
+        // Item 10 Phase 2: wait for the daemon-vs-in-process decision before choosing how to
+        // start, so a slow daemon connect can't race us into the local path (and dead air).
+        await engine.awaitDaemonReady?.();
+        // daemon-driven → the daemon fills + plays + advances itself.
         if (engine.isDaemonDriven) { rotLog("[ROT] STARTUP daemon-driven → automationStart"); await engine.startDaemonAutomation(); return; }
         rotLog(`[ROT] STARTUP autofill begin — queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
         engine.continuous = true;
@@ -1339,7 +1342,8 @@ export default function App() {
     try { localStorage.setItem("ether_autoAdv", n ? "1" : "0"); } catch {}
     if (n) {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
-      // Item 10 Phase 2 Step 2: daemon-driven → hand the whole fill+play+advance to the daemon.
+      await engine.awaitDaemonReady?.();  // settle daemon-vs-local before starting (avoid the race)
+      // daemon-driven → hand the whole fill+play+advance to the daemon.
       if (engine.isDaemonDriven) { await engine.startDaemonAutomation(); return; }
       resetScheduleCursor();
       if (engine.getQueue().length === 0) {

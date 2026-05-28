@@ -126,6 +126,14 @@ The **daemon** runs the ffmpeg → Icecast encoder off its **own** program bus, 
 - **Verified:** all 21 watchdog tests still pass (the supervision is gated off when `ETHER_AUDIO_DAEMON` is unset); `audiod/smoke-shutdown.js` confirms the daemon exits on the `shutdown` command.
 - **Remaining (still TODO):** daemon **versioned/updated separately** from the app, and an idle self-exit (no client + nothing playing for N min) for unattended stations — both deferrable; the watchdog covers the resilience case now.
 
+### Step 8 — Graceful fallback + default ON — ✅ DONE
+The daemon is a graceful **enhancement**, not a hard dependency, so it's safe as the shipped default:
+- **`electron/main.js` `setupAudioBackend()`** decides the audio backend once at startup: if the daemon is desired, it `ensure()`s + waits up to 5 s for a connection; **connected → run on the daemon** (`AUDIO_DAEMON=true`); **can't connect → fall back to the in-process engine** (`audio.initAudioEngine()`, today's behavior). `AUDIO_DAEMON` is now the *effective* mode all `audio:*` handlers branch on. `audio:daemonEnabled` awaits the decision so the renderer can't race it.
+- **Renderer race guard:** `engine-rodio` exposes `awaitDaemonReady()` (resolves when the daemon-vs-local decision lands); App.tsx's go-on-air paths await it before choosing daemon vs local — so a slow daemon connect can't start the local engine *and* the daemon.
+- **Storm guard:** the daemon client debounces spawns to ≤1 / 2 s (a permanently-unstartable daemon spawned 36× in 5 s before the fix; now 2×).
+- **DEFAULT ON:** `ETHER_AUDIO_DAEMON` defaults to enabled (`!== "0"`); `=0` is the rollback to the legacy in-process engine. The daemon is now the shipped default for all stations.
+- **Verified:** `audiod/accept-fallback.js` — daemon forced to die on startup (`ETHER_AUDIOD_DIE=1`) → the real client reports not-connected → main's exact decision falls back to the in-process engine (`AUDIO_DAEMON=false`, in-process inited). The daemon-active path (`accept-offair.js`) still passes 9/9 after the refactor. Worst case is now today's behavior, never dead air.
+
 ### Step 7 — Now-playing push STAYS in the app (locked)
 The app keeps POSTing now-playing to the backend, driven by forwarded `playstart`/`deck` events. A brief pause during a UI update is cosmetic and resumes on relaunch. (Could move to the daemon later if unattended now-playing matters.)
 

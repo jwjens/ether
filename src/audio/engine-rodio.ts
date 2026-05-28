@@ -121,6 +121,12 @@ export class AudioEngine {
   // Up Next UI and the now-playing/log path (App.tsx onPlayStart) keep working.
   private daemonDriven = false;
   private daemonUnsub: Array<() => void> = [];
+  private daemonDetectStarted = false;
+  // Resolves once the daemon-vs-local decision is known (main confirms the daemon connected, or
+  // falls back to the in-process engine). Go-on-air awaits this so it can't race the decision
+  // and accidentally start the local engine while the daemon is also taking over.
+  private daemonReady!: Promise<void>;
+  private resolveDaemonReady: () => void = () => {};
 
   init() {
     if (this.pollTimer) return;
@@ -129,13 +135,20 @@ export class AudioEngine {
     this.detectDaemon();
   }
 
+  /** Resolves when the daemon-vs-in-process decision is settled. */
+  awaitDaemonReady(): Promise<void> { return this.daemonReady || Promise.resolve(); }
+
   private detectDaemon() {
+    if (this.daemonDetectStarted) return;
+    this.daemonDetectStarted = true;
+    this.daemonReady = new Promise<void>((r) => { this.resolveDaemonReady = r; });
     const a = (window as any).ether?.audio;
-    if (!a?.daemonEnabled) return;
+    if (!a?.daemonEnabled) { this.resolveDaemonReady(); return; }
     a.daemonEnabled().then((on: boolean) => {
       this.daemonDriven = !!on;
       if (on) { rotLog("[ROT] daemon-driven: local advance DISABLED, mirroring ether-audiod"); this.attachDaemonEvents(); }
-    }).catch(() => {});
+      else rotLog("[ROT] in-process engine (daemon not active — fallback or disabled)");
+    }).catch(() => {}).finally(() => this.resolveDaemonReady());
   }
 
   private attachDaemonEvents() {

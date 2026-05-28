@@ -26,17 +26,25 @@ if (DAEMON_SCRIPT.includes("app.asar") && !DAEMON_SCRIPT.includes("app.asar.unpa
   DAEMON_SCRIPT = DAEMON_SCRIPT.replace("app.asar", "app.asar.unpacked");
 }
 
-function isEnabled() { return process.env.ETHER_AUDIO_DAEMON === "1"; }
+// Default ON — the out-of-process daemon is the shipped default. ETHER_AUDIO_DAEMON=0 forces
+// the legacy in-process engine (rollback). main.js falls back to in-process if it can't connect.
+function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
 
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();
 let onEvent = () => {};            // main sets this → forwards events to windows
 let reconnectTimer = null;
 let stopped = false;
+let lastSpawnAt = 0;               // debounce — never spawn more than once per 2s (storm guard)
 
 function setEventHandler(fn) { onEvent = typeof fn === "function" ? fn : (() => {}); }
 
 function spawnDaemon() {
+  // Storm guard: even if ensure()/probe is called rapidly, spawn at most once per 2s. A
+  // genuinely unstartable daemon (→ in-process fallback) must not spawn dozens of processes.
+  const now = Date.now();
+  if (now - lastSpawnAt < 2000) return;
+  lastSpawnAt = now;
   try {
     const child = cp.spawn(process.execPath, [DAEMON_SCRIPT], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },

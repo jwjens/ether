@@ -185,18 +185,25 @@ const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 const VITE_DEV_URL = "http://127.0.0.1:1420";
 
 // ── Load native audio addon ───────────────────────────────────
-// Item 10 Phase 2 Step 1: when ETHER_AUDIO_DAEMON=1, the out-of-process daemon (ether-audiod)
-// owns the LIVE engine. Main still loads the addon for stateless utilities (analyzeFile,
-// getFileDuration, getLocalIp, the song analyzers), but must NOT init its own engine — a 2nd
-// inited engine would open a competing output device. Deck control + state + levels route to
-// the daemon (see the audiodClient wiring + the audio:* handlers below). Default OFF — with
-// the flag unset everything below is the original in-process path, unchanged (rollback).
-const AUDIO_DAEMON = process.env.ETHER_AUDIO_DAEMON === "1";
+// Item 10 Phase 2: when the out-of-process daemon (ether-audiod) is DESIRED it owns the live
+// engine and main forwards deck control to it — so audio survives a UI/app restart. Crucially
+// the daemon is a graceful ENHANCEMENT: if it can't be brought up at startup, main falls back
+// to the in-process engine (today's behavior), so the daemon can NEVER cause dead air.
+//   AUDIO_DAEMON_DESIRED — the flag (do we WANT the daemon).
+//   AUDIO_DAEMON         — the EFFECTIVE mode; true only once the daemon is confirmed reachable
+//                          (decided in setupAudioBackend() below). All audio:* handlers branch
+//                          on this, so a fallback transparently uses the in-process engine.
+// Main always loads the addon — for stateless utilities AND the in-process fallback path. The
+// engine is NOT inited here; setupAudioBackend() inits it only when NOT on the daemon.
+// DEFAULT ON (the daemon is the shipped default for all stations). Set ETHER_AUDIO_DAEMON=0 to
+// force the legacy in-process engine (rollback). Safe to default on: if the daemon can't start,
+// setupAudioBackend falls back to the in-process engine automatically (no dead air).
+const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
+let AUDIO_DAEMON = false;
 let audio;
 try {
   audio = require("../native/ether-audio.node");
-  if (!AUDIO_DAEMON) { audio.initAudioEngine(); console.log("[AUDIO] Native engine initialized"); }
-  else console.log("[AUDIO] ETHER_AUDIO_DAEMON=1 — live engine runs out-of-process (ether-audiod); main addon kept for utilities only");
+  console.log("[AUDIO] native addon loaded" + (AUDIO_DAEMON_DESIRED ? " — daemon desired (in-process fallback armed)" : ""));
 } catch (e) {
   console.error("[AUDIO] Failed to load native addon:", e.message);
   // Fallback stub so app doesn't crash during development
@@ -219,11 +226,11 @@ try {
   };
 }
 
-// Item 10 Phase 2 Step 1 — out-of-process audio daemon client. Inert unless AUDIO_DAEMON.
-// When enabled, ensure the daemon is running and re-broadcast its levels events to windows
-// as `audio:levels` (the renderer's VU feed), replacing main's local 30 Hz poll below.
+// Item 10 Phase 2 Step 1 — out-of-process audio daemon client. Inert unless the daemon is
+// desired. When desired, re-broadcast the daemon's events to windows (levels → the renderer's
+// VU feed; deck/queue/playstart → the renderer proxy; stream → the on-air status).
 const audiodClient = require("./audio-daemon-client");
-if (AUDIO_DAEMON) {
+if (AUDIO_DAEMON_DESIRED) {
   audiodClient.setEventHandler((m) => {
     try {
       if (m.event === "levels") {
@@ -244,8 +251,39 @@ if (AUDIO_DAEMON) {
       }
     } catch {}
   });
-  audiodClient.ensure();
 }
+
+// ── Audio backend decision (daemon vs in-process fallback) ────────────────────
+// Decide ONCE at startup: if the daemon is desired, try to bring it up within a timeout; if it
+// connects, run on the daemon (AUDIO_DAEMON=true). If it can't be reached, or isn't desired,
+// init the in-process engine (today's behavior). audioBackendReady resolves when decided, and
+// audio:daemonEnabled awaits it so the renderer never races the choice. This is the safety net
+// that makes default-on safe: a broken/missing daemon degrades to the in-process engine rather
+// than dead air.
+let _resolveBackend;
+const audioBackendReady = new Promise((r) => { _resolveBackend = r; });
+async function setupAudioBackend() {
+  const napSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    if (AUDIO_DAEMON_DESIRED) {
+      audiodClient.ensure();   // spawns + connects; the client self-retries on failure (debounced)
+      const t0 = Date.now();
+      while (!audiodClient.isConnected() && Date.now() - t0 < 5000) { await napSleep(150); }
+      if (audiodClient.isConnected()) {
+        AUDIO_DAEMON = true;
+        console.log("[AUDIO] daemon ACTIVE — out-of-process engine (ether-audiod)");
+      } else {
+        AUDIO_DAEMON = false;
+        console.warn("[AUDIO] daemon unreachable after 5s — FALLING BACK to the in-process engine (no dead air)");
+        try { audio.initAudioEngine(); } catch (e) { console.error("[AUDIO] in-process init failed:", e.message); }
+      }
+    } else {
+      try { audio.initAudioEngine(); console.log("[AUDIO] in-process engine (daemon not enabled)"); }
+      catch (e) { console.error("[AUDIO] init failed:", e.message); }
+    }
+  } finally { _resolveBackend(); }
+}
+setupAudioBackend();
 
 // ── Database ──────────────────────────────────────────────────
 let db;
@@ -1727,7 +1765,7 @@ ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
 // Item 10 Phase 2 Step 2 — the renderer proxy queries this to learn whether the daemon owns
 // playout. When true it stops driving advance locally and subscribes to the daemon's
 // audio:daemon-deck / -queue / -playstart events instead.
-ipcMain.handle("audio:daemonEnabled", () => AUDIO_DAEMON);
+ipcMain.handle("audio:daemonEnabled", async () => { await audioBackendReady; return AUDIO_DAEMON; });
 // Generic bridge for the daemon's queue + automation commands (automationStart/automationStop/
 // fill/getQueue/enqueue/replaceQueue/clearQueue/setContinuous/setShuffle/setAutoAdvance).
 // Only meaningful when AUDIO_DAEMON; the in-process engine owns the queue otherwise.
