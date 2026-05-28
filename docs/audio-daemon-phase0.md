@@ -67,8 +67,8 @@ Today playout state is split: the **Rust** addon owns the live mixer/deck audio;
 
 ## Phase 1 entry plan (additive, does NOT touch the live app's audio path)
 1. ~~node:sqlite spike~~ ✅ **DONE** — `scripts/spike-nodesqlite.js`: Node 24's `node:sqlite` opened `openair.db` read-only (WAL) from bare node and ran loggen-style queries (417 songs, clock categories, 11 shows) while the app held the DB open. loggen can run in the daemon. (Experimental-warning only; no flag needed on Node 24.)
-2. **Scaffold `ether-audiod`** — standalone Node: load the addon, open the `\\.\pipe\ether-audiod` server, dispatch the command protocol to the addon, broadcast `levels`/`deck`/`queue` events. Build + smoke-test in isolation (a test client plays a file + reads levels over the pipe) BEFORE any app cutover.
-3. **Move queue + advance + loggen** from `engine-rodio.ts` into the daemon.
-4. (Phase 2) Re-point the app at the daemon.
+2. ~~Scaffold `ether-audiod`~~ ✅ **DONE** — `audiod/ether-audiod.js`: standalone Node daemon, loads the addon, serves `\\.\pipe\ether-audiod` (newline-JSON command/reply), broadcasts `levels` (~10 Hz) + `deck` (~4 Hz) events, lifecycle (SIGINT stops decks + closes pipe), single-instance (EADDRINUSE → exit). Wraps the addon command surface (init/load/play/pause/stop/volume/eq/state/levels/delay/dump/output-device/program-bus-port/watchdog). Smoke-tested via `audiod/smoke-test.js`: a client init'd + played a file and received **27 `levels` events at peak 1.000 entirely over the pipe** — engine driven + metered end-to-end through the daemon. ADDITIVE: the live app does not talk to it yet.
+3. **Move queue + advance + loggen** from `engine-rodio.ts` into the daemon (queue/advance state + the `node:sqlite`-backed scheduler).
+4. (Phase 2) Re-point the app's `audio:*` IPC + `engine-rodio` at the daemon over the pipe.
 
 **All daemon de-risks green:** N-API addon loads in bare node (Finding 1) · engine plays + streams headless (Finding 2) · `node:sqlite` reads the library (this spike). Phase 1 is fully unblocked.
