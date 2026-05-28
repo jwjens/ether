@@ -112,11 +112,18 @@ function etherSpawnSpec() {
 // app.asar.unpacked (packaged) / repo root (dev) and audiod/ sits beside it — no asar fixup.
 // Default ON, all desktop platforms; =0 rolls back to in-process. Disabled under the test
 // harness (WATCHDOG_TEST_CMD) since the Ether-supervision tests don't exercise the daemon.
-const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON !== '0' && !process.env.WATCHDOG_TEST_CMD;
+const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON === '1' && !process.env.WATCHDOG_TEST_CMD;
 // Same endpoint as ether-audiod.js + the client: Windows named pipe, else per-user Unix socket.
 const DAEMON_PIPE    = process.env.ETHER_AUDIOD_PIPE
   || (process.platform === 'win32' ? '\\\\.\\pipe\\ether-audiod' : path.join(os.tmpdir(), `ether-audiod-${(process.getuid && process.getuid()) || 0}.sock`));
 const DAEMON_SCRIPT  = path.join(path.resolve(__dirname, '..'), 'audiod', 'ether-audiod.js');
+// Update-survival (Item 10): respawn from the externally-staged, update-proof engine
+// (ether-engine.exe under %LOCALAPPDATA%) when the app client has staged one. The watchdog
+// never STAGES (that's the client's job, version-gated) — it only REUSES a staged copy via
+// stagedTarget(); null → fall back to the in-dir engine. Required defensively so a missing
+// module can never crash the supervisor.
+let stagedTarget;
+try { ({ stagedTarget } = require(path.join(path.resolve(__dirname, '..'), 'audiod', 'stage-engine'))); } catch { stagedTarget = () => null; }
 let daemonTimer = null;
 let daemonSpawning = false;
 
@@ -135,9 +142,11 @@ function spawnDaemon(reason) {
   if (daemonSpawning || stopping || halted) return;
   daemonSpawning = true;
   try {
-    const child2 = spawn(process.execPath, [DAEMON_SCRIPT], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore' });
+    let exe = process.execPath, script = DAEMON_SCRIPT, tag = 'in-dir engine';
+    try { const staged = stagedTarget(); if (staged) { exe = staged.exe; script = staged.script; tag = 'staged engine'; } } catch { /* fall back to in-dir */ }
+    const child2 = spawn(exe, [script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore' });
     child2.unref();
-    log(`ether-audiod not responding (${reason}) — (re)spawned daemon pid ${child2.pid}`);
+    log(`ether-audiod not responding (${reason}) — (re)spawned daemon pid ${child2.pid} (${tag})`);
   } catch (e) { log(`ether-audiod spawn failed: ${e.message}`); }
   setTimeout(() => { daemonSpawning = false; }, 3000); // debounce overlapping spawns
 }

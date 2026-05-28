@@ -1,3 +1,16 @@
+## [4.3.2] — 2026-05-28
+
+Cleaner live audio and a reliable ON-AIR indicator.
+
+### Fixed — back to the in-process audio engine by default
+
+The out-of-process background audio engine (shipped default-on in 4.3.0/4.3.1 for gapless
+updates) introduced a low crackle on the live stream and a flickering ON-AIR button that could
+stick on "OFF AIR" while actually broadcasting. The proven in-process engine is the default
+again, so live audio is clean and the ON-AIR indicator tracks the real stream. The background
+engine (and its gapless-update behavior) is still available opt-in via `ETHER_AUDIO_DAEMON=1`
+while its audio path is being retuned.
+
 ## [4.3.1] — 2026-05-28
 
 Gapless updates now on macOS and Linux too.

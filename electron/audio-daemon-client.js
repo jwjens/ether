@@ -35,10 +35,29 @@ if (DAEMON_SCRIPT.includes("app.asar") && !DAEMON_SCRIPT.includes("app.asar.unpa
   DAEMON_SCRIPT = DAEMON_SCRIPT.replace("app.asar", "app.asar.unpacked");
 }
 
-// Default ON, all desktop platforms — the out-of-process daemon is the shipped default.
-// ETHER_AUDIO_DAEMON=0 forces the legacy in-process engine (rollback). main.js falls back to
-// in-process if it can't connect (no dead air).
-function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
+// Update-survival staging (Item 10): an app UPDATE kills every Ether.exe and replaces the
+// install folder, so a daemon spawned as Ether.exe FROM that folder dies mid-install (the
+// "music stopped during install" gap). stage-engine copies the runtime to an external, renamed
+// ether-engine.exe under %LOCALAPPDATA% the installer can't touch; we spawn THAT. Best-effort:
+// stageEngine returns null off-Windows / in dev / on failure → fall back to the in-dir engine.
+let stageEngine;
+try { ({ stageEngine } = require("../audiod/stage-engine")); } catch { stageEngine = () => null; }
+let UNPACKED_ROOT = path.join(__dirname, "..");
+if (UNPACKED_ROOT.includes("app.asar") && !UNPACKED_ROOT.includes("app.asar.unpacked")) {
+  UNPACKED_ROOT = UNPACKED_ROOT.replace("app.asar", "app.asar.unpacked");
+}
+const SRC_ROOT = path.dirname(process.execPath);   // holds Ether.exe + icu/snapshot runtime data
+function appVersion() {
+  try { return require("electron").app.getVersion(); } catch {}
+  try { return require(path.join(UNPACKED_ROOT, "package.json")).version; } catch {}
+  return "0";
+}
+
+// OPT-IN (default OFF). The in-process engine is the shipped default again — the out-of-process
+// daemon introduced a stream-audio crackle + on-air-status regression on live stations, so it's
+// gated behind ETHER_AUDIO_DAEMON=1 until the audio path is root-caused with real listening tests.
+// Set ETHER_AUDIO_DAEMON=1 to opt into the daemon (gapless updates); unset/anything else = legacy.
+function isEnabled() { return process.env.ETHER_AUDIO_DAEMON === "1"; }
 
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();
@@ -56,12 +75,15 @@ function spawnDaemon() {
   if (now - lastSpawnAt < 2000) return;
   lastSpawnAt = now;
   try {
-    const child = cp.spawn(process.execPath, [DAEMON_SCRIPT], {
+    let exe = process.execPath, script = DAEMON_SCRIPT, tag = "in-dir engine";
+    const staged = stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion() });
+    if (staged) { exe = staged.exe; script = staged.script; tag = "staged engine (update-proof)"; }
+    const child = cp.spawn(exe, [script], {
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       detached: true, stdio: "ignore",
     });
     child.unref();
-    console.log("[audiod-client] spawned daemon (detached) pid", child.pid);
+    console.log("[audiod-client] spawned daemon (detached) pid", child.pid, "—", tag);
   } catch (e) { console.error("[audiod-client] spawn failed:", e.message); }
 }
 

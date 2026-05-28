@@ -195,12 +195,11 @@ const VITE_DEV_URL = "http://127.0.0.1:1420";
 //                          on this, so a fallback transparently uses the in-process engine.
 // Main always loads the addon — for stateless utilities AND the in-process fallback path. The
 // engine is NOT inited here; setupAudioBackend() inits it only when NOT on the daemon.
-// DEFAULT ON (the daemon is the shipped default for all stations). Set ETHER_AUDIO_DAEMON=0 to
-// force the legacy in-process engine (rollback). Safe to default on: if the daemon can't start,
-// setupAudioBackend falls back to the in-process engine automatically (no dead air).
-// Cross-platform: the transport is a Windows named pipe on Windows and a Unix domain socket on
-// macOS/Linux (see audio-daemon-client). So all desktop platforms get gapless updates.
-const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
+// DEFAULT OFF — opt-in via ETHER_AUDIO_DAEMON=1. The in-process engine is the shipped default
+// again: the daemon caused a live-stream crackle + an on-air-status regression, so it's gated
+// until the audio path is root-caused with real listening tests. When opted in, setupAudioBackend
+// still falls back to in-process if the daemon can't connect (no dead air).
+const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON === "1";
 let AUDIO_DAEMON = false;
 let audio;
 try {
@@ -232,6 +231,7 @@ try {
 // desired. When desired, re-broadcast the daemon's events to windows (levels → the renderer's
 // VU feed; deck/queue/playstart → the renderer proxy; stream → the on-air status).
 const audiodClient = require("./audio-daemon-client");
+const _daemonStreamStates = new Map();   // stationId → last stream state, for stream:status:global
 if (AUDIO_DAEMON_DESIRED) {
   audiodClient.setEventHandler((m) => {
     try {
@@ -247,9 +247,15 @@ if (AUDIO_DAEMON_DESIRED) {
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
       } else if (m.event === "stream") {
-        // Step 5: daemon Icecast status → the renderer's existing stream channels.
+        // Step 5: daemon Icecast status → the renderer's existing stream channels. The on-air
+        // badge reads global.anyLive, which ONLY updates from stream:status:global — so the
+        // daemon path MUST emit it too (the in-process path does via _emitGlobal). Without this
+        // the badge could never latch ON AIR in daemon mode (the original on-air-stuck-off bug).
         sendToAllWindows("stream:status", { stationId: m.stationId, live: m.state === "live", error: m.errorMsg || undefined });
         sendToAllWindows("stream:status:dest", { destId: `icecast:${m.stationId}`, label: `Icecast (${m.stationId})`, state: m.state, speed: m.speed, bitrate: m.bitrate, uptimeSec: m.uptimeSec, errorMsg: m.errorMsg, speedHistory: [] });
+        _daemonStreamStates.set(m.stationId, m.state);
+        let liveCount = 0; for (const s of _daemonStreamStates.values()) if (s === "live") liveCount++;
+        sendToAllWindows("stream:status:global", { anyLive: liveCount > 0, liveCount });
       }
     } catch {}
   });
