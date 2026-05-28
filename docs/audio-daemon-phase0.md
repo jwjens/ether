@@ -38,9 +38,15 @@ The goal is that the renderer's existing `window.ether.audio.*` surface barely c
 - `nowplaying` — derived now-playing (or keep that in the client; see open question)
 - `stream` — stream connect/disconnect/error
 
-## State ownership — the Phase-1 design call
+## State ownership — LOCKED (2026-05-27)
 
-Today playout state is split: the **Rust** addon owns the live mixer/deck audio state; **`engine-rodio.ts`** (renderer) owns the JS-side queue, deck status mirror, auto-advance/rotate logic, and end-detection; the **scheduler** (`loggen.ts`) + the now-playing push live in the renderer/`App.tsx`. For a daemon that survives UI restarts, **the queue + rotate/advance logic must move into the daemon** (else a UI restart loses the queue). Open question for Phase 1: does `loggen` (clock/rule/random fill, reads the SQLite library) also move into the daemon, or does the daemon request fills from a connected client? Leaning: move the queue + advance into the daemon; keep `loggen` callable in the daemon (it only needs DB read access — the daemon can open the same `openair.db` read path). The now-playing push to the backend can stay in the app (it's just an HTTP POST off the daemon's state events).
+Today playout state is split: the **Rust** addon owns the live mixer/deck audio; **`engine-rodio.ts`** (renderer) owns the JS-side queue, deck-status mirror, auto-advance/rotate logic, and end-detection; the **scheduler** (`loggen.ts`) + the now-playing push live in the renderer / `App.tsx`.
+
+**Decision:** the **daemon owns the queue + the rotate/advance/preload logic + the scheduler (`loggen`)** — everything required to keep playing unattended. A UI restart must not lose the queue or stop advancement, so none of that can live in the renderer. The renderer keeps only *view* concerns and operator actions (which become commands).
+
+**Consequent constraint (important):** the daemon is **bare Node**, so it **cannot use `better-sqlite3`** (V8-ABI — won't load there, the same reason the diag scripts need Electron's node). `loggen` reads the SQLite library, so the daemon needs an **N-API / ABI-stable SQLite binding** — **Node 24's built-in `node:sqlite`** is the candidate (ships with the runtime, no native rebuild). **Phase-1 spike:** confirm `node:sqlite` opens `openair.db` (WAL) read-only and runs loggen's queries while the app also has it open. (Fallback if it can't: a thin "fill request" command where the still-running daemon asks any connected client to run loggen — but that reintroduces a UI dependency for refills, so `node:sqlite` is strongly preferred.)
+
+**Stays in the app:** the now-playing push to the backend (an HTTP POST driven off the daemon's state events — no DB or engine needed), and all UI.
 
 ## Lifecycle & supervision
 
@@ -55,6 +61,12 @@ Today playout state is split: the **Rust** addon owns the live mixer/deck audio 
 - [x] Run spike: cpal device + decode + mix + real levels + program-bus from bare Node (Finding 2) — `scripts/spike-audiod-run.js`
 - [x] IPC transport decided (named pipe) + protocol drafted
 - [x] Lifecycle/supervision plan drafted (extend HA watchdog)
-- [ ] Lock the state-ownership decision (queue/advance → daemon; loggen location) before Phase 1 — the only remaining Phase-0 item
+- [x] State-ownership decision LOCKED — queue + advance + `loggen` move into the daemon; DB access via `node:sqlite` (not `better-sqlite3`); now-playing push stays in the app
 
-**Phase 0 verdict:** the daemon approach is technically validated — the engine runs fully headless in standalone Node. Remaining before Phase 1 is the one design lock (state ownership).
+**Phase 0 COMPLETE.** The engine runs fully headless in standalone Node (Findings 1 + 2), transport + protocol + lifecycle are designed, and state ownership is locked. One Phase-1 spike is pre-identified: confirm `node:sqlite` can read `openair.db` so `loggen` can run inside the daemon.
+
+## Phase 1 entry plan (additive, does NOT touch the live app's audio path)
+1. **node:sqlite spike** — read `openair.db` (WAL) read-only from bare node + run a loggen query.
+2. **Scaffold `ether-audiod`** — standalone Node: load the addon, open the `\\.\pipe\ether-audiod` server, dispatch the command protocol to the addon, broadcast `levels`/`deck`/`queue` events. Build + smoke-test in isolation (a test client plays a file + reads levels over the pipe) BEFORE any app cutover.
+3. **Move queue + advance + loggen** from `engine-rodio.ts` into the daemon.
+4. (Phase 2) Re-point the app at the daemon.
