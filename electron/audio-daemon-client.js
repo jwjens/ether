@@ -28,7 +28,8 @@ if (DAEMON_SCRIPT.includes("app.asar") && !DAEMON_SCRIPT.includes("app.asar.unpa
 
 // Default ON — the out-of-process daemon is the shipped default. ETHER_AUDIO_DAEMON=0 forces
 // the legacy in-process engine (rollback). main.js falls back to in-process if it can't connect.
-function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
+// Windows-only for now (the transport is a Windows named pipe).
+function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0" && process.platform === "win32"; }
 
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();

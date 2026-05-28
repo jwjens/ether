@@ -1,3 +1,23 @@
+## [4.3.0] — 2026-05-28
+
+Your station stays on air through updates and restarts.
+
+### Added — out-of-process audio engine (gapless updates)
+
+Ether's audio engine now runs as a **separate background process** (`ether-audiod`), so the
+music keeps playing even when the app window restarts — including during an **auto-update**.
+Previously, updating or restarting Ether caused a brief gap of dead air; now playout, the
+Icecast stream, and the play log all continue uninterrupted while the app relaunches.
+
+- **Playout, scheduling, the Icecast stream, and play logging** live in the background engine,
+  so a UI restart or an app update no longer takes you off air.
+- The desktop UI, VU meters, queue, and now-playing all drive the background engine live.
+- **Automatic safety net:** if the background engine can't start for any reason, Ether silently
+  falls back to the built-in engine — worst case is exactly the old behavior, never dead air.
+- The HA watchdog supervises the background engine and restarts it if it ever stops.
+
+On by default (Windows). Set `ETHER_AUDIO_DAEMON=0` to force the legacy in-process engine.
+
 ## [4.2.8] — 2026-05-26
 
 Live update notifications — find out about updates without restarting.

@@ -110,9 +110,9 @@ function etherSpawnSpec() {
 // the daemon survives even while the APP itself is mid-restart (crash/update), so audio +
 // stream never drop. The watchdog dir is asarUnpack'd, so appRoot resolves to
 // app.asar.unpacked (packaged) / repo root (dev) and audiod/ sits beside it — no asar fixup.
-// Default ON; =0 rolls back to in-process. Disabled under the test harness (WATCHDOG_TEST_CMD)
-// since the Ether-supervision tests don't exercise the daemon.
-const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON !== '0' && !process.env.WATCHDOG_TEST_CMD;
+// Default ON; =0 rolls back to in-process. Windows-only (named-pipe transport). Disabled under
+// the test harness (WATCHDOG_TEST_CMD) since the Ether-supervision tests don't exercise the daemon.
+const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON !== '0' && !process.env.WATCHDOG_TEST_CMD && process.platform === 'win32';
 const DAEMON_PIPE    = process.env.ETHER_AUDIOD_PIPE || '\\\\.\\pipe\\ether-audiod';
 const DAEMON_SCRIPT  = path.join(path.resolve(__dirname, '..'), 'audiod', 'ether-audiod.js');
 let daemonTimer = null;
