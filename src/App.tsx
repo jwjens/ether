@@ -792,6 +792,24 @@ export default function App() {
   useEffect(() => {
     const STREAM_BASE = `${ETHER_BACKEND_URL}/api/cmd-stream`;
 
+    // Resolve a library song (by local id, or file_key) to a playable filePath — fetching
+    // from the R2 cloud cache if it's not materialized locally. Used by the dashboard's
+    // remote A/B/C (deck:load) + Q (queue:enqueue) actions.
+    const resolveSong = async (songId?: number, fileKey?: string): Promise<{ filePath: string; title: string; artist: string; durationMs: number } | null> => {
+      try {
+        let row: any = null;
+        if (songId != null) row = await queryOne<any>("SELECT s.*, a.name AS artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?", [songId]);
+        if (!row && fileKey) row = await queryOne<any>("SELECT s.*, a.name AS artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_key = ?", [fileKey]);
+        if (!row) return null;
+        let filePath: string = row.file_path || "";
+        const key = row.file_key || fileKey;
+        if (!filePath && key) {
+          try { const res = await (window as any).ether.invoke("r2:fetch-track", key); if (res?.ok) filePath = res.filePath; } catch { /* best-effort */ }
+        }
+        return filePath ? { filePath, title: row.title, artist: row.artist_name || "", durationMs: row.duration_ms ?? 0 } : null;
+      } catch { return null; }
+    };
+
     const execCmd = async (cmd: string, data: any) => {
       try {
         switch (cmd) {
@@ -840,6 +858,42 @@ export default function App() {
             // set file_path (materialize) so they enter automation rotation.
             try { await (window as any).ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
             break;
+          case "deck:load": {
+            // Dashboard "A/B/C" — load a library song onto a deck and play it.
+            const deck = String(data.deck || "A").toUpperCase();
+            if (!["A", "B", "C"].includes(deck)) break;
+            const song = await resolveSong(data.song_id, data.file_key);
+            if (song) {
+              await engine.loadToDeck(deck, song.filePath, song.title, song.artist, undefined, song.durationMs);
+              engine.getDeck(deck)?.play();
+              window.dispatchEvent(new CustomEvent("ether:queue-changed"));
+            }
+            break;
+          }
+          case "queue:enqueue": {
+            // Dashboard "Q" — add a library song to the end of the queue.
+            const song = await resolveSong(data.song_id, data.file_key);
+            if (song) {
+              engine.addToQueue([{ filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs }]);
+              window.dispatchEvent(new CustomEvent("ether:queue-changed"));
+            }
+            break;
+          }
+          case "queue:reorder": {
+            // Dashboard drag-and-drop — reorder the first N queue items by the given index
+            // permutation; anything beyond the visible window is preserved untouched.
+            const order: number[] = Array.isArray(data.order) ? data.order : [];
+            if (order.length) {
+              const q = engine.getQueue();
+              if (order.length <= q.length && order.every(i => Number.isInteger(i) && i >= 0 && i < q.length)) {
+                const head = order.map(i => q[i]).filter(Boolean);
+                engine.replaceQueue([...head, ...q.slice(order.length)]);
+                setTimeout(() => engine.triggerPreload?.(), 100);
+                window.dispatchEvent(new CustomEvent("ether:queue-changed"));
+              }
+            }
+            break;
+          }
           default:
             console.log("[RemoteCmd] Unknown command:", cmd);
         }
