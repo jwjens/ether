@@ -185,11 +185,18 @@ const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
 const VITE_DEV_URL = "http://127.0.0.1:1420";
 
 // ── Load native audio addon ───────────────────────────────────
+// Item 10 Phase 2 Step 1: when ETHER_AUDIO_DAEMON=1, the out-of-process daemon (ether-audiod)
+// owns the LIVE engine. Main still loads the addon for stateless utilities (analyzeFile,
+// getFileDuration, getLocalIp, the song analyzers), but must NOT init its own engine — a 2nd
+// inited engine would open a competing output device. Deck control + state + levels route to
+// the daemon (see the audiodClient wiring + the audio:* handlers below). Default OFF — with
+// the flag unset everything below is the original in-process path, unchanged (rollback).
+const AUDIO_DAEMON = process.env.ETHER_AUDIO_DAEMON === "1";
 let audio;
 try {
   audio = require("../native/ether-audio.node");
-  audio.initAudioEngine();
-  console.log("[AUDIO] Native engine initialized");
+  if (!AUDIO_DAEMON) { audio.initAudioEngine(); console.log("[AUDIO] Native engine initialized"); }
+  else console.log("[AUDIO] ETHER_AUDIO_DAEMON=1 — live engine runs out-of-process (ether-audiod); main addon kept for utilities only");
 } catch (e) {
   console.error("[AUDIO] Failed to load native addon:", e.message);
   // Fallback stub so app doesn't crash during development
@@ -210,6 +217,24 @@ try {
     watchdogSet: () => true,
     audioLastCallbackMs: () => 0,
   };
+}
+
+// Item 10 Phase 2 Step 1 — out-of-process audio daemon client. Inert unless AUDIO_DAEMON.
+// When enabled, ensure the daemon is running and re-broadcast its levels events to windows
+// as `audio:levels` (the renderer's VU feed), replacing main's local 30 Hz poll below.
+const audiodClient = require("./audio-daemon-client");
+if (AUDIO_DAEMON) {
+  audiodClient.setEventHandler((m) => {
+    try {
+      if (m.event === "levels") {
+        const lv = { a: m.a || 0, b: m.b || 0, c: m.c || 0 };
+        lv.master = typeof m.master === "number" ? m.master : Math.max(lv.a, lv.b, lv.c);
+        sendToAllWindows("audio:levels", lv);
+      }
+      // deck/queue/playstart events are forwarded for the renderer proxy in Step 2.
+    } catch {}
+  });
+  audiodClient.ensure();
 }
 
 // ── Database ──────────────────────────────────────────────────
@@ -1117,10 +1142,12 @@ app.whenReady().then(() => {
     }
   }, 15000);
 
-  // Start 30fps real-time audio level push to renderer
+  // Start 30fps real-time audio level push to renderer.
+  // When AUDIO_DAEMON is on the daemon broadcasts levels and audiodClient re-emits them as
+  // audio:levels (see the event handler above), so skip the local poll (main isn't metering).
   mainWindow.webContents.on("did-finish-load", () => {
     if (levelPushId) clearInterval(levelPushId);
-    levelPushId = setInterval(() => {
+    if (!AUDIO_DAEMON) levelPushId = setInterval(() => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       try {
         const levels = JSON.parse(audio.audioGetLevels());
@@ -1579,9 +1606,15 @@ ipcMain.handle('sync:getStats', () => {
 // generate sync mutation noise for zero local benefit (each machine would
 // propagate its own cachePath to others, who'd just rewrite to their own).
 ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
+  // Item 10 Phase 2 Step 1: the resolved load goes to the daemon when enabled (it owns the
+  // engine); otherwise the in-process addon. File resolution (existsSync + R2 fetch) — which
+  // needs main's DB + R2 — stays here; only the final load is forwarded.
+  const doLoad = (fp) => AUDIO_DAEMON
+    ? audiodClient.cmd("load", { deck, filePath: fp, title, artist, gainDb: gainDb ?? 0, stationId })
+    : audio.audioLoad(deck, fp, title, artist, gainDb ?? 0, stationId);
   // Fast path — file exists locally. Behave exactly as the pre-1.3k handler.
   if (filePath && fs.existsSync(filePath)) {
-    return audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId);
+    return doLoad(filePath);
   }
 
   // File missing. Look up file_key for this file_path. Exact match on the
@@ -1601,7 +1634,7 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
   if (!fileKey) {
     // No file_key registered. Fall through to legacy — the Rust audio worker
     // will fail with "File not found" same as before 1.3k.
-    return audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId);
+    return doLoad(filePath);
   }
 
   // Have a file_key — try the R2 fallback. Tier gate enforced inside fetchR2Track.
@@ -1609,19 +1642,22 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
   const fetched = await fetchR2Track(fileKey);
   if (!fetched.ok) {
     console.warn(`[audio:load] R2 fallback failed: ${fetched.error} — falling through to legacy path`);
-    return audio.audioLoad(deck, filePath, title, artist, gainDb ?? 0, stationId);
+    return doLoad(filePath);
   }
 
   console.log(`[audio:load] R2 fallback succeeded → ${fetched.filePath}`);
-  return audio.audioLoad(deck, fetched.filePath, title, artist, gainDb ?? 0, stationId);
+  return doLoad(fetched.filePath);
 });
 
-ipcMain.handle("audio:play", (_, deck, stationId) => audio.audioPlay(deck, stationId));
-ipcMain.handle("audio:pause", (_, deck, stationId) => audio.audioPause(deck, stationId));
-ipcMain.handle("audio:stop", (_, deck, stationId) => audio.audioStop(deck, stationId));
-ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => audio.audioSetVolume(deck, volume, stationId));
-ipcMain.handle("audio:getState", (_, stationId) => JSON.parse(audio.audioGetState(stationId)));
-ipcMain.handle("audio:getLevels", (_, stationId) => JSON.parse(audio.audioGetLevels(stationId)));
+// Item 10 Phase 2 Step 1: deck control + state + levels route to the daemon when AUDIO_DAEMON
+// (it owns the engine), else the in-process addon. getState/getLevels return parsed objects
+// from both paths.
+ipcMain.handle("audio:play", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("play", { deck, stationId }) : audio.audioPlay(deck, stationId));
+ipcMain.handle("audio:pause", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("pause", { deck, stationId }) : audio.audioPause(deck, stationId));
+ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("stop", { deck, stationId }) : audio.audioStop(deck, stationId));
+ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setVolume", { deck, volume, stationId }) : audio.audioSetVolume(deck, volume, stationId));
+ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
+ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
 // Embedded cover art straight from the audio file (local-first artwork — primary source;
 // iTunes is the caller's fallback). music-metadata is ESM-only (v11), so it's loaded via
@@ -1647,25 +1683,31 @@ ipcMain.handle("audio:embeddedArt", async (_, filePath) => {
   _embeddedArtCache.set(filePath, result);
   return result;
 });
-ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => audio.watchdogSet(active, thresholdSec, stationId));
+ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => AUDIO_DAEMON ? audiodClient.cmd("watchdogSet", { active, thresholdSec, stationId }) : audio.watchdogSet(active, thresholdSec, stationId));
 // Broadcast (profanity) delay + dump — delay lives on the stream path only.
-ipcMain.handle("audio:setBroadcastDelay", (_, seconds, stationId) => audio.audioSetBroadcastDelay(seconds, stationId));
-ipcMain.handle("audio:dump", (_, stationId) => audio.audioDump(stationId));
-ipcMain.handle("audio:broadcastDelayState", (_, stationId) => { try { return JSON.parse(audio.audioBroadcastDelayState(stationId)); } catch { return { armed: false, delaySec: 0, bufferedSec: 0, fillPct: 0 }; } });
+ipcMain.handle("audio:setBroadcastDelay", (_, seconds, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setBroadcastDelay", { seconds, stationId }) : audio.audioSetBroadcastDelay(seconds, stationId));
+ipcMain.handle("audio:dump", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("dump", { stationId }) : audio.audioDump(stationId));
+ipcMain.handle("audio:broadcastDelayState", async (_, stationId) => {
+  if (AUDIO_DAEMON) { try { return await audiodClient.cmd("broadcastDelayState", { stationId }); } catch { return { armed: false, delaySec: 0, bufferedSec: 0, fillPct: 0 }; } }
+  try { return JSON.parse(audio.audioBroadcastDelayState(stationId)); } catch { return { armed: false, delaySec: 0, bufferedSec: 0, fillPct: 0 }; }
+});
 // EQ — sends 10 band gains (f32[]) to the station's EQ chain in the BusMixer.
 ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
+  if (AUDIO_DAEMON) return audiodClient.cmd("setEq", { stationId: stationId ?? 1, bands });
   try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(stationId ?? 1, JSON.stringify(bands)); }
   catch(e) { console.warn("[EQ] audioSetEq error:", e.message); }
   return true;
 });
 
-ipcMain.handle("audio:listOutputDevices", () => {
+ipcMain.handle("audio:listOutputDevices", async () => {
+  if (AUDIO_DAEMON) { try { return await audiodClient.cmd("listOutputDevices"); } catch { return []; } }
   try {
     if (typeof audio.audioListOutputDevices !== "function") return [];
     return JSON.parse(audio.audioListOutputDevices());
   } catch { return []; }
 });
 ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
+  if (AUDIO_DAEMON) return audiodClient.cmd("setOutputDevice", { stationId, device: deviceName });
   try {
     if (typeof audio.audioSetOutputDevice !== "function") return false;
     return audio.audioSetOutputDevice(stationId, deviceName);
@@ -4101,6 +4143,10 @@ function _spawnStream(stationId, args, label) {
 
 ipcMain.handle('stream:go-live', async (_, args = {}) => {
   try {
+    // Item 10 Phase 2: when the daemon owns the engine, the program bus lives in the daemon —
+    // main's addon has none to encode. Moving the ffmpeg→Icecast encoder into the daemon is
+    // Step 5; until then, refuse here rather than spawn ffmpeg against an empty bus.
+    if (AUDIO_DAEMON) return { ok: false, error: 'Streaming via the audio daemon is not wired yet (Item 10 Phase 2 Step 5).' };
     const stationId = args.stationId ?? getActiveStationId();
     const station   = db.prepare("SELECT * FROM stations WHERE id=?").get(stationId);
     if (!station) return { ok: false, error: `station ${stationId} not found` };
