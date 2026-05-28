@@ -230,8 +230,14 @@ if (AUDIO_DAEMON) {
         const lv = { a: m.a || 0, b: m.b || 0, c: m.c || 0 };
         lv.master = typeof m.master === "number" ? m.master : Math.max(lv.a, lv.b, lv.c);
         sendToAllWindows("audio:levels", lv);
+      } else if (m.event === "deck") {
+        // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
+        sendToAllWindows("audio:daemon-deck", { stationId: m.stationId, deck: m.deck, state: m.state });
+      } else if (m.event === "queue") {
+        sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
+      } else if (m.event === "playstart") {
+        sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
       }
-      // deck/queue/playstart events are forwarded for the renderer proxy in Step 2.
     } catch {}
   });
   audiodClient.ensure();
@@ -1712,6 +1718,19 @@ ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
     if (typeof audio.audioSetOutputDevice !== "function") return false;
     return audio.audioSetOutputDevice(stationId, deviceName);
   } catch { return false; }
+});
+
+// Item 10 Phase 2 Step 2 — the renderer proxy queries this to learn whether the daemon owns
+// playout. When true it stops driving advance locally and subscribes to the daemon's
+// audio:daemon-deck / -queue / -playstart events instead.
+ipcMain.handle("audio:daemonEnabled", () => AUDIO_DAEMON);
+// Generic bridge for the daemon's queue + automation commands (automationStart/automationStop/
+// fill/getQueue/enqueue/replaceQueue/clearQueue/setContinuous/setShuffle/setAutoAdvance).
+// Only meaningful when AUDIO_DAEMON; the in-process engine owns the queue otherwise.
+ipcMain.handle("audio:daemon", async (_, cmd, args) => {
+  if (!AUDIO_DAEMON) return { ok: false, error: "audio daemon disabled" };
+  try { return { ok: true, result: await audiodClient.cmd(cmd, args || {}) }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
 
 // Database

@@ -112,11 +112,62 @@ export class AudioEngine {
   private processingEnd = false;
   private endTriggered = new Set<DeckId>();
 
+  // Item 10 Phase 2 Step 2 — when ETHER_AUDIO_DAEMON is on, the out-of-process daemon owns the
+  // queue + advance, so the renderer must NOT advance locally (it would race the daemon). This
+  // is queried once at init; while still unknown it stays false (safe: the poll only reads
+  // forwarded deck state for display, it does not start playback). Deck control + manual loads
+  // still route to the daemon via the audio:* IPC forwarders (Step 1) — only the auto-advance
+  // brain is disabled here. The engine mirrors the daemon's queue + relays playstart so the
+  // Up Next UI and the now-playing/log path (App.tsx onPlayStart) keep working.
+  private daemonDriven = false;
+  private daemonUnsub: Array<() => void> = [];
+
   init() {
     if (this.pollTimer) return;
     this.processingEnd = false;  // clear any flag left over from a previous session
     this.pollTimer = setInterval(() => this.poll(), 250);
+    this.detectDaemon();
   }
+
+  private detectDaemon() {
+    const a = (window as any).ether?.audio;
+    if (!a?.daemonEnabled) return;
+    a.daemonEnabled().then((on: boolean) => {
+      this.daemonDriven = !!on;
+      if (on) { rotLog("[ROT] daemon-driven: local advance DISABLED, mirroring ether-audiod"); this.attachDaemonEvents(); }
+    }).catch(() => {});
+  }
+
+  private attachDaemonEvents() {
+    const a = (window as any).ether?.audio;
+    if (!a) return;
+    // Mirror the daemon's queue so getQueue() (the Up Next UI) stays current.
+    if (a.onQueue) {
+      const h = a.onQueue((m: any) => {
+        if (Array.isArray(m?.items)) this.queue = m.items.map((it: any) => ({
+          filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType,
+        }));
+      });
+      this.daemonUnsub.push(() => a.offQueue?.(h));
+    }
+    // The daemon advances + starts tracks; relay its playstart so the renderer's now-playing
+    // push + play log (App.tsx onPlayStart) keep firing without the renderer driving playback.
+    if (a.onPlayStart) {
+      const h = a.onPlayStart((m: any) => { if (m?.deck) this.notifyPlayStart(m.deck as DeckId, m.title || "", m.artist || "", m.filePath || ""); });
+      this.daemonUnsub.push(() => a.offPlayStart?.(h));
+    }
+  }
+
+  /** Kick off unattended playout in the daemon (fill + play + advance). The renderer's
+   *  go-on-air calls this instead of starting playback locally when daemon-driven. */
+  async startDaemonAutomation(): Promise<boolean> {
+    if (!this.daemonDriven) return false;
+    try { const r = await (window as any).ether?.audio?.daemon?.("automationStart", { stationId: this.stationId }); return !!(r && r.ok); }
+    catch { return false; }
+  }
+
+  /** True when the out-of-process daemon owns playout (renderer is a display/control proxy). */
+  get isDaemonDriven(): boolean { return this.daemonDriven; }
 
   private async poll() {
     try {
@@ -188,6 +239,7 @@ export class AudioEngine {
   }
 
   private checkEndByPosition(deckId: DeckId, pos: number, dur: number, prevStatus: DeckStatus, backendEnded = false) {
+    if (this.daemonDriven) return;  // daemon owns end-detection + advance
     if (this.processingEnd) return;
     const positionEnd = prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3;
     // Only trust Rust's "ended" signal when position also confirms we're near the end.
@@ -293,6 +345,7 @@ export class AudioEngine {
   }
 
   private async preloadDeck(deckId: DeckId, queueIndex = 0) {
+    if (this.daemonDriven) return;  // daemon owns preload
     if (this.queue.length <= queueIndex) {
       rotLog(`[ROT] preload ${deckId}[${queueIndex}] SKIP — queue too short (len=${this.queue.length})`);
       return;
@@ -312,6 +365,7 @@ export class AudioEngine {
   }
 
   private async refillIfNeeded() {
+    if (this.daemonDriven) return;  // daemon self-refills via its own scheduler
     if (this.queue.length === 0 && this.continuous && this.refillCallback) {
       rotLog(`[ROT] refill:begin — queue empty, fetching from refillCallback`);
       const songs = await this.refillCallback();
@@ -328,6 +382,7 @@ export class AudioEngine {
   }
 
   triggerPreload() {
+    if (this.daemonDriven) return;  // daemon owns preload
     rotLog(`[ROT] triggerPreload — queue: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
     this.preloadDeck("B", 0).then(() => { setTimeout(() => this.preloadDeck("C", 1), 400); });
   }
@@ -403,17 +458,20 @@ export class AudioEngine {
   }
 
   addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
+    if (this.daemonDriven) { (window as any).ether?.audio?.daemon?.("enqueue", { stationId: this.stationId, items: songs }); return; }
     rotLog(`[ROT] addToQueue +${songs.length} | before: [${this.queue.map(q => `"${q.title}"`).join(", ")}] | adding: [${songs.map(s => `"${s.title}"`).join(", ")}]`);
     this.queue.push(...songs);
     rotLog(`[ROT] addToQueue done | after: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
   }
   clearQueue() {
+    if (this.daemonDriven) { (window as any).ether?.audio?.daemon?.("clearQueue", { stationId: this.stationId }); this.queue = []; return; }
     rotLog(`[ROT] clearQueue — dropping ${this.queue.length} items: [${this.queue.map(q => `"${q.title}"`).join(", ")}]`);
     this.queue = [];
   }
   getQueue() { return [...this.queue]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
   replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
+    if (this.daemonDriven) { (window as any).ether?.audio?.daemon?.("replaceQueue", { stationId: this.stationId, items: songs }); this.queue = [...songs]; return; }
     rotLog(`[ROT] replaceQueue — was [${this.queue.map(q => `"${q.title}"`).join(", ")}] | now [${songs.map(s => `"${s.title}"`).join(", ")}]`);
     this.queue = [...songs];
   }
@@ -434,6 +492,7 @@ export class AudioEngine {
    * show begins on the exact second it's scheduled.
    */
   async jumpToNextSong(): Promise<boolean> {
+    if (this.daemonDriven) return false;  // daemon owns advance (a daemon skip command is a follow-up)
     if (this.queue.length === 0) return false;
     // Reset the advance chain — show transitions are imperative, bypass the queue
     this.advancePromise = Promise.resolve();

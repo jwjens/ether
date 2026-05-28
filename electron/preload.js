@@ -23,6 +23,17 @@ contextBridge.exposeInMainWorld("ether", {
     // Push-based level subscription — 30fps from main process, no polling
     onLevels:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:levels", h); return h; },
     offLevels: (h)  => ipcRenderer.removeListener("audio:levels", h),
+    // Item 10 Phase 2 Step 2 — out-of-process daemon. daemonEnabled() lets the engine decide
+    // whether to drive advance locally (false) or proxy the daemon (true). daemon() sends a
+    // queue/automation command; onDeck/onQueue/onPlayStart subscribe to the daemon's state.
+    daemonEnabled: () => ipcRenderer.invoke("audio:daemonEnabled"),
+    daemon: (cmd, args) => ipcRenderer.invoke("audio:daemon", cmd, args),
+    onDeck:       (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-deck", h); return h; },
+    offDeck:      (h)  => ipcRenderer.removeListener("audio:daemon-deck", h),
+    onQueue:      (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-queue", h); return h; },
+    offQueue:     (h)  => ipcRenderer.removeListener("audio:daemon-queue", h),
+    onPlayStart:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-playstart", h); return h; },
+    offPlayStart: (h)  => ipcRenderer.removeListener("audio:daemon-playstart", h),
   },
   theme: {
     export: (presetId, vars, font) => ipcRenderer.invoke("theme:export", { presetId, vars, font }),
