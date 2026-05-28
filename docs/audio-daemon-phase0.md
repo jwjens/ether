@@ -84,10 +84,12 @@ Today playout state is split: the **Rust** addon owns the live mixer/deck audio;
 
 **Goal:** re-point the live app at the daemon so the **mix AND the Icecast stream survive a UI/main-process restart** (an app auto-update relaunches only the UI; the daemon keeps streaming). This is the **only phase that touches live audio**, so every sub-step is proven off-air (throwaway station 99 / a non-broadcast machine) before the live app is pointed at the daemon, and the whole path sits behind a rollback flag until proven on OV.
 
-### Step 0 — Runtime decision (GATE, do first)
-How does the daemon run in the *packaged* app? Dev uses system Node 24 (has `node:sqlite`); a packaged install has no guaranteed system node. The daemon needs (a) the N-API addon — loads in any node/Electron, already proven; and (b) `node:sqlite` — Node 22.5+ (experimental).
-- **Candidate:** spawn the daemon via Electron's bundled node — `ELECTRON_RUN_AS_NODE=1 <electron.exe> audiod/ether-audiod.js` — **detached** so it outlives the app.
-- **Spike (blocking):** in a packaged build, confirm `require('node:sqlite')` works under `ELECTRON_RUN_AS_NODE` (i.e. the shipped Electron bundles a Node ≥ 22.5 with `node:sqlite`). If not → ship a small standalone `node` binary with the app, **or** give the daemon a `better-sqlite3` rebuilt for the daemon's node ABI (heavier; loses the "no native rebuild" win). **No cutover code lands before this is decided.**
+### Step 0 — Runtime decision (GATE) ✅ DONE — CLEARED (2026-05-27)
+How does the daemon run in the *packaged* app? Dev uses system Node 24; a packaged install has no guaranteed system node. The daemon needs (a) the N-API addon and (b) `node:sqlite`.
+- **Decision:** spawn the daemon via the **app's own Electron binary** — `ELECTRON_RUN_AS_NODE=1 <Ether.exe> audiod/ether-audiod.js` — **detached** so it outlives the app. **No standalone node binary, no `better-sqlite3` fallback needed.**
+- **Spike result** (`scripts/spike-electron-node-sqlite.js`, run under BOTH `node_modules/electron/dist/electron.exe` AND the packaged `dist-electron/win-unpacked/Ether.exe`): **identical pass.** Electron **41.1.0 bundles Node 24.14.0** (ABI `modules:145`), so `require('node:sqlite')` loads **flag-free**, opens `openair.db` read-only (417 songs) **and** read-write (TEMP-table write proven), and `ether-audio.node` loads (29 exports, all core fns) under Electron's node ABI — the Phase-0 N-API finding holds under Electron too.
+- **Fuse safety:** the packaged binary's `RunAsNode` fuse is **ENABLED** (verified by reading the embedded fuse wire — the project pulls `@electron/fuses` only transitively and configures no `electronFuses`, so Electron defaults apply). So `ELECTRON_RUN_AS_NODE` is honored and launching the exe with it does **not** boot the GUI. **Phase-2 caveat:** if a future build ever disables `RunAsNode` (a hardening step), the spawn line breaks and we'd need a shipped node binary — keep this in mind if fuses are ever configured.
+- The Step-4 (write-contention) and Step-5 (ffmpeg-in-daemon) spikes are still pending; this gate only proves the *runtime*.
 
 ### Step 1 — Addon ownership → daemon; main becomes a forwarder
 Today `electron/main.js:190` `require`s `ether-audio.node` in the **main** process; the `audio:*` handlers (`main.js:1581-1668`) call it directly; a levels poll (`1126-1130`) emits `audio:levels`.
