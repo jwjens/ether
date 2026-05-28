@@ -33,6 +33,7 @@
  *   WATCHDOG_TEST_ARGS  — space-separated args for the mock.
  */
 const http  = require('http');
+const net   = require('net');
 const fs    = require('fs');
 const path  = require('path');
 const os    = require('os');
@@ -100,6 +101,58 @@ function etherSpawnSpec() {
   delete env.ETHER_ADOPT_PID;                    // our adopt hint must not leak to the app
   env.ETHER_WATCHDOG_PID = String(process.pid);  // Phase 2.5: the app monitors us via this
   return { cmd: process.execPath, args: isDev ? [appRoot] : [], env };
+}
+
+// ── Audio daemon (ether-audiod) supervision — Item 10 Phase 2 Step 6 ──────────
+// Only active when the out-of-process audio engine is in use (ETHER_AUDIO_DAEMON=1). The app
+// also (re)spawns the daemon via audio-daemon-client; the daemon single-instances on its pipe
+// (EADDRINUSE → exit), so two supervisors are safe. This independent restarter is the win:
+// the daemon survives even while the APP itself is mid-restart (crash/update), so audio +
+// stream never drop. The watchdog dir is asarUnpack'd, so appRoot resolves to
+// app.asar.unpacked (packaged) / repo root (dev) and audiod/ sits beside it — no asar fixup.
+const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON === '1';
+const DAEMON_PIPE    = process.env.ETHER_AUDIOD_PIPE || '\\\\.\\pipe\\ether-audiod';
+const DAEMON_SCRIPT  = path.join(path.resolve(__dirname, '..'), 'audiod', 'ether-audiod.js');
+let daemonTimer = null;
+let daemonSpawning = false;
+
+function probeDaemon() {
+  return new Promise((resolve) => {
+    const s = net.connect(DAEMON_PIPE);
+    let done = false;
+    const finish = (alive) => { if (done) return; done = true; try { s.destroy(); } catch {} resolve(alive); };
+    s.once('connect', () => finish(true));
+    s.once('error',   () => finish(false));
+    setTimeout(() => finish(false), 1500);
+  });
+}
+
+function spawnDaemon(reason) {
+  if (daemonSpawning || stopping || halted) return;
+  daemonSpawning = true;
+  try {
+    const child2 = spawn(process.execPath, [DAEMON_SCRIPT], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore' });
+    child2.unref();
+    log(`ether-audiod not responding (${reason}) — (re)spawned daemon pid ${child2.pid}`);
+  } catch (e) { log(`ether-audiod spawn failed: ${e.message}`); }
+  setTimeout(() => { daemonSpawning = false; }, 3000); // debounce overlapping spawns
+}
+
+async function superviseDaemon() {
+  if (stopping || halted || !DAEMON_ENABLED) return;
+  const alive = await probeDaemon();
+  if (!alive && !stopping && !halted) spawnDaemon('pipe dead');
+}
+
+// Best-effort graceful daemon stop on a real user-quit (CLEAN_EXIT). An update/relaunch
+// (EXPECTED_RESTART) deliberately leaves the daemon running so audio is gapless.
+function stopDaemon() {
+  try {
+    const s = net.connect(DAEMON_PIPE);
+    s.once('connect', () => { try { s.write(JSON.stringify({ id: 0, cmd: 'shutdown' }) + '\n'); } catch {} setTimeout(() => { try { s.destroy(); } catch {} }, 200); });
+    s.once('error', () => {});
+    setTimeout(() => { try { s.destroy(); } catch {} }, 800);
+  } catch {}
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
@@ -233,6 +286,15 @@ function onChildExit(pid, code, signal) {
 
   if (consumeSentinel(CLEAN_EXIT)) {
     log('clean-exit sentinel → intentional user quit. Watchdog standing down.');
+    // Real quit → stop the daemon too (an update/relaunch leaves it running, below).
+    if (DAEMON_ENABLED) {
+      stopping = true;
+      if (daemonTimer) { clearInterval(daemonTimer); daemonTimer = null; }
+      log('user-quit → stopping ether-audiod');
+      stopDaemon();
+      setTimeout(() => shutdown(0), 400);  // let the shutdown command flush over the pipe
+      return;
+    }
     shutdown(0);
     return;
   }
@@ -317,6 +379,7 @@ function tripCrashLoop() {
 function shutdown(code) {
   stopping = true;
   stopPolling();
+  if (daemonTimer) { clearInterval(daemonTimer); daemonTimer = null; }
   try { fs.unlinkSync(PID_FILE); } catch { /* none */ }
   process.exit(code);
 }
@@ -343,6 +406,14 @@ function main() {
     adoptEther(adoptPid).then((ok) => { if (!ok) spawnEther('initial'); }).catch(() => spawnEther('initial'));
   } else {
     spawnEther('initial');
+  }
+
+  // Independently supervise the audio daemon (restart it if its pipe goes dead), so audio +
+  // stream survive even while the app is mid-restart. Only when the daemon path is in use.
+  if (DAEMON_ENABLED) {
+    log('audio daemon supervision ON (ETHER_AUDIO_DAEMON=1)');
+    superviseDaemon().catch(() => {});
+    daemonTimer = setInterval(() => { superviseDaemon().catch((e) => log(`daemon supervise error ${e}`)); }, 5000);
   }
 }
 

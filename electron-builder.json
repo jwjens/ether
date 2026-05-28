@@ -8,11 +8,16 @@
   },
   "asarUnpack": [
     "node_modules/ffmpeg-static/**",
-    "watchdog/**"
+    "watchdog/**",
+    "audiod/**",
+    "native/**/*.node",
+    "electron/sync/mutation-writer.js",
+    "electron/sync/synced-tables.js"
   ],
   "files": [
     "dist/**/*",
     "electron/**/*",
+    "audiod/**/*",
     "scripts/**/*.js",
     "native/**/*.node",
     "watchdog/**/*",

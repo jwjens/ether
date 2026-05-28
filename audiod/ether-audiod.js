@@ -79,6 +79,9 @@ const handlers = {
   broadcastDelayState:(m) => JSON.parse(A.audioBroadcastDelayState(m.stationId)),
   watchdogSet:        (m) => A.watchdogSet(m.active, m.thresholdSec, m.stationId),
   ping:               ()  => "pong",
+  // Graceful remote stop (the HA watchdog sends this on a clean user-quit, so the daemon
+  // doesn't outlive the station; an update/relaunch leaves the daemon running instead).
+  shutdown:           ()  => { setTimeout(shutdown, 50); return "bye"; },
 
   // ── autonomous playout engine (Phase 1 step 3): queue + advance + scheduler ──
   // Additive — the live app does not drive these yet (Phase-2 cutover does).
