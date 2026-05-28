@@ -8,9 +8,13 @@ Roadmap **Item 10 — Out-of-Process Audio Engine**. Phase 0 = de-risk + design 
 
 **Conclusion:** `ether-audiod` can be a **standalone Node process** loading this addon directly — no Electron, no `ELECTRON_RUN_AS_NODE`, no per-node-version rebuild. The scariest unknown for Item 10 is resolved positively.
 
-## Remaining empirical step — run OFF-AIR, not on live OV ⚠️
+## Finding 2 — the full engine runs headless ✅ (de-risked)
 
-The load proof above is safe on a live machine (it never calls `init`). The next spike — `initAudioEngine` → `audioLoad` a local file → `audioPlay` → `audioGetLevels` → start stream — actually **opens the cpal output device, spawns ffmpeg, and pushes Icecast**. On the live OV box that risks device contention / audible disruption, so it must run on a **test machine or an idle window**, not during a shift. Confirm: (a) cpal opens + plays a local file from bare Node, (b) the ffmpeg child spawns + pushes to a test Icecast mount, (c) levels report nonzero. Expected to pass — the addon owns cpal + ffmpeg spawning internally; Electron was only the *loader* (Finding 1). A `scripts/spike-audiod-run.js` should gate this behind an explicit `--i-am-off-air` flag so it can never fire on a live machine by accident.
+`scripts/spike-audiod-run.js` (bare node, throwaway station id 99, gated `--i-am-off-air`) proved that `initAudioEngine` → `audioLoad` a local MP3 → `audioPlay` → `audioGetLevels` works **with no Electron**: cpal opened the output device (Realtek, 48000 Hz 2ch), the file decoded and mixed (`Mixer peak 0.57, active_decks=1`), **real** post-fader levels reported (`levelA 0.52 → 0.95 → 0.20` — genuine audio dynamics), and the **program-bus stream source** stood up (`TCP port 54809`, drain at ~89,486 samples/sec ≈ the 88,200 target). The cpal callback fired ~101×/sec (correct 10 ms buffers).
+
+The only stream piece not exercised is **ffmpeg → Icecast**, but ffmpeg is spawned by the *app* today (Electron `child_process` of `ffmpeg-static`), not by the addon — an ordinary child process that runs in any Node and reads the program-bus TCP port. So there is no remaining addon-side stream risk.
+
+**Note for Phase 1:** `position_sec` stayed 0 in `audioGetState` during the spike — playback position is interpolated by the JS engine (`engine-rodio` poll), not the Rust meta. That state-tracking is part of what moves into the daemon (see State ownership).
 
 ## IPC transport — decided: **Windows named pipe**
 
@@ -48,7 +52,9 @@ Today playout state is split: the **Rust** addon owns the live mixer/deck audio 
 ## Phase 0 status
 
 - [x] N-API addon loads + full API in bare Node (Finding 1) — `scripts/spike-audiod-load.js`
-- [ ] Off-air run spike: cpal play + ffmpeg + Icecast from bare Node — `scripts/spike-audiod-run.js` (gated `--i-am-off-air`)
+- [x] Run spike: cpal device + decode + mix + real levels + program-bus from bare Node (Finding 2) — `scripts/spike-audiod-run.js`
 - [x] IPC transport decided (named pipe) + protocol drafted
 - [x] Lifecycle/supervision plan drafted (extend HA watchdog)
-- [ ] Lock the state-ownership decision (queue/advance → daemon; loggen location) before Phase 1
+- [ ] Lock the state-ownership decision (queue/advance → daemon; loggen location) before Phase 1 — the only remaining Phase-0 item
+
+**Phase 0 verdict:** the daemon approach is technically validated — the engine runs fully headless in standalone Node. Remaining before Phase 1 is the one design lock (state ownership).
