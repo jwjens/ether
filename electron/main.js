@@ -198,9 +198,9 @@ const VITE_DEV_URL = "http://127.0.0.1:1420";
 // DEFAULT ON (the daemon is the shipped default for all stations). Set ETHER_AUDIO_DAEMON=0 to
 // force the legacy in-process engine (rollback). Safe to default on: if the daemon can't start,
 // setupAudioBackend falls back to the in-process engine automatically (no dead air).
-// WINDOWS-ONLY for now: the transport is a Windows named pipe (\\.\pipe\…), so mac/linux run
-// the proven in-process engine. Cross-platform daemon (Unix sockets) is a follow-up.
-const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0" && process.platform === "win32";
+// Cross-platform: the transport is a Windows named pipe on Windows and a Unix domain socket on
+// macOS/Linux (see audio-daemon-client). So all desktop platforms get gapless updates.
+const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
 let AUDIO_DAEMON = false;
 let audio;
 try {

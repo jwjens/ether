@@ -13,7 +13,18 @@ const net = require("net");
 const path = require("path");
 const os = require("os");
 
-const PIPE = process.env.ETHER_AUDIOD_PIPE || "\\\\.\\pipe\\ether-audiod";
+// Cross-platform IPC endpoint: Windows → named pipe; macOS/Linux → a per-user Unix domain
+// socket in the temp dir. Override with ETHER_AUDIOD_PIPE. (Client + watchdog compute the
+// same default independently.) `isFileSocket` = a filesystem socket (unix, or Win10 AF_UNIX
+// when forced) — those can leave a stale file after a crash and need unlink-on-EADDRINUSE.
+function audiodEndpoint() {
+  if (process.env.ETHER_AUDIOD_PIPE) return process.env.ETHER_AUDIOD_PIPE;
+  if (process.platform === "win32") return "\\\\.\\pipe\\ether-audiod";
+  const uid = (process.getuid && process.getuid()) || 0;
+  return path.join(os.tmpdir(), `ether-audiod-${uid}.sock`);
+}
+const PIPE = audiodEndpoint();
+const isFileSocket = !PIPE.startsWith("\\\\.\\pipe\\");
 // Test seam (never set in production; mirrors the watchdog's WATCHDOG_TEST_* seams): exit
 // immediately to simulate a daemon that can't start, so the app's audio-backend fallback
 // (electron/main.js setupAudioBackend → in-process engine) can be verified deterministically.
@@ -151,12 +162,24 @@ const server = net.createServer((sock) => {
   sock.on("error", () => { clients.delete(sock); });
 });
 
+function startListen() { server.listen(PIPE, () => log("listening on " + PIPE + " (node " + process.version + ")")); }
+
 server.on("error", (e) => {
-  if (e.code === "EADDRINUSE") { log("pipe in use — another ether-audiod is already running. Exiting."); process.exit(0); }
+  if (e.code === "EADDRINUSE") {
+    if (isFileSocket) {
+      // A Unix-socket file can linger after a crash. Probe it: if a daemon answers, one is
+      // already running (single-instance → exit); if not, the file is stale → unlink + retry.
+      const probe = net.connect(PIPE);
+      probe.once("connect", () => { try { probe.destroy(); } catch {} log("endpoint in use — another ether-audiod is running. Exiting."); process.exit(0); });
+      probe.once("error", () => { try { probe.destroy(); } catch {} try { require("fs").unlinkSync(PIPE); } catch {} log("removed stale socket " + PIPE + " — retrying listen"); setTimeout(startListen, 200); });
+      return;
+    }
+    log("pipe in use — another ether-audiod is already running. Exiting."); process.exit(0);
+  }
   log("server error:", e.message); process.exit(1);
 });
 
-server.listen(PIPE, () => log("listening on " + PIPE + " (node " + process.version + ")"));
+startListen();
 
 function shutdown() {
   log("shutting down — stopping streams + engines + decks + closing pipe");

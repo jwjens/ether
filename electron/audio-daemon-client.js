@@ -13,9 +13,18 @@
 
 const net = require("net");
 const path = require("path");
+const os = require("os");
 const cp = require("child_process");
 
-const PIPE = process.env.ETHER_AUDIOD_PIPE || "\\\\.\\pipe\\ether-audiod";
+// Cross-platform endpoint (must match ether-audiod.js + watchdog): Windows named pipe;
+// macOS/Linux per-user Unix domain socket in the temp dir. Override with ETHER_AUDIOD_PIPE.
+function audiodEndpoint() {
+  if (process.env.ETHER_AUDIOD_PIPE) return process.env.ETHER_AUDIOD_PIPE;
+  if (process.platform === "win32") return "\\\\.\\pipe\\ether-audiod";
+  const uid = (process.getuid && process.getuid()) || 0;
+  return path.join(os.tmpdir(), `ether-audiod-${uid}.sock`);
+}
+const PIPE = audiodEndpoint();
 
 // Daemon entry. In a packaged build the app dir is inside app.asar, but ELECTRON_RUN_AS_NODE
 // has no asar support, so the daemon files must be asarUnpack'd — mirror the ffmpeg-static
@@ -26,10 +35,10 @@ if (DAEMON_SCRIPT.includes("app.asar") && !DAEMON_SCRIPT.includes("app.asar.unpa
   DAEMON_SCRIPT = DAEMON_SCRIPT.replace("app.asar", "app.asar.unpacked");
 }
 
-// Default ON — the out-of-process daemon is the shipped default. ETHER_AUDIO_DAEMON=0 forces
-// the legacy in-process engine (rollback). main.js falls back to in-process if it can't connect.
-// Windows-only for now (the transport is a Windows named pipe).
-function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0" && process.platform === "win32"; }
+// Default ON, all desktop platforms — the out-of-process daemon is the shipped default.
+// ETHER_AUDIO_DAEMON=0 forces the legacy in-process engine (rollback). main.js falls back to
+// in-process if it can't connect (no dead air).
+function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
 
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();

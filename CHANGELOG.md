@@ -1,3 +1,15 @@
+## [4.3.1] — 2026-05-28
+
+Gapless updates now on macOS and Linux too.
+
+### Fixed — cross-platform background audio engine
+
+v4.3.0 shipped the out-of-process audio engine (gapless updates) on **Windows only**. It now
+runs on **macOS and Linux** as well: the engine↔app link uses a Unix domain socket on those
+platforms (a Windows named pipe on Windows). So every desktop station — including macOS — keeps
+playing through a restart or auto-update, with the same automatic fallback to the built-in
+engine if the background engine ever can't start.
+
 ## [4.3.0] — 2026-05-28
 
 Your station stays on air through updates and restarts.
