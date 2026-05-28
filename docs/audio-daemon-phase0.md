@@ -66,7 +66,9 @@ Today playout state is split: the **Rust** addon owns the live mixer/deck audio;
 **Phase 0 COMPLETE.** The engine runs fully headless in standalone Node (Findings 1 + 2), transport + protocol + lifecycle are designed, and state ownership is locked. One Phase-1 spike is pre-identified: confirm `node:sqlite` can read `openair.db` so `loggen` can run inside the daemon.
 
 ## Phase 1 entry plan (additive, does NOT touch the live app's audio path)
-1. **node:sqlite spike** — read `openair.db` (WAL) read-only from bare node + run a loggen query.
+1. ~~node:sqlite spike~~ ✅ **DONE** — `scripts/spike-nodesqlite.js`: Node 24's `node:sqlite` opened `openair.db` read-only (WAL) from bare node and ran loggen-style queries (417 songs, clock categories, 11 shows) while the app held the DB open. loggen can run in the daemon. (Experimental-warning only; no flag needed on Node 24.)
 2. **Scaffold `ether-audiod`** — standalone Node: load the addon, open the `\\.\pipe\ether-audiod` server, dispatch the command protocol to the addon, broadcast `levels`/`deck`/`queue` events. Build + smoke-test in isolation (a test client plays a file + reads levels over the pipe) BEFORE any app cutover.
 3. **Move queue + advance + loggen** from `engine-rodio.ts` into the daemon.
 4. (Phase 2) Re-point the app at the daemon.
+
+**All daemon de-risks green:** N-API addon loads in bare node (Finding 1) · engine plays + streams headless (Finding 2) · `node:sqlite` reads the library (this spike). Phase 1 is fully unblocked.
