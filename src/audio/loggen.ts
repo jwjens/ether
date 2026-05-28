@@ -167,11 +167,18 @@ function buildBaseConditions(
   // Artist separation: exclude any artist whose songs were played recently.
   // Uses artist_separation_min from separation_rules DB table (converted to seconds).
   // The subquery finds all artist_ids with a recent spin, then excludes them.
+  //
+  // NOTE: `songs` is a single SHARED library — it has NO station_id column (stations
+  // differentiate via clocks/shows/schedule, which are station-scoped). A prior
+  // `s2.station_id = ?` here referenced a column that doesn't exist, so this whole
+  // condition threw at runtime — silently collapsing every live-pick path (clock /
+  // SmartRule / random) back to generated_schedule. The subquery is correctly NOT
+  // station-scoped. (`stationId` is retained in the signature for parity / future use.)
   cond += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
     SELECT DISTINCT s2.artist_id FROM songs s2
-    WHERE s2.artist_id IS NOT NULL AND s2.station_id = ? AND s2.last_played_at > (unixepoch() - ?)
+    WHERE s2.artist_id IS NOT NULL AND s2.last_played_at > (unixepoch() - ?)
   ))`;
-  params.push(stationId, sep.artist_sep_sec);
+  params.push(sep.artist_sep_sec);
 
   return cond;
 }
