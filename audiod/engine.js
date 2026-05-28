@@ -245,6 +245,26 @@ class DaemonEngine {
     setTimeout(async () => { await this.preload("B", 0); setTimeout(() => this.preload("C", 1), 400); }, 800);
     return true;
   }
+
+  // Force-advance to the next queued track (operator skip / show-clock jump) — independent of
+  // position. Loads the next deck in rotation, plays it, stops the current, preloads the next.
+  async skip() {
+    await this.refillIfNeeded();
+    if (this.queue.length === 0) return false;
+    const order = ["A", "B", "C"];
+    const playing = order.find(d => this._deckState(d).status === "playing");
+    const next = playing ? order[(order.indexOf(playing) + 1) % 3] : "A";
+    const item = this.dequeue();
+    this.deckChainType[next] = item.chainType || "segue";
+    this.loadToDeck(next, item);
+    this._play(next);
+    this._setDeck(next, { status: "playing", positionSec: 0 });
+    this.endTriggered.delete(next);
+    this._fireStart(next);
+    if (playing && playing !== next) this._stop(playing);
+    setTimeout(() => this.preload(order[(order.indexOf(next) + 1) % 3], 0), 600);
+    return true;
+  }
 }
 
 module.exports = { DaemonEngine };

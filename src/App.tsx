@@ -823,7 +823,7 @@ export default function App() {
             engine.getDeck("A")?.pause();
             break;
           case "skip":
-            engine.triggerPreload?.();
+            engine.skip();  // daemon-driven → force-advance in the daemon; else local preload
             break;
           case "set_volume":
             if (data.volume !== undefined) (engine as any).setMasterVolume?.(data.volume);
@@ -832,11 +832,13 @@ export default function App() {
             setAutoAdv(true);
             engine.autoAdvance = true;
             try { localStorage.setItem("ether_autoAdv", "1"); } catch {}
+            if (engine.isDaemonDriven) engine.startDaemonAutomation();
             break;
           case "automation_off":
             setAutoAdv(false);
             engine.autoAdvance = false;
             try { localStorage.setItem("ether_autoAdv", "0"); } catch {}
+            if (engine.isDaemonDriven) engine.stopDaemonAutomation();
             break;
           case "play_emergency_cart":
             (engine as any).playEmergencyCart?.();
@@ -1100,6 +1102,8 @@ export default function App() {
     if (autoAdv) {
       autoStartTimer = setTimeout(async () => {
         if (engine.getDeck("A")?.getState().status === "playing") return;
+        // Item 10 Phase 2 Step 2: daemon-driven → the daemon fills + plays + advances itself.
+        if (engine.isDaemonDriven) { rotLog("[ROT] STARTUP daemon-driven → automationStart"); await engine.startDaemonAutomation(); return; }
         rotLog(`[ROT] STARTUP autofill begin — queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
         engine.continuous = true;
         resetScheduleCursor();
@@ -1332,6 +1336,8 @@ export default function App() {
     try { localStorage.setItem("ether_autoAdv", n ? "1" : "0"); } catch {}
     if (n) {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
+      // Item 10 Phase 2 Step 2: daemon-driven → hand the whole fill+play+advance to the daemon.
+      if (engine.isDaemonDriven) { await engine.startDaemonAutomation(); return; }
       resetScheduleCursor();
       if (engine.getQueue().length === 0) {
         const count = await fillQueueFromSchedule();
@@ -1364,7 +1370,7 @@ export default function App() {
         setTimeout(() => engine.triggerPreload(), 800);
         window.dispatchEvent(new CustomEvent('ether:queue-changed'));
       }
-    } else { engine.continuous = false; setContinuous(false); }
+    } else { engine.continuous = false; setContinuous(false); if (engine.isDaemonDriven) engine.stopDaemonAutomation(); }
   };
 
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };

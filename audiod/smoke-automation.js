@@ -16,25 +16,35 @@ if (!file) { console.error("Set ETHER_SPIKE_FILE to a local audio file."); proce
 const SID = 99;
 
 let id = 0, buf = "";
-let playstart = false, deckEvents = 0, queueEvents = 0, aLive = false;
+let playstarts = 0, deckEvents = 0, queueEvents = 0, aLive = false;
 const pending = new Map();
 const cmd = (c, args = {}) => new Promise((resolve, reject) => { const myId = ++id; pending.set(myId, { resolve, reject }); sock.write(JSON.stringify({ id: myId, cmd: c, ...args }) + "\n"); });
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 const sock = net.connect(PIPE, async () => {
   await cmd("ping");
-  // Enqueue 3 copies so there's a preloadable B/C even with no schedule for station 99.
-  const items = [0, 1, 2].map(i => ({ filePath: file, title: "Auto " + (i + 1), artist: "Smoke", durationMs: 0 }));
+  // Enqueue 4 copies so there's a preloadable B/C plus headroom for a skip.
+  const items = [0, 1, 2, 3].map(i => ({ filePath: file, title: "Auto " + (i + 1), artist: "Smoke", durationMs: 0 }));
   await cmd("enqueue", { stationId: SID, items });
   console.log("queue before start:", (await cmd("getQueue", { stationId: SID })).length, "items");
   await cmd("automationStart", { stationId: SID });
-  setTimeout(async () => {
-    const qAfter = (await cmd("getQueue", { stationId: SID })).length;
-    await cmd("automationStop", { stationId: SID });
-    const ok = playstart && aLive && deckEvents > 0;
-    console.log(`\nplaystart=${playstart}  deckA live=${aLive}  deck events=${deckEvents}  queue events=${queueEvents}  queue after start=${qAfter}`);
-    console.log((ok ? "✅" : "❌") + " daemon drove playout autonomously over the pipe (fill→play→preload→events)" + (ok ? "." : " — check daemon/file."));
-    sock.end(); process.exit(ok ? 0 : 1);
-  }, 4000);
+  await sleep(2500);
+  const pBefore = playstarts, qBefore = (await cmd("getQueue", { stationId: SID })).length;
+  const startedOk = playstarts > 0 && aLive && deckEvents > 0;
+
+  // Skip: force-advance — expect a new playstart + the queue to shrink by one.
+  console.log("\n→ sending skip…");
+  await cmd("skip", { stationId: SID });
+  await sleep(1500);
+  const qAfter = (await cmd("getQueue", { stationId: SID })).length;
+  await cmd("automationStop", { stationId: SID });
+  const skipOk = playstarts > pBefore && qAfter < qBefore;
+
+  console.log(`\nstart: playstarts=${pBefore} deckA live=${aLive} deck events=${deckEvents} queue events=${queueEvents}`);
+  console.log(`skip : playstarts ${pBefore}→${playstarts}  queue ${qBefore}→${qAfter}`);
+  const ok = startedOk && skipOk;
+  console.log((ok ? "✅" : "❌") + " daemon drove autonomous playout + skip over the pipe" + (ok ? "." : " — check daemon/file."));
+  sock.end(); process.exit(ok ? 0 : 1);
 });
 
 sock.on("data", (d) => {
@@ -44,7 +54,7 @@ sock.on("data", (d) => {
     const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
     if (!line.trim()) continue;
     let m; try { m = JSON.parse(line); } catch { continue; }
-    if (m.event === "playstart" && m.stationId === SID) { playstart = true; console.log("  ▶ playstart:", m.deck, JSON.stringify(m.title)); }
+    if (m.event === "playstart" && m.stationId === SID) { playstarts++; console.log("  ▶ playstart:", m.deck, JSON.stringify(m.title)); }
     else if (m.event === "deck" && m.stationId === SID) { deckEvents++; if (m.deck === "A" && m.state && m.state.status === "playing") aLive = true; }
     else if (m.event === "queue" && m.stationId === SID) queueEvents++;
     else if (m.id != null && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.ok ? p.resolve(m.result) : p.reject(new Error(m.error)); }

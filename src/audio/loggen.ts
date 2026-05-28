@@ -482,6 +482,10 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
   try {
     const stationId = getActiveStationIdSync();
     const engine = getEngine(stationId);
+    // Item 10 Phase 2 Step 2: in daemon-driven mode the daemon self-refills via its own
+    // node:sqlite scheduler — the renderer must NOT also fill (would double-source the queue).
+    // Single guard here covers every caller (startup, AUTO toggle, refill callback, intervals).
+    if ((engine as any).isDaemonDriven) return 0;
     const hour = new Date().getHours();
     maybeDaypartLog(hour);
 

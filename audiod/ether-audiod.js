@@ -70,6 +70,8 @@ const handlers = {
   // Additive — the live app does not drive these yet (Phase-2 cutover does).
   automationStart:    (m) => getEngine(m.stationId).start(),                  // fill (if empty) + play + preload
   automationStop:     (m) => { const e = engines.get(m.stationId); if (e) e.stop(); return true; },
+  skip:               (m) => getEngine(m.stationId).skip(),                    // force-advance to next track
+
   fill:               (m) => { const e = getEngine(m.stationId); return e.refillIfNeeded().then(() => e.getQueue()); },
   getQueue:           (m) => { const e = engines.get(m.stationId); return e ? e.getQueue() : []; },
   enqueue:            (m) => { getEngine(m.stationId).addToQueue(m.items || []); return true; },

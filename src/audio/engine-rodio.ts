@@ -166,6 +166,22 @@ export class AudioEngine {
     catch { return false; }
   }
 
+  /** Stop the daemon's unattended playout (AUTO off, daemon-driven). */
+  async stopDaemonAutomation(): Promise<void> {
+    if (!this.daemonDriven) return;
+    try { await (window as any).ether?.audio?.daemon?.("automationStop", { stationId: this.stationId }); } catch {}
+  }
+
+  /** Skip to the next track. Daemon-driven → force-advance in the daemon; else local preload. */
+  async skip(): Promise<boolean> {
+    if (this.daemonDriven) {
+      try { const r = await (window as any).ether?.audio?.daemon?.("skip", { stationId: this.stationId }); return !!(r && r.ok); }
+      catch { return false; }
+    }
+    this.triggerPreload();
+    return true;
+  }
+
   /** True when the out-of-process daemon owns playout (renderer is a display/control proxy). */
   get isDaemonDriven(): boolean { return this.daemonDriven; }
 
@@ -492,7 +508,7 @@ export class AudioEngine {
    * show begins on the exact second it's scheduled.
    */
   async jumpToNextSong(): Promise<boolean> {
-    if (this.daemonDriven) return false;  // daemon owns advance (a daemon skip command is a follow-up)
+    if (this.daemonDriven) return this.skip();  // daemon owns advance — force-advance there
     if (this.queue.length === 0) return false;
     // Reset the advance chain — show transitions are imperative, bypass the queue
     this.advancePromise = Promise.resolve();
