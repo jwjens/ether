@@ -1,6 +1,6 @@
 # Ether Development Roadmap
 
-**Status:** Updated 2026-05-25  
+**Status:** Updated 2026-05-27  
 **Source of truth:** This document supersedes any roadmap references in chat memory or session notes. Mirrored to the GitHub wiki Roadmap page automatically (`.github/workflows/sync-roadmap-wiki.yml`).
 
 ---
@@ -205,6 +205,25 @@ Today every Ether station streams via Icecast (e.g. `44.244.52.207:8000/live` an
 
 ---
 
+### 10. Out-of-Process Audio Engine (Seamless Updates)
+
+**Status:** Scoped 2026-05-27. Not started. The recommended ("clean") path of three options for surviving app updates/restarts without dropping on-air audio.
+
+**Problem:** The Rust audio engine (`ether-audio.node`) is loaded *inside the Electron main process*, and the ffmpeg→Icecast encoder is a child of that process. Any app update (electron-updater quits + relaunches) or main-process crash takes the engine and the stream down for the relaunch window — dead air on every update. The HA watchdog recovers *crashes* but cannot make an *update* gapless, because the audio lives in the process being replaced. (Playback is local-file — R2 songs are fetched down to disk first — and there is exactly one encode → one Icecast mount; this item changes neither.)
+
+**Target architecture:** A standalone, long-lived **audio daemon** (`ether-audiod`) that owns the mixer, the program-bus drain, the ffmpeg child + Icecast push, local-file decode, the broadcast delay/dump, levels, and the queue/deck **state** — all per-station, as the Rust engine already is. The Electron app (main + renderer) becomes a **client** of the daemon over a local IPC channel (Windows named pipe). The UI can update, restart, or crash while the daemon keeps decoding local files and pushing the single Icecast stream with **no sample dropped**. Bonus payoffs: UI crashes no longer touch air, true headless operation, and multiple UI windows can attach to one engine.
+
+**Phases:**
+- **Phase 0 — Spike / de-risk.** Prove the napi addon loads, drives cpal output, spawns ffmpeg, and pushes to Icecast in a bare Node process (no Electron). Pick the IPC transport (named pipe) and draft the command/state/levels protocol. Decide daemon lifecycle + supervisor (extend the existing HA watchdog). Cheapest validation of the whole approach before the heavy lift.
+- **Phase 1 — Extract the engine (the heavy lift).** Stand up `ether-audiod` hosting `ether-audio.node`; move the mixer, drain, ffmpeg spawn, Icecast push, delay/dump, levels, AND queue/deck state ownership (today split between `engine-rodio.ts` in the renderer and the Rust state) into the daemon. Biggest design call: where the scheduler (`loggen`) runs — in the daemon, or the daemon requests fills from a client. Daemon exposes an IPC API mirroring the current `engine-rodio` surface.
+- **Phase 2 — App as client.** Re-point `engine-rodio.ts` + the main-process `audio:*` IPC at the daemon, keeping the `window.ether.audio.*` shape unchanged so the UI barely changes. Levels/state arrive from the daemon. On launch: attach to the running daemon (start it if absent); on quit/update: leave it running.
+- **Phase 3 — Supervision + seamless update.** Extend the HA watchdog to start + keep the daemon alive. App auto-update relaunches the UI while the daemon streams through it. The daemon updates separately, only at a safe moment (or with a brief backup-audio bridge if the daemon itself must restart).
+- **Phase 4 — Hardening.** Daemon persists queue/deck state and resumes after its own (rare) restart; lifecycle/shutdown policy when no station + no UI is attached; the only residual gap (a daemon-level restart) optionally covered by a backup bridge.
+
+**Risks / open questions:** cpal device ownership outside Electron (expected fine); relocating the ffmpeg child + Icecast push into the daemon; the queue/deck/scheduler state-ownership migration (the largest design call); the IPC protocol + UI reconnect after its own restart; Windows packaging of the daemon binary and supervision via the existing HA infra. **Two lighter alternatives were considered and rejected as the long-term answer:** (1) *scheduled/deferred updates* applied only at a safe moment — a pragmatic interim, but still a timed gap, not seamless; (2) *dual-instance handoff* (two engines, Icecast mount handoff, crossfade) — most of this item's complexity with less payoff.
+
+---
+
 ## Cross-Cutting Design Principles
 
 ### UX
@@ -254,4 +273,5 @@ Ideas worth preserving. Not committed to any roadmap item or timeline.
 | 2026-05-25 | **Listener Platform Tier 1 SHIPPED.** `ether-listener` PWA (React/Vite, Cloudflare Pages) live at `listen.ether-technologies.com/<slug>`; backend per-station metadata + now-playing (public `GET /public/station/:slug` + SSE), now-playing keyed by `station_uuid`. Now-playing reliability fixes v4.2.1–v4.2.6: live deck reads (not React snapshots); queue = full upcoming order incl. cued standby decks; and the backend bug that silently dropped every `playing=true` report (fractional position/duration rejected by INTEGER columns — now rounded). |
 | 2026-05-25 | **Control Center (Item 5) → active development; Phase 1 complete + in production.** `account_users` + JWT; self-service license-key admin bootstrap; `ether-dashboard` on Cloudflare Pages (`app.ether-technologies.com`); operator login, live all-stations view, read-only Users tab; install console users mirror up for remote sign-in (same name + PIN). Deliberately decoupled from the full sync engine — uses a lighter per-table push + the SSE command bus — so it did NOT require Item 2's two-client convergence first. |
 | 2026-05-25 | **Control Center Phase 2 (remote editing) underway.** 2a station/branding settings shipped (backend-authoritative `station_metadata`, JWT-gated). 2b rotation categories — the write-back channel (dashboard → `/api/cmd` SSE → install sync handlers → HLC → re-push via the `station_cc_data` mirror) — shipped and under verification on OV. Full functional parity with the desktop (clocks/dayparts/library) is the stated goal; library push must use bulk INSERT at ~5,600-song scale. Releases v4.2.1–v4.2.6. |
+| 2026-05-27 | **Out-of-Process Audio Engine added as Item 10.** No existing items renumbered. Decouples the audio engine + ffmpeg/Icecast into a standalone daemon (`ether-audiod`) so app updates/restarts/crashes don't drop on-air audio; the Electron app becomes an IPC client. Chosen as the "clean" path over scheduled-update and dual-instance-handoff alternatives. Phased: 0 spike → 1 extract engine + state → 2 app-as-client → 3 supervision/seamless-update → 4 hardening. Playback stays local-file + single Icecast stream (unchanged). |
 | 2026-05-26 | **Control Center Phase 2b COMPLETE — write-back channel proven bidirectionally on OV.** A category created in the dashboard applied on the install and reflected back. Write-path fix took v4.2.7 (the SSE command channel never connected on boot — checked for the license key once and never retried; now retries until present). Separately, GitHub's "Latest" badge was pinned to v4.1.7 (API-published releases don't auto-promote), which had been silently blocking electron-updater auto-update and forcing manual reinstalls — fixed by setting `make_latest` on v4.2.7 (now standard). Next: Phase 2c (clocks/dayparts), then the song library. |
