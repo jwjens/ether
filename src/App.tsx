@@ -3159,7 +3159,12 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             const deckMap: Record<string, any> = { A: deckA, B: deckB, C: deckC };
             const deck = deckMap[slot as string];
             const deckColors: Record<string, string> = { A: "#38bdf8", B: "#34d399", C: "#a78bfa", D: "#fb923c", E: "#e879f9", mic: "#ef4444" };
-            const deckColor = config?.color || deckColors[slot] || "#38bdf8";
+            // Rotation decks A/B/C always use the canonical slot color (A blue, B green, C purple)
+            // so the faders match the Up Next deck rows + library A/B/C buttons. config.color only
+            // carries the deck-TYPE color (every music deck is green), which can't tell A/B/C apart.
+            const deckColor = (slot === "A" || slot === "B" || slot === "C")
+              ? deckColors[slot]
+              : (config?.color || deckColors[slot] || "#38bdf8");
 
             // Music decks → ConsoleStrip (fader + VU)
             if (deckType === "music") {

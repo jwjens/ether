@@ -1,3 +1,12 @@
+## [4.3.12] — 2026-05-29
+
+### Fixed — fader colors match the rest of the app
+
+The vertical A/B/C deck faders showed the wrong colors (A appeared green, B blue) because they
+used the deck-*type* color — every music deck shares green — instead of the per-deck color. The
+rotation faders now always use the canonical A = blue, B = green, C = purple, matching the Up Next
+deck rows and the library A/B/C buttons.
+
 ## [4.3.11] — 2026-05-29
 
 A bigger, clearer on-air view: stacked deck rows up top, taller faders, fewer-but-bigger queue rows.
