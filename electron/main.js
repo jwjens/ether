@@ -1261,6 +1261,17 @@ app.on("before-quit", () => {
   // intentionally relaunching (update), in which case the expected-restart
   // sentinel is already written and we must NOT also write clean-exit.
   if (!_haExpectedRestart) writeHaSentinel(".ether-clean-exit");
+
+  // Deliberate close → STOP the broadcast. The out-of-process daemon is detached and outlives
+  // the app, so we must tell it to shut down. Previously only the HA watchdog did this (reading
+  // the clean-exit sentinel above); with HA OFF nothing read it, so the daemon kept playing after
+  // the user closed Ether. Gated: skip on an update relaunch (_haExpectedRestart → keep the daemon
+  // for gapless), and when a watchdog is supervising (_haWatchdogPid → leave its tested clean-exit
+  // handshake to it, avoiding a double-shutdown/respawn race). A crash never runs before-quit, so
+  // the daemon survives a crash (audio continues) as intended.
+  if (!_haExpectedRestart && AUDIO_DAEMON && !_haWatchdogPid) {
+    try { audiodClient.cmd("shutdown").catch(() => {}); } catch {}
+  }
 });
 
 // ── HA mutual supervision (Phase 2.5) ─────────────────────────

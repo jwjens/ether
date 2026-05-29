@@ -1,3 +1,14 @@
+## [4.3.4] — 2026-05-28
+
+Closing Ether now stops the broadcast.
+
+### Fixed — a deliberate close stops playout
+
+Closing Ether is a decision to go off air, so it now stops the broadcast. Previously the
+background audio engine could keep streaming after the window was closed. It still keeps playing
+straight through an **auto-update** or a **crash** — that's the whole point of the background
+engine — but a manual close shuts it down instead of leaving it on air in the background.
+
 ## [4.3.3] — 2026-05-28
 
 Gapless updates are back — with clean stream audio.
