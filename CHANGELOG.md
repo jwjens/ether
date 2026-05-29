@@ -1,3 +1,14 @@
+## [4.3.7] — 2026-05-29
+
+No more double-play when automation restarts.
+
+### Fixed — automation won't start a deck over one already on air
+
+After a gapless update/restart, the app could re-start automation and load a new song into an
+open deck *on top of* the track already playing — two songs at once. The engine now adopts
+whatever is already on air instead of starting a second deck. (Includes the 4.3.6 self-healing
+playout: idle decks stay cued and the queue stays topped up.)
+
 ## [4.3.6] — 2026-05-29
 
 Decks stay cued and the queue never runs dry.

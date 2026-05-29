@@ -303,6 +303,15 @@ class DaemonEngine {
   async start() {
     this.init();
     await this.refillIfNeeded();
+    // IDEMPOTENT: never start a deck over one that's already on air. If automationStart is
+    // re-issued while a deck is playing — e.g. the app reconnects after a gapless update/restart,
+    // or re-runs its startup automation — adopt the running playout instead of starting deck A on
+    // top of it (that caused the double-play overlap). _maintain() keeps the idle decks cued.
+    const order = ["A", "B", "C"];
+    const live = this._state();
+    const alreadyOnAir = order.some(d => this._deckState(d).status === "playing")
+      || (live && [live.deckA, live.deckB, live.deckC].some(d => d && d.status === "playing"));
+    if (alreadyOnAir) return true;
     // Load the first PLAYABLE track into A, skipping any missing-file items.
     let loaded = false, guard = 0;
     while (this.queue.length > 0 && guard++ < 100) {
