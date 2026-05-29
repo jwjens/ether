@@ -256,6 +256,7 @@ if (AUDIO_DAEMON_DESIRED) {
         _daemonStreamStates.set(m.stationId, m.state);
         let liveCount = 0; for (const s of _daemonStreamStates.values()) if (s === "live") liveCount++;
         sendToAllWindows("stream:status:global", { anyLive: liveCount > 0, liveCount });
+        sseAirstate(liveCount > 0, liveCount);
       }
     } catch {}
   });
@@ -3189,6 +3190,52 @@ async function poll(){
 poll();setInterval(poll,2000);
 </script></body></html>`;
 
+// ── Iris live-wire SSE (L1) ──────────────────────────────────
+// The renderer pushes consolidated state (now-playing + position + up-next) via the
+// 'iris:state' IPC channel; we relay it to connected Iris clients over /api/stream as
+// Server-Sent Events. The renderer is the only path-independent source of position and
+// the queue (the native engine state has neither), so the feed is renderer-driven.
+// Presence falls out of the connection: an open stream means Iris is connected.
+const sseClients = new Set();
+let latestIrisState = null;
+let streamAnyLive = false, streamLiveCount = 0;
+let _sseNpSig = "", _sseQSig = "";
+
+function sseWrite(res, event, data) {
+  try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+}
+function sseBroadcast(event, data) { for (const res of sseClients) sseWrite(res, event, data); }
+function buildIrisSnapshot() {
+  const base = latestIrisState || { playing: false, nowPlaying: null, decks: {}, upNext: [] };
+  return { ...base, airLive: streamAnyLive, liveCount: streamLiveCount };
+}
+function sseAirstate(anyLive, liveCount) {
+  streamAnyLive = !!anyLive; streamLiveCount = liveCount || 0;
+  sseBroadcast("airstate", { live: streamAnyLive, liveCount: streamLiveCount });
+}
+
+ipcMain.on("iris:state", (_evt, s) => {
+  latestIrisState = s;
+  irisLastSeen = Date.now();
+  if (!sseClients.size) return;
+  const np = s && s.nowPlaying ? s.nowPlaying : null;
+  // position — every tick, powers back-timing ("ending in N")
+  if (np) sseBroadcast("position", {
+    deck: np.deck, positionSec: np.positionSec || 0, durationSec: np.durationSec || 0,
+    remainingSec: Math.max(0, (np.durationSec || 0) - (np.positionSec || 0)),
+  });
+  // nowplaying — on change only
+  const npSig = np ? `${np.deck}|${np.title}|${np.artist}` : "none";
+  if (npSig !== _sseNpSig) { _sseNpSig = npSig; sseBroadcast("nowplaying", np); }
+  // queue — on change only
+  const upNext = (s && s.upNext) || [];
+  const qSig = upNext.map(q => q && q.title).join("|");
+  if (qSig !== _sseQSig) { _sseQSig = qSig; sseBroadcast("queue", { upNext }); }
+});
+
+// Keepalive comment so idle SSE connections aren't dropped by proxies/clients.
+setInterval(() => { for (const res of sseClients) { try { res.write(": keepalive\n\n"); } catch { /* gone */ } } }, 15000);
+
 // HTTP: REST API on port 3400 — serves Iris commands + public API
 // Accessible by external systems for automation, traffic integration, and monitoring.
 const irisHttpServer = require('http').createServer((req, res) => {
@@ -3354,8 +3401,28 @@ const irisHttpServer = require('http').createServer((req, res) => {
     return;
   }
 
+  // GET /api/stream — Iris live-wire SSE (L1). An open connection = Iris present.
+  if (req.method === 'GET' && url === '/api/stream') {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.write('retry: 3000\n\n');
+    sseClients.add(res);
+    irisConnected = true; irisLastSeen = Date.now();
+    sendToAllWindows('iris:connected', true);
+    sseWrite(res, 'snapshot', buildIrisSnapshot());
+    req.on('close', () => {
+      sseClients.delete(res);
+      if (sseClients.size === 0) { irisConnected = false; sendToAllWindows('iris:connected', false); }
+    });
+    return;
+  }
+
   res.statusCode = 404;
-  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id, /api/captions/iris' }));
+  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/stream, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id, /api/captions/iris' }));
 });
 
 irisHttpServer.on('error', (err) => {
@@ -3374,8 +3441,11 @@ irisHttpServer.listen(3400, '0.0.0.0', () => {
   startWatchdogMonitor();
 });
 
-// Mark Iris disconnected if no ping for 30 seconds
+// Mark Iris disconnected if no ping for 30 seconds. Skipped while an SSE stream is
+// open — the /api/stream connection (and its close handler) is the authority on
+// presence for live-wire clients; legacy /ping clients still rely on this timeout.
 setInterval(() => {
+  if (sseClients.size > 0) return;
   if (irisConnected && Date.now() - irisLastSeen > 30000) {
     irisConnected = false;
     sendToAllWindows('iris:connected', false);
@@ -4083,6 +4153,7 @@ function _emitGlobal() {
   }
   if (_rtmpStreamStatus.statusState === 'live') liveCount++;
   mainWindow.webContents.send('stream:status:global', { anyLive: liveCount > 0, liveCount });
+  sseAirstate(liveCount > 0, liveCount);
 }
 
 // Per-process RTMP status (video studio pipeline; lives alongside _rtmpProcess)

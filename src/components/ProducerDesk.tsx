@@ -392,6 +392,15 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
     return () => ether.iris.offCommand(h);
   }, [currentShowName]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Iris live-wire presence (L1): lit when Iris's SSE stream is connected ──
+  const [irisLive, setIrisLive] = useState(false);
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.iris?.onConnected) return;
+    const h = ether.iris.onConnected((v: boolean) => setIrisLive(!!v));
+    return () => ether.iris.offConnected?.(h);
+  }, []);
+
   // ── AI chat ──────────────────────────────────────────────────
   const sendMessage = async () => {
     if (!input.trim() || aiLoading) return;
@@ -525,6 +534,19 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
             )}
           </div>
         </div>
+
+        {/* Iris presence (L1 live-wire) */}
+        {!minimized && (
+          <div title={irisLive ? "Iris connected — live wire active" : "Iris offline"}
+            style={{ display: "flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 0,
+              background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", flexShrink: 0 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%",
+              background: irisLive ? "#34d399" : "rgba(255,255,255,0.18)",
+              boxShadow: irisLive ? "0 0 6px rgba(52,211,153,0.7)" : "none", transition: "all 0.2s" }} />
+            <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const,
+              color: irisLive ? "#34d399" : "rgba(255,255,255,0.25)" }}>Iris</span>
+          </div>
+        )}
 
         {/* Right controls */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
