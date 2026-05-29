@@ -1,3 +1,21 @@
+## [4.3.11] — 2026-05-29
+
+A bigger, clearer on-air view: stacked deck rows up top, taller faders, fewer-but-bigger queue rows.
+
+### Changed — Up Next shows the live A/B/C decks, WideOrbit-style
+
+The Up Next panel now leads with three stacked, color-coded deck rows (A cyan / B green / C purple) —
+the on-air track is badged ON AIR with a filling progress bar, and the two cued decks show what's
+loaded next. **Each deck row flashes during the final 10 seconds** so you know exactly when to talk
+over the outro. Below them, the queue rows are bigger with larger song-title, artist, and time fonts,
+so you see fewer at once but read them at a glance (scroll for the rest).
+
+### Changed — taller, color-coded faders
+
+The DECK A/B/C title strip above the mixer is gone; the faders now stretch to fill that space. Each
+deck fader carries a slim color-coded accent (no text label needed) that fills with the play progress,
+so you can still tell A from B from C at a glance. The per-row SEG button was removed from the queue.
+
 ## [4.3.10] — 2026-05-29
 
 The Song Library is now a push-up panel in the bottom row — reach it without leaving Live.

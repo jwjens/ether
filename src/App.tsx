@@ -3146,8 +3146,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         ["--strip-divider" as any]: "rgba(255,255,255,0.07)",
       } as React.CSSProperties}
     >
-      {/* Deck title strips — column-aligned above each ConsoleStrip */}
-      <ThreeSlotBar queueLen={queueLen} masterCollapsed={masterCollapsed} showCarts={showCarts} />
+      {/* The top DECK A/B/C title strip (ThreeSlotBar) was removed — deck identity now
+          lives in the Up Next deck rows + the color-coded fader accents, and the faders
+          grow to fill the reclaimed height. */}
       {(
         /* ── Console channel strips — the default deck view.
            Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */

@@ -18,6 +18,18 @@ function fmtDur(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function fmtSec(sec: number): string {
+  if (!sec || sec <= 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// A / B / C deck accent colors — must match the fader strips + ThreeSlotBar.
+const DECK_COLORS: Record<"A" | "B" | "C", string> = { A: "#38bdf8", B: "#34d399", C: "#a78bfa" };
+
+interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; }
+
 // Tiny artwork cache — exported so OnAirDeck can share it
 export const artCache: Record<string, string> = {};
 export async function fetchArt(title: string, artist: string): Promise<string | null> {
@@ -92,6 +104,47 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     update();
     return engine.on(update);
   }, [engine]);
+
+  // Live A/B/C deck snapshots for the stacked deck rows. engine.on fires on every state
+  // change; the 1s tick keeps the playing deck's countdown + progress fresh between events.
+  const [deckStates, setDeckStates] = useState<Record<"A" | "B" | "C", DeckRowState>>({
+    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "" },
+    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "" },
+    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "" },
+  });
+  useEffect(() => {
+    const pull = () => setDeckStates(prev => {
+      const next = { ...prev };
+      (["A", "B", "C"] as const).forEach(id => {
+        const s = engine.getDeck(id)?.getState?.();
+        next[id] = {
+          title: s?.title ?? "", artist: s?.artist ?? "", status: s?.status ?? "idle",
+          positionSec: s?.positionSec ?? 0, durationSec: s?.durationSec ?? 0,
+          filePath: (s as any)?.filePath ?? "",
+        };
+      });
+      return next;
+    });
+    pull();
+    const unsub = engine.on(pull);
+    const tick = setInterval(pull, 1000);
+    return () => { unsub(); clearInterval(tick); };
+  }, [engine]);
+
+  // Resolve artwork for the songs currently on the decks (local embedded art first, iTunes fallback).
+  useEffect(() => {
+    (["A", "B", "C"] as const).forEach(id => {
+      const s = deckStates[id];
+      if (!s.title) return;
+      const key = `${s.title}::${s.artist}`;
+      if (artUrls[key] !== undefined) return;
+      (async () => {
+        const local = await getLocalArt(s.filePath);
+        const url = local || await fetchArt(s.title, s.artist);
+        if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
+      })();
+    });
+  }, [deckStates.A.title, deckStates.B.title, deckStates.C.title]);
 
   useEffect(() => {
     queue.forEach(item => {
@@ -252,6 +305,70 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
         </div>
       </div>
 
+      {/* Flash keyframe — pulses the deck color over a row during the last 10s so a DJ
+          knows to start talking. Color-agnostic (the overlay's bg is set per-deck inline). */}
+      <style>{`@keyframes deck-row-flash { 0%,100% { opacity: 0.06; } 50% { opacity: 0.5; } }`}</style>
+
+      {/* ── Stacked A / B / C deck rows — color-coded, animated, flash in last 10s ── */}
+      <div style={{ flexShrink: 0, borderBottom: "2px solid rgba(255,255,255,0.07)" }}>
+        {(["A", "B", "C"] as const).map(id => {
+          const s = deckStates[id];
+          const color = DECK_COLORS[id];
+          const isPlaying = s.status === "playing";
+          const dur = s.durationSec || 0;
+          const pos = s.positionSec || 0;
+          const remaining = Math.max(0, dur - pos);
+          const isEndingSoon = isPlaying && dur > 0 && remaining <= 10;
+          const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
+          const hasTrack = !!s.title;
+          const timeStr = isPlaying ? `-${fmtSec(remaining)}` : (dur > 0 ? fmtSec(dur) : "");
+          const artKey = `${s.title}::${s.artist}`;
+          return (
+            <div key={id} style={{
+              position: "relative", overflow: "hidden", display: "flex", alignItems: "stretch",
+              height: 64, flexShrink: 0,
+              borderBottom: "1px solid rgba(255,255,255,0.05)",
+              background: isPlaying ? `${color}14` : "transparent",
+            }}>
+              {/* progress fill (playing deck) */}
+              {isPlaying && (
+                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.16, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
+              )}
+              {/* last-10s flash overlay */}
+              {isEndingSoon && (
+                <div style={{ position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none", animation: "deck-row-flash 0.85s ease-in-out infinite" }} />
+              )}
+              {/* color strip */}
+              <div style={{ width: 6, flexShrink: 0, background: color, zIndex: 1 }} />
+              {/* content */}
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, padding: "0 12px", minWidth: 0, zIndex: 1 }}>
+                <div style={{ width: 48, height: 48, flexShrink: 0, background: "var(--bg-tertiary)", border: `1px solid ${color}55`, overflow: "hidden" }}>
+                  {artUrls[artKey] && <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                    {isPlaying && (
+                      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", color: "#000", background: color, padding: "1px 5px", flexShrink: 0 }}>ON AIR</span>
+                    )}
+                    <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: hasTrack ? "var(--text-primary)" : "var(--text-tertiary)", fontStyle: hasTrack ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.title || "—"}
+                    </span>
+                  </div>
+                  {s.artist && (
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{s.artist}</div>
+                  )}
+                </div>
+                {timeStr && (
+                  <div style={{ fontSize: 20, fontFamily: "'DM Mono', monospace", fontWeight: 700, letterSpacing: "-0.02em", flexShrink: 0, color: isEndingSoon ? "#fbbf24" : (isPlaying ? "#fff" : "var(--text-tertiary)") }}>
+                    {timeStr}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {/* Queue list */}
       <div style={{ flex: 1, overflowY: "auto" as any }} onDragOver={handleCartDragOver} onDrop={handleCartDrop}>
         {queue.length < 3 ? (
@@ -303,9 +420,9 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               <div style={{ width: 4, flexShrink: 0, background: color, opacity: 0.75 }} />
 
               {/* Main content */}
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, padding: "10px 10px 10px 8px", minWidth: 0 }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 9, padding: "12px 10px 12px 8px", minWidth: 0 }}>
                 {/* Album art thumbnail */}
-                <div style={{ width: i === 0 ? 48 : 36, height: i === 0 ? 48 : 36, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+                <div style={{ width: i === 0 ? 52 : 44, height: i === 0 ? 52 : 44, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
                   {artUrls[artKey] && (
                     <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   )}
@@ -328,20 +445,20 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                   <div
                     ref={i === 0 ? topTitleRef : undefined}
                     style={{
-                      fontSize: i === 0 ? 16 : 11, fontWeight: 600, color: "var(--text-primary)",
+                      fontSize: i === 0 ? 17 : 14, fontWeight: 600, color: "var(--text-primary)",
                       overflow: i === 0 && topScrollPx > 0 ? "visible" : "hidden",
                       textOverflow: i === 0 && topScrollPx > 0 ? undefined : "ellipsis",
                       whiteSpace: "nowrap" as any, letterSpacing: "-0.01em",
                       ...(i === 0 && topScrollPx > 0 ? { animation: "nextup-title-scroll 9s ease-in-out infinite", "--scroll-x": `-${topScrollPx}px` } : {}),
                     } as React.CSSProperties}
                   >{item.title}</div>
-                  <div style={{ fontSize: 9, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{item.artist}</div>
+                  <div style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, marginTop: 1 }}>{item.artist}</div>
                 </div>
 
-                {/* Right side: duration + BPM badge + remove */}
+                {/* Right side: duration + BPM badge */}
                 <div style={{ display: "flex", flexDirection: "column" as any, alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
                   {ms > 0 && (
-                    <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)" }}>{fmtDur(ms)}</span>
+                    <span style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)", letterSpacing: "-0.02em" }}>{fmtDur(ms)}</span>
                   )}
                   {(item as any).bpm > 0 && (
                     <span style={{ fontSize: 7, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "0 3px", letterSpacing: "0.04em" }}>
@@ -349,28 +466,6 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                     </span>
                   )}
                 </div>
-
-                {/* Chain type badge — click to cycle SEG/STOP */}
-                <button
-                  onMouseDown={e => e.stopPropagation()}
-                  onClick={e => {
-                    e.stopPropagation();
-                    const cur = (item as any).chainType || "segue";
-                    const next = cur === "segue" ? "stop" : "segue";
-                    engine.setQueueItemChainType(engineIdx, next);
-                    onQueueChange();
-                  }}
-                  title={((item as any).chainType || "segue") === "segue" ? "Segue — auto-advance to next. Click to change to Stop." : "Stop — wait for manual trigger. Click to change to Segue."}
-                  style={{
-                    fontSize: 7, fontWeight: 800, letterSpacing: "0.08em",
-                    padding: "2px 5px", borderRadius: 0, cursor: "pointer", flexShrink: 0,
-                    background: ((item as any).chainType || "segue") === "stop" ? "rgba(239,68,68,0.15)" : "rgba(52,211,153,0.10)",
-                    color: ((item as any).chainType || "segue") === "stop" ? "var(--accent-red)" : "var(--accent-green)",
-                    border: `1px solid ${((item as any).chainType || "segue") === "stop" ? "rgba(239,68,68,0.3)" : "rgba(52,211,153,0.2)"}`,
-                  }}
-                >
-                  {((item as any).chainType || "segue") === "stop" ? "STOP" : "SEG"}
-                </button>
 
                 {/* Remove */}
                 <button

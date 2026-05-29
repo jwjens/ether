@@ -221,8 +221,8 @@ export default function ConsoleStrip({
       userSelect: "none", overflow: "hidden",
     }}>
 
-      {/* ── Channel label — hidden when ThreeSlotBar provides it externally ── */}
-      {!hideLabel && (
+      {/* ── Channel label ── */}
+      {!hideLabel ? (
         <div style={{
           width: "100%", padding: "8px 0",
           background: isOn && isPlaying ? `${color}28` : "var(--strip-label-bg, transparent)",
@@ -246,7 +246,22 @@ export default function ConsoleStrip({
             transition: "color 0.2s",
           }}>{label}</span>
         </div>
-      )}
+      ) : deckId ? (
+        // Label hidden (deck identity now lives in the Up Next deck rows) — but keep a slim
+        // color-coded accent so operators still know which fader is A/B/C, with the play
+        // progress riding across it.
+        <div style={{
+          width: "100%", height: 7, position: "relative", overflow: "hidden",
+          background: isOn && isPlaying ? `${color}33` : `${color}1a`,
+          borderBottom: `2px solid ${color}`,
+          transition: "background 0.3s",
+        }}>
+          <div ref={fillRef} style={{
+            position: "absolute", top: 0, left: 0, bottom: 0,
+            background: color, opacity: 0.85, zIndex: 0, pointerEvents: "none",
+          }} />
+        </div>
+      ) : null}
 
       {/* ── Main area: fader column + VU meter ── */}
       <div ref={faderAreaRef} style={{
