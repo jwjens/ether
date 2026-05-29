@@ -109,6 +109,7 @@ class DaemonEngine {
     this.checkEnd("B", pos.B, dur.B, prev.B, rustEnded.B);
     this.checkEnd("C", pos.C, dur.C, prev.C, rustEnded.C);
     this.processingEnd = false;
+    this._maintain();
   }
 
   _changed(prev, next) {
@@ -120,6 +121,22 @@ class DaemonEngine {
     const st = this._deckState(id);
     if (this._changed(this.lastFired[id], st)) this.emit("deck", { stationId: this.stationId, deck: id, state: st });
     this.lastFired[id] = st;
+  }
+
+  // Self-heal each poll tick: keep the queue topped up AND the two idle decks pre-loaded, so a
+  // transient empty queue (e.g. right after a daemon respawn) can't cascade into blank decks, no
+  // crossfade, or a progress bar with nothing to fill against. preload sets durationSec (→ the bar
+  // fills) and marks the deck ready (→ handleRotate crossfades instead of the bare load-next path).
+  // The deckReady/not-playing guards + preload's own idempotent guard keep this off handleRotate's toes.
+  _maintain() {
+    if (this.continuous && this.queue.length < 5) this.refillIfNeeded();
+    const order = ["A", "B", "C"];
+    const playing = order.find(d => this._deckState(d).status === "playing");
+    if (!playing || this.queue.length === 0) return;
+    const i = order.indexOf(playing);
+    const n1 = order[(i + 1) % 3], n2 = order[(i + 2) % 3];
+    if (!this.deckReady.has(n1) && this._deckState(n1).status !== "playing") this.preload(n1, 0);
+    if (this.queue.length > 1 && !this.deckReady.has(n2) && this._deckState(n2).status !== "playing") this.preload(n2, 1);
   }
 
   checkEnd(deckId, pos, dur, prevStatus, backendEnded = false) {
@@ -200,6 +217,7 @@ class DaemonEngine {
   }
 
   async preload(deckId, queueIndex = 0) {
+    if (this.deckReady.has(deckId)) return;   // already cued — idempotent (safe to call from _maintain + handleRotate)
     const st = this._deckState(deckId);
     if (st.status === "playing" || st.status === "paused") return;
     // Load a playable item at/after queueIndex; drop any unplayable (missing-file) items we hit so
@@ -215,10 +233,17 @@ class DaemonEngine {
   }
 
   async refillIfNeeded() {
-    if (this.queue.length === 0 && this.continuous) {
-      const fill = loggen.fillQueue(this.db, this.stationId, 20);
-      // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
-      this.queue.push(...this._playable(fill.items));
+    // Refill BEFORE the queue hits 0 (low watermark), so it never sits empty and starves preload.
+    if (!this.continuous || this.queue.length >= 5) return;
+    // Throttle so we don't hammer loggen every 250ms tick when the schedule genuinely returns nothing.
+    const now = Date.now();
+    if (now - (this._lastRefillAt || 0) < 2000) return;
+    this._lastRefillAt = now;
+    const fill = loggen.fillQueue(this.db, this.stationId, 20);
+    // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
+    const items = this._playable(fill.items);
+    if (items.length) {
+      this.queue.push(...items);
       this.emit("queue", { stationId: this.stationId, source: fill.source, items: this.queue });
     }
   }

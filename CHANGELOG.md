@@ -1,3 +1,15 @@
+## [4.3.6] — 2026-05-29
+
+Decks stay cued and the queue never runs dry.
+
+### Fixed — automation keeps the next tracks pre-loaded
+
+The background engine could end up with the upcoming decks blank and the play queue empty — so
+no songs pre-loaded into the next decks, no crossfade, and the next-track progress bar had no
+duration to fill against (most likely right after a restart). The engine now continuously keeps
+the queue topped up and the two idle decks pre-loaded with the upcoming songs, so each deck always
+shows what's next, the progress bar fills, and tracks roll A→B→C without gaps.
+
 ## [4.3.5] — 2026-05-28
 
 Automation no longer stalls on a missing or unreadable track.
