@@ -53,11 +53,11 @@ function appVersion() {
   return "0";
 }
 
-// OPT-IN (default OFF). The in-process engine is the shipped default again — the out-of-process
-// daemon introduced a stream-audio crackle + on-air-status regression on live stations, so it's
-// gated behind ETHER_AUDIO_DAEMON=1 until the audio path is root-caused with real listening tests.
-// Set ETHER_AUDIO_DAEMON=1 to opt into the daemon (gapless updates); unset/anything else = legacy.
-function isEnabled() { return process.env.ETHER_AUDIO_DAEMON === "1"; }
+// DEFAULT ON — the out-of-process daemon (gapless updates) is the shipped default. The earlier
+// live-stream crackle (wall-clock zero-fill in the native program-bus drain) and on-air-status
+// regression are FIXED, so the daemon is default again. ETHER_AUDIO_DAEMON=0 forces the legacy
+// in-process engine (rollback); main.js falls back to in-process if the daemon can't connect.
+function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
 
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();

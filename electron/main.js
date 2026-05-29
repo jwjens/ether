@@ -195,11 +195,11 @@ const VITE_DEV_URL = "http://127.0.0.1:1420";
 //                          on this, so a fallback transparently uses the in-process engine.
 // Main always loads the addon — for stateless utilities AND the in-process fallback path. The
 // engine is NOT inited here; setupAudioBackend() inits it only when NOT on the daemon.
-// DEFAULT OFF — opt-in via ETHER_AUDIO_DAEMON=1. The in-process engine is the shipped default
-// again: the daemon caused a live-stream crackle + an on-air-status regression, so it's gated
-// until the audio path is root-caused with real listening tests. When opted in, setupAudioBackend
-// still falls back to in-process if the daemon can't connect (no dead air).
-const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON === "1";
+// DEFAULT ON — the out-of-process daemon (gapless updates) is the shipped default. The earlier
+// live-stream crackle (program-bus drain zero-fill) and on-air-status regression are FIXED.
+// ETHER_AUDIO_DAEMON=0 forces the legacy in-process engine. Safe to default on: setupAudioBackend
+// falls back to the in-process engine automatically if the daemon can't connect (no dead air).
+const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
 let AUDIO_DAEMON = false;
 let audio;
 try {

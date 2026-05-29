@@ -112,7 +112,7 @@ function etherSpawnSpec() {
 // app.asar.unpacked (packaged) / repo root (dev) and audiod/ sits beside it — no asar fixup.
 // Default ON, all desktop platforms; =0 rolls back to in-process. Disabled under the test
 // harness (WATCHDOG_TEST_CMD) since the Ether-supervision tests don't exercise the daemon.
-const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON === '1' && !process.env.WATCHDOG_TEST_CMD;
+const DAEMON_ENABLED = process.env.ETHER_AUDIO_DAEMON !== '0' && !process.env.WATCHDOG_TEST_CMD;
 // Same endpoint as ether-audiod.js + the client: Windows named pipe, else per-user Unix socket.
 const DAEMON_PIPE    = process.env.ETHER_AUDIOD_PIPE
   || (process.platform === 'win32' ? '\\\\.\\pipe\\ether-audiod' : path.join(os.tmpdir(), `ether-audiod-${(process.getuid && process.getuid()) || 0}.sock`));

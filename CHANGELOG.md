@@ -1,3 +1,18 @@
+## [4.3.3] — 2026-05-28
+
+Gapless updates are back — with clean stream audio.
+
+### Fixed — stream crackle eliminated; background engine re-enabled
+
+The low crackle that affected the live stream is fixed. Its cause was in the broadcast
+encoder feed: it was paced by the system clock and inserted tiny bits of silence whenever it
+ran ahead of the audio — a steady trickle of clicks. The encoder is now paced by the audio
+itself, so the stream is clean.
+
+With that resolved, the **background audio engine is the default again**, so your station keeps
+playing through restarts and auto-updates. The ON-AIR indicator also reliably tracks the live
+stream. Set `ETHER_AUDIO_DAEMON=0` to force the legacy in-process engine if ever needed.
+
 ## [4.3.2] — 2026-05-28
 
 Cleaner live audio and a reliable ON-AIR indicator.
