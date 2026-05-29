@@ -1,4 +1,4 @@
-## [4.3.9] — 2026-05-29
+## [4.3.10] — 2026-05-29
 
 The Song Library is now a push-up panel in the bottom row — reach it without leaving Live.
 
@@ -9,6 +9,13 @@ the decks (the on-air queue keeps playing untouched), so you can search, filter,
 metadata, and load tracks straight to a deck or the queue without switching off the Live view.
 Drag the divider to size it, click LIBRARY again to tuck it away. Same library, same controls as
 the full-screen page — just one click from the console.
+
+### Fixed — release pipeline no longer races itself
+
+The CI publish step could intermittently fail with a 422 ("release already exists") when the
+Windows/Mac/Linux builds raced to create the same GitHub release. The matrix now publishes one
+platform at a time so the first run creates the release and the rest upload into it. (No app
+behavior change — this only makes releases land reliably. v4.3.9 was lost to this race.)
 
 ## [4.3.8] — 2026-05-29
 

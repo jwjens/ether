@@ -12,6 +12,13 @@ permissions:
 jobs:
   build:
     strategy:
+      # Publish is racy: every matrix job runs `electron-builder --publish always`,
+      # and each tries to POST /releases for the tag. Whoever wins creates it; the
+      # others get 422 "already_exists". Serialize the matrix so the first job creates
+      # the release and the rest find it + upload into it (the same path re-runs use).
+      max-parallel: 1
+      # Don't let one platform's failure cancel the others mid-publish.
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
