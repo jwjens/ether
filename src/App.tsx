@@ -519,7 +519,7 @@ export default function App() {
   const [showCarts, setShowCarts] = useState(false);
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
-  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks">(null);
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library">(null);
   // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
   // operator can dump before audio airs; DUMP becomes active once the buffer is full.
   const DELAY_SEC = 8;
@@ -1475,6 +1475,24 @@ export default function App() {
   useEffect(() => {
     const push = async () => {
       const payload = buildNowPlayingPayload(engine, stationName, stationUuid);
+      // Iris live wire (L1): push consolidated state to main every heartbeat so the
+      // assistant producer has fresh now-playing + back-time + up-next. Fires every
+      // tick (position is excluded from the backend dedup signature below), so Iris's
+      // back-timing stays current. Reuses this payload — the only path-independent
+      // source of position/duration/queue is the renderer engine.
+      try {
+        (window as any).ether?.emit?.("iris:state", {
+          stationId,
+          playing: payload.playing,
+          nowPlaying: payload.playing
+            ? { deck: payload.deck, title: payload.title, artist: payload.artist,
+                positionSec: payload.position, durationSec: payload.duration }
+            : null,
+          decks: payload.decks,
+          upNext: payload.queue,
+          ts: Date.now(),
+        });
+      } catch { /* main not ready / not in electron — ignore */ }
       // Embedded cover art of the on-air file → R2 public (primary listener artwork).
       // Cached URL returns immediately, or null while the upload is in flight; it's part
       // of the signature so the next heartbeat re-POSTs once the art is ready.
@@ -1881,6 +1899,7 @@ export default function App() {
                   xfadeActive={xfadeActive}
                   handleXfade={handleXfade}
                   onOpenCarts={() => setPanel("cartwall")}
+                  libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
                 />
               )}
             </div>
@@ -2099,6 +2118,7 @@ export default function App() {
           { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
           { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
           { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
+          { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
@@ -2765,12 +2785,12 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts, libraryDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
-  progPanel: null | "shows" | "categories" | "clocks";
+  progPanel: null | "shows" | "categories" | "clocks" | "library";
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
@@ -2789,6 +2809,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   xfadeActive: boolean;
   handleXfade: () => void;
   onOpenCarts: () => void;
+  libraryDock: JSX.Element;
 }) {
   const engine = useAudioEngine();
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
@@ -3270,9 +3291,13 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             </div>
             {/* Dock body — user-resizable height */}
             <div style={{ flexShrink: 0, height: dockHeight, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-secondary)", borderTop: progPanel ? "2px solid var(--accent-blue)" : "none" }}>
-              {progPanel
-                ? <Scheduler defaultTab={progPanel} embedded />
-                : <BoutiqueCartWall deckSlot="C" variant="strip" />}
+              {progPanel === "library"
+                // LibraryPanel relies on its parent for scrolling (like the full-screen view),
+                // so wrap it in a scroll container sized to the dock.
+                ? <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 16px" }}>{libraryDock}</div>
+                : progPanel
+                  ? <Scheduler defaultTab={progPanel} embedded />
+                  : <BoutiqueCartWall deckSlot="C" variant="strip" />}
             </div>
           </>
         );

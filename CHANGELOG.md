@@ -1,3 +1,15 @@
+## [4.3.9] — 2026-05-29
+
+The Song Library is now a push-up panel in the bottom row — reach it without leaving Live.
+
+### Added — LIBRARY push-up panel next to CATEGORIES
+
+The bottom row gains a **LIBRARY** tab beside CATEGORIES. It slides the full Song Library up over
+the decks (the on-air queue keeps playing untouched), so you can search, filter, import, edit
+metadata, and load tracks straight to a deck or the queue without switching off the Live view.
+Drag the divider to size it, click LIBRARY again to tuck it away. Same library, same controls as
+the full-screen page — just one click from the console.
+
 ## [4.3.8] — 2026-05-29
 
 Deck displays match what's actually on air — on the desktop and the web dashboard.
