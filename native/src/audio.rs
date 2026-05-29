@@ -1046,85 +1046,120 @@ fn drain_program_bus(
                 let mut resample_pos: f64 = 0.0;
 
                 loop {
-                    let elapsed_secs = wall_start.elapsed().as_secs_f64();
-                    let target_bytes = (elapsed_secs * TARGET_BYTES_PER_SEC) as u64;
+                    let target = delay.target_samples.load(Ordering::Relaxed);
 
-                    // CRITICAL: align deficit to a whole stereo FRAME (8 bytes = 2 f32).
-                    // Windows sleep granularity means elapsed_secs is never exactly N×5ms, so the
-                    // raw deficit can be a non-multiple; an unaligned write permanently misaligns
-                    // the f32le stream (static). Frame alignment also keeps L/R interleave correct
-                    // for the rebuild resampler below.
-                    let deficit = {
-                        let raw = target_bytes.saturating_sub(bytes_written) as usize;
-                        (raw / 8) * 8
-                    };
+                    if target == 0 {
+                        // ── DELAY OFF — producer-paced passthrough (single master clock) ─────
+                        // The cpal output callback (the audio device clock) feeds the ring; here we
+                        // write exactly what the ring delivers, so the stream is paced by the
+                        // device — there is no second (wall) clock to drift against and NO
+                        // zero-fill. The old path demanded a fixed 352800 B/s by wall clock and
+                        // silence-filled any shortfall; under the daemon's scheduling jitter the
+                        // ring underran constantly, so those silence inserts became a steady
+                        // crackle. ffmpeg's input buffer + Icecast backpressure (write_all blocks)
+                        // absorb jitter and pace us to real time. The producer always pushes whole
+                        // stereo frames, so `popped` is even and L/R interleave stays aligned.
+                        if !delay_fifo.is_empty() { delay_fifo.clear(); }
+                        resample_pos = 0.0;
+                        delay.dump_flag.swap(false, Ordering::Relaxed); // nothing buffered to dump here
+                        delay.buffered_samples.store(0, Ordering::Relaxed);
 
-                    if deficit > 0 {
-                        let max_samples = deficit / 4;
-
-                        // Pull whatever live program audio is available into the delay FIFO.
                         sample_buf.clear();
-                        sample_buf.resize(max_samples, 0.0f32);
+                        sample_buf.resize(8820, 0.0f32); // up to ~50 ms (2205 stereo frames)
                         let popped = cons.pop_slice(&mut sample_buf);
-
-                        // DUMP — discard the buffered (not-yet-aired) audio and splice to live.
-                        if delay.dump_flag.swap(false, Ordering::Relaxed) {
-                            delay_fifo.clear();
-                            resample_pos = 0.0;
+                        if popped > 0 {
+                            out_bytes.clear();
+                            for &s in &sample_buf[..popped] { out_bytes.extend_from_slice(&s.to_le_bytes()); }
+                            if stream.write_all(&out_bytes).is_err() {
+                                STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                                break;
+                            }
+                            let n = out_bytes.len() as u64;
+                            bytes_written        += n; // keep the wall clock coherent if delay is armed later
+                            real_bytes_since_log += n;
+                            DRAIN_BYTES_TOTAL.fetch_add(n, Ordering::Relaxed);
                         }
-                        for &s in &sample_buf[..popped] { delay_fifo.push_back(s); }
-                        while delay_fifo.len() > DELAY_FIFO_CAP { delay_fifo.pop_front(); } // safety
+                    } else {
+                        // ── DELAY ARMED — wall-clock-paced rebuild (unchanged) ───────────────
+                        let elapsed_secs = wall_start.elapsed().as_secs_f64();
+                        let target_bytes = (elapsed_secs * TARGET_BYTES_PER_SEC) as u64;
 
-                        let target      = delay.target_samples.load(Ordering::Relaxed);
-                        let want_frames = max_samples / 2; // deficit is frame-aligned → even
-
-                        // Consume ratio = source frames consumed per emitted frame.
-                        //   • delay off, or at/above target → 1.0 (exact passthrough).
-                        //   • below target → rebuild, but ONLY stretch through near-silence
-                        //     (consume <1.0) so the delay grows imperceptibly; passthrough on
-                        //     audible audio so nothing is pitch-shifted.
-                        let ratio: f64 = if target == 0 || delay_fifo.len() >= target {
-                            1.0
-                        } else {
-                            let probe = max_samples.min(delay_fifo.len());
-                            let mut peak = 0.0f32;
-                            for i in 0..probe { let v = delay_fifo[i].abs(); if v > peak { peak = v; } }
-                            if peak < 0.02 { 0.80 } else { 1.0 }
+                        // CRITICAL: align deficit to a whole stereo FRAME (8 bytes = 2 f32).
+                        // Windows sleep granularity means elapsed_secs is never exactly N×5ms, so the
+                        // raw deficit can be a non-multiple; an unaligned write permanently misaligns
+                        // the f32le stream (static). Frame alignment also keeps L/R interleave correct
+                        // for the rebuild resampler below.
+                        let deficit = {
+                            let raw = target_bytes.saturating_sub(bytes_written) as usize;
+                            (raw / 8) * 8
                         };
 
-                        out_bytes.clear();
-                        let avail_frames = delay_fifo.len() / 2;
-                        for _ in 0..want_frames {
-                            let idx = resample_pos.floor() as usize;
-                            if idx + 1 >= avail_frames { break; } // underrun → silence-fill remainder
-                            let frac = (resample_pos - idx as f64) as f32;
-                            let l = delay_fifo[idx * 2]     + (delay_fifo[idx * 2 + 2] - delay_fifo[idx * 2])     * frac;
-                            let r = delay_fifo[idx * 2 + 1] + (delay_fifo[idx * 2 + 3] - delay_fifo[idx * 2 + 1]) * frac;
-                            out_bytes.extend_from_slice(&l.to_le_bytes());
-                            out_bytes.extend_from_slice(&r.to_le_bytes());
-                            resample_pos += ratio;
+                        if deficit > 0 {
+                            let max_samples = deficit / 4;
+
+                            // Pull whatever live program audio is available into the delay FIFO.
+                            sample_buf.clear();
+                            sample_buf.resize(max_samples, 0.0f32);
+                            let popped = cons.pop_slice(&mut sample_buf);
+
+                            // DUMP — discard the buffered (not-yet-aired) audio and splice to live.
+                            if delay.dump_flag.swap(false, Ordering::Relaxed) {
+                                delay_fifo.clear();
+                                resample_pos = 0.0;
+                            }
+                            for &s in &sample_buf[..popped] { delay_fifo.push_back(s); }
+                            while delay_fifo.len() > DELAY_FIFO_CAP { delay_fifo.pop_front(); } // safety
+
+                            let want_frames = max_samples / 2; // deficit is frame-aligned → even
+
+                            // Consume ratio = source frames consumed per emitted frame.
+                            //   • at/above target → 1.0 (exact passthrough).
+                            //   • below target → rebuild, but ONLY stretch through near-silence
+                            //     (consume <1.0) so the delay grows imperceptibly; passthrough on
+                            //     audible audio so nothing is pitch-shifted.
+                            let ratio: f64 = if delay_fifo.len() >= target {
+                                1.0
+                            } else {
+                                let probe = max_samples.min(delay_fifo.len());
+                                let mut peak = 0.0f32;
+                                for i in 0..probe { let v = delay_fifo[i].abs(); if v > peak { peak = v; } }
+                                if peak < 0.02 { 0.80 } else { 1.0 }
+                            };
+
+                            out_bytes.clear();
+                            let avail_frames = delay_fifo.len() / 2;
+                            for _ in 0..want_frames {
+                                let idx = resample_pos.floor() as usize;
+                                if idx + 1 >= avail_frames { break; } // underrun → silence-fill remainder
+                                let frac = (resample_pos - idx as f64) as f32;
+                                let l = delay_fifo[idx * 2]     + (delay_fifo[idx * 2 + 2] - delay_fifo[idx * 2])     * frac;
+                                let r = delay_fifo[idx * 2 + 1] + (delay_fifo[idx * 2 + 3] - delay_fifo[idx * 2 + 1]) * frac;
+                                out_bytes.extend_from_slice(&l.to_le_bytes());
+                                out_bytes.extend_from_slice(&r.to_le_bytes());
+                                resample_pos += ratio;
+                            }
+                            // Pop the whole frames we've fully consumed; carry the fraction.
+                            let consume = (resample_pos.floor() as usize).min(delay_fifo.len() / 2);
+                            for _ in 0..(consume * 2) { delay_fifo.pop_front(); }
+                            resample_pos -= consume as f64;
+
+                            let real_byte_count = out_bytes.len();
+                            out_bytes.resize(deficit, 0u8); // zero-fill remainder (rebuild underrun)
+                            let zero_byte_count = deficit.saturating_sub(real_byte_count);
+
+                            delay.buffered_samples.store(delay_fifo.len(), Ordering::Relaxed);
+
+                            if stream.write_all(&out_bytes).is_err() {
+                                STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                                break;
+                            }
+
+                            bytes_written += deficit as u64;
+                            real_bytes_since_log += real_byte_count as u64;
+                            zero_bytes_since_log += zero_byte_count as u64;
+                            DRAIN_BYTES_TOTAL.fetch_add(deficit as u64, Ordering::Relaxed);
+                            DRAIN_ZERO_FILL_BYTES.fetch_add(zero_byte_count as u64, Ordering::Relaxed);
                         }
-                        // Pop the whole frames we've fully consumed; carry the fraction.
-                        let consume = (resample_pos.floor() as usize).min(delay_fifo.len() / 2);
-                        for _ in 0..(consume * 2) { delay_fifo.pop_front(); }
-                        resample_pos -= consume as f64;
-
-                        let real_byte_count = out_bytes.len();
-                        out_bytes.resize(deficit, 0u8); // zero-fill remainder (rebuild underrun)
-                        let zero_byte_count = deficit.saturating_sub(real_byte_count);
-
-                        delay.buffered_samples.store(delay_fifo.len(), Ordering::Relaxed);
-
-                        if stream.write_all(&out_bytes).is_err() {
-                            STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
-                            break;
-                        }
-
-                        bytes_written += deficit as u64;
-                        real_bytes_since_log += real_byte_count as u64;
-                        zero_bytes_since_log += zero_byte_count as u64;
-                        DRAIN_BYTES_TOTAL.fetch_add(deficit as u64, Ordering::Relaxed);
-                        DRAIN_ZERO_FILL_BYTES.fetch_add(zero_byte_count as u64, Ordering::Relaxed);
                     }
 
                     // Log every 5 seconds
