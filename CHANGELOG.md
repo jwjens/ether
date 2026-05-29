@@ -1,3 +1,14 @@
+## [4.3.5] — 2026-05-28
+
+Automation no longer stalls on a missing or unreadable track.
+
+### Fixed — auto-advance skips dead files instead of stopping
+
+If a scheduled track's file was missing (deleted after it was scheduled) or unreadable, the
+background engine could get stuck "playing" the dead track and stop advancing decks — silence on
+air. The engine now verifies each track is actually playable before airing it and skips any it
+can't read, moving straight to the next one, so the rotation keeps going.
+
 ## [4.3.4] — 2026-05-28
 
 Closing Ether now stops the broadcast.

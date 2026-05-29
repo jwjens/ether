@@ -14,6 +14,7 @@
 //   • Cart channel + crossfade/EQ live in the addon and are unchanged.
 
 const path = require("path");
+const fs = require("fs");
 const crypto = require("crypto");
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const loggen = require("./loggen");
@@ -180,10 +181,16 @@ class DaemonEngine {
         const live = this._state();
         if (live) { const ld = deckId === "A" ? live.deckA : deckId === "B" ? live.deckB : live.deckC; if (ld?.status === "playing") return; }
         await this.refillIfNeeded();
-        if (this.queue.length === 0) return;
-        const next = this.dequeue();
-        this.deckChainType[deckId] = next.chainType || "segue";
-        this.loadToDeck(deckId, next);
+        // Dequeue + load the next PLAYABLE track, discarding unplayable (missing-file) ones so a
+        // dead track never stalls the rotation. Bounded so an all-missing queue can't spin forever.
+        let loaded = false, guard = 0;
+        while (this.queue.length > 0 && guard++ < 100) {
+          const next = this.dequeue();
+          if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; loaded = true; break; }
+          this.emit("error", { stationId: this.stationId, where: "handleLoadNext", error: "skipped unplayable: " + (next.filePath || "") });
+          if (this.queue.length === 0) await this.refillIfNeeded();
+        }
+        if (!loaded) return;
         this._play(deckId);
         this._setDeck(deckId, { status: "playing", positionSec: 0 });
         this.endTriggered.delete(deckId);
@@ -193,18 +200,25 @@ class DaemonEngine {
   }
 
   async preload(deckId, queueIndex = 0) {
-    if (this.queue.length <= queueIndex) return;
     const st = this._deckState(deckId);
     if (st.status === "playing" || st.status === "paused") return;
-    const next = this.queue[queueIndex];
-    try { this.deckChainType[deckId] = next.chainType || "segue"; this.loadToDeck(deckId, next); this.deckReady.add(deckId); }
-    catch (e) { this.emit("error", { stationId: this.stationId, where: "preload", error: String(e) }); }
+    // Load a playable item at/after queueIndex; drop any unplayable (missing-file) items we hit so
+    // they never become a stuck "playing" deck. Only mark the deck ready on a successful load.
+    let guard = 0;
+    while (this.queue.length > queueIndex && guard++ < 100) {
+      const next = this.queue[queueIndex];
+      if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); return; }
+      this.queue.splice(queueIndex, 1);
+      this.emit("queue", { stationId: this.stationId, items: this.queue });
+      this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
+    }
   }
 
   async refillIfNeeded() {
     if (this.queue.length === 0 && this.continuous) {
       const fill = loggen.fillQueue(this.db, this.stationId, 20);
-      this.queue.push(...fill.items);
+      // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
+      this.queue.push(...this._playable(fill.items));
       this.emit("queue", { stationId: this.stationId, source: fill.source, items: this.queue });
     }
   }
@@ -216,13 +230,33 @@ class DaemonEngine {
     return item;
   }
 
+  // True if a queue item's file is actually PLAYABLE: a remote/stream URL (can't probe, trust it),
+  // or a local file that exists AND the decoder can read (getFileDuration > 0). The duration probe
+  // catches both missing files (scheduled-then-deleted) and corrupt/unsupported ones — the addon's
+  // audioLoad does NOT reliably report those (it logs "reload failed — skipping" but still returns
+  // success), so a dead deck would otherwise get stuck "playing" a non-existent source = dead air.
+  _fileOk(fp) {
+    if (!fp) return false;
+    if (/^[a-z]+:\/\//i.test(fp)) return true;
+    return fs.existsSync(fp) && this._dur(fp) > 0;
+  }
+  _playable(items) { return (items || []).filter(it => it && this._fileOk(it.filePath)); }
+
+  // Load a track into a deck. Returns TRUE on success, FALSE if the file is missing or the addon
+  // can't load it (corrupt/unsupported) — callers must SKIP a false (never play a dead deck, or
+  // the rotation stalls on a non-existent source = dead air). The old version always proceeded.
   loadToDeck(id, item) {
-    this._load(id, item.filePath, item.title, item.artist, item.gainDb);
+    if (!item || !this._fileOk(item.filePath)) return false;
+    let ok;
+    try { ok = this._load(id, item.filePath, item.title, item.artist, item.gainDb); }
+    catch (e) { this.emit("error", { stationId: this.stationId, where: "loadToDeck", error: String(e) }); return false; }
+    if (ok === false) return false;
     this._setDeck(id, { title: item.title || "", artist: item.artist || "", filePath: item.filePath, positionSec: 0, durationSec: (item.durationMs ?? 0) / 1000, status: "idle", volume: 1 });
     this.endTriggered.delete(id);
     const d = this._dur(item.filePath);
     if (d > 0) this._setDeck(id, { durationSec: d });
     this._maybeEmitDeck(id);
+    return true;
   }
 
   _fireStart(deckId) {
@@ -235,8 +269,8 @@ class DaemonEngine {
   }
 
   // ── operator/queue API (called from daemon command handlers) ──
-  addToQueue(items) { this.queue.push(...items); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
-  replaceQueue(items) { this.queue = [...items]; this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  addToQueue(items) { this.queue.push(...this._playable(items)); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  replaceQueue(items) { this.queue = this._playable(items); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   clearQueue() { this.queue = []; this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   getQueue() { return [...this.queue]; }
 
@@ -244,10 +278,15 @@ class DaemonEngine {
   async start() {
     this.init();
     await this.refillIfNeeded();
-    if (this.queue.length === 0) return false;
-    const first = this.dequeue();
-    this.deckChainType.A = first.chainType || "segue";
-    this.loadToDeck("A", first);
+    // Load the first PLAYABLE track into A, skipping any missing-file items.
+    let loaded = false, guard = 0;
+    while (this.queue.length > 0 && guard++ < 100) {
+      const first = this.dequeue();
+      if (this.loadToDeck("A", first)) { this.deckChainType.A = first.chainType || "segue"; loaded = true; break; }
+      this.emit("error", { stationId: this.stationId, where: "start", error: "skipped unplayable: " + (first.filePath || "") });
+      if (this.queue.length === 0) await this.refillIfNeeded();
+    }
+    if (!loaded) return false;
     this._play("A");
     this._setDeck("A", { status: "playing", positionSec: 0 });
     this._fireStart("A");
@@ -259,13 +298,18 @@ class DaemonEngine {
   // position. Loads the next deck in rotation, plays it, stops the current, preloads the next.
   async skip() {
     await this.refillIfNeeded();
-    if (this.queue.length === 0) return false;
     const order = ["A", "B", "C"];
     const playing = order.find(d => this._deckState(d).status === "playing");
     const next = playing ? order[(order.indexOf(playing) + 1) % 3] : "A";
-    const item = this.dequeue();
-    this.deckChainType[next] = item.chainType || "segue";
-    this.loadToDeck(next, item);
+    // Load the next PLAYABLE track, skipping missing-file items.
+    let loaded = false, guard = 0;
+    while (this.queue.length > 0 && guard++ < 100) {
+      const item = this.dequeue();
+      if (this.loadToDeck(next, item)) { this.deckChainType[next] = item.chainType || "segue"; loaded = true; break; }
+      this.emit("error", { stationId: this.stationId, where: "skip", error: "skipped unplayable: " + (item.filePath || "") });
+      if (this.queue.length === 0) await this.refillIfNeeded();
+    }
+    if (!loaded) return false;
     this._play(next);
     this._setDeck(next, { status: "playing", positionSec: 0 });
     this.endTriggered.delete(next);
