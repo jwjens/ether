@@ -1,3 +1,22 @@
+## [4.3.8] — 2026-05-29
+
+Deck displays match what's actually on air — on the desktop and the web dashboard.
+
+### Fixed — cued decks show on the desktop again
+
+In background-engine mode the two standby decks could display blank even though songs were
+loaded and ready. The deck strip now shows a deck as cued whenever it's holding a track, so
+DECK A/B/C always reflect what's playing and what's next. The Up Next list also re-syncs with
+the engine the moment the window (re)connects — and periodically after — so it's never stale
+after a reload or restart.
+
+### Fixed — web dashboard shows each song on its real deck
+
+The Control Center dashboard always pinned the on-air song to "Deck A," so as tracks rotated
+they appeared to shift up. It now reads the actual physical deck (A/B/C) for the on-air track
+and shows the two cued decks' real songs — nothing shifts up, and the progress bar fills against
+the live deck. (Requires the matching backend update so the per-deck data reaches the dashboard.)
+
 ## [4.3.7] — 2026-05-29
 
 No more double-play when automation restarts.

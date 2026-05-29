@@ -122,6 +122,7 @@ export class AudioEngine {
   private daemonDriven = false;
   private daemonUnsub: Array<() => void> = [];
   private daemonDetectStarted = false;
+  private daemonQueuePollN = 0; // low-frequency Up-Next resync counter (daemon mode)
   // Resolves once the daemon-vs-local decision is known (main confirms the daemon connected, or
   // falls back to the in-process engine). Go-on-air awaits this so it can't race the decision
   // and accidentally start the local engine while the daemon is also taking over.
@@ -169,6 +170,26 @@ export class AudioEngine {
       const h = a.onPlayStart((m: any) => { if (m?.deck) this.notifyPlayStart(m.deck as DeckId, m.title || "", m.artist || "", m.filePath || ""); });
       this.daemonUnsub.push(() => a.offPlayStart?.(h));
     }
+    // The daemon only pushes queue events on *change*. A freshly-attached renderer (first
+    // launch, Ctrl+R reload, or daemon respawn) would otherwise show a stale/empty Up Next
+    // until the next mutation. Pull the current queue once now; poll() keeps it converged.
+    void this.resyncDaemonQueue();
+  }
+
+  /** One-shot fetch of the daemon's authoritative queue → mirror into this.queue + fire
+   *  listeners so the Up Next UI is correct immediately, not just after the next change. */
+  private async resyncDaemonQueue(): Promise<void> {
+    const a = (window as any).ether?.audio;
+    if (!a?.daemon) return;
+    try {
+      const r = await a.daemon("getQueue", { stationId: this.stationId });
+      const items = Array.isArray(r?.result) ? r.result : (Array.isArray(r) ? r : null);
+      if (!items) return;
+      this.queue = items.map((it: any) => ({
+        filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType,
+      }));
+      this.listeners.forEach(l => l("A", this.stateA)); // nudge subscribers (queue length changed)
+    } catch { /* daemon not answering yet — the next onQueue event will populate it */ }
   }
 
   /** Kick off unattended playout in the daemon (fill + play + advance). The renderer's
@@ -200,6 +221,11 @@ export class AudioEngine {
 
   private async poll() {
     try {
+      // Daemon mode: queue events are change-only, so periodically reconcile Up Next with the
+      // daemon's authoritative queue (~every 5s). Cheap safety net against any missed event
+      // (daemon respawn without a renderer reload, dropped IPC, etc.).
+      if (this.daemonDriven && (++this.daemonQueuePollN % 20 === 0)) void this.resyncDaemonQueue();
+
       const s = await invoke("audio_get_state", { stationId: this.stationId });
       const now = Date.now();
       const elapsed = (now - this.lastPollTime) / 1000;

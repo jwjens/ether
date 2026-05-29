@@ -4691,12 +4691,17 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
           const deckColor    = DECK_COLORS[idx];
           const isPlaying    = slot.status === "playing";
           const isPaused     = slot.status === "paused";
-          const isActive     = isPlaying || isPaused || slot.ready;
+          // A deck holding a preloaded track is "cued" even when the renderer's
+          // local deckReady set is empty (daemon mode never populates it — the
+          // poll mirrors the daemon's title/status instead). Title presence is
+          // the mode-agnostic signal that a deck is loaded.
+          const isCued       = !isPlaying && !isPaused && !!slot.title;
+          const isActive     = isPlaying || isPaused || slot.ready || isCued;
           const remaining    = Math.max(0, slot.durationSec - slot.positionSec);
           const isEndingSoon = isPlaying && remaining > 0 && remaining < 15;
           const timeStr      = (isPlaying || isPaused)
             ? `-${fmt(remaining)}`
-            : slot.ready && slot.durationSec > 0 ? fmt(slot.durationSec) : "";
+            : isActive && slot.durationSec > 0 ? fmt(slot.durationSec) : "";
           return (
             <div key={DECK_LABELS[idx]} style={{
               flex: 1, minWidth: 0, position: "relative", overflow: "hidden",
