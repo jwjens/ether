@@ -77,7 +77,7 @@ function getStream(stationId) {
 // Each returns a JSON-serializable result (or throws → { ok:false, error }).
 const handlers = {
   init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); return true; },
-  load:               (m) => { stations.add(m.stationId); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck); return r; },
+  load:               (m) => { stations.add(m.stationId); return A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); },
   play:               (m) => A.audioPlay(m.deck, m.stationId),
   pause:              (m) => A.audioPause(m.deck, m.stationId),
   stop:               (m) => A.audioStop(m.deck, m.stationId),
