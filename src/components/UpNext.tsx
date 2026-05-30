@@ -94,7 +94,12 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
     const interval = setInterval(() => {
       setQueue(engine.getQueue());
     }, 1000);
-    return () => clearInterval(interval);
+    // Stage 2a: re-render promptly when the daemon's queue changes (engine-rodio re-emits
+    // `ether:queue-changed` on every daemon queue event) — not just on the 1s poll. This is what
+    // makes intent-driven edits feel instant now that we no longer push the mirror synchronously.
+    const onChanged = () => setQueue(engine.getQueue());
+    window.addEventListener("ether:queue-changed", onChanged);
+    return () => { clearInterval(interval); window.removeEventListener("ether:queue-changed", onChanged); };
   }, [engine, queueLen]);
 
   useEffect(() => {
@@ -235,10 +240,15 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       const from = dragIdxRef.current;
       const to = dragOverIdxRef.current;
       if (isDraggingRef.current && from !== null && to !== null && from !== to) {
-        const q = engine.getQueue();
-        const [item] = q.splice(from, 1);
-        q.splice(to, 0, item);
-        rebuild(q);
+        if (engine.isDaemonDriven) {
+          const qid = engine.getQueue()[from]?.qid;          // Stage 2a: reorder by id, not by array push
+          if (qid) engine.queueReorder(qid, to);
+        } else {
+          const q = engine.getQueue();
+          const [item] = q.splice(from, 1);
+          q.splice(to, 0, item);
+          rebuild(q);
+        }
       }
       dragIdxRef.current = null;
       dragOverIdxRef.current = null;
@@ -251,18 +261,28 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
   const handleContext = (e: React.MouseEvent, idx: number) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, idx }); };
   const closeContext = () => setContextMenu(null);
-  const moveUp   = (idx: number) => { if (idx <= 0) return; const q = engine.getQueue(); const it = q.splice(idx, 1)[0]; q.splice(idx - 1, 0, it); rebuild(q); closeContext(); };
-  const moveDown = (idx: number) => { const q = engine.getQueue(); if (idx >= q.length - 1) return; const it = q.splice(idx, 1)[0]; q.splice(idx + 1, 0, it); rebuild(q); closeContext(); };
-  const moveToTop    = (idx: number) => { const q = engine.getQueue(); const it = q.splice(idx, 1)[0]; q.unshift(it); rebuild(q); closeContext(); };
-  const moveToBottom = (idx: number) => { const q = engine.getQueue(); const it = q.splice(idx, 1)[0]; q.push(it); rebuild(q); closeContext(); };
-  const removeItem   = (idx: number) => { const q = engine.getQueue(); q.splice(idx, 1); rebuild(q); closeContext(); };
+  // Stage 2a: in daemon mode every queue edit becomes an id-addressed intent to the daemon (the
+  // single source of truth) — never a local splice + replaceQueue clobber. The qid is read from the
+  // mirror at the clicked engine-index; the daemon's queue event reconciles the UI. In-process mode
+  // keeps the local splice + rebuild path unchanged.
+  const qidAt = (idx: number): string | undefined => engine.getQueue()[idx]?.qid;
+  const moveUp   = (idx: number) => { if (idx <= 0) return; if (engine.isDaemonDriven) { const qid = qidAt(idx); if (qid) engine.queueReorder(qid, idx - 1); closeContext(); return; } const q = engine.getQueue(); const it = q.splice(idx, 1)[0]; q.splice(idx - 1, 0, it); rebuild(q); closeContext(); };
+  const moveDown = (idx: number) => { if (engine.isDaemonDriven) { const qid = qidAt(idx); if (qid) engine.queueReorder(qid, idx + 1); closeContext(); return; } const q = engine.getQueue(); if (idx >= q.length - 1) return; const it = q.splice(idx, 1)[0]; q.splice(idx + 1, 0, it); rebuild(q); closeContext(); };
+  const moveToTop    = (idx: number) => { if (engine.isDaemonDriven) { const qid = qidAt(idx); if (qid) engine.queueMove(qid, "top"); closeContext(); return; } const q = engine.getQueue(); const it = q.splice(idx, 1)[0]; q.unshift(it); rebuild(q); closeContext(); };
+  const moveToBottom = (idx: number) => { if (engine.isDaemonDriven) { const qid = qidAt(idx); if (qid) engine.queueMove(qid, "bottom"); closeContext(); return; } const q = engine.getQueue(); const it = q.splice(idx, 1)[0]; q.push(it); rebuild(q); closeContext(); };
+  const removeItem   = (idx: number) => { if (engine.isDaemonDriven) { const qid = qidAt(idx); if (qid) engine.queueRemove(qid); closeContext(); return; } const q = engine.getQueue(); q.splice(idx, 1); rebuild(q); closeContext(); };
 
   const handleCartDragOver = (e: React.DragEvent) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; };
   const handleCartDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const cartData = e.dataTransfer.getData("application/cart");
     if (cartData) {
-      try { const cart = JSON.parse(cartData); engine.addToQueue([{ filePath: cart.filePath, title: cart.title, artist: cart.artist || "" }]); onQueueChange(); } catch {}
+      try {
+        const cart = JSON.parse(cartData);
+        const item = { filePath: cart.filePath, title: cart.title, artist: cart.artist || "" };
+        if (engine.isDaemonDriven) engine.queueEnqueue([item]); else engine.addToQueue([item]);  // Stage 2a
+        onQueueChange();
+      } catch {}
     }
   };
 
@@ -296,7 +316,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
             </svg>
           </button>
           {queue.length > 0 && (
-            <button onClick={() => { engine.clearQueue(); onQueueChange(); }}
+            <button onClick={() => { if (engine.isDaemonDriven) engine.queueClearPending(); else engine.clearQueue(); onQueueChange(); }}
               style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase" as const }}
               onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
               onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}

@@ -547,10 +547,10 @@ export default function App() {
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
   const handleXfade = () => {
-    // Stage 0 (Item 10): in daemon mode the daemon owns deck rotation. This renderer-side crossfade
-    // would race it (it mutates the queue + loads decks locally), so keep it the no-op it has been.
-    // Stage 2 replaces this with an explicit deck:crossfade intent routed to the daemon.
-    if (engine.isDaemonDriven) return;
+    // Stage 2a (Item 10): in daemon mode the daemon owns deck rotation — send an explicit
+    // deck:crossfade intent (it picks the ready target + performs the fade) instead of crossfading
+    // locally, which would race the daemon. The renderer mutates nothing here. In-process below.
+    if (engine.isDaemonDriven) { engine.deckCrossfade(); return; }
     const playingDeck = deckA?.status === "playing" ? "A" : deckB?.status === "playing" ? "B" : deckC?.status === "playing" ? "C" : null;
     if (!playingDeck) return;
     const order: Array<"A"|"B"|"C"> = ["A", "B", "C"];
@@ -866,11 +866,16 @@ export default function App() {
             break;
           case "deck:load": {
             // Dashboard "A/B/C" — load a library song onto a deck and play it.
-            const deck = String(data.deck || "A").toUpperCase();
+            const deck = String(data.deck || "A").toUpperCase() as "A" | "B" | "C";
             if (!["A", "B", "C"].includes(deck)) break;
             const song = await resolveSong(data.song_id, data.file_key);
             if (song) {
-              await engine.loadToDeck(deck, song.filePath, song.title, song.artist, undefined, song.durationMs);
+              // Stage 2a: daemon mode → deck:cue intent then play; in-process → load locally.
+              if (engine.isDaemonDriven) {
+                await engine.deckCue(deck, { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs });
+              } else {
+                await engine.loadToDeck(deck, song.filePath, song.title, song.artist, undefined, song.durationMs);
+              }
               engine.getDeck(deck)?.play();
               window.dispatchEvent(new CustomEvent("ether:queue-changed"));
             }
@@ -880,7 +885,8 @@ export default function App() {
             // Dashboard "Q" — add a library song to the end of the queue.
             const song = await resolveSong(data.song_id, data.file_key);
             if (song) {
-              engine.addToQueue([{ filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs }]);
+              const item = { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs };
+              if (engine.isDaemonDriven) engine.queueEnqueue([item]); else engine.addToQueue([item]);  // Stage 2a
               window.dispatchEvent(new CustomEvent("ether:queue-changed"));
             }
             break;
@@ -892,9 +898,17 @@ export default function App() {
             if (order.length) {
               const q = engine.getQueue();
               if (order.length <= q.length && order.every(i => Number.isInteger(i) && i >= 0 && i < q.length)) {
-                const head = order.map(i => q[i]).filter(Boolean);
-                engine.replaceQueue([...head, ...q.slice(order.length)]);
-                setTimeout(() => engine.triggerPreload?.(), 100);
+                if (engine.isDaemonDriven) {
+                  // Stage 2a: snapshot the desired head order to stable qids, then place each by id
+                  // at its target index. Cued/bound entries no-op (protected); the daemon clamps the
+                  // rest into the pending region. Never pushes a whole-queue array.
+                  const qids = order.map(i => q[i]?.qid).filter(Boolean) as string[];
+                  for (let k = 0; k < qids.length; k++) await engine.queueReorder(qids[k], k);
+                } else {
+                  const head = order.map(i => q[i]).filter(Boolean);
+                  engine.replaceQueue([...head, ...q.slice(order.length)]);
+                  setTimeout(() => engine.triggerPreload?.(), 100);
+                }
                 window.dispatchEvent(new CustomEvent("ether:queue-changed"));
               }
             }
@@ -1391,7 +1405,13 @@ export default function App() {
   const loadDeck = useCallback((deckId: "A" | "B" | "C", s: SongRow) => {
     if (!s.file_path) return;
     if (engine.getDeck(deckId).getState().status === "playing") return; // don't kill what's on air
-    engine.loadToDeck(deckId, s.file_path, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
+    // Stage 2a: daemon mode → deck:cue intent (the daemon loads + protects it from the self-heal).
+    // In-process → load the deck locally as before.
+    if (engine.isDaemonDriven) {
+      engine.deckCue(deckId, { filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 });
+    } else {
+      engine.loadToDeck(deckId, s.file_path, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
+    }
     window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);

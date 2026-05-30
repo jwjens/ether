@@ -1,3 +1,24 @@
+## [4.3.20] — 2026-05-30
+
+Item 10 — **Stage 2a** of the daemon↔renderer state-coordination fix: the UI now **drives the daemon
+through the Stage-1 intent commands** instead of pushing its queue mirror back. Daemon-mode branches
+only — the in-process engine (`ETHER_AUDIO_DAEMON=0`) is untouched.
+
+### Changed — renderer writes go through intents, not the mirror echo
+
+- **Up Next** queue edits (drag-reorder, move up/down/top/bottom, remove) now send id-addressed
+  intents by `qid` (`queueReorder`/`queueMove`/`queueRemove`); cart-drop → `queueEnqueue`; Clear All →
+  `queueClearPending` (cued decks survive, audio doesn't drop). No local splice + `replaceQueue`.
+- **A/B/C deck buttons** → `deck:cue`; the **XFADE** button → `deck:crossfade` (it actually
+  crossfades in daemon mode now, via the daemon); dashboard `deck:load`/`queue:enqueue`/`queue:reorder`
+  remote commands route through the same intents.
+- **Responsiveness:** `engine-rodio` re-emits the app-standard `ether:queue-changed` event on every
+  daemon queue event, and Up Next subscribes — so intent-driven edits reflect within ~50 ms (not the
+  1 s poll), without the renderer ever pushing its mirror.
+
+The legacy `replaceQueue`/`loadToDeck` daemon send-paths **still exist** but are no longer called in
+daemon mode; **Stage 2b** strips that dead echo-back. In-process mode is byte-for-byte unchanged.
+
 ## [4.3.19] — 2026-05-30
 
 Item 10 — **Stage 1** of the daemon↔renderer state-coordination fix: the daemon gains explicit

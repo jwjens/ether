@@ -159,9 +159,15 @@ export class AudioEngine {
     // daemon's per-entry qid so the mirror can address an exact entry (Stage 2 intent commands).
     if (a.onQueue) {
       const h = a.onQueue((m: any) => {
-        if (Array.isArray(m?.items)) this.queue = m.items.map((it: any) => ({
-          filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
-        }));
+        if (Array.isArray(m?.items)) {
+          this.queue = m.items.map((it: any) => ({
+            filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
+          }));
+          // Stage 2a: engine-rodio is the SOLE consumer of the raw daemon queue event; it re-emits
+          // the app-standard `ether:queue-changed` signal so Up Next (and any queue UI) re-renders
+          // within ~50ms of a daemon change, without the renderer pushing its mirror back.
+          try { window.dispatchEvent(new CustomEvent("ether:queue-changed")); } catch {}
+        }
       });
       this.daemonUnsub.push(() => a.offQueue?.(h));
     }
