@@ -1382,33 +1382,18 @@ export default function App() {
 
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
 
-  const loadA = useCallback((s: SongRow) => {
+  // A/B/C = load the song onto that exact deck. If the deck is on air, leave it alone — never
+  // override the playing song. (Q below appends to the bottom of the queue.)
+  const loadDeck = useCallback((deckId: "A" | "B" | "C", s: SongRow) => {
     if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any;
-    const q = engine.getQueue(); q.splice(0, 0, item); engine.replaceQueue(q);
-    setQueueLen(engine.getQueue().length);
-    engine.triggerPreload();
+    if (engine.getDeck(deckId).getState().status === "playing") return; // don't kill what's on air
+    engine.loadToDeck(deckId, s.file_path, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
     window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, []);
-  const loadB = useCallback((s: SongRow) => {
-    if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any;
-    const q = engine.getQueue(); q.splice(1, 0, item); engine.replaceQueue(q);
-    setQueueLen(engine.getQueue().length);
-    engine.triggerPreload();
-    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
-  }, []);
-  const loadC = useCallback((s: SongRow) => {
-    if (!s.file_path) return;
-    const item = { filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any;
-    const q = engine.getQueue(); q.splice(2, 0, item); engine.replaceQueue(q);
-    setQueueLen(engine.getQueue().length);
-    engine.triggerPreload();
-    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
-  }, []);
+  const loadA = useCallback((s: SongRow) => loadDeck("A", s), [loadDeck]);
+  const loadB = useCallback((s: SongRow) => loadDeck("B", s), [loadDeck]);
+  const loadC = useCallback((s: SongRow) => loadDeck("C", s), [loadDeck]);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
   });
