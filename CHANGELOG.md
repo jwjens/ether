@@ -1,9 +1,20 @@
-## [4.3.21] — 2026-05-30
+## [4.3.22] — 2026-05-30
 
-Item 10 — **Stage 3b**: a daemon stall-recovery **watchdog** that makes a permanent A→B→C rotation
-stall (dead air) impossible. Daemon-only; in-process engine untouched.
+Item 10 — **Stage 3 (3a + 3b together)**: fixes the A→B→C rotation stall (Bug 2) at the root **and**
+makes a stall structurally unable to persist. Daemon-only; the in-process engine is untouched.
 
-### Fixed — rotation can no longer stall into dead air
+### Fixed — rotation no longer stalls into dead air (3a: root cause)
+
+- **`preload` is serialized on the advance chain.** Deck preloads (from the self-heal and after a
+  crossfade) now run on the SAME `advanceP` chain as `handleRotate`/`handleLoadNext`, so a preload
+  can never overlap a rotate — the race that left `handleRotate` reading a half-loaded deck / a
+  transient `deckReady` and bailing into a stall. `checkEnd` now always sees settled state.
+- **Freshened `checkEnd` guards.** The rotate-vs-load-next decision re-reads **live native state**
+  instead of the per-tick `this.stateX` snapshot, so a momentarily-stale "playing" flag can no
+  longer make the engine skip an advance.
+- Wedge detection (below) now also covers the serialized preload ops.
+
+### Fixed — and can no longer stall into dead air (3b: backstop)
 
 - **Watchdog invariant:** content present + nobody playing ⇒ somebody playing within ~1 s. The poll
   loop now checks each tick: if no deck has been playing for >1 s while automation is engaged and

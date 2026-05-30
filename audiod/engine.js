@@ -259,15 +259,20 @@ class DaemonEngine {
       }
       this._setDeck(deckId, { status: "ended" });
 
+      // Stage 3a: decide rotate-vs-load-next against FRESH native state, not the per-tick snapshot
+      // (this.stateX), so a momentarily-stale "playing" flag can't make us skip the advance. deckReady
+      // is now reliable too because preload is serialized on the same advanceP chain (no concurrent load).
+      const live = this._state();
+      const livePlaying = (d) => { const ld = live ? (d === "A" ? live.deckA : d === "B" ? live.deckB : live.deckC) : null; return ld?.status === "playing"; };
       if (deckId === "A") {
         if (this.deckReady.has("B")) this.handleRotate("A", "B");
-        else if (this.autoAdvance && this.stateB.status !== "playing" && this.stateC.status !== "playing") this.handleLoadNext("A");
+        else if (this.autoAdvance && !livePlaying("B") && !livePlaying("C")) this.handleLoadNext("A");
       } else if (deckId === "B") {
         if (this.deckReady.has("C")) this.handleRotate("B", "C");
-        else if (this.autoAdvance && this.stateA.status !== "playing" && this.stateC.status !== "playing") this.handleLoadNext("B");
+        else if (this.autoAdvance && !livePlaying("A") && !livePlaying("C")) this.handleLoadNext("B");
       } else if (deckId === "C") {
         if (this.deckReady.has("A")) this.handleRotate("C", "A");
-        else if ((this.autoAdvance || this.queue.length > 0) && this.stateA.status !== "playing" && this.stateB.status !== "playing") this.handleLoadNext("A");
+        else if ((this.autoAdvance || this.queue.length > 0) && !livePlaying("A") && !livePlaying("B")) this.handleLoadNext("A");
       }
     }
   }
@@ -332,24 +337,31 @@ class DaemonEngine {
     });
   }
 
-  async preload(deckId, queueIndex = 0) {
-    if (this.deckReady.has(deckId)) return;   // already cued — idempotent (safe to call from _maintain + handleRotate)
+  // Stage 3a: serialize the deck LOAD on the SAME advanceP chain as handleRotate/handleLoadNext, so a
+  // preload can never overlap a rotate (the race that left handleRotate reading a half-loaded deck /
+  // a transient deckReady → the Bug-2 stall). Cheap guards run synchronously up front to avoid queuing
+  // obvious no-ops every poll tick; the load (and a re-check, since a rotate may run ahead of us on the
+  // chain) runs inside the serialized, wedge-tracked _advance closure.
+  preload(deckId, queueIndex = 0) {
+    if (this.deckReady.has(deckId)) return Promise.resolve();   // already cued — idempotent
     const st = this._deckState(deckId);
-    if (st.status === "playing" || st.status === "paused") return;
-    // Never cue a file that's already playing/cued on another deck — that's what stacked the same
-    // song onto all three decks. Skip past any such item (leave it queued to play later instead).
-    const onOtherDecks = ["A", "B", "C"].filter(d => d !== deckId).map(d => this._deckState(d).filePath).filter(Boolean);
-    // Load a playable item at/after queueIndex; drop any unplayable (missing-file) items we hit so
-    // they never become a stuck "playing" deck. Only mark the deck ready on a successful load.
-    let guard = 0;
-    while (this.queue.length > queueIndex && guard++ < 100) {
-      const next = this.queue[queueIndex];
-      if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
-      if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
-      this.queue.splice(queueIndex, 1);
-      this.emit("queue", { stationId: this.stationId, items: this.queue });
-      this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
-    }
+    if (st.status === "playing" || st.status === "paused") return Promise.resolve();
+    return this._advance("preload:" + deckId, async () => {
+      if (this.deckReady.has(deckId)) return;                   // re-check inside the chain
+      const st2 = this._deckState(deckId);
+      if (st2.status === "playing" || st2.status === "paused") return;
+      // Never cue a file that's already playing/cued on another deck — that stacked the same song.
+      const onOtherDecks = ["A", "B", "C"].filter(d => d !== deckId).map(d => this._deckState(d).filePath).filter(Boolean);
+      let guard = 0;
+      while (this.queue.length > queueIndex && guard++ < 100) {
+        const next = this.queue[queueIndex];
+        if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
+        if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
+        this.queue.splice(queueIndex, 1);
+        this.emit("queue", { stationId: this.stationId, items: this.queue });
+        this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
+      }
+    });
   }
 
   async refillIfNeeded() {
