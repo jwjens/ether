@@ -1,3 +1,28 @@
+## [4.3.21] — 2026-05-30
+
+Item 10 — **Stage 3b**: a daemon stall-recovery **watchdog** that makes a permanent A→B→C rotation
+stall (dead air) impossible. Daemon-only; in-process engine untouched.
+
+### Fixed — rotation can no longer stall into dead air
+
+- **Watchdog invariant:** content present + nobody playing ⇒ somebody playing within ~1 s. The poll
+  loop now checks each tick: if no deck has been playing for >1 s while automation is engaged and
+  there's content (a cued/loaded deck or a non-empty/refillable queue), it forces an advance. (The
+  v4.3.6 self-heal only topped up idle decks *while one was already playing*, so an "all decks
+  stopped" state had no recovery path — that was the Bug 2 dead-air stall.)
+- **Respects manual cues:** recovery plays an already-cued deck (a hand-cued `deck:cue` deck first)
+  rather than loading a different track over it; only when nothing is loaded anywhere does it pull
+  the next track from the queue onto deck A.
+- **advanceP-wedge reset:** advance ops (`handleRotate`/`handleLoadNext`) now run through a wrapper
+  that records when each starts. If the serialized chain is stuck >3 s, the watchdog resets it
+  (`advanceP = Promise.resolve()`) so recovery can actually run — a hung chain can't cause dead air.
+- **Fires once per stall** (re-arms when a deck plays again), with a bounded retry if a recovery
+  can't find content, and is **gated to on-air automation only** — it never auto-starts a fresh,
+  idle daemon.
+
+Stage 3a (next) serializes `preload` on the advance chain + freshens `checkEnd` guards to make the
+stall *rare*; this watchdog makes it *unable to persist*.
+
 ## [4.3.20] — 2026-05-30
 
 Item 10 — **Stage 2a** of the daemon↔renderer state-coordination fix: the UI now **drives the daemon

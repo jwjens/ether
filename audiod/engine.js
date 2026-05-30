@@ -62,6 +62,15 @@ class DaemonEngine {
     this.shuffle = false;
     this.crossfadeDuration = 3;
     this.advanceP = Promise.resolve();
+    // Stage 3b: stall-recovery watchdog state. The invariant it enforces: content present + nobody
+    // playing ⇒ somebody playing within ~1s. Without this, an "all decks stopped" state had no
+    // recovery path (the v4.3.6 self-heal only tops up idle decks WHILE one is playing) → dead air.
+    this._lastPlayingAt = Date.now();   // last tick any deck was playing
+    this._advanceStartedAt = 0;          // when the in-flight advance op began (0 = idle) — wedge detection
+    this._watchdogArmed = true;          // fire at most once per stall; re-armed when a deck plays again
+    this._lastRecoverAt = 0;             // last watchdog recovery attempt — bounded retry if a recovery can't find content
+    this._started = false;               // automation engaged (start() called, not stopped). The watchdog only
+                                         // recovers while on air — it must never auto-start playout on a fresh daemon.
     this.pollTimer = null;
     this.lastPollTime = Date.now();
   }
@@ -79,6 +88,7 @@ class DaemonEngine {
     if (!this.pollTimer) { this.processingEnd = false; this.pollTimer = setInterval(() => this.poll(), 250); }
   }
   stop() {
+    this._started = false;   // Stage 3b: automation stopped — disable the stall watchdog (don't fight a deliberate stop).
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     this._stop("A"); this._stop("B"); this._stop("C");
   }
@@ -121,6 +131,84 @@ class DaemonEngine {
     this.checkEnd("C", pos.C, dur.C, prev.C, rustEnded.C);
     this.processingEnd = false;
     this._maintain();
+    this._watchdog();
+  }
+
+  // Stage 3b: stall-recovery watchdog. Runs every poll tick AFTER _maintain. Enforces the invariant
+  // "content present + nobody playing ⇒ somebody playing within ~1s" — the backstop that makes a
+  // permanent stall impossible, regardless of any race in the rotate logic (3a tightens those).
+  _watchdog() {
+    const STALL_MS = 1000;       // sustained no-playing window before we call it a stall (rides out a crossfade)
+    const WEDGE_MS = 3000;       // an advance op in-flight longer than this = a wedged advanceP chain
+    const RETRY_MS = 2000;       // if a recovery couldn't find content, retry at most this often (no tight spin)
+    if (!this._started) return;  // only recover while automation is engaged — never auto-start a fresh daemon
+    const order = ["A", "B", "C"];
+    const now = Date.now();
+    const playing = order.find(d => this._deckState(d).status === "playing");
+    if (playing) { this._lastPlayingAt = now; this._watchdogArmed = true; return; }  // healthy → re-arm
+
+    // Is there anything to recover WITH? A cued/loaded deck, or queued (or continuous-refillable) content.
+    const haveContent = order.some(d => !!this._deckState(d).title) || this.queue.length > 0 || this.continuous;
+    if (!haveContent) return;                               // genuinely nothing to play — not a stall
+    if (now - this._lastPlayingAt < STALL_MS) return;       // not stalled long enough (could be mid-transition)
+    // Fire ONCE per stall (armed). If that recovery can't find content, fall back to a bounded retry
+    // every RETRY_MS so a transiently-empty schedule can't leave us permanently disarmed.
+    if (!this._watchdogArmed && (now - this._lastRecoverAt) < RETRY_MS) return;
+
+    const inFlight = this._advanceStartedAt !== 0;
+    const wedged = inFlight && (now - this._advanceStartedAt) > WEDGE_MS;
+    if (inFlight && !wedged) return;                        // a normal advance is running — give it a beat, don't double-fire
+
+    this._watchdogArmed = false;                            // disarm; re-arms only when a deck actually plays
+    this._lastRecoverAt = now;
+    if (wedged) {
+      // The serialized chain is stuck — abandon it so our recovery can actually run.
+      this.emit("error", { stationId: this.stationId, where: "watchdog", error: `advanceP wedged ${now - this._advanceStartedAt}ms — resetting chain` });
+      this.advanceP = Promise.resolve();
+      this._advanceStartedAt = 0;
+    }
+    this.emit("error", { stationId: this.stationId, where: "watchdog", error: `stall recovery — no deck playing ${now - this._lastPlayingAt}ms, forcing advance` });
+    this._recoverStall();
+  }
+
+  // Get audio flowing again after a stall. Respects manual cues: if a deck is hand-cued (or otherwise
+  // cued/loaded-idle), PLAY that deck rather than loading a different track over it; only when nothing
+  // is loaded anywhere do we pull the next track from the queue onto deck A.
+  _recoverStall() {
+    this._advance("watchdog-recover", async () => {
+      const order = ["A", "B", "C"];
+      if (order.some(d => this._deckState(d).status === "playing")) return;  // someone started in the meantime
+      // Prefer a cued standby deck (manual cue first → operator intent, then any ready/loaded-idle deck).
+      const cued = order.find(d => this.manualCue.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
+                || order.find(d => this.deckReady.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
+                || order.find(d => this._deckState(d).status === "idle" && this._deckState(d).title);
+      if (cued) {
+        this._play(cued);
+        this._setDeck(cued, { status: "playing", positionSec: 0 });
+        this.endTriggered.delete(cued);
+        this.deckReady.delete(cued);
+        if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
+        else if (this.queue.length > 0) this.dequeue();
+        this._fireStart(cued);
+        return;
+      }
+      // Nothing cued anywhere — load + play the next PLAYABLE track from the queue onto deck A.
+      await this.refillIfNeeded();
+      let guard = 0;
+      while (this.queue.length > 0 && guard++ < 100) {
+        const next = this.dequeue();
+        if (this.loadToDeck("A", next)) {
+          this.deckChainType.A = next.chainType || "segue";
+          this._play("A");
+          this._setDeck("A", { status: "playing", positionSec: 0 });
+          this.endTriggered.delete("A");
+          this._fireStart("A");
+          return;
+        }
+        this.emit("error", { stationId: this.stationId, where: "watchdog-recover", error: "skipped unplayable: " + (next.filePath || "") });
+        if (this.queue.length === 0) await this.refillIfNeeded();
+      }
+    });
   }
 
   _changed(prev, next) {
@@ -184,9 +272,20 @@ class DaemonEngine {
     }
   }
 
-  handleRotate(fromId, toId) {
+  // Stage 3b: run an advance op on the serialized chain, recording when it started so the watchdog
+  // can detect (and reset) a WEDGED chain. Catches errors so one bad op can't poison advanceP.
+  _advance(where, fn) {
     this.advanceP = this.advanceP.then(async () => {
-      try {
+      this._advanceStartedAt = Date.now();
+      try { await fn(); }
+      catch (e) { this.emit("error", { stationId: this.stationId, where, error: String(e) }); }
+      finally { this._advanceStartedAt = 0; }
+    });
+    return this.advanceP;
+  }
+
+  handleRotate(fromId, toId) {
+    this._advance("handleRotate", async () => {
         const live = this._state();
         const liveTo = live ? (toId === "A" ? live.deckA : toId === "B" ? live.deckB : live.deckC) : null;
         const otherPlaying = live ? (
@@ -208,13 +307,11 @@ class DaemonEngine {
         if (toId === "B") { setTimeout(() => this.preload("C", 0), 800); setTimeout(() => this.preload("A", 1), nearDelay); }
         else if (toId === "C") { setTimeout(() => this.preload("A", 0), 800); setTimeout(() => this.preload("B", 1), nearDelay); }
         else if (toId === "A") { setTimeout(async () => { await this.refillIfNeeded(); this.preload("B", 0); }, 800); setTimeout(() => this.preload("C", 1), nearDelay); }
-      } catch (e) { this.emit("error", { stationId: this.stationId, where: "handleRotate", error: String(e) }); }
     });
   }
 
   handleLoadNext(deckId) {
-    this.advanceP = this.advanceP.then(async () => {
-      try {
+    this._advance("handleLoadNext", async () => {
         const live = this._state();
         if (live) { const ld = deckId === "A" ? live.deckA : deckId === "B" ? live.deckB : live.deckC; if (ld?.status === "playing") return; }
         await this.refillIfNeeded();
@@ -232,7 +329,6 @@ class DaemonEngine {
         this._setDeck(deckId, { status: "playing", positionSec: 0 });
         this.endTriggered.delete(deckId);
         this._fireStart(deckId);
-      } catch (e) { this.emit("error", { stationId: this.stationId, where: "handleLoadNext", error: String(e) }); }
     });
   }
 
@@ -424,6 +520,8 @@ class DaemonEngine {
   // Fill (if empty), load deck A, play, and preload B/C — the unattended start.
   async start() {
     this.init();
+    this._started = true;   // Stage 3b: automation engaged — the stall watchdog is now allowed to recover.
+    this._lastPlayingAt = Date.now();  // grace window so the watchdog doesn't fire before start() plays A
     await this.refillIfNeeded();
     // IDEMPOTENT: never start a deck over one that's already on air. If automationStart is
     // re-issued while a deck is playing — e.g. the app reconnects after a gapless update/restart,
