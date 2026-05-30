@@ -44,6 +44,10 @@ class DaemonEngine {
     this.lastFired = {};
     this.deckChainType = { A: "segue", B: "segue", C: "segue" };
     this.deckReady = new Set();
+    // Decks an operator hand-loaded via the A/B/C buttons. Marked ready so the self-heal won't
+    // re-cue over them; flagged manual so the rotate path doesn't dequeue an unrelated song when
+    // it crossfades into one (a manual cue didn't come from the queue).
+    this.manualCue = new Set();
     this.endTriggered = new Set();
     this.processingEnd = false;
     this.autoAdvance = true;     // automation engine = always auto-advancing
@@ -109,6 +113,7 @@ class DaemonEngine {
     this.checkEnd("B", pos.B, dur.B, prev.B, rustEnded.B);
     this.checkEnd("C", pos.C, dur.C, prev.C, rustEnded.C);
     this.processingEnd = false;
+    this._maintain();
   }
 
   _changed(prev, next) {
@@ -120,6 +125,22 @@ class DaemonEngine {
     const st = this._deckState(id);
     if (this._changed(this.lastFired[id], st)) this.emit("deck", { stationId: this.stationId, deck: id, state: st });
     this.lastFired[id] = st;
+  }
+
+  // Self-heal each poll tick: keep the queue topped up AND the two idle decks pre-loaded, so a
+  // transient empty queue (e.g. right after a daemon respawn) can't cascade into blank decks, no
+  // crossfade, or a progress bar with nothing to fill against. preload sets durationSec (→ the bar
+  // fills) and marks the deck ready (→ handleRotate crossfades instead of the bare load-next path).
+  // The deckReady/not-playing guards + preload's own idempotent guard keep this off handleRotate's toes.
+  _maintain() {
+    if (this.continuous && this.queue.length < 5) this.refillIfNeeded();
+    const order = ["A", "B", "C"];
+    const playing = order.find(d => this._deckState(d).status === "playing");
+    if (!playing || this.queue.length === 0) return;
+    const i = order.indexOf(playing);
+    const n1 = order[(i + 1) % 3], n2 = order[(i + 2) % 3];
+    if (!this.deckReady.has(n1) && this._deckState(n1).status !== "playing") this.preload(n1, 0);
+    if (this.queue.length > 1 && !this.deckReady.has(n2) && this._deckState(n2).status !== "playing") this.preload(n2, 1);
   }
 
   checkEnd(deckId, pos, dur, prevStatus, backendEnded = false) {
@@ -166,7 +187,10 @@ class DaemonEngine {
         this._setDeck(toId, { status: "playing", positionSec: 0 });
         this._fireStart(toId);
         this.deckReady.delete(toId); this.endTriggered.delete(toId);
-        if (this.queue.length > 0) this.dequeue();
+        // A hand-loaded deck wasn't fed from the queue — don't dequeue against it (that would drop
+        // an unrelated upcoming song). Auto-cued decks DO consume their queue slot.
+        if (this.manualCue.has(toId)) this.manualCue.delete(toId);
+        else if (this.queue.length > 0) this.dequeue();
         const nearDelay = cfMs + 800;
         if (toId === "B") { setTimeout(() => this.preload("C", 0), 800); setTimeout(() => this.preload("A", 1), nearDelay); }
         else if (toId === "C") { setTimeout(() => this.preload("A", 0), 800); setTimeout(() => this.preload("B", 1), nearDelay); }
@@ -200,13 +224,18 @@ class DaemonEngine {
   }
 
   async preload(deckId, queueIndex = 0) {
+    if (this.deckReady.has(deckId)) return;   // already cued — idempotent (safe to call from _maintain + handleRotate)
     const st = this._deckState(deckId);
     if (st.status === "playing" || st.status === "paused") return;
+    // Never cue a file that's already playing/cued on another deck — that's what stacked the same
+    // song onto all three decks. Skip past any such item (leave it queued to play later instead).
+    const onOtherDecks = ["A", "B", "C"].filter(d => d !== deckId).map(d => this._deckState(d).filePath).filter(Boolean);
     // Load a playable item at/after queueIndex; drop any unplayable (missing-file) items we hit so
     // they never become a stuck "playing" deck. Only mark the deck ready on a successful load.
     let guard = 0;
     while (this.queue.length > queueIndex && guard++ < 100) {
       const next = this.queue[queueIndex];
+      if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
       if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); return; }
       this.queue.splice(queueIndex, 1);
       this.emit("queue", { stationId: this.stationId, items: this.queue });
@@ -215,10 +244,17 @@ class DaemonEngine {
   }
 
   async refillIfNeeded() {
-    if (this.queue.length === 0 && this.continuous) {
-      const fill = loggen.fillQueue(this.db, this.stationId, 20);
-      // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
-      this.queue.push(...this._playable(fill.items));
+    // Refill BEFORE the queue hits 0 (low watermark), so it never sits empty and starves preload.
+    if (!this.continuous || this.queue.length >= 5) return;
+    // Throttle so we don't hammer loggen every 250ms tick when the schedule genuinely returns nothing.
+    const now = Date.now();
+    if (now - (this._lastRefillAt || 0) < 2000) return;
+    this._lastRefillAt = now;
+    const fill = loggen.fillQueue(this.db, this.stationId, 20);
+    // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
+    const items = this._playable(fill.items);
+    if (items.length) {
+      this.queue.push(...items);
       this.emit("queue", { stationId: this.stationId, source: fill.source, items: this.queue });
     }
   }
@@ -269,6 +305,15 @@ class DaemonEngine {
   }
 
   // ── operator/queue API (called from daemon command handlers) ──
+  // The renderer hand-loaded a deck (A/B/C button → audio:load). The native deck is already
+  // loaded; flag it here so the self-heal (_maintain) won't preload over it and the rotate path
+  // treats it as a manual cue. No-op for a playing deck (the load guard already blocks that).
+  noteManualCue(deckId) {
+    if (!["A", "B", "C"].includes(deckId)) return;
+    if (this._deckState(deckId).status === "playing") return;
+    this.deckReady.add(deckId);
+    this.manualCue.add(deckId);
+  }
   addToQueue(items) { this.queue.push(...this._playable(items)); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   replaceQueue(items) { this.queue = this._playable(items); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   clearQueue() { this.queue = []; this.emit("queue", { stationId: this.stationId, items: this.queue }); }
