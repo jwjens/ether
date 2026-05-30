@@ -49,6 +49,12 @@ class DaemonEngine {
     // re-cue over them; flagged manual so the rotate path doesn't dequeue an unrelated song when
     // it crossfades into one (a manual cue didn't come from the queue).
     this.manualCue = new Set();
+    // Stage 1: qids of queue entries that preload has loaded onto a standby deck (they stay IN the
+    // queue until they rotate on air). queue:* intent commands treat these as protected — you change
+    // what's on a deck via deck:* commands, never by editing the queue. Updated SYNCHRONOUSLY: added
+    // in preload on a successful load, removed in dequeue() (the single point every advance/rotate
+    // path funnels through), so there is no window where a qid is "unbound" before the next preload.
+    this.boundQids = new Set();
     this.endTriggered = new Set();
     this.processingEnd = false;
     this.autoAdvance = true;     // automation engine = always auto-advancing
@@ -243,7 +249,7 @@ class DaemonEngine {
     while (this.queue.length > queueIndex && guard++ < 100) {
       const next = this.queue[queueIndex];
       if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
-      if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); return; }
+      if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
       this.queue.splice(queueIndex, 1);
       this.emit("queue", { stationId: this.stationId, items: this.queue });
       this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
@@ -269,6 +275,9 @@ class DaemonEngine {
   dequeue() {
     const idx = this.shuffle ? Math.floor(Math.random() * this.queue.length) : 0;
     const item = this.queue.splice(idx, 1)[0];
+    // Stage 1: a removed entry is no longer a pending queue slot — clear its bound flag here,
+    // synchronously, so the rotate path can never leave a stale bound qid behind.
+    if (item && item.qid) this.boundQids.delete(item.qid);
     this.emit("queue", { stationId: this.stationId, items: this.queue });
     return item;
   }
@@ -327,9 +336,90 @@ class DaemonEngine {
     this.manualCue.add(deckId);
   }
   addToQueue(items) { this.queue.push(...this._ensureIds(this._playable(items))); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
-  replaceQueue(items) { this.queue = this._ensureIds(this._playable(items)); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
-  clearQueue() { this.queue = []; this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  replaceQueue(items) { this.queue = this._ensureIds(this._playable(items)); this._pruneBound(); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  clearQueue() { this.queue = []; this.boundQids.clear(); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   getQueue() { return [...this.queue]; }
+
+  // ── Stage 1: explicit-intent commands (queue:* / deck:*) ──────────────────────────────────────
+  // Additive — these run ALONGSIDE the legacy addToQueue/replaceQueue/clearQueue/load while the
+  // renderer migrates (Stage 2). All are id-addressed, idempotent, and tolerant: a stale/unknown
+  // intent is a quiet no-op (returns false), never an error or a corrupting mutation.
+
+  // Keep boundQids ⊆ qids actually present in the queue (after a legacy whole-queue replace).
+  _pruneBound() { const live = new Set(this.queue.map(it => it.qid)); for (const q of [...this.boundQids]) if (!live.has(q)) this.boundQids.delete(q); }
+  // Index of the first PENDING (non-bound) entry — bound entries sit at the head as the cued decks.
+  _pendingStart() { const i = this.queue.findIndex(it => !this.boundQids.has(it.qid)); return i < 0 ? this.queue.length : i; }
+
+  // queue:enqueue — append to the bottom (daemon stamps qids). Same effect as legacy addToQueue.
+  intentEnqueue(items) { this.addToQueue(items); return true; }
+
+  // queue:remove — drop the pending entry with this qid. No-op if unknown or bound (cued on a deck).
+  intentRemove(qid) {
+    if (!qid || this.boundQids.has(qid)) return false;
+    const idx = this.queue.findIndex(it => it.qid === qid);
+    if (idx < 0) return false;
+    this.queue.splice(idx, 1);
+    this.emit("queue", { stationId: this.stationId, items: this.queue });
+    return true;
+  }
+
+  // queue:reorder — move a pending entry to toIndex (clamped into the pending region; never above a
+  // bound/cued head entry). No-op if unknown, bound, or already there.
+  intentReorder(qid, toIndex) {
+    if (!qid || this.boundQids.has(qid)) return false;
+    const idx = this.queue.findIndex(it => it.qid === qid);
+    if (idx < 0) return false;
+    const [item] = this.queue.splice(idx, 1);
+    const lo = this._pendingStart();
+    const dest = Math.max(lo, Math.min(Number.isFinite(toIndex) ? toIndex : this.queue.length, this.queue.length));
+    this.queue.splice(dest, 0, item);
+    this.emit("queue", { stationId: this.stationId, items: this.queue });
+    return true;
+  }
+
+  // queue:move — shortcut to the top (first pending slot, "play next") or bottom of the queue.
+  intentMove(qid, where) {
+    if (where !== "top" && where !== "bottom") return false;
+    return this.intentReorder(qid, where === "top" ? this._pendingStart() : this.queue.length);
+  }
+
+  // queue:clear — clear the PENDING region only; leave the cued/playing decks (their head entries)
+  // alone so audio never stops. (Legacy clearQueue still wipes everything for back-compat.)
+  intentClearPending() {
+    const before = this.queue.length;
+    this.queue = this.queue.filter(it => this.boundQids.has(it.qid));
+    if (this.queue.length === before) return false;
+    this.emit("queue", { stationId: this.stationId, items: this.queue });
+    return true;
+  }
+
+  // deck:cue — hand-load a song onto a specific deck (the A/B/C buttons' intent). No-op for a
+  // non-A/B/C deck, a playing deck (never override on-air), or an unplayable file. Marks it manual
+  // + ready and emits a deck event. songRef = { filePath, title, artist, gainDb?, durationMs? }.
+  intentCueDeck(deck, songRef) {
+    if (!["A", "B", "C"].includes(deck)) return false;
+    if (this._deckState(deck).status === "playing") return false;
+    if (!songRef || !this.loadToDeck(deck, songRef)) return false;
+    this.deckChainType[deck] = songRef.chainType || "segue";
+    this.deckReady.add(deck);
+    this.manualCue.add(deck);
+    this._maybeEmitDeck(deck);
+    return true;
+  }
+
+  // deck:crossfade — fade the playing deck to a ready one. Args optional: from defaults to the
+  // playing deck, to defaults to the next ready deck in rotation. No-op if there's no playing deck
+  // or no ready target. Reuses handleRotate (carries its own spurious-end guards + dequeue).
+  intentCrossfade(from, to) {
+    const order = ["A", "B", "C"];
+    const playing = from && order.includes(from) ? from : order.find(d => this._deckState(d).status === "playing");
+    if (!playing) return false;
+    let target = to && order.includes(to) ? to : null;
+    if (!target) { const i = order.indexOf(playing); for (let k = 1; k <= 2; k++) { const c = order[(i + k) % 3]; if (this.deckReady.has(c)) { target = c; break; } } }
+    if (!target || target === playing || !this.deckReady.has(target)) return false;
+    this.handleRotate(playing, target);
+    return true;
+  }
 
   // Fill (if empty), load deck A, play, and preload B/C — the unattended start.
   async start() {

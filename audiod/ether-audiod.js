@@ -113,6 +113,17 @@ const handlers = {
   enqueue:            (m) => { getEngine(m.stationId).addToQueue(m.items || []); return true; },
   replaceQueue:       (m) => { getEngine(m.stationId).replaceQueue(m.items || []); return true; },
   clearQueue:         (m) => { const e = engines.get(m.stationId); if (e) e.clearQueue(); return true; },
+
+  // ── Stage 1: explicit-intent commands (additive; run ALONGSIDE the legacy ones above) ──
+  // The renderer does not call these yet (Stage 2 flips it). All id-addressed, idempotent, tolerant
+  // — a stale/unknown intent returns false (a quiet no-op), never an error or a corrupting mutation.
+  "queue:enqueue":    (m) => getEngine(m.stationId).intentEnqueue(m.items || []),
+  "queue:remove":     (m) => getEngine(m.stationId).intentRemove(m.qid),
+  "queue:reorder":    (m) => getEngine(m.stationId).intentReorder(m.qid, m.toIndex),
+  "queue:move":       (m) => getEngine(m.stationId).intentMove(m.qid, m.where),
+  "queue:clear":      (m) => getEngine(m.stationId).intentClearPending(),
+  "deck:cue":         (m) => getEngine(m.stationId).intentCueDeck(m.deck, m.songRef || {}),
+  "deck:crossfade":   (m) => getEngine(m.stationId).intentCrossfade(m.from, m.to),
   setAutoAdvance:     (m) => { getEngine(m.stationId).autoAdvance = !!m.value; return true; },
   setContinuous:      (m) => { getEngine(m.stationId).continuous = !!m.value; return true; },
   setShuffle:         (m) => { getEngine(m.stationId).shuffle = !!m.value; return true; },

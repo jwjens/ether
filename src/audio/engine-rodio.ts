@@ -235,6 +235,20 @@ export class AudioEngine {
   /** True when the out-of-process daemon owns playout (renderer is a display/control proxy). */
   get isDaemonDriven(): boolean { return this.daemonDriven; }
 
+  // ── Stage 1: typed wrappers for the daemon's explicit-intent commands (queue:* / deck:*). Added
+  // so Stage 2 is a wiring change, not new logic — NOTHING in the UI calls these yet. Each forwards
+  // to the daemon via the generic bridge and resolves with the daemon's ack ({ ok, result }).
+  private daemonCmd(cmd: string, args: Record<string, any>): Promise<any> {
+    return (window as any).ether?.audio?.daemon?.(cmd, { stationId: this.stationId, ...args });
+  }
+  queueEnqueue(items: any[]): Promise<any> { return this.daemonCmd("queue:enqueue", { items }); }
+  queueRemove(qid: string): Promise<any> { return this.daemonCmd("queue:remove", { qid }); }
+  queueReorder(qid: string, toIndex: number): Promise<any> { return this.daemonCmd("queue:reorder", { qid, toIndex }); }
+  queueMove(qid: string, where: "top" | "bottom"): Promise<any> { return this.daemonCmd("queue:move", { qid, where }); }
+  queueClearPending(): Promise<any> { return this.daemonCmd("queue:clear", {}); }
+  deckCue(deck: DeckId, songRef: { filePath: string; title: string; artist: string; gainDb?: number; durationMs?: number; chainType?: "segue" | "stop" }): Promise<any> { return this.daemonCmd("deck:cue", { deck, songRef }); }
+  deckCrossfade(from?: DeckId, to?: DeckId): Promise<any> { return this.daemonCmd("deck:crossfade", { from, to }); }
+
   private async poll() {
     try {
       // Daemon mode: queue events are change-only, so periodically reconcile Up Next with the

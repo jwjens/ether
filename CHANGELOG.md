@@ -1,3 +1,24 @@
+## [4.3.19] — 2026-05-30
+
+Item 10 — **Stage 1** of the daemon↔renderer state-coordination fix: the daemon gains explicit
+**intent-command endpoints**, added alongside the existing commands (additive — nothing removed, the
+renderer does not call them yet; that's Stage 2).
+
+### Added — id-addressed queue/deck intent commands (daemon)
+
+- New daemon commands: `queue:enqueue`, `queue:remove`, `queue:reorder`, `queue:move`,
+  `queue:clear`, `deck:cue`, `deck:crossfade`. Each is id-addressed (by the Stage-0 per-entry
+  `qid`), **idempotent and tolerant** — a stale or unknown intent is a quiet no-op, never an error
+  or a corrupting mutation.
+- **`boundQids`**: the daemon now tracks which queue entries are loaded on a standby deck and
+  protects them — `queue:*` edits treat cued entries as no-ops (change a deck via `deck:*`). It's
+  updated synchronously (added in `preload`, removed in `dequeue`, the single point every
+  rotate/advance path funnels through) so there's no window where a qid is briefly unbound.
+- Typed renderer wrappers (`queueEnqueue`/`queueRemove`/`queueReorder`/`queueMove`/
+  `queueClearPending`/`deckCue`/`deckCrossfade`) added to the engine — **not yet called by any UI**.
+- No `main.js`/preload changes — the existing generic `audio:daemon` bridge already forwards
+  commands by name.
+
 ## [4.3.18] — 2026-05-30
 
 Item 10 (out-of-process audio engine) — **Stage 0** of the daemon↔renderer state-coordination fix.
