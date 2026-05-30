@@ -241,7 +241,8 @@ if (AUDIO_DAEMON_DESIRED) {
         sendToAllWindows("audio:levels", lv);
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
-        sendToAllWindows("audio:daemon-deck", { stationId: m.stationId, deck: m.deck, state: m.state });
+        // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
+        sendToAllWindows("audio:daemon-deck", { stationId: m.stationId, deck: m.deck, state: m.state, ready: m.ready });
       } else if (m.event === "queue") {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
       } else if (m.event === "playstart") {

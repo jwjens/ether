@@ -547,6 +547,10 @@ export default function App() {
   const [autoXfade, setAutoXfade] = useState(true);
   const [xfadeActive, setXfadeActive] = useState(false);
   const handleXfade = () => {
+    // Stage 0 (Item 10): in daemon mode the daemon owns deck rotation. This renderer-side crossfade
+    // would race it (it mutates the queue + loads decks locally), so keep it the no-op it has been.
+    // Stage 2 replaces this with an explicit deck:crossfade intent routed to the daemon.
+    if (engine.isDaemonDriven) return;
     const playingDeck = deckA?.status === "playing" ? "A" : deckB?.status === "playing" ? "B" : deckC?.status === "playing" ? "C" : null;
     if (!playingDeck) return;
     const order: Array<"A"|"B"|"C"> = ["A", "B", "C"];

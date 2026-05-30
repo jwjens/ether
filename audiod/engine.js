@@ -42,6 +42,7 @@ class DaemonEngine {
     this.queue = [];
     this.stateA = makeState("A"); this.stateB = makeState("B"); this.stateC = makeState("C");
     this.lastFired = {};
+    this.lastReady = {};   // Stage 0: track deckReady per deck so a ready-flip re-emits a deck event.
     this.deckChainType = { A: "segue", B: "segue", C: "segue" };
     this.deckReady = new Set();
     // Decks an operator hand-loaded via the A/B/C buttons. Marked ready so the self-heal won't
@@ -123,8 +124,14 @@ class DaemonEngine {
   }
   _maybeEmitDeck(id) {
     const st = this._deckState(id);
-    if (this._changed(this.lastFired[id], st)) this.emit("deck", { stationId: this.stationId, deck: id, state: st });
+    const ready = this.deckReady.has(id);
+    // Stage 0: deck events now carry deckReady (cued/ready) so the renderer can mirror cued state
+    // instead of guessing. Emit on a status/title/position change OR a ready flip.
+    if (this._changed(this.lastFired[id], st) || this.lastReady[id] !== ready) {
+      this.emit("deck", { stationId: this.stationId, deck: id, state: st, ready });
+    }
     this.lastFired[id] = st;
+    this.lastReady[id] = ready;
   }
 
   // Self-heal each poll tick: keep the queue topped up AND the two idle decks pre-loaded, so a
@@ -252,7 +259,7 @@ class DaemonEngine {
     this._lastRefillAt = now;
     const fill = loggen.fillQueue(this.db, this.stationId, 20);
     // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
-    const items = this._playable(fill.items);
+    const items = this._ensureIds(this._playable(fill.items));
     if (items.length) {
       this.queue.push(...items);
       this.emit("queue", { stationId: this.stationId, source: fill.source, items: this.queue });
@@ -277,6 +284,11 @@ class DaemonEngine {
     return fs.existsSync(fp) && this._dur(fp) > 0;
   }
   _playable(items) { return (items || []).filter(it => it && this._fileOk(it.filePath)); }
+  // Stage 0: stamp a stable per-QUEUE-ENTRY id (qid) on each item as it enters the queue. The same
+  // song can appear twice, so this is NOT the song's id — it's the identity of THIS queue slot, so
+  // the renderer + future intent commands (remove/reorder) can address an exact entry. Preserves an
+  // existing qid (e.g. a renderer echo-back of items it already received).
+  _ensureIds(items) { return (items || []).map(it => (it && it.qid) ? it : { ...it, qid: crypto.randomUUID() }); }
 
   // Load a track into a deck. Returns TRUE on success, FALSE if the file is missing or the addon
   // can't load it (corrupt/unsupported) — callers must SKIP a false (never play a dead deck, or
@@ -314,8 +326,8 @@ class DaemonEngine {
     this.deckReady.add(deckId);
     this.manualCue.add(deckId);
   }
-  addToQueue(items) { this.queue.push(...this._playable(items)); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
-  replaceQueue(items) { this.queue = this._playable(items); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  addToQueue(items) { this.queue.push(...this._ensureIds(this._playable(items))); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  replaceQueue(items) { this.queue = this._ensureIds(this._playable(items)); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   clearQueue() { this.queue = []; this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   getQueue() { return [...this.queue]; }
 

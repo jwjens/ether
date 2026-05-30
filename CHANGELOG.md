@@ -1,3 +1,23 @@
+## [4.3.18] — 2026-05-30
+
+Item 10 (out-of-process audio engine) — **Stage 0** of the daemon↔renderer state-coordination fix.
+Locks in the daemon as the single source of truth for deck + queue state, read path first
+(additive only — no write-path changes, nothing removed).
+
+### Changed — the renderer mirrors the daemon's deck state instead of deriving its own
+
+- The daemon stamps a stable **per-queue-entry id (`qid`)** on every item as it enters the queue and
+  includes it in queue events (the same song can appear twice, so this is the slot's identity, not
+  the song's), and it now emits **`deckReady`** (cued) in every deck event.
+- The renderer **subscribes to the daemon's `deck` events** and treats them as authoritative for
+  A/B/C status/title/duration/cued state; `poll()` only advances the countdown locally between
+  events instead of deriving deck status from its own native read.
+- The **XFADE button is gated to its existing no-op in daemon mode** — the renderer-side crossfade
+  would race the daemon. Stage 2 replaces it with an explicit `deck:crossfade` intent to the daemon.
+
+This stage proves the read path; the write-path flip (renderer stops echoing its queue mirror back
+to the daemon) comes in Stage 2.
+
 ## [4.3.12] — 2026-05-29
 
 ### Fixed — fader colors match the rest of the app

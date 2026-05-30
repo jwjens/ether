@@ -82,7 +82,7 @@ export class AudioEngine {
   private lastPollTime = Date.now();
   private lastFiredState: { A?: DeckState; B?: DeckState; C?: DeckState } = {};
 
-  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[] = [];
+  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number; qid?: string }[] = [];
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   // Per-deck chain type: what happens when THIS deck finishes.
   // Loaded from the queue item at deck-load time.
@@ -155,14 +155,30 @@ export class AudioEngine {
   private attachDaemonEvents() {
     const a = (window as any).ether?.audio;
     if (!a) return;
-    // Mirror the daemon's queue so getQueue() (the Up Next UI) stays current.
+    // Mirror the daemon's queue so getQueue() (the Up Next UI) stays current. Stage 0: carry the
+    // daemon's per-entry qid so the mirror can address an exact entry (Stage 2 intent commands).
     if (a.onQueue) {
       const h = a.onQueue((m: any) => {
         if (Array.isArray(m?.items)) this.queue = m.items.map((it: any) => ({
-          filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType,
+          filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
         }));
       });
       this.daemonUnsub.push(() => a.offQueue?.(h));
+    }
+    // Stage 0: the daemon is the authority for A/B/C deck state. Mirror its `deck` events
+    // (status/title/duration + cued/deckReady) into stateA/B/C, instead of deriving deck status
+    // from our own native poll. poll() now only ticks positionSec for a smooth countdown.
+    if (a.onDeck) {
+      const h = a.onDeck((m: any) => {
+        const id = m?.deck as DeckId;
+        if (id !== "A" && id !== "B" && id !== "C") return;
+        const st = makeState(id, m.state || {});
+        if (id === "A") this.stateA = st; else if (id === "B") this.stateB = st; else this.stateC = st;
+        if (m.ready) this.deckReady.add(id); else this.deckReady.delete(id);
+        this.lastFiredState[id] = st;   // keep poll()'s change-detector aligned so it doesn't double-fire
+        this.listeners.forEach(l => l(id, st));
+      });
+      this.daemonUnsub.push(() => a.offDeck?.(h));
     }
     // The daemon advances + starts tracks; relay its playstart so the renderer's now-playing
     // push + play log (App.tsx onPlayStart) keep firing without the renderer driving playback.
@@ -186,7 +202,7 @@ export class AudioEngine {
       const items = Array.isArray(r?.result) ? r.result : (Array.isArray(r) ? r : null);
       if (!items) return;
       this.queue = items.map((it: any) => ({
-        filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType,
+        filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
       }));
       this.listeners.forEach(l => l("A", this.stateA)); // nudge subscribers (queue length changed)
     } catch { /* daemon not answering yet — the next onQueue event will populate it */ }
@@ -243,9 +259,12 @@ export class AudioEngine {
       const posB = (this.stateB.status === "playing") ? Math.min(this.stateB.positionSec + elapsed, durB || 9999) : this.stateB.positionSec;
       const posC = (this.stateC.status === "playing") ? Math.min(this.stateC.positionSec + elapsed, durC || 9999) : this.stateC.positionSec;
 
-      this.stateA = { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA };
-      this.stateB = { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB };
-      this.stateC = { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC };
+      // Stage 0: in daemon mode A/B/C status/title/duration are authoritative from onDeck events;
+      // here we only advance positionSec locally for a smooth countdown between those events. The
+      // in-process engine keeps reading the native deck state directly (unchanged).
+      this.stateA = this.daemonDriven ? { ...this.stateA, positionSec: posA } : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA };
+      this.stateB = this.daemonDriven ? { ...this.stateB, positionSec: posB } : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB };
+      this.stateC = this.daemonDriven ? { ...this.stateC, positionSec: posC } : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC };
 
       if (this.stateChanged(this.lastFiredState.A, this.stateA)) { this.listeners.forEach(l => l("A", this.stateA)); }
       this.lastFiredState.A = this.stateA;
