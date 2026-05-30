@@ -565,7 +565,15 @@ export class AudioEngine {
   getQueue() { return [...this.queue]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
   replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
-    if (this.daemonDriven) { (window as any).ether?.audio?.daemon?.("replaceQueue", { stationId: this.stationId, items: songs }); this.queue = [...songs]; return; }
+    // Stage 2b: the renderer may NO LONGER push its whole queue mirror to the daemon — that echo was
+    // the "clobber" that re-introduced played/duplicate songs and raced rotation (Bugs 1 & 3). The
+    // daemon is the single source of truth; every daemon-mode queue edit now goes through the
+    // id-addressed intents (queue:reorder/remove/move/enqueue/clear). This is a guarded no-op; the
+    // warning flags any stray caller so it can be migrated. (In-process keeps the local replace.)
+    if (this.daemonDriven) {
+      console.warn("[ENGINE] replaceQueue ignored in daemon mode — use queue:* intent commands (Stage 2b)");
+      return;
+    }
     rotLog(`[ROT] replaceQueue — was [${this.queue.map(q => `"${q.title}"`).join(", ")}] | now [${songs.map(s => `"${s.title}"`).join(", ")}]`);
     this.queue = [...songs];
   }

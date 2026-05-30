@@ -1,3 +1,18 @@
+## [4.3.23] — 2026-05-30
+
+Item 10 — **Stage 2b**: closes the last hole in the daemon↔renderer migration. The renderer can no
+longer push its whole queue mirror back to the daemon.
+
+### Changed — renderer can no longer clobber the daemon's queue
+
+- `engine-rodio.replaceQueue` is now a **guarded no-op in daemon mode** (warns on any stray caller).
+  That whole-queue echo was the original "clobber" behind the duplicate/played-song bugs; all
+  daemon-mode queue edits already go through the id-addressed intents (Stage 2a), so nothing legit
+  calls it anymore. In-process mode is unchanged.
+- Note: `loadToDeck` is intentionally left as-is — it's still the live manual-load path for the
+  Jock/Spots/PhoneDesk/Deck-Configurator panels (routes to the daemon `load` + `noteManualCue`),
+  not an echo. Migrating those panels to `deck:cue` is a separate future cleanup.
+
 ## [4.3.22] — 2026-05-30
 
 Item 10 — **Stage 3 (3a + 3b together)**: fixes the A→B→C rotation stall (Bug 2) at the root **and**
