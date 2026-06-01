@@ -1,3 +1,13 @@
+## [4.3.26] — 2026-05-31
+
+### Added — AUTO / MANUAL toggle button next to On-Air
+
+- The header now has an **AUTO / MANUAL** toggle beside the On-Air badge. On-Air only starts/stops
+  the Icecast stream; this new button starts/stops **automation** (fill + play + advance) — green
+  **● AUTO** when rotation is running, **MANUAL** when the operator drives the decks. It's wired to
+  the existing `toggleAuto` (also the Alt/Cmd-A shortcut); previously automation could only be
+  toggled by the keyboard shortcut or the command bus, with no visible control.
+
 ## [4.3.25] — 2026-05-31
 
 ### Fixed — dashboard A/B/C deck send no longer auto-plays

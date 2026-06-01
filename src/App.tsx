@@ -1691,6 +1691,27 @@ export default function App() {
             </svg>
           </button>
 
+          {/* AUTO / MANUAL toggle — sits next to On-Air. AUTO = automated rotation (fill+play+advance);
+              MANUAL = operator drives the decks. Wired to the existing toggleAuto (also Alt/Cmd-A). */}
+          <button
+            data-tour="auto-btn"
+            onClick={() => { toggleAuto(); }}
+            title={autoAdv
+              ? "Automation is ON — click to switch to MANUAL (you control the decks)"
+              : "MANUAL mode — click to switch to AUTO (automated rotation)"}
+            style={{
+              height: 48, padding: "0 20px", borderRadius: 0, border: "none", cursor: "pointer",
+              fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
+              background: autoAdv ? "#10b981" : "var(--bg-tertiary)",
+              color: autoAdv ? "#04140e" : "var(--text-tertiary)",
+              boxShadow: autoAdv ? "0 0 14px rgba(16,185,129,0.45)" : "none",
+              transition: "all 0.2s",
+              display: "flex", alignItems: "center", gap: 8,
+            }}
+          >
+            {autoAdv ? "● AUTO" : "MANUAL"}
+          </button>
+
           <GlobalOnAirBadge
             onGoLive={() => { goLive(stationId); }}
             onStopLive={() => { stopLive(stationId); }}
