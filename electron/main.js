@@ -885,12 +885,28 @@ function createWindow() {
     }
   });
 
-  // Hide instead of close (keeps app in tray)
+  // Closing the window is a DECISION, not a silent tray-hide. The old behavior (vanish to tray,
+  // keep running + on air) left operators thinking Ether had quit while it kept eating resources
+  // and there was no obvious way to actually stop it. Make the choice explicit.
   mainWindow.on("close", (e) => {
-    if (!app.isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
-    }
+    if (app.isQuitting) return;   // a real quit is already in progress → let it close
+    e.preventDefault();
+    const onAir = _isOnAir();
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: "question",
+      buttons: ["Keep Playing in Tray", "Stop & Quit Ether", "Cancel"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: "Close Ether",
+      message: onAir ? "Ether is on air." : "Close Ether?",
+      detail:
+        "Keep Playing in Tray — close this window; audio keeps streaming in the background (find Ether in the system tray).\n\n" +
+        "Stop & Quit Ether — stop automation and the stream, shut the audio engine down, and exit completely. It won't auto-restart.",
+    });
+    if (choice === 0) mainWindow.hide();
+    else if (choice === 1) fullStopAndQuit();
+    // choice === 2 (Cancel) → stay open, do nothing
   });
 
   // Grant mic/camera permissions — both layers required for packaged (file://) builds.
@@ -920,7 +936,16 @@ function createTray() {
   const menu = Menu.buildFromTemplate([
     { label: "Show Ether", click: () => { mainWindow.show(); mainWindow.focus(); } },
     { type: "separator" },
-    { label: "Quit", click: () => { app.isQuitting = true; app.quit(); } },
+    { label: "Stop Keeping On Air…", click: () => {
+        const c = dialog.showMessageBoxSync({
+          type: "warning", buttons: ["Stop Keeping On Air", "Cancel"], defaultId: 1, cancelId: 1, noLink: true,
+          title: "Stop Keeping On Air",
+          message: "Stop auto-restart for this session?",
+          detail: "The on-air watchdog will be stopped, so Ether won't relaunch if it closes or is force-killed — useful when you need to fully shut down (e.g. the system is under load). Re-opening Ether restores it.",
+        });
+        if (c === 0) pauseKeepOnAir();
+      } },
+    { label: "Quit Ether", click: () => fullStopAndQuit() },
   ]);
   tray.setContextMenu(menu);
   tray.setToolTip("Ether — On Air");
@@ -969,7 +994,7 @@ function buildMenu() {
       { label: "Import Music...", click: () => send("file:import") },
       { label: "Preferences", click: () => send("file:preferences") },
       { type: "separator" },
-      { label: "Quit", accelerator: "CmdOrCtrl+Q", click: () => { app.isQuitting = true; app.quit(); } },
+      { label: "Quit Ether", accelerator: "CmdOrCtrl+Q", click: () => fullStopAndQuit() },
     ]},
     { label: "View", submenu: [
       { label: "Play Queue", click: () => send("view:queue") },
@@ -1353,6 +1378,10 @@ app.whenReady().then(() => {
 // only respawn if it never returns). userData is the same dir the watchdog
 // computes independently — keep them in sync.
 let _haExpectedRestart = false;
+// Set ONLY by a deliberate full quit (the X/Quit dialog's "Stop & Quit", File/tray Quit). Tells
+// before-quit to tear the daemon down + stop the client so nothing resurrects — vs. close-to-tray
+// (keeps the daemon playing) or an update relaunch (_haExpectedRestart).
+let _userFullQuit = false;
 function writeHaSentinel(name) {
   try { fs.writeFileSync(path.join(app.getPath("userData"), name), String(Date.now())); }
   catch (e) { console.error("[HA] sentinel write failed:", name, e.message); }
@@ -1390,7 +1419,12 @@ app.on("before-quit", () => {
   // for gapless), and when a watchdog is supervising (_haWatchdogPid → leave its tested clean-exit
   // handshake to it, avoiding a double-shutdown/respawn race). A crash never runs before-quit, so
   // the daemon survives a crash (audio continues) as intended.
-  if (!_haExpectedRestart && AUDIO_DAEMON && !_haWatchdogPid) {
+  if (_userFullQuit) {
+    // Deliberate FULL quit (driven by fullStopAndQuit, which already sent the daemon shutdown and
+    // stood the watchdog down): stop the client so it cannot reconnect/respawn the daemon as we
+    // exit. This overrides the watchdog-handshake gate below — the user asked for everything off.
+    try { audiodClient.stop(); } catch {}
+  } else if (!_haExpectedRestart && AUDIO_DAEMON && !_haWatchdogPid) {
     try { audiodClient.cmd("shutdown").catch(() => {}); } catch {}
   }
 });
@@ -1721,6 +1755,11 @@ ipcMain.handle("ha:disable", async () => {
   return { ok: r.ok && unreg.ok, autologon: r, task: unreg };
 });
 
+// Lightweight "pause keep-on-air" (no UAC): stop the live watchdog for THIS session so a force-kill
+// stays dead. Distinct from ha:disable, which fully removes auto-logon (UAC) and persists off. Used
+// by the tray "Stop Keeping On Air…" item and (optionally) a Settings button.
+ipcMain.handle("ha:pauseKeepOnAir", () => { try { pauseKeepOnAir(); return { ok: true }; } catch (e) { return { ok: false, error: String(e && e.message || e) }; } });
+
 function _haWatchdogPidFile() { return path.join(app.getPath("userData"), ".ether-watchdog.pid"); }
 function readWatchdogPidFile() {
   try { return Number(fs.readFileSync(_haWatchdogPidFile(), "utf8").trim()) || 0; } catch { return 0; }
@@ -1731,6 +1770,42 @@ function _haKillWatchdog(pid) {
   // NO /T: the watchdog may have spawned US as its child, and /T takes the whole
   // tree — which would kill this app. Kill only the watchdog process itself.
   try { require("child_process").spawnSync("taskkill", ["/F", "/PID", String(pid)], { stdio: "ignore" }); } catch { /* best effort */ }
+}
+
+// Is the station actually on air right now? (drives the close-dialog wording.)
+function _isOnAir() {
+  try {
+    if (_automationIntent && _automationIntent.size > 0) return true;
+    for (const s of _daemonStreamStates.values()) if (s === "live") return true;
+  } catch {}
+  return false;
+}
+
+// Emergency "stop keeping on air": stop relaunching + kill the live HA watchdog so a force-kill
+// (Task Manager — or our own exit) STAYS dead for this session. Unelevated: it does NOT remove the
+// auto-logon Scheduled Task (that needs UAC via Settings → disable), so keep-on-air re-arms on the
+// next logon. This is the "I need to fully shut down NOW" lever for a system under load.
+function pauseKeepOnAir() {
+  try { stopWatchdogMonitor(); } catch {}
+  const pid = _haWatchdogPid || readWatchdogPidFile();
+  try { _haKillWatchdog(pid); } catch {}
+  try { removeWatchdogPidFile(); } catch {}
+  _haWatchdogPid = 0;
+  try { writeHaSentinel(".ether-clean-exit"); } catch {}   // also tell any mid-cycle watchdog to stand down
+  console.log("[HA] keep-on-air paused — watchdog stopped; a force-kill now stays dead this session");
+}
+
+// Deliberate FULL shutdown — the X/Quit dialog's "Stop & Quit", File→Quit, tray Quit. Tears the
+// whole stack down so nothing resurrects: stand the watchdog down, tell the daemon to stop, stop
+// the client so it can't respawn the daemon, then quit. The short delay lets the shutdown reach the
+// daemon pipe before our process exits. before-quit also writes the clean-exit sentinel.
+function fullStopAndQuit() {
+  if (app.isQuitting) return;
+  _userFullQuit = true;
+  app.isQuitting = true;
+  try { pauseKeepOnAir(); } catch {}                                  // watchdog can't relaunch us mid-exit
+  try { if (AUDIO_DAEMON) audiodClient.cmd("shutdown").catch(() => {}); } catch {}  // stop the detached daemon
+  setTimeout(() => { try { audiodClient.stop(); } catch {} app.quit(); }, 250);
 }
 
 // Executes the --enable-ha / --disable-ha CLI flags. Called from the :3400 listen
