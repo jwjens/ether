@@ -288,7 +288,7 @@ async function pickRandom(
 
 interface ClockSlotRow { category_id: number; }
 
-export async function getActiveShowClock(stationId: number): Promise<{ clockId: number; showName: string } | null> {
+export async function getActiveShowClock(stationId: number): Promise<{ clockId: number; showName: string; showColor: string | null } | null> {
   try {
     const hour = new Date().getHours();
     const day  = String(new Date().getDay());
@@ -297,10 +297,10 @@ export async function getActiveShowClock(stationId: number): Promise<{ clockId: 
     // (avoids complex SQL for overnight / midnight-ending shows)
     const rows = await query<{
       clock_id: number; name: string;
-      start_hour: number; end_hour: number; days: string;
+      start_hour: number; end_hour: number; days: string; color: string | null;
     }>(
-      `SELECT clock_id, name, start_hour, end_hour, days
-       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?
+      `SELECT clock_id, name, start_hour, end_hour, days, color
+       FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?
        ORDER BY CASE
          WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
          WHEN end_hour = 0 OR end_hour = start_hour THEN 24
@@ -329,7 +329,7 @@ export async function getActiveShowClock(stationId: number): Promise<{ clockId: 
 
       if (active) {
         console.log(`[loggen] Active show: "${row.name}" (${start_hour}–${end_hour}) clock=${row.clock_id}`);
-        return { clockId: row.clock_id, showName: row.name };
+        return { clockId: row.clock_id, showName: row.name, showColor: row.color ?? null };
       }
     }
 
@@ -364,7 +364,7 @@ export async function getFormatCategoryIds(stationId: number, clockId?: number):
            WHERE cs.slot_type = 'music' AND cs.category_id IS NOT NULL AND cs.deleted_at IS NULL
              AND cs.station_id = ?
              AND cs.clock_id IN (
-               SELECT clock_id FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?
+               SELECT clock_id FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?
              )`,
           [stationId, stationId]);
     return rows.map(r => r.category_id).filter(c => c != null);

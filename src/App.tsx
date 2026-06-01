@@ -627,12 +627,14 @@ export default function App() {
       .catch(() => setVersion("?.?.?"));
   }, []);
   // Current show/daypart name — shown top-left in the header (where the logo used to be).
+  // Colored with the show's own scheduler color so the header matches the Show Scheduler.
   const [headerShow, setHeaderShow] = useState<string | null>(null);
+  const [headerShowColor, setHeaderShowColor] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     const resolve = async () => {
-      try { const sc = await getActiveShowClock(stationId); if (!cancelled) setHeaderShow(sc?.showName ?? null); }
-      catch { if (!cancelled) setHeaderShow(null); }
+      try { const sc = await getActiveShowClock(stationId); if (!cancelled) { setHeaderShow(sc?.showName ?? null); setHeaderShowColor(sc?.showColor ?? null); } }
+      catch { if (!cancelled) { setHeaderShow(null); setHeaderShowColor(null); } }
     };
     resolve();
     const id = setInterval(resolve, 30000);
@@ -1612,7 +1614,7 @@ export default function App() {
           title={headerShow ? `On air: ${headerShow}` : "Live"}
           style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: "0 18px 0 6px" }}
         >
-          <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "0.14em", color: "var(--accent-cyan)", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "0.14em", color: headerShowColor || "var(--accent-cyan)", textTransform: "uppercase", whiteSpace: "nowrap" }}>
             {headerShow || "ETHER"}
           </span>
         </div>

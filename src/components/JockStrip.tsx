@@ -80,7 +80,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
         display: "flex", alignItems: "center", gap: 10,
         padding: "0 16px",
         flex: 1,
-        background: focused ? "rgba(0,0,0,0.35)" : "transparent",
+        background: focused ? "#000" : "var(--bg-primary)",
         transition: "background 0.15s ease",
         borderRadius: 0,
       }}>
