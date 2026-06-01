@@ -22,7 +22,7 @@ export default function GlobalOnAirBadge({ onGoLive, onStopLive, style }: Props)
       : "OFF AIR";
 
   const bg      = live ? "#ef4444" : connecting ? "rgba(245,158,11,0.18)" : "var(--bg-tertiary)";
-  const color   = live ? "#fff"    : connecting ? "#fbbf24"               : "var(--text-tertiary)";
+  const color   = live ? "#fff"    : connecting ? "#fbbf24"               : "var(--text-primary)";
   const shadow  = live ? "0 0 16px rgba(239,68,68,0.5)" : connecting ? "0 0 10px rgba(245,158,11,0.35)" : "none";
   const outline = connecting ? "1px solid rgba(245,158,11,0.45)" : "none";
 

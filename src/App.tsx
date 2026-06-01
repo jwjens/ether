@@ -1681,8 +1681,8 @@ export default function App() {
               Mixer
             </button>
           )}
-          <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ height: 44, padding: viewport.narrow ? "0 12px" : "0 14px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", gap: 7 }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+          <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ height: 44, padding: viewport.narrow ? "0 12px" : "0 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", cursor: "pointer", fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", gap: 7 }}>
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
             {!viewport.narrow && currentUser?.name}
           </button>
 
@@ -1695,10 +1695,10 @@ export default function App() {
               ? "Automation is ON — click to switch to MANUAL (you control the decks)"
               : "MANUAL mode — click to switch to AUTO (automated rotation)"}
             style={{
-              height: 44, padding: "0 18px", borderRadius: 0, cursor: "pointer",
-              fontSize: 13, fontWeight: 700, letterSpacing: "0.08em",
+              height: 44, padding: "0 20px", borderRadius: 0, cursor: "pointer",
+              fontSize: 16, fontWeight: 800, letterSpacing: "0.08em",
               background: autoAdv ? "#10b981" : "var(--bg-tertiary)",
-              color: autoAdv ? "#04140e" : "var(--text-secondary)",
+              color: "#fff",
               border: autoAdv ? "1px solid #10b981" : "1px solid var(--border-primary)",
               transition: "all 0.15s",
               display: "flex", alignItems: "center", gap: 7,
@@ -1710,7 +1710,7 @@ export default function App() {
           <GlobalOnAirBadge
             onGoLive={() => { goLive(stationId); }}
             onStopLive={() => { stopLive(stationId); }}
-            style={{ height: 44, padding: "0 18px", fontSize: 13, letterSpacing: "0.08em" }}
+            style={{ height: 44, padding: "0 20px", fontSize: 16, fontWeight: 800, letterSpacing: "0.08em" }}
           />
 
           {/* ☰ Menu button — far right */}
@@ -2946,8 +2946,12 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     return () => window.removeEventListener("ether:guest-level", onLevel as EventListener);
   }, []);
 
-  // Panel widths — resizable via drag divider
-  const [queueWidth, setQueueWidth] = useState(320);
+  // Panel widths — resizable via drag divider. Persisted + defaults WIDE ("stretched to the
+  // right") so the queue's album-art deck rows open roomy by default, and the user's preferred
+  // stretch is remembered across launches.
+  const [queueWidth, setQueueWidth] = useState<number>(() => {
+    try { const v = parseInt(localStorage.getItem("ether_queue_width") || "", 10); return Number.isFinite(v) ? Math.max(320, Math.min(640, v)) : 560; } catch { return 560; }
+  });
   const resizingRef = useRef(false);
 
   // Queue slide-in/out collapse state — persisted so it stays how the user
@@ -2960,6 +2964,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   useEffect(() => {
     try { localStorage.setItem("ether_queue_collapsed", queueCollapsed ? "1" : "0"); } catch {}
   }, [queueCollapsed]);
+  // Persist queue width so the user's preferred stretch is the default on the next launch.
+  useEffect(() => {
+    try { localStorage.setItem("ether_queue_width", String(queueWidth)); } catch {}
+  }, [queueWidth]);
 
   const COLLAPSED_W = 26;
 
@@ -2972,7 +2980,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     const onMove = (ev: MouseEvent) => {
       // If queue is on the left, dragging right = wider; if on the right, dragging left = wider
       const dir = panelOrder[0] === "queue" ? 1 : -1;
-      const next = Math.max(320, Math.min(560, startW + (ev.clientX - startX) * dir));
+      const next = Math.max(320, Math.min(640, startW + (ev.clientX - startX) * dir));
       setQueueWidth(next);
     };
     const onUp = () => {

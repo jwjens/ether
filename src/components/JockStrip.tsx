@@ -74,21 +74,23 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
 
   return (
     <div style={{ position: "relative", height: "100%", display: "flex", flexDirection: "column" }}>
-      {/* Search input */}
+      {/* Search input — black, blends into the header bar; icon + text rich white & bold */}
+      <style>{`.ether-qsearch::placeholder{color:#fff;opacity:.72;font-weight:700}`}</style>
       <div style={{
         display: "flex", alignItems: "center", gap: 10,
         padding: "0 16px",
         flex: 1,
-        background: focused ? "var(--bg-secondary)" : "var(--bg-tertiary)",
+        background: focused ? "rgba(0,0,0,0.35)" : "transparent",
         transition: "background 0.15s ease",
         borderRadius: 0,
       }}>
-          <svg width="22" height="22" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, opacity: 0.35, color: "var(--text-primary)" }}>
-            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
-            <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <svg width="22" height="22" viewBox="0 0 14 14" fill="none" style={{ flexShrink: 0, opacity: 0.95, color: "#fff" }}>
+            <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeWidth="2"/>
+            <path d="M9.5 9.5L12.5 12.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
           </svg>
           <input
             type="text"
+            className="ether-qsearch"
             placeholder="Quick search — type to find a song..."
             value={search}
             onChange={e => { setSearch(e.target.value); onSearchChange?.(e.target.value); }}
@@ -96,7 +98,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
             onBlur={() => { setFocused(false); setTimeout(() => setShowResults(false), 300); }}
             style={{
               flex: 1, background: "transparent", border: "none", outline: "none",
-              fontSize: 20, color: "var(--text-primary)",
+              fontSize: 20, color: "#fff", fontWeight: 700,
               fontFamily: "'Inter', system-ui, sans-serif",
               letterSpacing: "-0.01em",
             }}

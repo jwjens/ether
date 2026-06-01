@@ -71,11 +71,11 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
         }}
         title={stations.length > 1 ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Enterprise to manage multiple stations"}
         style={{
-          display: "inline-flex", alignItems: "center", gap: 6,
-          height: 44, padding: "0 14px", borderRadius: 0,
-          fontSize: 13, fontWeight: 700, letterSpacing: "0.06em",
+          display: "inline-flex", alignItems: "center", gap: 7,
+          height: 44, padding: "0 16px", borderRadius: 0,
+          fontSize: 15, fontWeight: 800, letterSpacing: "0.06em",
           background: open ? "var(--bg-hover, rgba(255,255,255,0.08))" : "var(--bg-tertiary)",
-          color: "var(--text-secondary)",
+          color: "var(--text-primary)",
           border: "1px solid var(--border-primary)",
           cursor: "pointer", transition: "background 0.1s",
           fontFamily: "'JetBrains Mono', ui-monospace, monospace",
