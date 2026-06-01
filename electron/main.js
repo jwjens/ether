@@ -237,6 +237,58 @@ const _daemonStreamStates = new Map();   // stationId → last stream state, for
 // that's exactly the state we need to replay so a respawned (idle, _started=false) daemon resumes
 // playout instead of dead air. stationId → the automationStart args, so the replay is faithful.
 const _automationIntent = new Map();
+
+// Stale-daemon auto-reload (Item 10 follow-up — closes the dead-air-on-update gotcha). The daemon
+// is detached so it survives an app update gaplessly; the downside is a daemon left running OLD
+// code (or wedged) after the app updates — the renderer is new, the daemon is a zombie, and that
+// caused real dead air on the 4.3.27 update. On each fresh connect we ask the daemon its version
+// (the app version it was spawned with); if it's older than this app, we reload it — at the next
+// song boundary while audio is flowing, or promptly if there's NO audio (wedged/idle), which
+// bounds dead-air. The fresh daemon is re-staged to the current version and auto-resume replays.
+let _daemonReloadArmed = false;
+let _daemonReloadTimer = null;
+let _lastDaemonAudioAt = 0;
+function disarmDaemonReload() {
+  _daemonReloadArmed = false;
+  if (_daemonReloadTimer) { clearInterval(_daemonReloadTimer); _daemonReloadTimer = null; }
+}
+function fireDaemonReload(why) {
+  if (!_daemonReloadArmed) return;
+  disarmDaemonReload();
+  console.warn(`[AUDIO] stale daemon → reloading (${why})`);
+  try { audiodClient.reloadDaemon(); } catch {}
+}
+function armDaemonReload() {
+  if (_daemonReloadArmed) return;
+  _daemonReloadArmed = true;
+  _lastDaemonAudioAt = Date.now();   // grace: don't fire before we've seen whether audio is flowing
+  // A daemon that isn't actually producing sound (wedged or idle) is safe to reload at once; a
+  // healthy one keeps _lastDaemonAudioAt fresh from levels events and instead waits for a boundary.
+  _daemonReloadTimer = setInterval(() => {
+    if (Date.now() - _lastDaemonAudioAt > 4500) fireDaemonReload("no audio");
+  }, 1500);
+}
+async function checkStaleDaemon() {
+  let dv;
+  try {
+    dv = await audiodClient.cmd("version", {});
+  } catch (e) {
+    // A daemon too old to even know the `version` command is, by definition, stale — reload it.
+    // (This is what lets the FIRST update after this ships self-heal: the running daemon predates
+    // the command.) A plain connection error is NOT this — only treat "unknown cmd" as stale.
+    if (e && /unknown cmd/.test(String(e.message || e))) {
+      console.warn("[AUDIO] daemon predates the version command — arming reload");
+      armDaemonReload();
+    }
+    return;
+  }
+  const appV = (() => { try { return require("electron").app.getVersion(); } catch { return "0"; } })();
+  if (dv && dv !== "0" && dv !== appV) {
+    console.warn(`[AUDIO] daemon v${dv} is older than app v${appV} — arming reload`);
+    armDaemonReload();
+  }
+}
+
 if (AUDIO_DAEMON_DESIRED) {
   audiodClient.setEventHandler((m) => {
     try {
@@ -244,6 +296,9 @@ if (AUDIO_DAEMON_DESIRED) {
         const lv = { a: m.a || 0, b: m.b || 0, c: m.c || 0 };
         lv.master = typeof m.master === "number" ? m.master : Math.max(lv.a, lv.b, lv.c);
         sendToAllWindows("audio:levels", lv);
+        // Liveness signal for the stale-daemon reload: real output keeps this fresh, so a wedged
+        // daemon (claims playing, silent) stops updating it and trips the no-audio reload path.
+        if (_daemonReloadArmed && (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01)) _lastDaemonAudioAt = Date.now();
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
@@ -252,6 +307,9 @@ if (AUDIO_DAEMON_DESIRED) {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
+        // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
+        // just ended). The no-audio timer covers wedged/idle daemons that never reach here.
+        if (_daemonReloadArmed) fireDaemonReload("song boundary");
       } else if (m.event === "stream") {
         // Step 5: daemon Icecast status → the renderer's existing stream channels. The on-air
         // badge reads global.anyLive, which ONLY updates from stream:status:global — so the
@@ -273,6 +331,10 @@ if (AUDIO_DAEMON_DESIRED) {
   // existing alreadyOnAir no-op (audibly silent) — we deliberately lean on that single idempotency
   // path rather than adding a second. The very first connect replays nothing (intent is empty).
   audiodClient.setConnectedHandler(() => {
+    // A fresh connection supersedes any pending reload (this connect may BE the reloaded daemon).
+    // Disarm first, then re-evaluate the daemon we're now talking to.
+    disarmDaemonReload();
+    checkStaleDaemon();
     if (_automationIntent.size === 0) return;
     for (const [sid, args] of _automationIntent) {
       audiodClient.cmd("automationStart", args || { stationId: sid })

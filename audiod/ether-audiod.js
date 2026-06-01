@@ -98,6 +98,9 @@ const handlers = {
   broadcastDelayState:(m) => JSON.parse(A.audioBroadcastDelayState(m.stationId)),
   watchdogSet:        (m) => A.watchdogSet(m.active, m.thresholdSec, m.stationId),
   ping:               ()  => "pong",
+  // The app version this daemon was spawned with (passed via env). Lets the app detect a stale
+  // daemon left running across an update and reload it (the dead-air-on-update gotcha).
+  version:            ()  => process.env.ETHER_DAEMON_VERSION || "0",
   // Graceful remote stop (the HA watchdog sends this on a clean user-quit, so the daemon
   // doesn't outlive the station; an update/relaunch leaves the daemon running instead).
   shutdown:           ()  => { setTimeout(shutdown, 50); return "bye"; },

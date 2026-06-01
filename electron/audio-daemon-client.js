@@ -85,7 +85,9 @@ function spawnDaemon() {
     let logFile;
     try { logFile = path.join(require("electron").app.getPath("userData"), "logs", "ether-audiod.log"); } catch {}
     const child = cp.spawn(exe, [script], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
+      // ETHER_DAEMON_VERSION lets the daemon report (via the `version` cmd) which app version
+      // spawned it, so a stale daemon left running across an update can be detected + reloaded.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DAEMON_VERSION: appVersion(), ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
       detached: true, stdio: "ignore",
     });
     child.unref();
@@ -163,4 +165,12 @@ function cmd(name, args = {}) {
 function isConnected() { return connected; }
 function stop() { stopped = true; if (reconnectTimer) clearTimeout(reconnectTimer); try { if (sock) sock.end(); } catch {} }
 
-module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, isConnected, stop };
+// Reload a stale daemon (closes the dead-air-on-update gotcha). Tell the running daemon to shut
+// down; its socket close → drop() → scheduleReconnect() → ensure() finds the pipe dead → spawnDaemon()
+// brings up a FRESH, re-staged daemon at the current app version, and onConnected replays
+// automationStart. One brief gap, then current code — vs. a zombie/wedged daemon causing dead air.
+function reloadDaemon() {
+  try { if (connected && sock) sock.write(JSON.stringify({ cmd: "shutdown" }) + "\n"); } catch {}
+}
+
+module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, isConnected, stop, reloadDaemon };
