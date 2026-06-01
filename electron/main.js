@@ -232,6 +232,11 @@ try {
 // VU feed; deck/queue/playstart → the renderer proxy; stream → the on-air status).
 const audiodClient = require("./audio-daemon-client");
 const _daemonStreamStates = new Map();   // stationId → last stream state, for stream:status:global
+// Auto-resume (Item 10): per-station automation intent. Set when the app issues automationStart,
+// cleared ONLY by an explicit automationStop. A daemon disconnect/respawn must NEVER clear it —
+// that's exactly the state we need to replay so a respawned (idle, _started=false) daemon resumes
+// playout instead of dead air. stationId → the automationStart args, so the replay is faithful.
+const _automationIntent = new Map();
 if (AUDIO_DAEMON_DESIRED) {
   audiodClient.setEventHandler((m) => {
     try {
@@ -260,6 +265,20 @@ if (AUDIO_DAEMON_DESIRED) {
         sseAirstate(liveCount > 0, liveCount);
       }
     } catch {}
+  });
+
+  // Auto-resume: on every fresh daemon (re)connect, replay automationStart for each station whose
+  // intent is on-air. A respawned daemon comes up idle (_started=false) — this re-arms it (the
+  // Trace-B dead-air path, now self-healing). A surviving, still-playing daemon hits the engine's
+  // existing alreadyOnAir no-op (audibly silent) — we deliberately lean on that single idempotency
+  // path rather than adding a second. The very first connect replays nothing (intent is empty).
+  audiodClient.setConnectedHandler(() => {
+    if (_automationIntent.size === 0) return;
+    for (const [sid, args] of _automationIntent) {
+      audiodClient.cmd("automationStart", args || { stationId: sid })
+        .then(() => console.log(`[AUDIO] auto-resume: replayed automationStart for station ${sid} on daemon (re)connect`))
+        .catch((e) => console.warn(`[AUDIO] auto-resume: replay failed for station ${sid}: ${e && e.message || e}`));
+    }
   });
 }
 
@@ -1792,6 +1811,16 @@ ipcMain.handle("audio:daemonEnabled", async () => { await audioBackendReady; ret
 // Only meaningful when AUDIO_DAEMON; the in-process engine owns the queue otherwise.
 ipcMain.handle("audio:daemon", async (_, cmd, args) => {
   if (!AUDIO_DAEMON) return { ok: false, error: "audio daemon disabled" };
+  // Track automation intent for auto-resume: set on automationStart, cleared ONLY on an explicit
+  // automationStop (a deliberate operator stop is never auto-resumed). Disconnect/respawn never
+  // touches this map — the whole point is that it survives a daemon death.
+  try {
+    const sid = args && args.stationId;
+    if (sid != null) {
+      if (cmd === "automationStart") _automationIntent.set(sid, args);
+      else if (cmd === "automationStop") _automationIntent.delete(sid);
+    }
+  } catch {}
   try { return { ok: true, result: await audiodClient.cmd(cmd, args || {}) }; }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });

@@ -61,11 +61,13 @@ function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();
 let onEvent = () => {};            // main sets this → forwards events to windows
+let onConnected = () => {};        // main sets this → fired on every fresh attach (auto-resume replay)
 let reconnectTimer = null;
 let stopped = false;
 let lastSpawnAt = 0;               // debounce — never spawn more than once per 2s (storm guard)
 
 function setEventHandler(fn) { onEvent = typeof fn === "function" ? fn : (() => {}); }
+function setConnectedHandler(fn) { onConnected = typeof fn === "function" ? fn : (() => {}); }
 
 function spawnDaemon() {
   // Storm guard: even if ensure()/probe is called rapidly, spawn at most once per 2s. A
@@ -116,6 +118,12 @@ function attach(s) {
   };
   sock.on("close", drop);
   sock.on("error", () => { /* close follows */ });
+  // Fired on EVERY fresh attach — both ensure() connect handlers (initial probe AND the post-spawn
+  // s2) funnel through attach(), as does every respawn/reconnect. Main uses it to replay
+  // automationStart for on-air stations so a respawned daemon resumes instead of dead air. Deferred
+  // a tick so the connect handler finishes and `connected`/`sock` are fully settled before any
+  // replayed cmd() writes. Never throws into the socket path.
+  setImmediate(() => { if (sock === s && connected) { try { onConnected(); } catch {} } });
 }
 
 function scheduleReconnect() {
@@ -155,4 +163,4 @@ function cmd(name, args = {}) {
 function isConnected() { return connected; }
 function stop() { stopped = true; if (reconnectTimer) clearTimeout(reconnectTimer); try { if (sock) sock.end(); } catch {} }
 
-module.exports = { isEnabled, ensure, cmd, setEventHandler, isConnected, stop };
+module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, isConnected, stop };

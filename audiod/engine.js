@@ -198,6 +198,7 @@ class DaemonEngine {
         if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
         else if (this.queue.length > 0) this.dequeue();
         this._fireStart(cued);
+        this._log("watchdog-recover: deck " + cued + " LIVE — " + (this._deckState(cued).title || "(untitled)"));
         return;
       }
       // Nothing cued anywhere — load + play the next PLAYABLE track from the queue onto deck A.
@@ -211,6 +212,7 @@ class DaemonEngine {
           this._setDeck("A", { status: "playing", positionSec: 0 });
           this.endTriggered.delete("A");
           this._fireStart("A");
+          this._log("watchdog-recover: deck A LIVE — " + (this.stateA.title || "(untitled)"));
           return;
         }
         this.emit("error", { stationId: this.stationId, where: "watchdog-recover", error: "skipped unplayable: " + (next.filePath || "") });
@@ -313,6 +315,7 @@ class DaemonEngine {
         setTimeout(() => this._stop(fromId), cfMs + 500);
         this._setDeck(toId, { status: "playing", positionSec: 0 });
         this._fireStart(toId);
+        this._log("segue: deck " + toId + " LIVE — " + (this._deckState(toId).title || "(untitled)"));
         this.deckReady.delete(toId); this.endTriggered.delete(toId);
         // A hand-loaded deck wasn't fed from the queue — don't dequeue against it (that would drop
         // an unrelated upcoming song). Auto-cued decks DO consume their queue slot.
@@ -344,6 +347,7 @@ class DaemonEngine {
         this._setDeck(deckId, { status: "playing", positionSec: 0 });
         this.endTriggered.delete(deckId);
         this._fireStart(deckId);
+        this._log("load-next: deck " + deckId + " LIVE — " + (this._deckState(deckId).title || "(untitled)"));
     });
   }
 
@@ -596,6 +600,7 @@ class DaemonEngine {
     this._setDeck(next, { status: "playing", positionSec: 0 });
     this.endTriggered.delete(next);
     this._fireStart(next);
+    this._log("skip: deck " + next + " LIVE — " + (this._deckState(next).title || "(untitled)"));
     if (playing && playing !== next) this._stop(playing);
     setTimeout(() => this.preload(order[(order.indexOf(next) + 1) % 3], 0), 600);
     return true;
