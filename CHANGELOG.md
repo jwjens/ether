@@ -1,3 +1,31 @@
+## [4.3.28] — 2026-05-31
+
+### Fixed — no more dead air from a wedged audio engine (auto-recovery)
+
+- **Silent-wedge auto-recovery** — if the audio engine's output stream dies (an audio-device change,
+  or the audio thread starved under heavy system load) a deck could read "playing" with no actual
+  sound. Ether now detects this (a deck playing but output silent for several seconds) and
+  automatically reloads the engine, recovering the audio without operator intervention.
+- **Stale-engine auto-reload on update** — an app update could leave the previous audio engine
+  running old code, occasionally wedged. Ether now detects a version mismatch and reloads the engine
+  to match — at a song boundary when audio is flowing, or promptly if it isn't.
+
+### Added — "Stop & Quit" so quit actually quits
+
+- Closing the window (X) now asks: **Keep Playing in Tray**, **Stop & Quit Ether**, or **Cancel** —
+  instead of silently hiding to the tray while still running and on air. Stop & Quit stops automation
+  + the stream, shuts the engine down, and exits cleanly (no auto-restart).
+- New tray item **"Stop Keeping On Air…"** — an emergency switch that stops the keep-alive watchdog
+  so Ether stays closed when you need to fully shut it down (e.g. the system is under load).
+
+### Changed — header legibility + queue
+
+- **Header** — quick search is now black and blends into the bar with a rich white, bold icon + text;
+  the station badge, account button, **AUTO** and **ON AIR** are bigger and bold; the top-left show
+  name is tinted with **its own color from the Show Scheduler**.
+- **Queue** opens **wide by default** (and remembers your preferred width across launches) so the
+  artwork-forward deck rows have room.
+
 ## [4.3.27] — 2026-05-31
 
 ### Changed — dark "Ether" default + full UI redesign (all theme-token driven)
