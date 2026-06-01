@@ -13,6 +13,10 @@ const net = require("net");
 const path = require("path");
 const os = require("os");
 
+// Durable daemon log FIRST — the daemon runs detached/stdio:"ignore", so without this its
+// console output (including a fatal addon-load error below) is discarded. Tees console.* to a file.
+require("./daemon-log").install();
+
 // Cross-platform IPC endpoint: Windows → named pipe; macOS/Linux → a per-user Unix domain
 // socket in the temp dir. Override with ETHER_AUDIOD_PIPE. (Client + watchdog compute the
 // same default independently.) `isFileSocket` = a filesystem socket (unix, or Win10 AF_UNIX
@@ -131,11 +135,17 @@ const handlers = {
 
 function send(sock, obj) { try { sock.write(JSON.stringify(obj) + "\n"); } catch { /* client gone */ } }
 
+// Commands worth a log line on receipt — the lifecycle/automation surface (NOT the high-rate
+// pollers like getState/getLevels/getQueue, which would drown the log). automationStart/Stop
+// receipts are the anchor for verifying the auto-resume fix (Commit 2).
+const LOGGED_CMDS = new Set(["automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream"]);
+
 function handleLine(sock, line) {
   let msg;
   try { msg = JSON.parse(line); } catch { return; }
   const fn = handlers[msg.cmd];
   if (!fn) { send(sock, { id: msg.id, ok: false, error: "unknown cmd: " + msg.cmd }); return; }
+  if (LOGGED_CMDS.has(msg.cmd)) log("cmd " + msg.cmd + " station=" + (msg.stationId ?? "-"));
   try {
     const r = fn(msg);
     // Some handlers (automationStart/fill) return promises — resolve before replying.

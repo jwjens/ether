@@ -53,9 +53,8 @@ function appVersion() {
   return "0";
 }
 
-// DEFAULT ON — the out-of-process daemon (gapless updates) is the shipped default. The earlier
-// live-stream crackle (wall-clock zero-fill in the native program-bus drain) and on-air-status
-// regression are FIXED, so the daemon is default again. ETHER_AUDIO_DAEMON=0 forces the legacy
+// DEFAULT ON — the out-of-process daemon (gapless updates) is the shipped default. Crackle,
+// lifecycle (close-stops), and missing-file fixes are in. ETHER_AUDIO_DAEMON=0 forces the legacy
 // in-process engine (rollback); main.js falls back to in-process if the daemon can't connect.
 function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
 
@@ -78,8 +77,13 @@ function spawnDaemon() {
     let exe = process.execPath, script = DAEMON_SCRIPT, tag = "in-dir engine";
     const staged = stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion() });
     if (staged) { exe = staged.exe; script = staged.script; tag = "staged engine (update-proof)"; }
+    // Durable daemon log: the daemon is detached/stdio:"ignore" so its console is otherwise lost.
+    // We know app userData here (the ELECTRON_RUN_AS_NODE daemon doesn't), so pass the path in.
+    // (The daemon derives the same path as a fallback if this env is absent — never blind.)
+    let logFile;
+    try { logFile = path.join(require("electron").app.getPath("userData"), "logs", "ether-audiod.log"); } catch {}
     const child = cp.spawn(exe, [script], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
       detached: true, stdio: "ignore",
     });
     child.unref();

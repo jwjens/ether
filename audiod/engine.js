@@ -75,6 +75,11 @@ class DaemonEngine {
     this.lastPollTime = Date.now();
   }
 
+  // Daemon-log line, prefixed with the station. console.log is teed to the durable file by
+  // audiod/daemon-log.js (and still hits stdout under the off-air harnesses). Diagnostic only —
+  // never gates playout, never throws.
+  _log(...a) { try { console.log("[engine s" + this.stationId + "]", ...a); } catch {} }
+
   // ── addon wrappers (synchronous) ──
   _load(deck, fp, title, artist, gainDb) { return A.audioLoad(deck, fp, title || "", artist || "", gainDb ?? 0, this.stationId); }
   _play(deck) { return A.audioPlay(deck, this.stationId); }
@@ -88,6 +93,7 @@ class DaemonEngine {
     if (!this.pollTimer) { this.processingEnd = false; this.pollTimer = setInterval(() => this.poll(), 250); }
   }
   stop() {
+    if (this._started) this._log("_started: true → false (automation stopped)");
     this._started = false;   // Stage 3b: automation stopped — disable the stall watchdog (don't fight a deliberate stop).
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     this._stop("A"); this._stop("B"); this._stop("C");
@@ -163,10 +169,12 @@ class DaemonEngine {
     this._lastRecoverAt = now;
     if (wedged) {
       // The serialized chain is stuck — abandon it so our recovery can actually run.
+      this._log("watchdog: advanceP WEDGED " + (now - this._advanceStartedAt) + "ms — resetting chain");
       this.emit("error", { stationId: this.stationId, where: "watchdog", error: `advanceP wedged ${now - this._advanceStartedAt}ms — resetting chain` });
       this.advanceP = Promise.resolve();
       this._advanceStartedAt = 0;
     }
+    this._log("watchdog: STALL — no deck playing " + (now - this._lastPlayingAt) + "ms, forcing advance");
     this.emit("error", { stationId: this.stationId, where: "watchdog", error: `stall recovery — no deck playing ${now - this._lastPlayingAt}ms, forcing advance` });
     this._recoverStall();
   }
@@ -251,6 +259,7 @@ class DaemonEngine {
     if ((positionEnd || genuineBackendEnd) && !this.endTriggered.has(deckId)) {
       this.processingEnd = true;
       this.endTriggered.add(deckId);
+      this._log("deck " + deckId + " ended (pos=" + pos.toFixed(1) + "/" + dur + "s, chain=" + this.deckChainType[deckId] + ", readyB=" + this.deckReady.has("B") + " readyC=" + this.deckReady.has("C") + " readyA=" + this.deckReady.has("A") + ")");
 
       if (this.deckChainType[deckId] === "stop") {
         this._setDeck(deckId, { status: "ended" });
@@ -282,9 +291,10 @@ class DaemonEngine {
   _advance(where, fn) {
     this.advanceP = this.advanceP.then(async () => {
       this._advanceStartedAt = Date.now();
+      this._log("advance →", where, "(queue=" + this.queue.length + ")");
       try { await fn(); }
-      catch (e) { this.emit("error", { stationId: this.stationId, where, error: String(e) }); }
-      finally { this._advanceStartedAt = 0; }
+      catch (e) { this._log("advance ✗", where, String(e)); this.emit("error", { stationId: this.stationId, where, error: String(e) }); }
+      finally { const ms = Date.now() - this._advanceStartedAt; this._advanceStartedAt = 0; this._log("advance done", where, ms + "ms"); }
     });
     return this.advanceP;
   }
@@ -376,7 +386,10 @@ class DaemonEngine {
     const items = this._ensureIds(this._playable(fill.items));
     if (items.length) {
       this.queue.push(...items);
+      this._log("refill: +" + items.length + " from " + fill.source + " (queue=" + this.queue.length + ")");
       this.emit("queue", { stationId: this.stationId, source: fill.source, items: this.queue });
+    } else {
+      this._log("refill: 0 playable from " + fill.source + " (queue=" + this.queue.length + ")");
     }
   }
 
@@ -532,7 +545,9 @@ class DaemonEngine {
   // Fill (if empty), load deck A, play, and preload B/C — the unattended start.
   async start() {
     this.init();
+    const wasStarted = this._started;
     this._started = true;   // Stage 3b: automation engaged — the stall watchdog is now allowed to recover.
+    this._log("automationStart: requested" + (wasStarted ? " (already _started)" : " — _started false → true (automation engaged)"));
     this._lastPlayingAt = Date.now();  // grace window so the watchdog doesn't fire before start() plays A
     await this.refillIfNeeded();
     // IDEMPOTENT: never start a deck over one that's already on air. If automationStart is
@@ -543,7 +558,7 @@ class DaemonEngine {
     const live = this._state();
     const alreadyOnAir = order.some(d => this._deckState(d).status === "playing")
       || (live && [live.deckA, live.deckB, live.deckC].some(d => d && d.status === "playing"));
-    if (alreadyOnAir) return true;
+    if (alreadyOnAir) { this._log("automationStart: already on air → idempotent no-op (adopting running playout, no reload)"); return true; }
     // Load the first PLAYABLE track into A, skipping any missing-file items.
     let loaded = false, guard = 0;
     while (this.queue.length > 0 && guard++ < 100) {
@@ -552,10 +567,11 @@ class DaemonEngine {
       this.emit("error", { stationId: this.stationId, where: "start", error: "skipped unplayable: " + (first.filePath || "") });
       if (this.queue.length === 0) await this.refillIfNeeded();
     }
-    if (!loaded) return false;
+    if (!loaded) { this._log("automationStart: no playable track to start (queue empty/all unplayable)"); return false; }
     this._play("A");
     this._setDeck("A", { status: "playing", positionSec: 0 });
     this._fireStart("A");
+    this._log("automationStart: deck A LIVE — " + (this.stateA.title || "(untitled)"));
     setTimeout(async () => { await this.preload("B", 0); setTimeout(() => this.preload("C", 1), 400); }, 800);
     return true;
   }
