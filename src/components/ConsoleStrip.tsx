@@ -214,10 +214,8 @@ export default function ConsoleStrip({
   return (
     <div style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
-      backgroundColor: "var(--panel-bg, #1a1a20)",
-      backgroundImage: "var(--panel-gradient, none)",
-      borderRight: "var(--panel-border, 1px solid #252530)",
-      boxShadow: "var(--panel-outer-shadow, none)",
+      backgroundColor: "var(--panel-bg, #0e0e13)",
+      borderRight: "var(--panel-border, 1px solid rgba(255,255,255,0.05))",
       userSelect: "none", overflow: "hidden",
     }}>
 
@@ -265,15 +263,15 @@ export default function ConsoleStrip({
 
       {/* ── Main area: fader column + VU meter ── */}
       <div ref={faderAreaRef} style={{
-        flex: 1, width: "100%", display: "flex", gap: 0,
+        flex: 1, width: "100%", display: "flex", gap: 14, justifyContent: "center",
         padding: "10px 8px 8px",
         minHeight: 180, overflow: "hidden",
         position: "relative",
       }}>
 
-        {/* ── Fader column: rail, scale, and knob cap ── */}
+        {/* ── Fader column: rail + knob cap ── */}
         <div style={{
-          width: 72, flexShrink: 0, height: "100%", position: "relative", zIndex: 1,
+          width: 54, flexShrink: 0, height: "100%", position: "relative", zIndex: 1,
         }}>
 
           {/* Mouse / touch capture — covers full column, sits above all visuals */}
@@ -287,15 +285,13 @@ export default function ConsoleStrip({
             }}
           />
 
-          {/* Rail groove — narrow recessed channel */}
+          {/* Rail — flat thin track */}
           <div style={{
             position: "absolute",
             left: "50%", transform: "translateX(-50%)",
             top: KNOB_H / 2, bottom: KNOB_H / 2,
-            width: 8,
-            background: "#07070e",
-            border: "1px solid #252535",
-            boxShadow: "inset 0 2px 8px rgba(0,0,0,0.9), inset 0 0 3px rgba(0,0,0,0.5)",
+            width: 4,
+            background: "rgba(255,255,255,0.09)",
           }} />
 
           {/* Active fill — colored segment from bottom to knob */}
@@ -304,77 +300,15 @@ export default function ConsoleStrip({
             left: "50%", transform: "translateX(-50%)",
             bottom: KNOB_H / 2,
             height: Math.max(0, (faderH - KNOB_H) - knobY),
-            width: 6,
-            background: isOn ? color : "#444",
-            opacity: isOn ? 0.42 : 0.07,
+            width: 4,
+            background: isOn ? color : "#555",
+            opacity: isOn ? 0.7 : 0.06,
             transition: dragging ? "none" : "height 0.08s ease-out",
           }} />
 
-          {/* +6 dB reference label at top — not a reachable fader position,
-              shown as a headroom marker matching real broadcast console scales */}
-          <div style={{
-            position: "absolute",
-            top: 0, right: 2,
-            fontSize: 7, lineHeight: 1,
-            fontFamily: "'DM Mono', ui-monospace, monospace",
-            color: "var(--scale-text, rgba(255,255,255,0.14))",
-            pointerEvents: "none", zIndex: 1,
-          }}>+6</div>
+          {/* dB scale removed — clean rail, no per-tick labels (the meter reads the level) */}
 
-          {/* dB scale: tick marks + labels on the right side of the rail */}
-          {DB_MARKS.map(({ label: lbl, db, isUnity }) => {
-            // y is the pixel offset from top of the fader column where this dB mark falls
-            const y = isFinite(db)
-              ? (Math.max(-DB_FLOOR, Math.min(0, db)) / -DB_FLOOR) * (faderH - KNOB_H) + KNOB_H / 2
-              : (faderH - KNOB_H) + KNOB_H / 2; // ∞ sits at very bottom
-            return (
-              <React.Fragment key={lbl}>
-
-                {/* Tick line — extends right from the rail edge */}
-                <div style={{
-                  position: "absolute",
-                  // left edge starts just outside the rail right edge (50% + half-rail = 50%+4px)
-                  left: "calc(50% + 5px)",
-                  top: y,
-                  width: isUnity ? 16 : 9,
-                  height: 1,
-                  background: isUnity
-                    ? "var(--scale-tick-unity, rgba(255,255,255,0.50))"
-                    : "var(--scale-tick, rgba(255,255,255,0.14))",
-                  pointerEvents: "none", zIndex: 1,
-                }} />
-
-                {/* 0 dB notch highlight on the rail surface — tactile reference point */}
-                {isUnity && (
-                  <div style={{
-                    position: "absolute",
-                    left: "50%", transform: "translateX(-50%)",
-                    top: y - 1, height: 3, width: 10,
-                    background: "var(--scale-tick-unity, rgba(255,255,255,0.22))",
-                    boxShadow: "0 0 5px rgba(255,255,255,0.10)",
-                    pointerEvents: "none", zIndex: 2,
-                  }} />
-                )}
-
-                {/* Label text */}
-                <div style={{
-                  position: "absolute",
-                  top: y - 4, right: 2,
-                  fontSize: 7, lineHeight: 1,
-                  fontFamily: "'DM Mono', ui-monospace, monospace",
-                  color: isUnity
-                    ? "var(--scale-text-unity, rgba(255,255,255,0.55))"
-                    : "var(--scale-text, rgba(255,255,255,0.24))",
-                  pointerEvents: "none", zIndex: 1,
-                }}>
-                  {lbl}
-                </div>
-
-              </React.Fragment>
-            );
-          })}
-
-          {/* ── Fader knob cap — wide flat horizontal bar ── */}
+          {/* ── Fader knob cap — flat handle (motorized-board friendly) ── */}
           <div style={{
             position: "absolute",
             left: "50%", transform: "translateX(-50%)",
@@ -383,130 +317,76 @@ export default function ConsoleStrip({
             cursor: "grab",
             zIndex: 5,
             transition: dragging ? "none" : "top 0.08s ease-out",
-            // Brushed-aluminum fader cap — light gray so it pops against dark rail
-            background: dragging
-              ? `linear-gradient(180deg, #e0e0e8 0%, #c8c8d0 20%, #b8b8c0 50%, #c8c8d0 80%, #e0e0e8 100%)`
-              : "linear-gradient(180deg, #d4d4dc 0%, #bdbdc6 20%, #aaaaB2 50%, #bdbdc6 80%, #d4d4dc 100%)",
-            border: `1px solid ${dragging ? color : "#9090a0"}`,
+            background: isOn ? "#e6e6ec" : "#55555f",
+            border: dragging ? `2px solid ${color}` : `1px solid ${isOn ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.5)"}`,
+            opacity: isOn ? 1 : 0.7,
             borderRadius: 2,
-            boxShadow: dragging
-              ? `0 0 14px ${color}55, 0 4px 14px rgba(0,0,0,0.85)`
-              : "0 3px 10px rgba(0,0,0,0.75), inset 0 1px 0 rgba(255,255,255,0.16), inset 0 -1px 0 rgba(0,0,0,0.45)",
+            boxShadow: dragging ? `0 0 0 3px ${color}40` : "none",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {/* Center grip marker — dark stripe on light cap */}
-            <div style={{
-              width: KNOB_W - 16, height: 2,
-              background: dragging
-                ? `linear-gradient(90deg, transparent, ${color}, transparent)`
-                : "linear-gradient(90deg, transparent, rgba(0,0,0,0.45), transparent)",
-              borderRadius: 1,
-            }} />
+            {/* Center grip line */}
+            <div style={{ width: KNOB_W - 18, height: 2, background: "rgba(0,0,0,0.28)", borderRadius: 1 }} />
           </div>
 
         </div>{/* end fader column */}
 
-        {/* ── Mono VU meter — full height, right side ── */}
+        {/* ── Mono VU meter — slim, solid RGB (red top · blue · green), only lit on signal ── */}
         <div style={{
-          flex: 1, minWidth: 16, height: "100%",
+          width: 32, flexShrink: 0, height: "100%",
           background: "var(--vu-meter-bg, #0a0a0f)",
-          border: "1px solid var(--strip-divider, #303040)",
-          boxShadow: "inset 0 2px 6px rgba(0,0,0,0.4)",
           position: "relative", overflow: "hidden", zIndex: 1,
         }}>
-          {/* Fixed zoned gradient pinned to the dB SCALE — green up to −12 dBFS (75%),
-              amber −12…−3 (75–94%), red above −3. Always full height; the mask below
-              uncovers it from the bottom, so only the lit portion shows its zone color. */}
+          {/* Solid 3-zone column — green (safe) → orange (hot) → red (clip). Hard stops, no blend. */}
           <div style={{
             position: "absolute", inset: 0,
-            background: `linear-gradient(to top, ${color} 0%, ${color} 75%, var(--accent-amber) 75%, var(--accent-amber) 94%, var(--accent-red) 94%, var(--accent-red) 100%)`,
-            opacity: isOn ? 0.92 : 0.05,
+            background: "linear-gradient(to top, var(--accent-green) 0%, var(--accent-green) 66%, var(--accent-amber) 66%, var(--accent-amber) 88%, var(--accent-red) 88%, var(--accent-red) 100%)",
+            opacity: isOn ? 1 : 0.04,
           }} />
-          {/* Mask — covers the UNLIT portion above the level. ref-updated at 30Hz (smoothed)
-              when deckId is set; JSX-driven otherwise. */}
+          {/* Mask — covers the UNLIT portion above the level. ref-updated at 30Hz when deckId set. */}
           <div ref={deckId ? vuFillRef : undefined} style={{
             position: "absolute", top: 0, left: 0, right: 0,
             height: deckId ? "100%" : `${(1 - vuH) * 100}%`,
-            background: "var(--vu-meter-bg, #0a0a0f)",
+            background: "#0a0a0f",
           }} />
-          {/* Smooth leading-edge line at the level */}
+          {/* Leading-edge line at the level */}
           <div ref={deckId ? vuPeakRef : undefined} style={{
             position: "absolute", bottom: deckId ? "0%" : `${vuH * 100}%`, left: 0, right: 0,
-            height: 2, background: deckId ? color : vuColor,
-            boxShadow: deckId ? `0 0 5px ${color}` : `0 0 5px ${vuColor}`,
+            height: 2, background: "#fff",
             display: deckId ? "none" : (isOn && level > 0.02 ? "block" : "none"),
           }} />
-          {/* dB reference marks on meter */}
-          {[0, -6, -12, -24, -48].map(dbVal => {
-            const ratio = dbVal === 0 ? 1 : Math.pow(10, dbVal / 20);
-            return (
-              <div key={dbVal} style={{
-                position: "absolute", bottom: `${ratio * 100}%`, left: 0, right: 0,
-                height: 1, background: "rgba(255,255,255,0.06)",
-              }} />
-            );
-          })}
         </div>
 
       </div>{/* end main area */}
 
-      {/* ── dB readout ── */}
-      <div style={{
-        width: "100%", textAlign: "center", padding: "4px 0",
-        fontSize: 9, fontFamily: "'DM Mono', monospace",
-        color: "#666", borderTop: "1px solid var(--strip-divider, #303040)",
-        background: "var(--strip-readout-bg, transparent)",
-      }}>
-        {db} dB
-      </div>
-
-      {/* ── ON / PFL — horizontal, full-width illuminated buttons ── */}
+      {/* ── ON / PFL — flat ── */}
       <div style={{
         display: "flex", flexDirection: "row", alignItems: "stretch",
         gap: 8, padding: "10px 8px 12px",
-        background: "var(--strip-readout-bg, transparent)", borderTop: "1px solid var(--strip-divider, #303040)",
+        borderTop: "1px solid var(--strip-divider, #303040)",
       }}>
 
-        {/* ON / OFF — blue glow when active */}
+        {/* ON — solid fill when active (brighter while playing), flat */}
         <button onClick={() => { playClick(); onToggleOn(); }} style={{
-          flex: 1, height: 38, borderRadius: 4,
-          background: isOn
-            ? `linear-gradient(180deg, ${isPlaying ? "#5090ff" : "#3060aa"}, ${isPlaying ? "#2060cc" : "#1a3060"})`
-            : "linear-gradient(180deg, #333, #1a1a1a)",
-          border: `2px solid ${isOn ? (isPlaying ? "#4080ee" : "#2a5090") : "#333"}`,
-          boxShadow: isOn
-            ? `0 0 ${isPlaying ? 16 : 8}px ${isPlaying ? "#3070dd60" : "#20409030"}, inset 0 1px 2px rgba(255,255,255,0.15)`
-            : "inset 0 2px 4px rgba(0,0,0,0.5)",
+          flex: 1, height: 38, borderRadius: 3,
+          background: isOn ? (isPlaying ? "#2563eb" : "#1e3358") : "var(--bg-tertiary, #232330)",
+          border: `1px solid ${isOn ? (isPlaying ? "#3b82f6" : "#2a4a7a") : "var(--border-primary, #333)"}`,
           cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-          transition: "all 0.15s",
+          transition: "all 0.12s",
         }}>
-          <span style={{
-            fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
-            color: isOn ? "#fff" : "#666",
-            textShadow: isOn ? "0 0 4px rgba(255,255,255,0.5)" : "none",
-          }}>ON</span>
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: isOn ? "#fff" : "var(--text-tertiary, #666)" }}>ON</span>
         </button>
 
-        {/* PFL / CUE — amber glow when active */}
+        {/* PFL — solid amber when active, flat */}
         <button onClick={() => { playClick(); setPflActive(!pflActive); onPfl?.(); }} style={{
-          flex: 1, height: 38, borderRadius: 4,
-          background: pflActive
-            ? "linear-gradient(180deg, #ddaa30, #886610)"
-            : "linear-gradient(180deg, #333, #1a1a1a)",
-          border: `2px solid ${pflActive ? "#aa8820" : "#333"}`,
-          boxShadow: pflActive
-            ? "0 0 12px rgba(221,170,48,0.4), inset 0 1px 2px rgba(255,255,255,0.15)"
-            : "inset 0 2px 4px rgba(0,0,0,0.5)",
+          flex: 1, height: 38, borderRadius: 3,
+          background: pflActive ? "#b8860b" : "var(--bg-tertiary, #232330)",
+          border: `1px solid ${pflActive ? "#d4a017" : "var(--border-primary, #333)"}`,
           cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
-          transition: "all 0.15s",
+          transition: "all 0.12s",
         }}>
-          <span style={{
-            fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
-            color: pflActive ? "#fff" : "#666",
-            textShadow: pflActive ? "0 0 4px rgba(255,255,255,0.5)" : "none",
-          }}>PFL</span>
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: pflActive ? "#fff" : "var(--text-tertiary, #666)" }}>PFL</span>
         </button>
 
       </div>

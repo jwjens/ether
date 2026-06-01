@@ -1,3 +1,22 @@
+## [4.3.27] — 2026-05-31
+
+### Changed — dark "Ether" default + full UI redesign (all theme-token driven)
+
+- **New dark/flat "Ether" default theme** — the flagship preset's tokens and material layer are now
+  black + flat (no skeuomorphic gradients/shadows), with RGB decks (`--deck-a/b/c` = red/blue/green)
+  and teal/green/amber/red accents. All redesign colors route through theme tokens, so the Theme
+  Studio and every preset control them.
+- **Header** — thin 56px bar; time-only clock at 46px that **glows the on-air deck's color** (A red /
+  B blue / C green, teal when idle); show name (top-left) replaces the logo; AUTO/MANUAL + On-Air +
+  station badge unified to one height; hamburger moved far right.
+- **Queue / Up Next** — bigger artwork-forward rows, bold white title + artist, single duration;
+  the playing deck shows a **solid bright color fill** with bold white text over it (no ON AIR badge
+  needed); category strips/badges and the per-row pulse removed; header removed.
+- **Mixer** — flat faders (motorized-board friendly), thin rail, slim solid green/orange/red meters
+  that only light on signal, flat ON/PFL, no dB scale/readout; idle channel knobs dimmed.
+- **Footer** — DELAY/DUMP/XFADE restyled to match the tabs; tabs brightened + teal active; Clear All
+  moved here; floating keyboard-shortcut button removed (Shift+/ still opens the overlay).
+
 ## [4.3.26] — 2026-05-31
 
 ### Added — AUTO / MANUAL toggle button next to On-Air

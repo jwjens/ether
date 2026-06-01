@@ -59,6 +59,7 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
 
   return (
     <div ref={dropRef} style={{ position: "relative", flexShrink: 0 }}>
+      <style>{`@keyframes ether-station-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.82)} }`}</style>
       {/* Pill trigger */}
       <button
         onClick={() => {
@@ -70,19 +71,19 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
         }}
         title={stations.length > 1 ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Enterprise to manage multiple stations"}
         style={{
-          display: "inline-flex", alignItems: "center", gap: 5,
-          height: 32, padding: "0 10px", borderRadius: 0,
-          fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
-          background: open ? "rgba(56,189,248,0.22)" : "rgba(56,189,248,0.12)",
-          color: "#38bdf8",
-          border: "1px solid rgba(56,189,248,0.35)",
+          display: "inline-flex", alignItems: "center", gap: 6,
+          height: 44, padding: "0 14px", borderRadius: 0,
+          fontSize: 13, fontWeight: 700, letterSpacing: "0.06em",
+          background: open ? "var(--bg-hover, rgba(255,255,255,0.08))" : "var(--bg-tertiary)",
+          color: "var(--text-secondary)",
+          border: "1px solid var(--border-primary)",
           cursor: "pointer", transition: "background 0.1s",
           fontFamily: "'JetBrains Mono', ui-monospace, monospace",
         }}
-        onMouseEnter={e => { if (!open) (e.currentTarget as HTMLElement).style.background = "rgba(56,189,248,0.2)"; }}
-        onMouseLeave={e => { if (!open) (e.currentTarget as HTMLElement).style.background = "rgba(56,189,248,0.12)"; }}
+        onMouseEnter={e => { if (!open) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover, rgba(255,255,255,0.08))"; }}
+        onMouseLeave={e => { if (!open) (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
       >
-        <span style={{ fontSize: 8, color: "#22c55e" }}>●</span>
+        <span style={{ fontSize: 9, color: "#22c55e", animation: "ether-station-pulse 1.6s ease-in-out infinite", display: "inline-block" }}>●</span>
         <span>{label}</span>
         <svg width="8" height="8" viewBox="0 0 8 8" fill="none" style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform 0.15s" }}>
           <path d="M1 2.5L4 5.5L7 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>

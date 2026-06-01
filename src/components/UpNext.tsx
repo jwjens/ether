@@ -26,7 +26,7 @@ function fmtSec(sec: number): string {
 }
 
 // A / B / C deck accent colors — must match the fader strips + ThreeSlotBar.
-const DECK_COLORS: Record<"A" | "B" | "C", string> = { A: "#38bdf8", B: "#34d399", C: "#a78bfa" };
+const DECK_COLORS: Record<"A" | "B" | "C", string> = { A: "var(--deck-a)", B: "var(--deck-b)", C: "var(--deck-c)" };
 
 interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; }
 
@@ -291,39 +291,7 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
       style={{ background: "var(--bg-primary)", border: "none", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }}
       onClick={closeContext}
     >
-      {/* ── NEXT UP header ── */}
-      <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-          {currentShow && (
-            <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.18em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, lineHeight: 1 }}>Next Up · On Air</span>
-          )}
-          <span className="next-up-glow" title={currentShow ? `Rotation source: ${currentShow}` : undefined}
-            style={{ fontSize: currentShow ? 17 : 20, fontWeight: 700, letterSpacing: "0.08em", color: "#f97316", textTransform: "uppercase" as const, lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {currentShow || "Next Up"}
-          </span>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button
-            title="Pop out to separate window"
-            onClick={() => (window as any).ether?.invoke("window:popout", "upnext")}
-            style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", padding: "2px 3px", display: "flex", alignItems: "center", transition: "color 0.12s", borderRadius: 0 }}
-            onMouseEnter={e => (e.currentTarget as HTMLButtonElement).style.color = "#6080c0"}
-            onMouseLeave={e => (e.currentTarget as HTMLButtonElement).style.color = "var(--text-tertiary)"}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-              <polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-            </svg>
-          </button>
-          {queue.length > 0 && (
-            <button onClick={() => { if (engine.isDaemonDriven) engine.queueClearPending(); else engine.clearQueue(); onQueueChange(); }}
-              style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", letterSpacing: "0.06em", textTransform: "uppercase" as const }}
-              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
-              onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
-            >Clear All</button>
-          )}
-        </div>
-      </div>
+      {/* NEXT UP header removed — show name now lives in the top bar; Clear All moved to the bottom bar */}
 
       {/* Flash keyframe — pulses the deck color over a row during the last 10s so a DJ
           knows to start talking. Color-agnostic (the overlay's bg is set per-deck inline). */}
@@ -346,41 +314,38 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
           return (
             <div key={id} style={{
               position: "relative", overflow: "hidden", display: "flex", alignItems: "stretch",
-              height: 64, flexShrink: 0,
+              height: 94, flexShrink: 0,
               borderBottom: "1px solid rgba(255,255,255,0.05)",
               background: isPlaying ? `${color}14` : "transparent",
             }}>
               {/* progress fill (playing deck) */}
               {isPlaying && (
-                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.16, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
+                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.9, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
               )}
               {/* last-10s flash overlay */}
               {isEndingSoon && (
                 <div style={{ position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none", animation: "deck-row-flash 0.85s ease-in-out infinite" }} />
               )}
-              {/* color strip */}
-              <div style={{ width: 6, flexShrink: 0, background: color, zIndex: 1 }} />
+              {/* (deck color strip removed) */}
               {/* content */}
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 11, padding: "0 12px", minWidth: 0, zIndex: 1 }}>
-                <div style={{ width: 48, height: 48, flexShrink: 0, background: "var(--bg-tertiary)", border: `1px solid ${color}55`, overflow: "hidden" }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 13, padding: "0 14px", minWidth: 0, zIndex: 1 }}>
+                <div style={{ width: 74, height: 74, flexShrink: 0, background: "var(--bg-tertiary)", border: `1px solid ${color}55`, overflow: "hidden" }}>
                   {artUrls[artKey] && <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-                    {isPlaying && (
-                      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", color: "#000", background: color, padding: "1px 5px", flexShrink: 0 }}>ON AIR</span>
-                    )}
-                    <span style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.01em", color: hasTrack ? "var(--text-primary)" : "var(--text-tertiary)", fontStyle: hasTrack ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <span style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.01em", color: hasTrack ? "var(--text-primary)" : "var(--text-tertiary)", fontStyle: hasTrack ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {s.title || "—"}
                     </span>
                   </div>
                   {s.artist && (
-                    <div style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>{s.artist}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 3 }}>{s.artist}</div>
                   )}
                 </div>
-                {timeStr && (
-                  <div style={{ fontSize: 20, fontFamily: "'DM Mono', monospace", fontWeight: 700, letterSpacing: "-0.02em", flexShrink: 0, color: isEndingSoon ? "#fbbf24" : (isPlaying ? "#fff" : "var(--text-tertiary)") }}>
-                    {timeStr}
+                {hasTrack && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.02em" }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: isEndingSoon ? "#fbbf24" : (isPlaying ? "#fff" : "var(--text-tertiary)") }}>{fmtSec(pos)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: isPlaying ? "#fff" : "var(--text-secondary)" }}>{dur > 0 ? fmtSec(dur) : "--:--"}</span>
                   </div>
                 )}
               </div>
@@ -433,25 +398,19 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                 cursor: isBeingDragged ? "grabbing" : "grab",
                 userSelect: "none" as any,
                 transition: "background 0.1s",
-                animation: i === 0 ? "nextup-pulse 2.4s ease-in-out infinite" : undefined,
+                animation: undefined,
               } as React.CSSProperties}
             >
-              {/* 4px left category color strip */}
-              <div style={{ width: 4, flexShrink: 0, background: color, opacity: 0.75 }} />
+              {/* (category color strip removed — clean, no unexplained colors) */}
 
               {/* Main content */}
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 9, padding: "12px 10px 12px 8px", minWidth: 0 }}>
-                {/* Album art thumbnail */}
-                <div style={{ width: i === 0 ? 52 : 44, height: i === 0 ? 52 : 44, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.06)", overflow: "hidden" }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 15, padding: "18px 16px 18px 14px", minWidth: 0 }}>
+                {/* Album art thumbnail — emphasized */}
+                <div style={{ width: 74, height: 74, flexShrink: 0, background: "var(--bg-tertiary)", border: "1px solid rgba(255,255,255,0.08)", overflow: "hidden" }}>
                   {artUrls[artKey] && (
                     <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   )}
                 </div>
-
-                {/* Cat badge */}
-                {catLabel && (
-                  <span style={{ fontSize: 7, fontWeight: 800, color: "#000", background: color, padding: "1px 4px", letterSpacing: "0.06em", flexShrink: 0 }}>{catLabel}</span>
-                )}
 
                 {/* Title + artist */}
                 <div style={{
@@ -465,26 +424,19 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                   <div
                     ref={i === 0 ? topTitleRef : undefined}
                     style={{
-                      fontSize: i === 0 ? 17 : 14, fontWeight: 600, color: "var(--text-primary)",
+                      fontSize: i === 0 ? 19 : 17, fontWeight: 800, color: "var(--text-primary)",
                       overflow: i === 0 && topScrollPx > 0 ? "visible" : "hidden",
                       textOverflow: i === 0 && topScrollPx > 0 ? undefined : "ellipsis",
                       whiteSpace: "nowrap" as any, letterSpacing: "-0.01em",
                       ...(i === 0 && topScrollPx > 0 ? { animation: "nextup-title-scroll 9s ease-in-out infinite", "--scroll-x": `-${topScrollPx}px` } : {}),
                     } as React.CSSProperties}
                   >{item.title}</div>
-                  <div style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, marginTop: 1 }}>{item.artist}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, marginTop: 3 }}>{item.artist}</div>
                 </div>
 
-                {/* Right side: duration + BPM badge */}
-                <div style={{ display: "flex", flexDirection: "column" as any, alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
-                  {ms > 0 && (
-                    <span style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)", letterSpacing: "-0.02em" }}>{fmtDur(ms)}</span>
-                  )}
-                  {(item as any).bpm > 0 && (
-                    <span style={{ fontSize: 7, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "0 3px", letterSpacing: "0.04em" }}>
-                      {Math.round((item as any).bpm)} bpm
-                    </span>
-                  )}
+                {/* Right side: duration only — elapsed lives on the playing deck rows, not queued */}
+                <div style={{ display: "flex", alignItems: "center", flexShrink: 0, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.02em" }}>
+                  <span style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)" }}>{ms > 0 ? fmtDur(ms) : "--:--"}</span>
                 </div>
 
                 {/* Remove */}

@@ -14,15 +14,8 @@ export default function KeyboardHelp() {
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  if (!show) return (
-    <button onClick={() => setShow(true)}
-      style={{ position: "fixed", bottom: 12, right: 12, padding: "4px 10px", borderRadius: 0,
-        fontSize: 10, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-tertiary)",
-        border: "1px solid var(--border-primary)", cursor: "pointer", zIndex: 100, opacity: 0.5 }}
-      title="Keyboard shortcuts (?)">
-      ⌨ ?
-    </button>
-  );
+  // Floating ⌨ button removed — Shift+/ (or F12) still toggles this overlay.
+  if (!show) return null;
 
   const shortcuts = [
     { key: "Space", action: "Play / Pause Deck A" },

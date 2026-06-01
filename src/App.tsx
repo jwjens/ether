@@ -27,7 +27,7 @@ import { queryScoped } from "./db/stationScoped";
 import { useActiveStation } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
 import { DeckState, rotLog } from "./audio/engine-rodio";
-import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor, getFormatCategoryIds } from "./audio/loggen";
+import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor, getFormatCategoryIds, getActiveShowClock } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
@@ -626,6 +626,18 @@ export default function App() {
       .then((v: string) => setVersion(v))
       .catch(() => setVersion("?.?.?"));
   }, []);
+  // Current show/daypart name — shown top-left in the header (where the logo used to be).
+  const [headerShow, setHeaderShow] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const resolve = async () => {
+      try { const sc = await getActiveShowClock(stationId); if (!cancelled) setHeaderShow(sc?.showName ?? null); }
+      catch { if (!cancelled) setHeaderShow(null); }
+    };
+    resolve();
+    const id = setInterval(resolve, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [stationId]);
   const closeDeckConfig = useCallback(() => {
     setDeckConfigClosing(true);
     setTimeout(() => { setShowDeckConfig(false); setDeckConfigClosing(false); }, 200);
@@ -1459,6 +1471,12 @@ export default function App() {
   const resetLayout = () => { window.location.reload(); };
 
   const nowPlayingDeck = [deckA, deckB, deckC].find(d => d?.status === "playing");
+  // Clock accent follows the on-air deck's color (A red / B blue / C green), teal when idle.
+  const nowPlayingDeckColor =
+    deckA?.status === "playing" ? "var(--deck-a)" :
+    deckB?.status === "playing" ? "var(--deck-b)" :
+    deckC?.status === "playing" ? "var(--deck-c)" :
+    "var(--accent-cyan)";
   const nowPlayingTitle = nowPlayingDeck?.title || "";
   const nowPlayingStr = nowPlayingDeck
     ? `${nowPlayingDeck.title}${nowPlayingDeck.artist ? ` by ${nowPlayingDeck.artist}` : ""}`
@@ -1586,16 +1604,17 @@ export default function App() {
       <KeyboardHelp />
 
       {/* ── Header ── */}
-      <header style={{ height: viewport.isTablet ? 64 : 96, display: "flex", alignItems: "center", padding: "0 16px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      <header style={{ height: viewport.isTablet ? 48 : 56, display: "flex", alignItems: "center", padding: "0 12px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
 
-        {/* Logo — click to return to Mixer */}
+        {/* Show name — top-left (replaces the old logo). Click returns to Mixer. */}
         <div
           onClick={() => setPanel("live")}
-          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: "0 8px 0 0", opacity: 1, transition: "opacity 0.15s" }}
-          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.opacity = "0.85"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.opacity = "1"; }}
+          title={headerShow ? `On air: ${headerShow}` : "Live"}
+          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: "0 18px 0 6px" }}
         >
-          <EtherLogo size={28} iconOnly />
+          <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "0.14em", color: "var(--accent-cyan)", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+            {headerShow || "ETHER"}
+          </span>
         </div>
 
         {/* LEFT: Search — width shrinks with viewport, becomes icon-only at <800px */}
@@ -1621,7 +1640,7 @@ export default function App() {
         {/* CENTER: Clock — absolutely centered, scales down to xs at narrow widths (never fully hidden) */}
         {(viewport.clockSize as string) !== "hidden" && (
           <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0, display: "flex", alignItems: "center", gap: 8, pointerEvents: "none" }}>
-            <ClockDisplay size={viewport.clockSize} />
+            <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
           </div>
         )}
 
@@ -1667,17 +1686,44 @@ export default function App() {
             {!viewport.narrow && currentUser?.name}
           </button>
 
-          {/* ☰ Menu button */}
+          {/* AUTO / MANUAL toggle — sits next to On-Air. AUTO = automated rotation (fill+play+advance);
+              MANUAL = operator drives the decks. Wired to the existing toggleAuto (also Alt/Cmd-A). */}
+          <button
+            data-tour="auto-btn"
+            onClick={() => { toggleAuto(); }}
+            title={autoAdv
+              ? "Automation is ON — click to switch to MANUAL (you control the decks)"
+              : "MANUAL mode — click to switch to AUTO (automated rotation)"}
+            style={{
+              height: 44, padding: "0 18px", borderRadius: 0, cursor: "pointer",
+              fontSize: 13, fontWeight: 700, letterSpacing: "0.08em",
+              background: autoAdv ? "#10b981" : "var(--bg-tertiary)",
+              color: autoAdv ? "#04140e" : "var(--text-secondary)",
+              border: autoAdv ? "1px solid #10b981" : "1px solid var(--border-primary)",
+              transition: "all 0.15s",
+              display: "flex", alignItems: "center", gap: 7,
+            }}
+          >
+            {autoAdv ? "● AUTO" : "MANUAL"}
+          </button>
+
+          <GlobalOnAirBadge
+            onGoLive={() => { goLive(stationId); }}
+            onStopLive={() => { stopLive(stationId); }}
+            style={{ height: 44, padding: "0 18px", fontSize: 13, letterSpacing: "0.08em" }}
+          />
+
+          {/* ☰ Menu button — far right */}
           <button
             onClick={() => setDrawerOpen(d => !d)}
             title="Menu"
             style={{
-              width: 48, height: 48, borderRadius: 0, cursor: "pointer",
+              width: 44, height: 44, borderRadius: 0, cursor: "pointer",
               background: drawerOpen ? "var(--bg-tertiary)" : "transparent",
               border: `1px solid ${drawerOpen ? "var(--border-primary)" : "transparent"}`,
               color: drawerOpen ? "var(--text-primary)" : "var(--text-secondary)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              flexDirection: "column", gap: 4, transition: "all 0.15s",
+              transition: "all 0.15s",
             }}
             onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; (e.currentTarget as HTMLElement).style.color = "var(--text-primary)"; }}
             onMouseLeave={e => {
@@ -1690,32 +1736,6 @@ export default function App() {
               <line x1="0" y1="10" x2="14" y2="10"/>
             </svg>
           </button>
-
-          {/* AUTO / MANUAL toggle — sits next to On-Air. AUTO = automated rotation (fill+play+advance);
-              MANUAL = operator drives the decks. Wired to the existing toggleAuto (also Alt/Cmd-A). */}
-          <button
-            data-tour="auto-btn"
-            onClick={() => { toggleAuto(); }}
-            title={autoAdv
-              ? "Automation is ON — click to switch to MANUAL (you control the decks)"
-              : "MANUAL mode — click to switch to AUTO (automated rotation)"}
-            style={{
-              height: 48, padding: "0 20px", borderRadius: 0, border: "none", cursor: "pointer",
-              fontSize: 15, fontWeight: 800, letterSpacing: "0.1em",
-              background: autoAdv ? "#10b981" : "var(--bg-tertiary)",
-              color: autoAdv ? "#04140e" : "var(--text-tertiary)",
-              boxShadow: autoAdv ? "0 0 14px rgba(16,185,129,0.45)" : "none",
-              transition: "all 0.2s",
-              display: "flex", alignItems: "center", gap: 8,
-            }}
-          >
-            {autoAdv ? "● AUTO" : "MANUAL"}
-          </button>
-
-          <GlobalOnAirBadge
-            onGoLive={() => { goLive(stationId); }}
-            onStopLive={() => { stopLive(stationId); }}
-          />
         </div>
 
         {/* ── Slide-out Drawer ── */}
@@ -2142,6 +2162,16 @@ export default function App() {
       <footer style={{ height: 52, display: "flex", alignItems: "center", padding: "0 10px", gap: 0, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
         {/* NOMINAL health indicator — same height as tabs */}
         <HealthStatusDot onClick={() => setPanel("health")} height={36} />
+        {/* Clear queue — moved here from the (removed) queue header */}
+        {queueLen > 0 && (
+          <button
+            onClick={() => { if (engine.isDaemonDriven) (engine as any).queueClearPending?.(); else engine.clearQueue?.(); window.dispatchEvent(new CustomEvent('ether:queue-changed')); }}
+            title="Clear the Up Next queue"
+            style={{ height: 36, padding: "0 12px", borderRadius: 0, marginLeft: 6, marginRight: 2, border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-tertiary)", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer" }}
+            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
+            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
+          >CLEAR</button>
+        )}
         {/* View tabs */}
         {([
           { label: "DECKS",  active: showDeckConfig,        fn: () => { setPanel("live"); setShowDeckConfig(true); } },
@@ -2154,11 +2184,15 @@ export default function App() {
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
-            border: `1px solid ${active ? "#38bdf8" : "var(--border-primary)"}`,
-            background: active ? "rgba(56,189,248,0.12)" : "transparent",
-            color: active ? "#38bdf8" : "var(--text-secondary)",
+            border: `1px solid ${active ? "var(--accent-cyan)" : "var(--border-secondary)"}`,
+            background: active ? "color-mix(in srgb, var(--accent-cyan) 16%, transparent)" : "transparent",
+            color: active ? "var(--accent-cyan)" : "var(--text-primary)",
             fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer",
-          }}>{label}</button>
+            transition: "color 0.12s, background 0.12s, border-color 0.12s",
+          }}
+            onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
+            onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+          >{label}</button>
         ))}
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
           {/* Version — always-visible source-of-truth for "what am I running?" */}
@@ -2211,22 +2245,22 @@ export default function App() {
         <button onClick={doDump} disabled={!delayArmed || delayFill < 1}
           title={!delayArmed ? "Arm the delay first" : delayFill < 1 ? "Delay still building…" : "DUMP — drop the buffered audio and splice to live"}
           style={{
-            height: 36, padding: "0 16px", borderRadius: 0, marginRight: 8,
-            background: (delayArmed && delayFill >= 1) ? "#dc2626" : "#3f1212",
-            border: `1px solid ${(delayArmed && delayFill >= 1) ? "#ef4444" : "#5b1a1a"}`,
-            color: (delayArmed && delayFill >= 1) ? "#fff" : "#7f5555",
-            fontSize: 12, fontWeight: 900, letterSpacing: "0.1em",
+            height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
+            background: (delayArmed && delayFill >= 1) ? "rgba(239,68,68,0.16)" : "transparent",
+            border: `1px solid ${(delayArmed && delayFill >= 1) ? "#ef4444" : "var(--border-primary)"}`,
+            color: (delayArmed && delayFill >= 1) ? "#ef4444" : "var(--text-tertiary)",
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
             cursor: (delayArmed && delayFill >= 1) ? "pointer" : "not-allowed",
           }}>DUMP</button>
 
-        {/* XFADE — far right, red fill */}
+        {/* XFADE — far right */}
         <button onClick={handleXfade} style={{
-          height: 36, padding: "0 18px", borderRadius: 0,
-          background: xfadeActive ? "#ef4444" : "#7f1d1d",
-          border: `1px solid ${xfadeActive ? "#ef4444" : "#991b1b"}`,
-          color: "#fff", fontSize: 12, fontWeight: 900, letterSpacing: "0.1em",
-          cursor: "pointer", transition: "background 0.12s, box-shadow 0.12s",
-          boxShadow: xfadeActive ? "0 0 14px rgba(239,68,68,0.55)" : "none",
+          height: 36, padding: "0 14px", borderRadius: 0,
+          background: xfadeActive ? "#ef4444" : "transparent",
+          border: `1px solid ${xfadeActive ? "#ef4444" : "var(--border-primary)"}`,
+          color: xfadeActive ? "#fff" : "var(--text-secondary)",
+          fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
+          cursor: "pointer", transition: "all 0.12s",
         }}>XFADE</button>
       </footer>
     </div>
@@ -3101,7 +3135,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
         flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden",
         position: "relative",
         opacity: dragging === "queue" ? 0.55 : 1,
-        outline: dropTarget === "queue" ? "2px solid #38bdf8" : "none",
+        outline: dropTarget === "queue" ? "2px solid var(--accent-cyan)" : "none",
         outlineOffset: 2, borderRadius: 0,
         // Width transition animates the slide; opacity/outline already had transitions.
         transition: "width 0.22s cubic-bezier(.2,.7,.2,1), opacity 0.15s, outline 0.1s",
@@ -3169,8 +3203,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       key="decks"
       style={{
         flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", gap: 0,
+        background: "var(--bg-primary)",
         opacity: dragging === "decks" ? 0.55 : 1,
-        outline: dropTarget === "decks" ? "2px solid #38bdf8" : "none",
+        outline: dropTarget === "decks" ? "2px solid var(--accent-cyan)" : "none",
         outlineOffset: 2, borderRadius: 0,
         transition: "opacity 0.15s, outline 0.1s",
         // Dim all ConsoleStrip column dividers to near-invisible
@@ -3190,7 +3225,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             const deckType = config?.type || (slot === "mic" ? "mic" : "music");
             const deckMap: Record<string, any> = { A: deckA, B: deckB, C: deckC };
             const deck = deckMap[slot as string];
-            const deckColors: Record<string, string> = { A: "#38bdf8", B: "#34d399", C: "#a78bfa", D: "#fb923c", E: "#e879f9", mic: "#ef4444" };
+            const deckColors: Record<string, string> = { A: "var(--deck-a)", B: "var(--deck-b)", C: "var(--deck-c)", D: "#fb923c", E: "#e879f9", mic: "#a855f7" };
             // Rotation decks A/B/C always use the canonical slot color (A blue, B green, C purple)
             // so the faders match the Up Next deck rows + library A/B/C buttons. config.color only
             // carries the deck-TYPE color (every music deck is green), which can't tell A/B/C apart.
@@ -4994,30 +5029,26 @@ function NowPlayingPill() {
   );
 }
 
-function ClockDisplay({ size = "full" }: { size?: "full" | "lg" | "md" | "sm" | "xs" | "hidden" }) {
+function ClockDisplay({ size = "full", accentColor = "var(--accent-cyan)" }: { size?: "full" | "lg" | "md" | "sm" | "xs" | "hidden"; accentColor?: string }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  // At "sm"/"xs", drop seconds and date to avoid clipping at narrow widths.
+  // Time-only clock, sized to fill the thin top bar (date removed by design).
   const showSeconds = size === "full" || size === "lg" || size === "md";
-  const showDate = size === "full" || size === "lg";
   const time = now.toLocaleTimeString([], showSeconds
     ? { hour: "2-digit", minute: "2-digit", second: "2-digit" }
     : { hour: "2-digit", minute: "2-digit" });
-  const day = now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
   const fontSize =
-    size === "full" ? 52 :
+    size === "full" ? 46 :
     size === "lg"   ? 40 :
     size === "md"   ? 32 :
     size === "sm"   ? 24 :
                       18; // xs
-  const dateSize = size === "full" ? 13 : 11;
   return (
     <div style={{ textAlign: "center", lineHeight: 1 }}>
-      <div style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize, fontWeight: 700, color: "#fff", letterSpacing: "0.03em", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{time}</div>
-      {showDate && <div style={{ fontFamily: "'Inter', sans-serif", fontSize: dateSize, color: "var(--text-secondary)", marginTop: 5, letterSpacing: "0.02em" }}>{day}</div>}
+      <div style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize, fontWeight: 800, color: accentColor, letterSpacing: "0.04em", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", textShadow: `0 0 16px color-mix(in srgb, ${accentColor} 45%, transparent)`, transition: "color 0.6s ease, text-shadow 0.6s ease" }}>{time}</div>
     </div>
   );
 }
