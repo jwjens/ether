@@ -289,6 +289,40 @@ async function checkStaleDaemon() {
   }
 }
 
+// Audio-liveness watchdog (Item 10 follow-up — the recurring SILENT-WEDGE recovery). Distinct from
+// the daemon's own stall watchdog (which only catches "no deck playing"): here the daemon's logic
+// keeps rotating but its cpal output stream has died (device change/disconnect), so a deck reports
+// "playing" while output is silent — levels frozen at ~0 — and nothing recovers it. This is dead
+// air the operator hears. We detect it from the renderer side (where the levels feed already lives)
+// and auto-reload the daemon: the exact kill→respawn recovery, automated. Conservative to avoid
+// false reloads — only fires when audio has been silent a while AND getState CONFIRMS a deck is
+// supposed to be playing, with a cooldown so a still-broken device can't induce a tight loop.
+let _audioWatchdogTimer = null;
+let _lastAudioReloadAt = 0;
+function startAudioLivenessWatchdog() {
+  if (_audioWatchdogTimer) return;
+  _audioWatchdogTimer = setInterval(async () => {
+    try {
+      if (!audiodClient.isConnected()) return;
+      if (Date.now() - _lastDaemonAudioAt < 6000) return;     // audio is (or just was) flowing — healthy
+      if (Date.now() - _lastAudioReloadAt < 60000) return;    // cooldown — never loop on a still-dead device
+      // Output has been silent ≥6s. Confirm a deck is actually SUPPOSED to be playing before we act,
+      // so genuine idle/off-air silence never triggers a reload. Check the on-air stations (or s1).
+      const sids = _automationIntent.size > 0 ? [..._automationIntent.keys()] : [1];
+      for (const sid of sids) {
+        const st = await audiodClient.cmd("getState", { stationId: sid }).catch(() => null);
+        const playing = st && [st.deckA, st.deckB, st.deckC].some((d) => d && d.status === "playing");
+        if (playing) {
+          _lastAudioReloadAt = Date.now();
+          console.warn(`[AUDIO] liveness watchdog: station ${sid} deck reports playing but output silent ≥6s — reloading daemon (silent-wedge recovery)`);
+          try { audiodClient.reloadDaemon(); } catch {}
+          break;
+        }
+      }
+    } catch {}
+  }, 2000);
+}
+
 if (AUDIO_DAEMON_DESIRED) {
   audiodClient.setEventHandler((m) => {
     try {
@@ -296,9 +330,10 @@ if (AUDIO_DAEMON_DESIRED) {
         const lv = { a: m.a || 0, b: m.b || 0, c: m.c || 0 };
         lv.master = typeof m.master === "number" ? m.master : Math.max(lv.a, lv.b, lv.c);
         sendToAllWindows("audio:levels", lv);
-        // Liveness signal for the stale-daemon reload: real output keeps this fresh, so a wedged
-        // daemon (claims playing, silent) stops updating it and trips the no-audio reload path.
-        if (_daemonReloadArmed && (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01)) _lastDaemonAudioAt = Date.now();
+        // Audio-liveness signal (feeds BOTH the stale-daemon reload and the silent-wedge watchdog):
+        // real output keeps this fresh; a wedged daemon (deck claims playing, output silent) stops
+        // updating it because its audio callback has stopped firing → levels freeze at ~0.
+        if (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01) _lastDaemonAudioAt = Date.now();
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
@@ -342,6 +377,9 @@ if (AUDIO_DAEMON_DESIRED) {
         .catch((e) => console.warn(`[AUDIO] auto-resume: replay failed for station ${sid}: ${e && e.message || e}`));
     }
   });
+
+  // Safety net for the recurring silent-wedge (cpal output death) — auto-recovers dead air.
+  startAudioLivenessWatchdog();
 }
 
 // ── Audio backend decision (daemon vs in-process fallback) ────────────────────
