@@ -10,6 +10,7 @@ import MasterEQRack from "./MasterEQRack";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import { AudioRoutingPicker, CurrentRoutingSummary } from "./AudioRoutingPanel";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { vuSmooth, vuPeak } from "../lib/vuMeter";
 
 // ── Constants ────────────────────────────────────────────────
 // Fallback values only — resolved via CSS custom properties at runtime
@@ -25,8 +26,6 @@ function readThemeColors() {
     RED:  s.getPropertyValue("--accent-red").trim()   || RED,
   };
 }
-const PEAK_HOLD_MS = 1400;
-
 // ── Console event bus ────────────────────────────────────────
 // Call from anywhere in the app to push a line to the console.
 export type ConsoleEventType = "system" | "audio" | "rotation" | "error" | "clock" | "info";
@@ -56,6 +55,7 @@ function MasterVU() {
   const phaseR     = useRef(Math.PI * 0.37);
   const rafRef     = useRef(0);
   const masterRef  = useRef(0);
+  const lastFrameMs = useRef(0);   // wall-clock of the previous RAF tick → delta-time ballistics
 
   useEffect(() => {
     const ether = (window as any).ether;
@@ -102,6 +102,11 @@ function MasterVU() {
       const w = canvas.width;
       const h = canvas.height;
       const now = Date.now();
+      // Elapsed wall-clock since the last RAF tick — drives all ballistics so the meter feel is
+      // independent of draw rate AND of the (10 Hz) level feed. Clamp the first frame / a backgrounded
+      // tab so a huge dt can't snap the bar.
+      const dt = Math.min(now - (lastFrameMs.current || now), 100);
+      lastFrameMs.current = now;
 
       // Refresh theme colors at most every 2 seconds
       if (now - colorCacheTs > 2000) {
@@ -131,8 +136,10 @@ function MasterVU() {
       const wobble = 0.04;
       const targetL = Math.max(0, Math.min(1, m + wobble * Math.sin(phaseL.current)));
       const targetR = Math.max(0, Math.min(1, m + wobble * Math.sin(phaseR.current)));
-      levelL.current += (targetL - levelL.current) * (targetL > levelL.current ? 0.75 : 0.06);
-      levelR.current += (targetR - levelR.current) * (targetR > levelR.current ? 0.75 : 0.06);
+      // Delta-time attack/decay (taus in lib/vuMeter) — rate-independent, replaces the old fixed
+      // per-frame lerp factors that assumed a steady 60fps/30Hz and turned jumpy at the 10 Hz feed.
+      levelL.current = vuSmooth(levelL.current, targetL, dt);
+      levelR.current = vuSmooth(levelR.current, targetR, dt);
 
       const drawBar = (
         x: number, barW: number,
@@ -159,12 +166,9 @@ function MasterVU() {
           ctx.fillRect(x, fillY, barW, barH);
         }
 
-        if (lv > peakRef.current) {
-          peakRef.current   = lv;
-          peakAtRef.current = now;
-        } else if (now - peakAtRef.current > PEAK_HOLD_MS) {
-          peakRef.current = Math.max(0, peakRef.current - 0.012);
-        }
+        const pk = vuPeak(peakRef.current, peakAtRef.current, lv, now, dt);
+        peakRef.current   = pk.peak;
+        peakAtRef.current = pk.at;
         if (peakRef.current > 0.05) {
           const py = Math.max(1, h - Math.floor(peakRef.current * h) - 1);
           ctx.fillStyle = peakRef.current > 0.80 ? cachedVu.peakClip : peakRef.current > 0.60 ? cachedVu.peakWarn : cachedVu.peakNorm;

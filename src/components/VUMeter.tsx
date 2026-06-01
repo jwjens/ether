@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { vuSmooth, vuPeak } from "../lib/vuMeter";
 
 interface Props {
   deckId: "A" | "B" | "C" | string;
@@ -9,8 +10,6 @@ interface Props {
   /** When provided, bypasses IPC subscription and uses this value (0–1) directly. */
   externalLevel?: number;
 }
-
-const PEAK_HOLD_MS = 1500;
 
 export default function VUMeter({
   deckId, isPlaying,
@@ -25,6 +24,7 @@ export default function VUMeter({
   const phaseL        = useRef(0);
   const rafRef        = useRef<number>(0);
   const standbyPhase  = useRef(Math.random() * Math.PI * 2);
+  const lastFrameMs   = useRef(0);   // wall-clock of the previous RAF tick → delta-time ballistics
 
   // ── Draw loop ─────────────────────────────────────────────────
   useEffect(() => {
@@ -54,6 +54,10 @@ export default function VUMeter({
       const w   = canvas.width;
       const h   = canvas.height;
       const now = Date.now();
+      // Elapsed wall-clock since the last RAF tick — drives the ballistics so the meter feel is
+      // independent of draw rate AND of the (10 Hz) level feed. Clamp first frame / backgrounded tab.
+      const dt = Math.min(now - (lastFrameMs.current || now), 100);
+      lastFrameMs.current = now;
 
       // Refresh theme colors at most every 2 seconds
       if (now - colorCacheTs > 2000) {
@@ -122,8 +126,9 @@ export default function VUMeter({
       const wobble = 0.05;
       const raw    = rawLevel.current;
       const targetL = Math.max(0, Math.min(1, raw + wobble * Math.sin(phaseL.current)));
-      // Attack: ~2 frames (80%). Decay: ~300ms (5.5% per frame at 60fps)
-      levelL.current += (targetL - levelL.current) * (targetL > levelL.current ? 0.80 : 0.055);
+      // Delta-time attack/decay (taus in lib/vuMeter) — rate-independent, replaces the old fixed
+      // per-frame lerp factors that turned jumpy when the level feed dropped to 10 Hz.
+      levelL.current = vuSmooth(levelL.current, targetL, dt);
 
 
       const drawBar = (
@@ -149,13 +154,10 @@ export default function VUMeter({
           ctx.fillRect(x, fillY, bw, barH);
         }
 
-        // Peak hold line (1px)
-        if (lv > pkRef.current) {
-          pkRef.current   = lv;
-          pkAtRef.current = now;
-        } else if (now - pkAtRef.current > PEAK_HOLD_MS) {
-          pkRef.current = Math.max(0, pkRef.current - 0.010);
-        }
+        // Peak hold line (1px) — delta-time hold + fall (taus in lib/vuMeter)
+        const pk = vuPeak(pkRef.current, pkAtRef.current, lv, now, dt);
+        pkRef.current   = pk.peak;
+        pkAtRef.current = pk.at;
         if (pkRef.current > 0.05) {
           const py = Math.max(0, h - Math.floor(pkRef.current * h) - 1);
           ctx.fillStyle = pkRef.current > 0.80 ? colors.peakClip

@@ -1,3 +1,29 @@
+## [4.3.24] — 2026-05-31
+
+Item 10 — daemon **observability + self-healing**, plus a **rate-independent VU meter** fix.
+
+### Added — durable daemon logging
+
+- The out-of-process engine (detached, `stdio:"ignore"`) now tees its console to
+  `<userData>/logs/ether-audiod.log` (rotates, never goes silent) — lifecycle, automation cmd
+  receipts, `_started` transitions, advance/refill/deck-end, watchdog/stall, and a `deck X LIVE`
+  line on every path that puts a deck on air.
+
+### Fixed — daemon-respawn auto-resume (no more dead air after a respawn)
+
+- When the daemon respawned (crash / gapless update / restart) it came up idle and the app never
+  re-issued `automationStart` → silence. The app now caches per-station automation intent and
+  replays `automationStart` on every fresh daemon (re)connect; a surviving, still-playing daemon
+  takes the existing idempotent no-op (audio untouched). A deliberate `automationStop` clears the
+  intent, so an operator stop is never auto-resumed.
+
+### Fixed — VU meter no longer jumpy at the daemon's 10 Hz feed
+
+- `MasterVU` and the per-deck `VUMeter` smoothing is now **delta-time based** (time constants in ms
+  via `lib/vuMeter`), independent of the level-feed rate, so the meter glides the same whether levels
+  arrive at 10 Hz, 30 Hz, or irregularly. The daemon level rate is unchanged (10 Hz). Taus are tunable
+  in one place. Synthetic/theater meters untouched.
+
 ## [4.3.23] — 2026-05-30
 
 Item 10 — **Stage 2b**: closes the last hole in the daemon↔renderer migration. The renderer can no
