@@ -1,3 +1,13 @@
+## [4.3.25] — 2026-05-31
+
+### Fixed — dashboard A/B/C deck send no longer auto-plays
+
+- Clicking A/B/C on a song in the **web dashboard** library now **cues** the song to that deck in a
+  ready (not playing) state so it waits its turn in rotation — matching the desktop library
+  (JockStrip / library A/B/C, which cue without playing). The install's `deck:load` command handler
+  (`src/App.tsx`) was calling `engine.getDeck(deck).play()` right after cueing, which force-started
+  audio on send. Removed that stray play; Q (`queue:enqueue`) was already correct.
+
 ## [4.3.24] — 2026-05-31
 
 Item 10 — daemon **observability + self-healing**, plus a **rate-independent VU meter** fix.

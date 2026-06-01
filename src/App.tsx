@@ -865,18 +865,20 @@ export default function App() {
             try { await (window as any).ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
             break;
           case "deck:load": {
-            // Dashboard "A/B/C" — load a library song onto a deck and play it.
+            // Dashboard "A/B/C" — CUE a library song onto a deck in a READY (not playing) state so it
+            // waits its turn in rotation. Loading a deck must NEVER start audio — this matches the
+            // desktop JockStrip/library A/B/C buttons, which cue without playing. (Use Q / transport to play.)
             const deck = String(data.deck || "A").toUpperCase() as "A" | "B" | "C";
             if (!["A", "B", "C"].includes(deck)) break;
             const song = await resolveSong(data.song_id, data.file_key);
             if (song) {
-              // Stage 2a: daemon mode → deck:cue intent then play; in-process → load locally.
+              // Stage 2a: daemon mode → deck:cue intent; in-process → local load. Either path leaves the
+              // deck CUED/ready, NOT playing — no .play() here (the stray play() was the auto-play bug).
               if (engine.isDaemonDriven) {
                 await engine.deckCue(deck, { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs });
               } else {
                 await engine.loadToDeck(deck, song.filePath, song.title, song.artist, undefined, song.durationMs);
               }
-              engine.getDeck(deck)?.play();
               window.dispatchEvent(new CustomEvent("ether:queue-changed"));
             }
             break;
