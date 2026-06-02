@@ -1264,6 +1264,29 @@ app.whenReady().then(() => {
     console.warn("[STATION-METADATA] install failed:", e.message);
   }
 
+  // GPIO engine (broadcast hardware I/O) — db-dependent, so it installs HERE (after initDb), not at
+  // module load where `db` was still undefined (the "[GPIO] table init: …undefined…'exec'" error).
+  // The onGpiEvent callback's mainWindow use is guarded; GPI events only arrive after the window exists.
+  try {
+    const { installGpioEngine } = require("./gpio-engine.js");
+    installGpioEngine(ipcMain, db, {
+      onGpiEvent: (actionType, actionValue, info) => {
+        console.log(`[GPIO] action: ${actionType} = ${actionValue}`, info);
+        if (mainWindow) mainWindow.webContents.send("gpio:event", { actionType, actionValue, ...info });
+      },
+    });
+  } catch (e) {
+    console.warn("[GPIO] installGpioEngine failed:", e.message);
+  }
+
+  // Site Replication (multi-station sync) — also db-dependent; same reason it lives here now.
+  try {
+    const { installSiteReplication } = require("./site-replication.js");
+    installSiteReplication(ipcMain, db);
+  } catch (e) {
+    console.warn("[REPL] installSiteReplication failed:", e.message);
+  }
+
   // sync IPC handlers — all 30 typed handler sets via aggregator
   // (stations:* excluded from installAll — registered manually below with custom logic)
   console.log('[sync/handlers] ▶ installAll starting (phase-3.5)');
@@ -2987,29 +3010,10 @@ try {
   console.warn("[video] installVideoEngine failed:", e.message);
 }
 
-// ── GPIO engine (broadcast hardware I/O) ────────────────────────────────
-try {
-  const { installGpioEngine } = require("./gpio-engine.js");
-  installGpioEngine(ipcMain, db, {
-    onGpiEvent: (actionType, actionValue, info) => {
-      console.log(`[GPIO] action: ${actionType} = ${actionValue}`, info);
-      // Forward GPI events to the renderer for macro/command dispatch
-      if (mainWindow) {
-        mainWindow.webContents.send("gpio:event", { actionType, actionValue, ...info });
-      }
-    },
-  });
-} catch (e) {
-  console.warn("[GPIO] installGpioEngine failed:", e.message);
-}
-
-// ── Site Replication (multi-station sync) ────────────────────────
-try {
-  const { installSiteReplication } = require("./site-replication.js");
-  installSiteReplication(ipcMain, db);
-} catch (e) {
-  console.warn("[REPL] installSiteReplication failed:", e.message);
-}
+// GPIO engine + Site Replication were here at MODULE LOAD, where `db` is still undefined (initDb()
+// runs later, inside app.whenReady()) — so they installed against an undefined handle (db.exec →
+// "Cannot read properties of undefined (reading 'exec')"). Moved into app.whenReady() AFTER initDb()
+// (see the block after installStationMetadata) so they receive a real db.
 
 // (Cloud backup installed in app.whenReady() after initDb())
 
