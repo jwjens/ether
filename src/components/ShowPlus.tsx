@@ -1637,7 +1637,7 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
   };
 
   return (
-    <div style={{ height: 38, display: "flex", alignItems: "center", gap: 10, padding: "0 14px", background: BG1, borderTop: `1px solid ${BOR}`, flexShrink: 0 }}>
+    <div style={{ height: 46, display: "flex", alignItems: "center", gap: 12, padding: "0 16px", background: BG1, borderTop: `1px solid ${BOR}`, flexShrink: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
         <div style={{ width: 7, height: 7, borderRadius: "50%", background: isStreaming ? RED : BG3, boxShadow: isStreaming ? `0 0 8px ${RED}` : "none" }} />
         <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.1em", color: isStreaming ? RED : TXT2 }}>
@@ -1647,18 +1647,18 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
 
       <div style={{ width: 1, height: 14, background: BOR }} />
 
-      <button onClick={onToggleRecord} disabled={!stream} style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 10px", border: "none", cursor: stream ? "pointer" : "not-allowed", background: isRecording ? RED : BG2, color: isRecording ? "#fff" : TXT2, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em" }}>
-        <div style={{ width: 7, height: 7, borderRadius: isRecording ? 0 : "50%", background: "currentColor" }} />
+      <button onClick={onToggleRecord} disabled={!stream} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 13px", border: "none", cursor: stream ? "pointer" : "not-allowed", background: isRecording ? RED : BG2, color: isRecording ? "#fff" : TXT2, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em" }}>
+        <div style={{ width: 8, height: 8, borderRadius: isRecording ? 0 : "50%", background: "currentColor" }} />
         {isRecording ? `REC  ${fmt(secs)}` : "Record"}
       </button>
 
       {/* Clip buffer button */}
-      <button onClick={onSaveClip} disabled={!stream} title="Save last 30 seconds as clip" style={{ padding: "3px 9px", border: `1px solid ${BOR}`, background: BG2, color: stream ? AMB : BOR, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", cursor: stream ? "pointer" : "not-allowed" }}>
+      <button onClick={onSaveClip} disabled={!stream} title="Save last 30 seconds as clip" style={{ padding: "7px 12px", border: `1px solid ${BOR}`, background: BG2, color: stream ? AMB : BOR, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", cursor: stream ? "pointer" : "not-allowed" }}>
         ⏮ CLIP
       </button>
 
       {/* Live captions toggle + mic selector */}
-      <button onClick={onToggleCaptions} title="Live captions (Whisper)" style={{ padding: "3px 9px", border: `1px solid ${captionsEnabled ? "#00c8a8" : BOR}`, background: captionsEnabled ? "rgba(0,200,168,0.12)" : BG2, color: captionsEnabled ? "#00c8a8" : TXT2, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer" }}>
+      <button onClick={onToggleCaptions} title="Live captions (Whisper)" style={{ padding: "7px 12px", border: `1px solid ${captionsEnabled ? "#00c8a8" : BOR}`, background: captionsEnabled ? "rgba(0,200,168,0.12)" : BG2, color: captionsEnabled ? "#00c8a8" : TXT2, fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer" }}>
         CC
       </button>
       {micDevices.length > 0 && (
@@ -1666,7 +1666,7 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
           value={micDeviceId}
           onChange={e => onSelectMic(e.target.value)}
           title="Microphone for live captions"
-          style={{ fontSize: 11, background: BG2, color: TXT2, border: `1px solid ${BOR}`, padding: "2px 4px", maxWidth: 140, cursor: "pointer" }}
+          style={{ fontSize: 12, background: BG2, color: TXT2, border: `1px solid ${BOR}`, padding: "5px 7px", maxWidth: 150, cursor: "pointer" }}
         >
           <option value="">Default mic</option>
           {micDevices.map(d => (
@@ -1680,7 +1680,7 @@ function StatusBar({ isRecording, isStreaming, guestCount, hostLevel, onToggleRe
       <div style={{ flex: 1 }} />
 
       {/* Smart Cut indicator */}
-      <button onClick={onToggleSmartCut} title="AI Smart Cut — auto-switch to loudest speaker" style={{ padding: "3px 9px", border: `1px solid ${smartCutEnabled ? "#00c8a8" : BOR}`, background: smartCutEnabled ? "rgba(0,200,168,0.12)" : BG2, color: smartCutEnabled ? "#00c8a8" : TXT2, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", cursor: "pointer" }}>
+      <button onClick={onToggleSmartCut} title="AI Smart Cut — auto-switch to loudest speaker" style={{ padding: "7px 12px", border: `1px solid ${smartCutEnabled ? "#00c8a8" : BOR}`, background: smartCutEnabled ? "rgba(0,200,168,0.12)" : BG2, color: smartCutEnabled ? "#00c8a8" : TXT2, fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", cursor: "pointer" }}>
         ✦ AI CUT
       </button>
 

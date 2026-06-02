@@ -469,7 +469,7 @@ export default function VideoEngineCanvas() {
         padding: "8px 12px", background: BG1, borderBottom: `1px solid ${BOR}`,
         display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
       }}>
-        <span style={{ fontSize: 9, color: TXT2, letterSpacing: "0.1em", marginRight: 8, fontWeight: 700 }}>
+        <span style={{ fontSize: 11, color: TXT2, letterSpacing: "0.12em", marginRight: 10, fontWeight: 800 }}>
           LAYOUT
         </span>
         {LAYOUT_PRESETS.map(p => (
@@ -478,16 +478,16 @@ export default function VideoEngineCanvas() {
             onClick={() => applyLayoutPreset(p.id as LayoutPreset)}
             disabled={layers.length === 0}
             style={{
-              padding: "5px 10px", borderRadius: 0,
+              padding: "7px 13px", borderRadius: 0,
               background: BG3, color: layers.length === 0 ? TXT2 : TXT,
               border: `1px solid ${BOR}`,
-              fontSize: 10, fontWeight: 600,
+              fontSize: 12, fontWeight: 700,
               cursor: layers.length === 0 ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", gap: 5,
+              display: "flex", alignItems: "center", gap: 6,
               opacity: layers.length === 0 ? 0.45 : 1,
             }}
           >
-            <span style={{ fontSize: 14, fontFamily: "ui-monospace, monospace" }}>{p.icon}</span>
+            <span style={{ fontSize: 15, fontFamily: "ui-monospace, monospace" }}>{p.icon}</span>
             <span>{p.label}</span>
           </button>
         ))}
