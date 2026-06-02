@@ -412,6 +412,12 @@ async function setupAudioBackend() {
     }
   } finally { _resolveBackend(); }
 }
+// Resolve the canonical DB path ONCE, up front, and publish it to any spawned daemon via env so the
+// app and the out-of-process engine ALWAYS open the same database. Critical now that the DB lives on
+// local disk: without this the daemon falls back to its legacy Roaming default (ether-audiod.js) and
+// diverges from the app. Spawned daemons inherit it through {...process.env} in spawnDaemon().
+try { process.env.ETHER_DB_PATH = getDbPath(); }
+catch (e) { console.error("[DB] early path resolve failed (initDb will surface it):", e.message); }
 setupAudioBackend();
 
 // ── Database ──────────────────────────────────────────────────
@@ -419,18 +425,52 @@ let db;
 let cloudBackupTrigger = null; // set when cloud-backup module loads
 
 function getDbPath() {
-  // Use same path as Tauri so existing databases are found
-  const appData = app.getPath("appData");
-  const etherDir = path.join(appData, "com.ether.radio");
-  require("fs").mkdirSync(etherDir, { recursive: true });
-  return path.join(etherDir, "openair.db");
+  // The DB MUST live on LOCAL disk. Managed/OV profiles redirect Roaming AppData (the legacy
+  // app.getPath("appData") location) to a network H:\ share, where SQLite's WAL shared-memory
+  // (-shm mmap) is unsupported → new Database()/WAL throws and the app dies before its window.
+  // %LOCALAPPDATA% is machine-local and not part of the usual folder-redirection set.
+  const fs = require("fs");
+  let baseDir;
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    baseDir = path.join(process.env.LOCALAPPDATA, "Ether");
+  } else {
+    baseDir = app.getPath("userData"); // mac/Linux: not subject to the Windows folder-redirect problem
+  }
+  const etherDir = path.join(baseDir, "com.ether.radio");
+  try { fs.mkdirSync(etherDir, { recursive: true }); }
+  catch (e) { throw new Error(`Cannot create local data folder ${etherDir}: ${e.message}`); }
+  const localDb = path.join(etherDir, "openair.db");
+
+  // One-time migration from the legacy Roaming location (the redirected/SMB path on managed
+  // profiles) so existing installs keep their library/config. Crash-safe: copy the WAL sidecars
+  // first, then the main file LAST via temp+rename, so a partial copy never leaves a half-migrated
+  // DB that the existsSync() guard would treat as complete. Copy (not move) — the legacy file stays
+  // as a backup. Best-effort: any failure just falls through to a fresh local DB.
+  try {
+    if (!fs.existsSync(localDb)) {
+      const legacyDb = path.join(app.getPath("appData"), "com.ether.radio", "openair.db");
+      if (legacyDb !== localDb && fs.existsSync(legacyDb)) {
+        for (const suffix of ["-wal", "-journal"]) {
+          const src = legacyDb + suffix;
+          if (fs.existsSync(src)) fs.copyFileSync(src, localDb + suffix);
+        }
+        const tmp = localDb + ".migrating";
+        fs.copyFileSync(legacyDb, tmp);
+        fs.renameSync(tmp, localDb);
+        console.log("[DB] migrated legacy Roaming DB → local disk:", legacyDb, "→", localDb);
+      }
+    }
+  } catch (e) { console.warn("[DB] legacy DB migration skipped (using fresh local DB):", e.message); }
+
+  return localDb;
 }
 
 function initDb() {
   const dbPath = getDbPath();
   console.log("[DB] Path:", dbPath);
-  db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
+  try { db = new Database(dbPath); }
+  catch (e) { throw new Error(`Cannot open database ${dbPath}: ${e.message}`); }
+  db.pragma("journal_mode = WAL");   // WAL is safe now that the DB is guaranteed local disk
   db.pragma("foreign_keys = ON");
   console.log("[DB] Connected:", dbPath);
   runMigrations();
