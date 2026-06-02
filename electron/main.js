@@ -519,6 +519,12 @@ function runMigrations() {
   alterSafe("ALTER TABLE songs ADD COLUMN rotation_status TEXT DEFAULT 'active'");
   alterSafe("ALTER TABLE songs ADD COLUMN intro_version_path TEXT");
   alterSafe("ALTER TABLE songs ADD COLUMN has_intro INTEGER DEFAULT 0");
+  // These three live in the v0 baseline but had NO alterSafe — so a DB created by an older baseline
+  // (or carried forward from an old install) lacked them, and migrate-library-phase-sync-4 (v4) does
+  // `SELECT energy, last_played_at, play_count FROM songs` → "no such column: energy" on init (OV, 4.3.33).
+  alterSafe("ALTER TABLE songs ADD COLUMN energy REAL");
+  alterSafe("ALTER TABLE songs ADD COLUMN last_played_at INTEGER");
+  alterSafe("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE clock_slots ADD COLUMN chain_type TEXT DEFAULT 'segue'");
