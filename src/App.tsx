@@ -97,7 +97,7 @@ import TrackEditor from "./components/TrackEditor";
 import AboutPanel from "./components/AboutPanel";
 import ListenerAnalytics from "./components/ListenerAnalytics";
 import CloudBackup from "./components/CloudBackup";
-import MultiOutputPanel from "./components/MultiOutputPanel";
+import AudioRoutingScreen from "./components/AudioRoutingPanel";
 import StationManager from "./components/StationManager";
 import ManageDevices from "./components/ManageDevices";
 import { usePlan, setPlanGlobally, PlanGate } from "./hooks/usePlan";
@@ -2011,7 +2011,7 @@ export default function App() {
               )}
               {panel === "multioutput" && (
                 <PlanGate requires="pro" feature="Multi-Output Audio Routing">
-                  <MultiOutputPanel />
+                  <AudioRoutingScreen />
                 </PlanGate>
               )}
               {panel === "stationmanager" && (

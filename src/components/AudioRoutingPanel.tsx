@@ -261,3 +261,29 @@ export function CurrentRoutingSummary({ refreshKey }: { refreshKey: number }) {
     </div>
   );
 }
+
+// ── AudioRoutingScreen ────────────────────────────────────────
+// Full-screen view for panel === "multioutput" ("Multi-Output Audio Routing"). Replaces the retired
+// MultiOutputPanel.tsx (which called the orphaned, unregistered IPC name `list_audio_output_devices`).
+// Composes the working, mode-agnostic picker + summary — both backed by audio:listOutputDevices /
+// audio:setOutputDevice, which function in BOTH daemon and in-process modes. The backed routing model
+// is per-station output device (the per-deck model in the old panel had no backend).
+
+export default function AudioRoutingScreen() {
+  const [refresh, setRefresh] = useState(0);
+  return (
+    <div style={{ maxWidth: 560, margin: "0 auto", padding: "28px 20px" }}>
+      <h2 style={{ fontSize: 16, fontWeight: 800, letterSpacing: "0.04em", color: "var(--text-primary)", textTransform: "uppercase" as const, margin: 0 }}>
+        Multi-Output Audio Routing
+      </h2>
+      <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "6px 0 18px", lineHeight: 1.5 }}>
+        Assign each station's playout to a specific audio output device. Applies live — works whether
+        Ether is running the out-of-process engine or the in-process fallback.
+      </p>
+      <div style={{ border: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
+        <AudioRoutingPicker onApplied={() => setRefresh(k => k + 1)} />
+        <CurrentRoutingSummary refreshKey={refresh} />
+      </div>
+    </div>
+  );
+}

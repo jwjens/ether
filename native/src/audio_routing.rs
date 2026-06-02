@@ -95,9 +95,9 @@ impl AudioRouter {
 }
 
 // Plain functions — no tauri::State, no #[tauri::command]
-pub fn list_audio_output_devices() -> Vec<AudioDevice> {
-    AudioRouter::enumerate_devices()
-}
+// (list_audio_output_devices() removed — orphaned Tauri-era export, never #[napi] and never called
+// from JS. Device enumeration is served by the #[napi] audio_list_output_devices() in lib.rs →
+// IPC audio:listOutputDevices, consumed by AudioRoutingPanel.)
 
 pub fn get_deck_routing(state: &Arc<Mutex<DeckRouting>>) -> DeckRouting {
     state.lock().unwrap().clone()
