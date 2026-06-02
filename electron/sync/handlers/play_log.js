@@ -72,8 +72,8 @@ function playLogCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id);
+      `INSERT INTO ${TABLE} (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path ?? null);
   });
   return playLogGet(db, uuid);
 }

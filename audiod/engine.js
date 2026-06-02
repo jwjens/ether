@@ -447,7 +447,7 @@ class DaemonEngine {
     // Item 10 Phase 2 Step 4: the daemon owns play logging in daemon-driven mode (the
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
     // throws into the playout path.
-    try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION }); } catch {}
+    try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION, filePath: st.filePath }); } catch {}
   }
 
   // ── operator/queue API (called from daemon command handlers) ──

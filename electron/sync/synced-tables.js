@@ -468,6 +468,7 @@ const REGISTRY = {
       updated_at:          'scalar',
       deleted_at:          'scalar',
       programming_row_id:  'scalar',
+      file_path:           'blob-ref',   // v19: the audio that aired — affidavit join key
     },
   },
 

@@ -18,7 +18,7 @@ const { logMutation, serializePayload } = require(path.join(__dirname, "..", "el
 // Mirrors src/db/client.ts logPlay → play_log:create. db must be a read-WRITE node:sqlite
 // DatabaseSync handle. Returns the new row uuid, or null on failure (logging never throws
 // into the playout path — a logging error must not interrupt audio).
-function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId }) {
+function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, filePath }) {
   if (!db || stationId == null || !title) return null;
   const now = new Date().toISOString();
   const uuid = crypto.randomUUID();
@@ -29,6 +29,7 @@ function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId }) 
     played_at: Math.floor(Date.now() / 1000),   // explicit — the DEFAULT unixepoch() never fires on the synced insert
     scheduled_log_id: null, show_name: null, category_code: null, programming_row_id: null,
     station_id: stationId, uuid, created_at: now, updated_at: now, deleted_at: null,
+    file_path: filePath || null,   // v19: the audio that aired — affidavit join key
   };
   let payloadAfter;
   try { payloadAfter = serializePayload(row, "play_log"); }
@@ -39,9 +40,9 @@ function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId }) 
     db.exec("BEGIN IMMEDIATE");
     try {
       db.prepare(
-        `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id);
+        `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path);
       logMutation(db, { table_name: "play_log", row_id: uuid, op: "insert", payload_before: null, payload_after: payloadAfter, station_id: stationId, actor_id: null });
       db.exec("COMMIT");
     } catch (e) { try { db.exec("ROLLBACK"); } catch {} throw e; }

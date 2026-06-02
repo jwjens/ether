@@ -123,7 +123,7 @@ export function getSessionId(): string {
   return _sessionId;
 }
 
-export async function logPlay(title: string, artist: string, deck: string, durationMs: number | undefined, stationId: number): Promise<void> {
+export async function logPlay(title: string, artist: string, deck: string, durationMs: number | undefined, stationId: number, filePath?: string | null): Promise<void> {
   await (window as any).ether.playLog.create({
     station_id:  stationId,
     title,
@@ -135,5 +135,6 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     // never surfaced new plays even though rows were being written.
     played_at:   Math.floor(Date.now() / 1000),
     session_id:  getSessionId(),
+    file_path:   filePath ?? null,   // v19: the audio that aired — affidavit join key
   });
 }

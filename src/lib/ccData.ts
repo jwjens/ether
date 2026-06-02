@@ -117,7 +117,7 @@ export async function pushPlayHistory(
     for (let b = 0; b < MAX_BATCHES; b++) {
       const cursor = Number(localStorage.getItem(cursorKey) || "0");
       const rows: any[] = await query(
-        `SELECT id, uuid, title, artist, duration_ms, played_at, category_code, show_name
+        `SELECT id, uuid, title, artist, duration_ms, played_at, category_code, show_name, file_path
            FROM play_log
           WHERE station_id = ? AND id > ? AND deleted_at IS NULL
           ORDER BY id LIMIT ?`,
@@ -128,6 +128,7 @@ export async function pushPlayHistory(
         row_uuid: r.uuid || `lid-${stationId}-${r.id}`,
         title: r.title, artist: r.artist, duration_ms: r.duration_ms,
         played_at: r.played_at, category_code: r.category_code, show_name: r.show_name,
+        file_path: r.file_path ?? null,   // v19: affidavit join key
       }));
       const res = await fetch(`${ETHER_BACKEND_URL}/api/account/play-history`, {
         method: "POST",
@@ -209,6 +210,7 @@ const NS: Record<string, string> = {
   station_programming: "stationProgramming",
   artists: "artists",
   albums: "albums",
+  spots: "spots",   // mirrored for the advertiser affidavit (advertiser/isci/file_path)
 };
 
 // Edits to these tables change a song's row in the per-station library VIEW, so after

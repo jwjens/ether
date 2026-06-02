@@ -712,7 +712,7 @@ export default function App() {
   // license_key, which only exists under station 1's config. (Phase 2b read-path fix.)
   useEffect(() => {
     if (firstRunChecked && apiKeyRef.current && stationUuid) {
-      for (const t of ["categories", "clocks", "clock_slots", "shows"]) {
+      for (const t of ["categories", "clocks", "clock_slots", "shows", "spots"]) {
         pushCcTable(apiKeyRef.current, stationUuid, stationId, t);
       }
       pushLibrary(apiKeyRef.current, stationUuid, stationId);
@@ -1233,7 +1233,7 @@ export default function App() {
           // Item 10 Phase 2 Step 4: in daemon-driven mode the daemon writes the play log
           // (survives a UI/app restart) — the renderer must not also log (double-log). The
           // now-playing emits below stay in the app (Step 7).
-          if (!engine.isDaemonDriven) logPlay(st.title, st.artist || '', id, undefined, stationId).catch(e => console.error('Log write error:', e));
+          if (!engine.isDaemonDriven) logPlay(st.title, st.artist || '', id, undefined, stationId, st.filePath).catch(e => console.error('Log write error:', e));
           try { (window as any).ether.emit("iris:nowplaying", { title: st.title, artist: st.artist || '' }); } catch {}
           try {
             const file_key = st.filePath ? st.filePath.replace(/\\/g, '/').split('/').pop() : '';

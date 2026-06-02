@@ -545,6 +545,7 @@ function runMigrations() {
   alterSafe("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)");
   alterSafe("ALTER TABLE play_log ADD COLUMN deck_id TEXT");
   alterSafe("ALTER TABLE play_log ADD COLUMN session_id TEXT");
+  alterSafe("ALTER TABLE play_log ADD COLUMN file_path TEXT");   // v19: affidavit join key
   alterSafe("ALTER TABLE artists ADD COLUMN gender TEXT DEFAULT 'unknown'");
 
   // Part 1 — deck purpose (controls mode-based visibility)

@@ -15,7 +15,7 @@ const EXPECTED = {
     "id", "title", "artist", "deck", "deck_id", "duration_ms",
     "session_id", "played_at", "scheduled_log_id", "show_name",
     "category_code", "programming_row_id", "station_id", "uuid",
-    "created_at", "updated_at", "deleted_at",
+    "created_at", "updated_at", "deleted_at", "file_path",
   ],
   scheduled_log: [
     "id", "log_date", "hour", "position", "song_id", "title",
@@ -548,6 +548,7 @@ alterSafe("ALTER TABLE clocks ADD COLUMN color TEXT");
 alterSafe("ALTER TABLE shows ADD COLUMN clock_id INTEGER REFERENCES clocks(id)");
 alterSafe("ALTER TABLE play_log ADD COLUMN deck_id TEXT");
 alterSafe("ALTER TABLE play_log ADD COLUMN session_id TEXT");
+alterSafe("ALTER TABLE play_log ADD COLUMN file_path TEXT");   // v19: affidavit join key
 alterSafe("ALTER TABLE artists ADD COLUMN gender TEXT DEFAULT 'unknown'");
 alterSafe("ALTER TABLE deck_configs ADD COLUMN purpose TEXT DEFAULT ''");
 alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
