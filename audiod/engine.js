@@ -562,7 +562,18 @@ class DaemonEngine {
     const live = this._state();
     const alreadyOnAir = order.some(d => this._deckState(d).status === "playing")
       || (live && [live.deckA, live.deckB, live.deckC].some(d => d && d.status === "playing"));
-    if (alreadyOnAir) { this._log("automationStart: already on air → idempotent no-op (adopting running playout, no reload)"); return true; }
+    if (alreadyOnAir) {
+      // Adopt the running deck (never restart it — that caused the double-play overlap), but STILL
+      // cue the two idle decks so the rotation can advance. The app reissues automationStart while a
+      // deck is already playing (gapless update / reconnect / boot auto-resume); without cueing the
+      // standby decks here they stay empty and the song never transitions until a manual AUTO reset.
+      this._log("automationStart: already on air → adopting running playout + cueing idle decks");
+      const livePlaying = (d) => this._deckState(d).status === "playing"
+        || (live && [live.deckA, live.deckB, live.deckC][order.indexOf(d)] && [live.deckA, live.deckB, live.deckC][order.indexOf(d)].status === "playing");
+      const idle = order.filter(d => !livePlaying(d));
+      if (idle[0]) setTimeout(async () => { await this.preload(idle[0], 0); if (idle[1]) setTimeout(() => this.preload(idle[1], 1), 400); }, 300);
+      return true;
+    }
     // Load the first PLAYABLE track into A, skipping any missing-file items.
     let loaded = false, guard = 0;
     while (this.queue.length > 0 && guard++ < 100) {
