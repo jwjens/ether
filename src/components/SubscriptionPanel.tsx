@@ -120,10 +120,17 @@ export default function SubscriptionPanel() {
     setLoading(true);
     setLicenseError("");
     try {
+      // Send a stable per-machine id (client_identity) so seats are tracked per machine, not per
+      // email. If identity isn't available the backend falls back to a per-email seat.
+      let machine_id = "", machine_name = "";
+      try {
+        const idResp = await (window as any).ether.identity?.get?.();
+        if (idResp?.ok) { machine_id = idResp.machine_id || ""; machine_name = idResp.machine_name || ""; }
+      } catch { /* fall through — backend treats absent machine_id as a per-email seat */ }
       const res = await fetch(`${ETHER_BACKEND_URL}/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ license_key: licenseKey.trim(), email: licenseEmail.trim() }),
+        body: JSON.stringify({ license_key: licenseKey.trim(), email: licenseEmail.trim(), machine_id, machine_name, os: navigator.platform }),
       });
       const data = await res.json();
       if (!data.valid) {
