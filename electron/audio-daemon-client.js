@@ -65,6 +65,8 @@ let onConnected = () => {};        // main sets this → fired on every fresh at
 let reconnectTimer = null;
 let stopped = false;
 let lastSpawnAt = 0;               // debounce — never spawn more than once per 2s (storm guard)
+let spawnAttempts = 0;            // consecutive spawn-without-successful-connect cycles
+const MAX_SPAWN_ATTEMPTS = 5;     // after this, give up — in-process fallback is terminal (no PID storm)
 
 function setEventHandler(fn) { onEvent = typeof fn === "function" ? fn : (() => {}); }
 function setConnectedHandler(fn) { onConnected = typeof fn === "function" ? fn : (() => {}); }
@@ -75,6 +77,14 @@ function spawnDaemon() {
   const now = Date.now();
   if (now - lastSpawnAt < 2000) return;
   lastSpawnAt = now;
+  // Hard cap: if the daemon keeps being spawned but never becomes reachable (e.g. it crashes on its
+  // own DB open on a broken/redirected profile), give up so the in-process fallback is terminal
+  // rather than an unbounded PID storm. Reset to 0 on a successful connect (attach()).
+  if (spawnAttempts >= MAX_SPAWN_ATTEMPTS) {
+    if (!stopped) { stopped = true; console.warn(`[audiod-client] daemon unreachable after ${MAX_SPAWN_ATTEMPTS} spawns — giving up; in-process fallback is terminal this session`); }
+    return;
+  }
+  spawnAttempts++;
   try {
     let exe = process.execPath, script = DAEMON_SCRIPT, tag = "in-dir engine";
     const staged = stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion() });
@@ -96,6 +106,7 @@ function spawnDaemon() {
 }
 
 function attach(s) {
+  spawnAttempts = 0;   // reached a live daemon — reset the give-up counter
   sock = s; buf = "";
   sock.on("data", (d) => {
     buf += d.toString("utf8");

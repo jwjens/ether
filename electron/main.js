@@ -404,6 +404,9 @@ async function setupAudioBackend() {
       } else {
         AUDIO_DAEMON = false;
         console.warn("[AUDIO] daemon unreachable after 5s — FALLING BACK to the in-process engine (no dead air)");
+        // Terminal fallback: stop the client's spawn/reconnect loop so it doesn't keep respawning
+        // detached daemons in the background (the PID storm) after we've committed to in-process.
+        try { audiodClient.stop(); } catch {}
         try { audio.initAudioEngine(); } catch (e) { console.error("[AUDIO] in-process init failed:", e.message); }
       }
     } else {
