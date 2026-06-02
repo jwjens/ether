@@ -157,6 +157,7 @@ export default function SubscriptionPanel() {
     if (plan === "station")          return "#a78bfa";
     if (plan === "pro_lifetime")     return "#f59e0b";
     if (plan === "station_lifetime") return "#f59e0b";
+    if (plan === "operator")         return "#10b981";
     return "#34d399";
   };
 
@@ -165,6 +166,7 @@ export default function SubscriptionPanel() {
     if (plan === "station")          return "Network";
     if (plan === "pro_lifetime")     return "Studio Lifetime";
     if (plan === "station_lifetime") return "Network Lifetime";
+    if (plan === "operator")         return "Enterprise";
     return "Solo";
   };
 
