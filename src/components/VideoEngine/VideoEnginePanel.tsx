@@ -38,7 +38,7 @@ function withSequentialZ(layers: SceneLayer[]): SceneLayer[] {
   return layers.map((l, i) => ({ ...l, z: i }));
 }
 
-export default function VideoEnginePanel() {
+export default function VideoEnginePanel({ view = "engine" }: { view?: "engine" | "sources" }) {
   const eng = useVideoEngine();
   const {
     sources, layers, config, destinations, recordPath, status, encoders,
@@ -165,6 +165,7 @@ export default function VideoEnginePanel() {
         </div>
       )}
 
+      {view === "sources" && (<>
       {/* Sources */}
       <Section title="SOURCES">
         <div style={{ display: "flex", gap: 4, marginBottom: 6, flexWrap: "wrap" }}>
@@ -369,7 +370,9 @@ export default function VideoEnginePanel() {
           </div>
         </div>
       )}
+      </>)}
 
+      {view === "engine" && (<>
       {/* Scene */}
       <Section title={`SCENE (${layers.length})`}>
         {layers.length === 0 && (
@@ -608,6 +611,7 @@ export default function VideoEnginePanel() {
           Phase 0 — video-only. Audio routing arrives in Phase 4.
         </div>
       </Section>
+      </>)}
     </div>
   );
 }

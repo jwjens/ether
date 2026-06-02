@@ -2633,6 +2633,9 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
               />
               </>
             )}
+            {(rightTab === "engine" || rightTab === "sources") && (
+              <VideoEnginePanel view={rightTab === "sources" ? "sources" : "engine"} />
+            )}
             {rightTab === "sources" && (
               <SourcesPanelWithEngine
                 screenSources={screenSources}
@@ -2648,9 +2651,6 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
             {rightTab === "quality" && (
               <EncoderSection />
             )}
-            <div style={{ display: rightTab === "engine" ? "block" : "none" }}>
-              <VideoEnginePanel />
-            </div>
           </div>
         </div>
       </div>
