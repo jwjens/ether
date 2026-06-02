@@ -12,7 +12,7 @@ const PAYMENT_LINK_STATION        = "https://buy.stripe.com/cNi14hgxC6Sx1FB2RN9k
 const PAYMENT_LINK_PRO_LIFETIME     = "https://buy.stripe.com/pro-lifetime";     // replace with real link
 const PAYMENT_LINK_STATION_LIFETIME = "https://buy.stripe.com/station-lifetime"; // replace with real link
 
-export type PlanTier = "free" | "pro" | "station" | "pro_lifetime" | "station_lifetime";
+export type PlanTier = "free" | "pro" | "station" | "pro_lifetime" | "station_lifetime" | "operator";
 
 interface PlanFeature {
   label: string;
