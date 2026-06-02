@@ -9,7 +9,7 @@ import { query as dbQuery } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { VideoEngineProvider, useVideoEngine } from "./VideoEngine/VideoEngineContext";
 import VideoEngineCanvas from "./VideoEngine/VideoEngineCanvas";
-import VideoEnginePanel  from "./VideoEngine/VideoEnginePanel";
+import VideoEnginePanel, { EncoderSection, DestinationsSection } from "./VideoEngine/VideoEnginePanel";
 import { useCaptions, CaptionsOverlay } from "./Captions";
 import StreamStatusPill from "./StreamStatusPill";
 import { QRCodeSVG } from "qrcode.react";
@@ -2598,7 +2598,7 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
         </div>
 
         {/* Right sidebar */}
-        <div style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: `1px solid ${BOR}`, background: BG2, overflow: "hidden" }}>
+        <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", borderLeft: `1px solid ${BOR}`, background: BG2, overflow: "hidden" }}>
           <div style={{ borderBottom: `1px solid ${BOR}`, flexShrink: 0, background: BG2 }}>
             <div style={{ display: "flex" }}>
               {tab("engine",  "ENGINE")}
@@ -2610,6 +2610,8 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
 
           <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0, width: "100%" }}>
             {rightTab === "showplus" && (
+              <>
+              <DestinationsSection />
               <ShowPlusPanel
                 guests={guests} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest}
                 guestsEnabled={guestsEnabled} onToggleGuests={() => setGuestsEnabled(v => !v)}
@@ -2629,6 +2631,7 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
                 monitorVolume={monitorVolume} setMonitorVolume={setMonitorVolume}
                 hostStream={hostStream} brandKit={brandKit} setBrandKit={setBrandKit}
               />
+              </>
             )}
             {rightTab === "sources" && (
               <SourcesPanelWithEngine
@@ -2643,11 +2646,10 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
               />
             )}
             {rightTab === "quality" && (
-              <QualityPanel resolution={resolution} setResolution={setResolution} bitrate={bitrate} setBitrate={setBitrate} stream={hostStream} />
+              <EncoderSection />
             )}
             <div style={{ display: rightTab === "engine" ? "block" : "none" }}>
               <VideoEnginePanel />
-              <MultiRTMPPanel stream={hostStream} bitrateKbps={bitrateKbps} />
             </div>
           </div>
         </div>

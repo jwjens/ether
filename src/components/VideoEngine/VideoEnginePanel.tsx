@@ -139,7 +139,7 @@ export default function VideoEnginePanel() {
   const isRecording = !!status?.recording;
 
   return (
-    <div style={{ padding: 8, color: TXT, fontSize: 11, fontFamily: "Inter, system-ui, sans-serif" }}>
+    <div style={{ padding: 12, color: TXT, fontSize: 12, fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{
         padding: "6px 10px", background: BG1, border: `1px solid ${BOR}`,
         marginBottom: 8, display: "flex", alignItems: "center", gap: 8,
@@ -566,16 +566,174 @@ export default function VideoEnginePanel() {
         </div>
       </Section>
 
-      {/* Encoder */}
+      {/* Encoder moved to the QUALITY tab (EncoderSection) — de-dup */}
+
+      {/* RTMP destinations moved to the SHOW+ tab (DestinationsSection) — de-dup */}
+
+      {/* Recording */}
+      <Section title="RECORDING">
+        <Row>
+          <input
+            value={recordPath}
+            readOnly
+            placeholder="No file chosen"
+            style={{ ...inStyle, flex: 1, cursor: "pointer" }}
+            onClick={chooseRecordPath}
+          />
+          <Btn small onClick={chooseRecordPath}>…</Btn>
+        </Row>
+        <div style={{ marginTop: 4 }}>
+          {isRecording ? (
+            <Btn danger onClick={stopRecording} style={{ width: "100%" }}>◼ Stop Recording</Btn>
+          ) : (
+            <Btn red onClick={startRecording} style={{ width: "100%" }}>● Start Recording</Btn>
+          )}
+        </div>
+      </Section>
+
+      {/* Status */}
+      <Section title="STATUS">
+        {status?.sinks.length === 0 && (
+          <div style={{ fontSize: 9, color: TXT2 }}>Idle — no active sinks.</div>
+        )}
+        {status?.sinks.map(s => (
+          <Row key={s.id}>
+            <div style={{ flex: 1, fontSize: 10 }}>{s.label}</div>
+            <div style={{ fontSize: 9, color: TXT2, fontFamily: "ui-monospace, monospace" }}>
+              {Math.floor(s.uptimeMs / 1000)}s · {s.framesWritten} chunks
+            </div>
+          </Row>
+        ))}
+        <div style={{ fontSize: 9, color: TXT2, marginTop: 6 }}>
+          Phase 0 — video-only. Audio routing arrives in Phase 4.
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{
+        padding: "9px 14px", background: BG2, borderBottom: `1px solid ${BOR}`,
+        fontSize: 11, fontWeight: 800, color: TXT, letterSpacing: "0.1em", marginBottom: 12,
+        textTransform: "uppercase" as const,
+      }}>{title}</div>
+      <div style={{ padding: "0 4px" }}>{children}</div>
+    </div>
+  );
+}
+
+function Row({ children, onClick, style }: { children: React.ReactNode; onClick?: (e: React.MouseEvent) => void; style?: React.CSSProperties }) {
+  return (
+    <div onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 8, padding: "8px 4px",
+        borderBottom: `1px solid ${BG3}`, ...style,
+      }}
+    >{children}</div>
+  );
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return <div style={{ width: 92, fontSize: 12, fontWeight: 600, color: TXT2, flexShrink: 0 }}>{children}</div>;
+}
+
+function Btn({ children, onClick, small, danger, red, pur, style, title }: {
+  children: React.ReactNode;
+  onClick: (e: React.MouseEvent) => void;
+  small?: boolean; danger?: boolean; red?: boolean; pur?: boolean;
+  style?: React.CSSProperties; title?: string;
+}) {
+  const bg = danger ? "#401a20" : red ? "#401a20" : pur ? "#1f1a3a" : BG3;
+  const bord = danger ? RED : red ? RED : pur ? PUR : BOR;
+  const color = danger ? RED : red ? RED : pur ? PUR : TXT;
+  return (
+    <button onClick={onClick} title={title}
+      style={{
+        padding: small ? "4px 9px" : "7px 12px",
+        background: bg, border: `1px solid ${bord}`, color,
+        fontSize: small ? 11 : 12, cursor: "pointer", borderRadius: 0,
+        fontWeight: 700, letterSpacing: "0.03em", ...style,
+      }}
+    >{children}</button>
+  );
+}
+
+function Led({ on, label, color = GRN }: { on: boolean; label: string; color?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: "0.06em" }}>
+      <div style={{
+        width: 8, height: 8, background: on ? color : "#333",
+        boxShadow: on ? `0 0 6px ${color}` : "none",
+      }} />
+      <span style={{ color: on ? color : TXT2 }}>{label}</span>
+    </div>
+  );
+}
+
+const selStyle: React.CSSProperties = {
+  flex: 1, padding: "7px 9px", background: BG1, color: TXT,
+  border: `1px solid ${BOR}`, fontSize: 13, borderRadius: 0,
+};
+const inStyle: React.CSSProperties = {
+  padding: "7px 9px", background: BG1, color: TXT, border: `1px solid ${BOR}`,
+  fontSize: 13, borderRadius: 0, fontFamily: "ui-monospace, monospace",
+};
+
+function NumInput({ value, onChange, suffix, min, max, step }: {
+  value: number; onChange: (v: number) => void; suffix?: string;
+  min?: number; max?: number; step?: number;
+}) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 3, flex: 1 }}>
+      <input
+        type="number" value={value} min={min} max={max} step={step}
+        onChange={(e) => onChange(+e.target.value)}
+        style={{ ...inStyle, flex: 1, textAlign: "right" as const }}
+      />
+      {suffix && <span style={{ fontSize: 11, color: TXT2 }}>{suffix}</span>}
+    </div>
+  );
+}
+
+function presetIdFor(url: string): string {
+  const match = RTMP_PRESETS.find(p => p.id !== "custom" && url.startsWith(p.url.replace(/\/$/, "")));
+  return match?.id || "custom";
+}
+
+function codecFamilyOf(s: string): string {
+  const [fam] = s.split("/");
+  return fam === "h265" || fam === "hevc" ? "h265" : "h264";
+}
+function codecHwOf(s: string): string {
+  const parts = s.split("/");
+  return parts[1] || "auto";
+}
+function buildCodecString(family: string, hw: string): string {
+  return hw === "auto" || !hw ? family : `${family}/${hw}`;
+}
+function hasEncoder(list: string[], family: string, hw: string): boolean {
+  const prefix = family === "h265" ? "hevc" : "h264";
+  return list.includes(`${prefix}_${hw}`);
+}
+
+// ── EncoderSection ────────────────────────────────────────────
+// Extracted from the ENGINE tab so the encoder lives ONLY in the QUALITY tab (de-dup). Uses the
+// authoritative engine config (eng.config: width/height/fps/bitrate_kbps/codec) — not the legacy
+// useVideoQuality parallel that the old QualityPanel edited.
+export function EncoderSection() {
+  const { config, setConfig, encoders } = useVideoEngine();
+  return (
+    <div style={{ padding: 12, color: TXT, fontSize: 12, fontFamily: "Inter, system-ui, sans-serif" }}>
       <Section title="ENCODER">
         <Row>
           <Label>Resolution</Label>
           <select
             value={`${config.width}×${config.height}`}
-            onChange={(e) => {
-              const [w, h] = e.target.value.split("×").map(Number);
-              setConfig({ ...config, width: w, height: h });
-            }}
+            onChange={(e) => { const [w, h] = e.target.value.split("×").map(Number); setConfig({ ...config, width: w, height: h }); }}
             style={selStyle}
           >
             <option value="1280×720">1280×720</option>
@@ -623,8 +781,18 @@ export default function VideoEnginePanel() {
           </select>
         </Row>
       </Section>
+    </div>
+  );
+}
 
-      {/* Destinations — multi-RTMP simulcast */}
+// ── DestinationsSection ───────────────────────────────────────
+// Extracted from the ENGINE tab → lives in the SHOW+ (streaming/podcast) hub. Uses the authoritative
+// eng.destinations (the same store the engine streams from), replacing the parallel MultiRTMPPanel.
+export function DestinationsSection() {
+  const { destinations, addDestination, removeDestination, patchDestination, status, startStream, stopStream } = useVideoEngine();
+  const isStreaming = !!status?.streaming;
+  return (
+    <div style={{ padding: 12, color: TXT, fontSize: 12, fontFamily: "Inter, system-ui, sans-serif" }}>
       <Section title={`RTMP DESTINATIONS (${destinations.length})`}>
         {destinations.map((dest, i) => {
           const presetId = presetIdFor(dest.url);
@@ -642,75 +810,35 @@ export default function VideoEnginePanel() {
                             : connStatus === "connecting"   ? { color: TXT2, label: "CONNECTING…" }
                             : null;
           return (
-            <div key={i} style={{ padding: "6px 6px 8px", marginBottom: 6, background: BG2, border: `1px solid ${borderColor}` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 4 }}>
+            <div key={i} style={{ padding: "8px 8px 10px", marginBottom: 8, background: BG2, border: `1px solid ${borderColor}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                 <select
                   value={presetId}
-                  onChange={(e) => {
-                    const p = RTMP_PRESETS.find(x => x.id === e.target.value);
-                    if (p) patchDestination(i, { url: p.url, label: p.name });
-                  }}
+                  onChange={(e) => { const p = RTMP_PRESETS.find(x => x.id === e.target.value); if (p) patchDestination(i, { url: p.url, label: p.name }); }}
                   style={{ ...selStyle, flex: 1 }}
                 >
-                  {RTMP_PRESETS.map(p => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
+                  {RTMP_PRESETS.map(p => (<option key={p.id} value={p.id}>{p.name}</option>))}
                 </select>
-                {destinations.length > 1 && (
-                  <Btn small danger onClick={() => removeDestination(i)}>×</Btn>
-                )}
+                {destinations.length > 1 && (<Btn small danger onClick={() => removeDestination(i)}>×</Btn>)}
               </div>
-              <input
-                value={dest.label}
-                onChange={(e) => patchDestination(i, { label: e.target.value })}
-                placeholder="Label"
-                style={{ ...inStyle, width: "100%", marginBottom: 3 }}
-              />
-              <input
-                value={dest.url}
-                onChange={(e) => patchDestination(i, { url: e.target.value })}
-                placeholder="rtmp://..."
-                style={{ ...inStyle, width: "100%", marginBottom: 3 }}
-              />
-              <input
-                value={dest.key}
-                type="password"
-                onChange={(e) => patchDestination(i, { key: e.target.value })}
-                placeholder="Stream key"
-                style={{ ...inStyle, width: "100%", marginBottom: 3 }}
-              />
-              <input
-                value={dest.backupUrl ?? ""}
-                onChange={(e) => patchDestination(i, { backupUrl: e.target.value || undefined })}
-                placeholder="Backup RTMP URL (optional failover)"
-                style={{ ...inStyle, width: "100%", marginBottom: dest.backupUrl ? 3 : 0, opacity: 0.7 }}
-              />
+              <input value={dest.label} onChange={(e) => patchDestination(i, { label: e.target.value })} placeholder="Label" style={{ ...inStyle, width: "100%", marginBottom: 5, boxSizing: "border-box" as const }} />
+              <input value={dest.url} onChange={(e) => patchDestination(i, { url: e.target.value })} placeholder="rtmp://..." style={{ ...inStyle, width: "100%", marginBottom: 5, boxSizing: "border-box" as const }} />
+              <input value={dest.key} type="password" onChange={(e) => patchDestination(i, { key: e.target.value })} placeholder="Stream key" style={{ ...inStyle, width: "100%", marginBottom: 5, boxSizing: "border-box" as const }} />
+              <input value={dest.backupUrl ?? ""} onChange={(e) => patchDestination(i, { backupUrl: e.target.value || undefined })} placeholder="Backup RTMP URL (optional failover)" style={{ ...inStyle, width: "100%", marginBottom: dest.backupUrl ? 5 : 0, opacity: 0.7, boxSizing: "border-box" as const }} />
               {dest.backupUrl && (
-                <input
-                  value={dest.backupKey ?? ""}
-                  onChange={(e) => patchDestination(i, { backupKey: e.target.value || undefined })}
-                  placeholder="Backup stream key (if different)"
-                  type="password"
-                  style={{ ...inStyle, width: "100%" }}
-                />
+                <input value={dest.backupKey ?? ""} onChange={(e) => patchDestination(i, { backupKey: e.target.value || undefined })} placeholder="Backup stream key (if different)" type="password" style={{ ...inStyle, width: "100%", boxSizing: "border-box" as const }} />
               )}
-              {preset?.help && (
-                <div style={{ fontSize: 8, color: TXT2, marginTop: 3, lineHeight: 1.3 }}>{preset.help}</div>
-              )}
+              {preset?.help && (<div style={{ fontSize: 10, color: TXT2, marginTop: 5, lineHeight: 1.4 }}>{preset.help}</div>)}
               {statusDot && (
-                <div style={{ fontSize: 8, color: statusDot.color, marginTop: 3, fontFamily: "ui-monospace, monospace", display: "flex", gap: 6 }}>
+                <div style={{ fontSize: 10, color: statusDot.color, marginTop: 5, fontFamily: "ui-monospace, monospace", display: "flex", gap: 6 }}>
                   <span>● {statusDot.label}</span>
-                  {sink && connStatus === "connected" && (
-                    <span style={{ color: TXT2 }}>{Math.floor(sink.uptimeMs / 1000)}s · {sink.framesWritten} chunks</span>
-                  )}
+                  {sink && connStatus === "connected" && (<span style={{ color: TXT2 }}>{Math.floor(sink.uptimeMs / 1000)}s · {sink.framesWritten} chunks</span>)}
                 </div>
               )}
             </div>
           );
         })}
-        <Btn onClick={() => addDestination({ url: "rtmp://", key: "", label: `Destination ${destinations.length + 1}` })}
-          style={{ width: "100%", marginBottom: 6 }}
-        >+ Add Destination</Btn>
+        <Btn onClick={() => addDestination({ url: "rtmp://", key: "", label: `Destination ${destinations.length + 1}` })} style={{ width: "100%", marginBottom: 8 }}>+ Add Destination</Btn>
         <div style={{ marginTop: 2 }}>
           {isStreaming ? (
             <Btn danger onClick={stopStream} style={{ width: "100%" }}>◼ Stop All Streams</Btn>
@@ -719,152 +847,6 @@ export default function VideoEnginePanel() {
           )}
         </div>
       </Section>
-
-      {/* Recording */}
-      <Section title="RECORDING">
-        <Row>
-          <input
-            value={recordPath}
-            readOnly
-            placeholder="No file chosen"
-            style={{ ...inStyle, flex: 1, cursor: "pointer" }}
-            onClick={chooseRecordPath}
-          />
-          <Btn small onClick={chooseRecordPath}>…</Btn>
-        </Row>
-        <div style={{ marginTop: 4 }}>
-          {isRecording ? (
-            <Btn danger onClick={stopRecording} style={{ width: "100%" }}>◼ Stop Recording</Btn>
-          ) : (
-            <Btn red onClick={startRecording} style={{ width: "100%" }}>● Start Recording</Btn>
-          )}
-        </div>
-      </Section>
-
-      {/* Status */}
-      <Section title="STATUS">
-        {status?.sinks.length === 0 && (
-          <div style={{ fontSize: 9, color: TXT2 }}>Idle — no active sinks.</div>
-        )}
-        {status?.sinks.map(s => (
-          <Row key={s.id}>
-            <div style={{ flex: 1, fontSize: 10 }}>{s.label}</div>
-            <div style={{ fontSize: 9, color: TXT2, fontFamily: "ui-monospace, monospace" }}>
-              {Math.floor(s.uptimeMs / 1000)}s · {s.framesWritten} chunks
-            </div>
-          </Row>
-        ))}
-        <div style={{ fontSize: 9, color: TXT2, marginTop: 6 }}>
-          Phase 0 — video-only. Audio routing arrives in Phase 4.
-        </div>
-      </Section>
     </div>
   );
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{
-        padding: "4px 8px", background: BG2, borderBottom: `1px solid ${BOR}`,
-        fontSize: 9, fontWeight: 700, color: TXT2, letterSpacing: "0.08em", marginBottom: 6,
-      }}>{title}</div>
-      {children}
-    </div>
-  );
-}
-
-function Row({ children, onClick, style }: { children: React.ReactNode; onClick?: (e: React.MouseEvent) => void; style?: React.CSSProperties }) {
-  return (
-    <div onClick={onClick}
-      style={{
-        display: "flex", alignItems: "center", gap: 4, padding: "4px 2px",
-        borderBottom: `1px solid ${BG3}`, ...style,
-      }}
-    >{children}</div>
-  );
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return <div style={{ width: 70, fontSize: 10, color: TXT2 }}>{children}</div>;
-}
-
-function Btn({ children, onClick, small, danger, red, pur, style, title }: {
-  children: React.ReactNode;
-  onClick: (e: React.MouseEvent) => void;
-  small?: boolean; danger?: boolean; red?: boolean; pur?: boolean;
-  style?: React.CSSProperties; title?: string;
-}) {
-  const bg = danger ? "#401a20" : red ? "#401a20" : pur ? "#1f1a3a" : BG3;
-  const bord = danger ? RED : red ? RED : pur ? PUR : BOR;
-  const color = danger ? RED : red ? RED : pur ? PUR : TXT;
-  return (
-    <button onClick={onClick} title={title}
-      style={{
-        padding: small ? "2px 6px" : "4px 8px",
-        background: bg, border: `1px solid ${bord}`, color,
-        fontSize: small ? 9 : 10, cursor: "pointer", borderRadius: 0,
-        fontWeight: 600, letterSpacing: "0.02em", ...style,
-      }}
-    >{children}</button>
-  );
-}
-
-function Led({ on, label, color = GRN }: { on: boolean; label: string; color?: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9, fontWeight: 700, letterSpacing: "0.05em" }}>
-      <div style={{
-        width: 7, height: 7, background: on ? color : "#333",
-        boxShadow: on ? `0 0 6px ${color}` : "none",
-      }} />
-      <span style={{ color: on ? color : TXT2 }}>{label}</span>
-    </div>
-  );
-}
-
-const selStyle: React.CSSProperties = {
-  flex: 1, padding: "3px 6px", background: BG1, color: TXT,
-  border: `1px solid ${BOR}`, fontSize: 10, borderRadius: 0,
-};
-const inStyle: React.CSSProperties = {
-  padding: "3px 6px", background: BG1, color: TXT, border: `1px solid ${BOR}`,
-  fontSize: 10, borderRadius: 0, fontFamily: "ui-monospace, monospace",
-};
-
-function NumInput({ value, onChange, suffix, min, max, step }: {
-  value: number; onChange: (v: number) => void; suffix?: string;
-  min?: number; max?: number; step?: number;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 3, flex: 1 }}>
-      <input
-        type="number" value={value} min={min} max={max} step={step}
-        onChange={(e) => onChange(+e.target.value)}
-        style={{ ...inStyle, flex: 1, textAlign: "right" as const }}
-      />
-      {suffix && <span style={{ fontSize: 9, color: TXT2 }}>{suffix}</span>}
-    </div>
-  );
-}
-
-function presetIdFor(url: string): string {
-  const match = RTMP_PRESETS.find(p => p.id !== "custom" && url.startsWith(p.url.replace(/\/$/, "")));
-  return match?.id || "custom";
-}
-
-function codecFamilyOf(s: string): string {
-  const [fam] = s.split("/");
-  return fam === "h265" || fam === "hevc" ? "h265" : "h264";
-}
-function codecHwOf(s: string): string {
-  const parts = s.split("/");
-  return parts[1] || "auto";
-}
-function buildCodecString(family: string, hw: string): string {
-  return hw === "auto" || !hw ? family : `${family}/${hw}`;
-}
-function hasEncoder(list: string[], family: string, hw: string): boolean {
-  const prefix = family === "h265" ? "hevc" : "h264";
-  return list.includes(`${prefix}_${hw}`);
 }
