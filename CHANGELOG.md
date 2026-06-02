@@ -1,3 +1,16 @@
+## [4.3.29] — 2026-06-01
+
+### Security — dependency advisories cleared
+
+- Resolved **12 of 16** Dependabot advisories via dependency upgrades — including the **vitest**
+  critical and all the **axios** runtime advisories (SSRF / prototype pollution / response
+  tampering), plus vite, follow-redirects, @xmldom/xmldom, and **uuid → 14**. Most were transitive
+  (lockfile-only); uuid was a direct major bump (we only call `v4()`, so the advisory never applied —
+  bumped purely to clear the alert). Build verified.
+- The remaining 4 advisories are all in the on-device ML stack (`@xenova/transformers` →
+  `onnxruntime-web` → `onnx-proto` → `protobufjs`) — low real-world risk for a packaged desktop app,
+  and a non-trivial upgrade, tracked separately.
+
 ## [4.3.28] — 2026-05-31
 
 ### Fixed — no more dead air from a wedged audio engine (auto-recovery)
