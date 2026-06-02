@@ -1135,12 +1135,19 @@ export default function App() {
     let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
     if (autoAdv) {
       autoStartTimer = setTimeout(async () => {
-        if (engine.getDeck("A")?.getState().status === "playing") return;
         // Item 10 Phase 2: wait for the daemon-vs-in-process decision before choosing how to
         // start, so a slow daemon connect can't race us into the local path (and dead air).
         await engine.awaitDaemonReady?.();
-        // daemon-driven → the daemon fills + plays + advances itself.
+        // daemon-driven → the daemon fills + plays + advances itself. Issue automationStart even when a
+        // deck is ALREADY playing (e.g. a daemon that SURVIVED an app update/restart still playing deck A,
+        // or a crash-recovery restore): the daemon's start() is idempotent and ADOPTS the running deck,
+        // but it MUST run so the daemon's automation engine engages (its 250ms poll preloads B/C and
+        // advances on song-end) AND so main records the automation intent that powers auto-resume across a
+        // stale-daemon reload. The old "deck A already playing → return" guard skipped this in daemon mode,
+        // which left audio playing but B/C empty and no transition until a manual AUTO reset.
         if (engine.isDaemonDriven) { rotLog("[ROT] STARTUP daemon-driven → automationStart"); await engine.startDaemonAutomation(); return; }
+        // in-process path: if crash recovery already restored & started deck A, don't double-start over it.
+        if (engine.getDeck("A")?.getState().status === "playing") return;
         rotLog(`[ROT] STARTUP autofill begin — queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
         engine.continuous = true;
         resetScheduleCursor();
