@@ -1143,7 +1143,31 @@ function processInviteFile() {
 let levelPushId = null;
 
 app.whenReady().then(() => {
-  initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
+  // initDb() opens SQLite (better-sqlite3, synchronous) + runs migrations. On a managed/OV profile
+  // with redirected (network/SMB) AppData this can THROW — WAL's shared-memory (-shm mmap) is
+  // unsupported on SMB, and open/mkdir can be denied. An uncaught throw here aborts this ENTIRE
+  // whenReady callback BEFORE createWindow(), so the app runs windowless and looks hung (the exact
+  // OV failure). Guard it: surface a visible error and exit cleanly — never vanish silently.
+  try {
+    initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
+  } catch (e) {
+    let dbPath = "(could not resolve)";
+    try { dbPath = getDbPath(); } catch {}
+    console.error("[DB] FATAL: initDb failed —", (e && e.stack) || e);
+    try {
+      dialog.showMessageBoxSync({
+        type: "error",
+        title: "Ether — Database Error",
+        message: "Ether could not open its database and has to close.",
+        detail: `Database path:\n${dbPath}\n\n${(e && e.message) || e}\n\nThis usually means the data folder is on a redirected or network drive. Ether needs a local data folder — please send this message to support.`,
+        buttons: ["Quit"],
+        noLink: true,
+      });
+    } catch (dlgErr) { console.error("[DB] error dialog failed:", dlgErr && dlgErr.message); }
+    app.isQuitting = true;
+    app.quit();
+    return; // do NOT continue to createWindow() with an unusable / undefined db
+  }
   processInviteFile(); // VIP invite seeding — runs after DB is ready
 
   // Cloud backup must init AFTER initDb() so db is not undefined
