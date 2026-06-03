@@ -158,6 +158,19 @@ export default function OnboardingFlow({ onComplete }: Props) {
   // resumed state.
   const [resumeChecking, setResumeChecking] = useState(true);
 
+  // If a station already exists on this computer, the welcome screen offers a way back
+  // into the app (so a dev/onboarding revisit isn't a trap) and disables Create/Connect —
+  // those set up a NEW station/account, which a configured install shouldn't redo here.
+  const [hasExistingStation, setHasExistingStation] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await (window as any).ether.stations?.list?.();
+        setHasExistingStation(Array.isArray(list) && list.length > 0);
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -687,12 +700,27 @@ export default function OnboardingFlow({ onComplete }: Props) {
                 title="Create new account"
                 subtitle="First install — set up a new station under your license"
                 onClick={() => { resetForWelcomePath(); setState('create'); }}
+                disabled={hasExistingStation}
               />
               <PathButton
                 title="Connect to existing account"
                 subtitle="Adding this computer to a station you already use"
                 onClick={() => { resetForWelcomePath(); setState('connect'); }}
+                disabled={hasExistingStation}
               />
+              {hasExistingStation && (
+                <>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", textAlign: "center", marginTop: 4, lineHeight: 1.5 }}>
+                    This computer already has a station set up.
+                  </div>
+                  <button
+                    onClick={() => setState('done')}
+                    style={{ marginTop: 4, padding: "12px 0", borderRadius: 0, background: "linear-gradient(135deg, #22d3ee, #a78bfa)", color: "#000", border: "none", fontSize: 14, fontWeight: 800, fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", cursor: "pointer" }}
+                  >
+                    ← Return to Ether
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1270,16 +1298,20 @@ function stateLabel(s: OnboardingState): string {
   }
 }
 
-function PathButton({ title, subtitle, onClick }: { title: string; subtitle: string; onClick: () => void }) {
+function PathButton({ title, subtitle, onClick, disabled }: { title: string; subtitle: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button
-      onClick={onClick}
-      style={CARD_STYLE}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
+      title={disabled ? "You already have a station set up on this computer" : undefined}
+      style={{ ...CARD_STYLE, opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer" }}
       onMouseEnter={(e) => {
+        if (disabled) return;
         e.currentTarget.style.borderColor = "#22d3ee";
         e.currentTarget.style.background  = "rgba(34,211,238,0.06)";
       }}
       onMouseLeave={(e) => {
+        if (disabled) return;
         e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
         e.currentTarget.style.background  = "rgba(255,255,255,0.03)";
       }}
