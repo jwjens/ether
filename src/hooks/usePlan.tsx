@@ -14,6 +14,7 @@
  */
 
 import { useState, useEffect } from "react";
+import { OWNER_LICENSE_KEY } from "../lib/devAccess";
 
 export type PlanTier = "free" | "pro" | "pro_lifetime" | "station" | "station_lifetime" | "operator";
 
@@ -52,9 +53,11 @@ function loadFromStation1() {
       const result = await (window as any).ether.stationConfigKv.list(1);
       const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
 
-      // Dev panel override wins over both env-var and real license. Gated on
-      // import.meta.env.DEV so the whole branch is dead code in prod builds.
-      if (import.meta.env.DEV) {
+      // Dev panel override wins over both env-var and real license. Honored in the
+      // dev server, or on the owner install (license_key === ETHER-OWNER-2026) so the
+      // tier picker survives reloads there; ignored for customers.
+      const ownerKey = rows.find((r) => r.key === 'license_key')?.value?.trim() === OWNER_LICENSE_KEY;
+      if (import.meta.env.DEV || ownerKey) {
         const override = rows.find((r) => r.key === 'plan_tier_dev_override')?.value;
         if (override && override in DEV_TIER_BY_LABEL) {
           notifyAll(DEV_TIER_BY_LABEL[override]);

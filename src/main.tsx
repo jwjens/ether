@@ -68,13 +68,15 @@ async function boot() {
     await runMigrations();
   }
 
-  // Dev-only console helpers + debug panel/banner mount. Both modules are
-  // tree-shaken out of prod builds — `import.meta.env.DEV` is a build-time
-  // constant that becomes `false` in prod, eliminating the entire branch.
+  // Dev console helpers + debug panel/banner mount. Available in the dev server, or
+  // in any build on the owner install (license_key === ETHER-OWNER-2026). Loaded via
+  // dynamic import so the modules are a lazy chunk that never ships in the initial
+  // bundle — and stays unreachable for customers. See lib/devAccess.ts.
   const isMainApp = !isPopout && !isNowPlaying && !isDesk && !isCueEditor;
   let DebugMount: React.ComponentType | null = null;
   let DevTierBanner: React.ComponentType | null = null;
-  if (import.meta.env.DEV && isMainApp) {
+  const { isDevToolsEnabled } = await import("./lib/devAccess");
+  if (isMainApp && await isDevToolsEnabled()) {
     const { initDevGlobals } = await import("./lib/devGlobals");
     initDevGlobals();
     const debugMod = await import("./components/DebugPanel");

@@ -593,15 +593,21 @@ export default function App() {
   const [deckConfigClosing, setDeckConfigClosing] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
 
-  // Footer version click handler. In prod: opens About immediately on click.
-  // In dev: counts clicks within 500ms; 3 in a row navigates to #debug
-  // instead of opening About. Single click still opens About (with ~350ms
-  // delay in dev to allow detection of the triple). Whole dev branch
-  // tree-shakes out in prod via the import.meta.env.DEV constant.
+  // Dev tools available in the dev server, or on the owner install (ETHER-OWNER-2026).
+  // Drives the version triple-click → debug panel gesture. See lib/devAccess.ts.
+  const [devToolsEnabled, setDevToolsEnabled] = useState(false);
+  useEffect(() => {
+    import("./lib/devAccess").then(({ isDevToolsEnabled }) => isDevToolsEnabled().then(setDevToolsEnabled));
+  }, []);
+
+  // Footer version click handler. When dev tools are disabled: opens About
+  // immediately on click. When enabled: counts clicks within 350ms; 3 in a row
+  // navigates to #debug instead of opening About. Single click still opens About
+  // (with a short delay to allow detection of the triple).
   const versionClickCountRef = useRef(0);
   const versionClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleVersionClick = () => {
-    if (!import.meta.env.DEV) { setShowAbout(true); return; }
+    if (!devToolsEnabled) { setShowAbout(true); return; }
     versionClickCountRef.current++;
     if (versionClickCountRef.current >= 3) {
       versionClickCountRef.current = 0;
@@ -2217,7 +2223,7 @@ export default function App() {
                 opacity: 0.55,
                 cursor: "pointer",
               }}
-              title={import.meta.env.DEV ? "Click for About — triple-click for debug panel" : "Click for About / version details"}
+              title={devToolsEnabled ? "Click for About — triple-click for debug panel" : "Click for About / version details"}
               onClick={handleVersionClick}
             >
               v{version}
