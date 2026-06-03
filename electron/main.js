@@ -2414,6 +2414,28 @@ ipcMain.handle("db:restore", (_, backupName) => {
   } catch (e) { return { data: null, error: e.message }; }
 });
 
+// Factory reset — wipe the local database (the live file AND the legacy migration source,
+// else getDbPath copies it back) so the next launch is a clean first run: re-onboarding +
+// first-user PIN setup. Closes the DB, deletes both copies + their WAL sidecars, then
+// relaunches. Destructive — the renderer gates this behind a double-email confirmation.
+ipcMain.handle("system:factoryReset", () => {
+  try {
+    try { db.close(); } catch {}
+    const live = getDbPath();
+    const legacy = path.join(app.getPath("appData"), "com.ether.radio", "openair.db");
+    for (const base of [live, legacy]) {
+      for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+        const f = base + suffix;
+        try { if (fs.existsSync(f)) fs.rmSync(f, { force: true }); } catch {}
+      }
+    }
+    markHaExpectedRestart();
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // ── Legacy Tauri command aliases — called by SettingsPanel ────
 ipcMain.handle("get_local_ip", () => audio.getLocalIp());
 // These were Tauri commands in the original build. Now aliased here so

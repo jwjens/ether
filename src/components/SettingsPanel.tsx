@@ -1383,6 +1383,35 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>(initialCategory);
   const [searchText, setSearchText] = useState("");
 
+  // Factory reset (Danger zone). Wipes this computer's local DB and relaunches into first-run
+  // setup. Guarded by a double-email confirmation: type the account email twice (or "RESET"
+  // if no account email is on file). See electron main system:factoryReset.
+  const [frOpen, setFrOpen] = useState(false);
+  const [frEmail1, setFrEmail1] = useState("");
+  const [frEmail2, setFrEmail2] = useState("");
+  const [frErr, setFrErr] = useState("");
+  const [frBusy, setFrBusy] = useState(false);
+  const [acctEmail, setAcctEmail] = useState("");
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await (window as any).ether.stationConfigKv.list(1);
+        const rows: { key: string; value: string }[] = r?.ok ? r.rows : [];
+        setAcctEmail(rows.find((x) => x.key === "license_email")?.value || "");
+      } catch {}
+    })();
+  }, []);
+  const frTarget = acctEmail.trim() || "RESET";
+  const frMatch = frEmail1.trim().toLowerCase() === frTarget.toLowerCase()
+               && frEmail2.trim().toLowerCase() === frTarget.toLowerCase();
+  const doFactoryReset = async () => {
+    if (!frMatch) { setFrErr("Both fields must match — type it exactly, twice."); return; }
+    setFrBusy(true); setFrErr("");
+    try { await (window as any).ether.system.factoryReset(); }
+    catch { setFrBusy(false); setFrErr("Couldn’t reset. Please try again."); }
+  };
+  const frInput: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, outline: "none", marginBottom: 10 };
+
   // Keep URL hash in sync when the user switches categories — gives them
   // shareable + bookmarkable deep links to any settings area.
   useEffect(() => {
@@ -2193,6 +2222,37 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         )}
         {backups.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>No backups yet — click "Back up now" to create your first one</div>}
       </Section>
+
+      {/* ── Danger zone — factory reset ── */}
+      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} title="Factory reset this computer" description="Erase this computer's Ether data and start over from first-time setup — does not touch other computers on your account">
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 14 }}>
+          Wipes this computer's local database — stations, library, schedule, users, and settings — and relaunches into onboarding. Other computers on your account are unaffected. Consider <strong>Back up now</strong> above first. <strong>This cannot be undone.</strong>
+        </div>
+        <button onClick={() => { setFrOpen(true); setFrEmail1(""); setFrEmail2(""); setFrErr(""); }} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(239,68,68,0.12)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.4)", cursor: "pointer" }}>
+          Factory reset…
+        </button>
+      </Section>
+
+      {frOpen && (
+        <div onClick={() => { if (!frBusy) setFrOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 1000 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, background: "var(--bg-secondary)", border: "1px solid rgba(239,68,68,0.45)", borderRadius: 0, padding: 28, fontFamily: "'Inter', system-ui, sans-serif" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#ef4444", marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>Factory reset this computer</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 18 }}>
+              This permanently erases this computer's Ether data — stations, library, schedule, users, and settings — and restarts setup from scratch. It cannot be undone.
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 8 }}>
+              Type {acctEmail.trim() ? <>your account email <strong style={{ color: "var(--text-primary)" }}>{acctEmail.trim()}</strong></> : <><strong style={{ color: "var(--text-primary)" }}>RESET</strong></>} <strong>twice</strong> to confirm:
+            </div>
+            <input value={frEmail1} onChange={(e) => { setFrEmail1(e.target.value); setFrErr(""); }} placeholder={frTarget} autoFocus style={frInput} />
+            <input value={frEmail2} onChange={(e) => { setFrEmail2(e.target.value); setFrErr(""); }} onKeyDown={(e) => { if (e.key === "Enter" && frMatch && !frBusy) doFactoryReset(); }} placeholder={frTarget} style={frInput} />
+            {frErr && <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 12 }}>{frErr}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+              <button onClick={() => setFrOpen(false)} disabled={frBusy} style={{ padding: "9px 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13 }}>Cancel</button>
+              <button onClick={doFactoryReset} disabled={!frMatch || frBusy} style={{ padding: "9px 16px", borderRadius: 0, border: "none", background: frMatch && !frBusy ? "#ef4444" : "rgba(239,68,68,0.35)", color: "#fff", fontWeight: 700, cursor: frMatch && !frBusy ? "pointer" : "not-allowed", fontSize: 13 }}>{frBusy ? "Resetting…" : "Erase & restart setup"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Cloud Backup ── */}
       <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="Automatic encrypted off-site backup of your station database — included with your Ether subscription">

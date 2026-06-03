@@ -132,6 +132,7 @@ contextBridge.exposeInMainWorld("ether", {
     getAppDataDir: () => ipcRenderer.invoke("system:getAppDataDir"),
     getPlatform: () => ipcRenderer.invoke("system:getPlatform"),
     getVersion: () => ipcRenderer.invoke("system:getVersion"),
+    factoryReset: () => ipcRenderer.invoke("system:factoryReset"),
   },
   autostart: {
     enable: () => ipcRenderer.invoke("autostart:enable"),
