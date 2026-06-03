@@ -10,7 +10,7 @@ interface Show {
 }
 
 interface Category {
-  id: number; code: string; name: string; color: string | null;
+  id: number; uuid?: string; code: string; name: string; color: string | null;
   spins_per_hour: number; priority: number; song_count?: number;
 }
 
@@ -377,6 +377,20 @@ function CategoriesTab() {
     }
   };
 
+  const del = async () => {
+    if (!editing?.id || !editing.uuid) return;
+    const label = `${editing.code}${editing.name ? " — " + editing.name : ""}`;
+    if (!confirm(`Delete category "${label}"?\n\nSongs in this category won't be deleted, but they'll lose this category assignment.`)) return;
+    setSaveError("");
+    try {
+      await (window as any).ether.categories.delete(editing.uuid, stationId);
+      load();
+      setEditing(null);
+    } catch (e: any) {
+      setSaveError(e?.message || "Delete failed");
+    }
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -408,6 +422,9 @@ function CategoriesTab() {
             <button onClick={save} disabled={catSaved} className={`px-3 py-1 rounded text-xs font-bold text-white transition-colors ${catSaved ? "bg-emerald-600" : "bg-blue-600 hover:bg-blue-500"}`}>{catSaved ? "✓ Saved" : "Save Category"}</button>
             <button onClick={() => { setEditing(null); setSaveError(""); }} className="px-3 py-1 bg-zinc-700 rounded text-xs text-zinc-300">Cancel</button>
             {saveError && <span className="text-xs text-red-400">{saveError}</span>}
+            {editing.id && (
+              <button onClick={del} className="ml-auto px-3 py-1 bg-red-700 hover:bg-red-600 rounded text-xs font-bold text-white">Delete Category</button>
+            )}
           </div>
         </div>
       )}
