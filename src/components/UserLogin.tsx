@@ -26,37 +26,58 @@ const ROLE_COLORS: Record<string, string> = {
   music_director: "#a78bfa",
 };
 
-const DEFAULT_USERS: AppUser[] = [
-  { id: 1, name: "Admin", role: "admin", pin_hash: "1234", color: "#f87171" },
-  { id: 2, name: "Jock", role: "jock", pin_hash: null, color: "#22d3ee" },
-  { id: 3, name: "Music Director", role: "music_director", pin_hash: "1234", color: "#a78bfa" },
-];
-
 export default function UserLogin({ onLogin }: Props) {
-  const [users, setUsers] = useState<AppUser[]>(DEFAULT_USERS);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [selected, setSelected] = useState<AppUser | null>(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [shake, setShake] = useState(false);
 
+  // First-run setup. No users in the DB yet → instead of auto-creating a default admin,
+  // let the first person name their profile (their title) and set a PIN (typed twice to
+  // match). Roles/extra profiles are managed afterward in Preferences.
+  const [loading, setLoading] = useState(true);
+  const [setupMode, setSetupMode] = useState(false);
+  const [setupName, setSetupName] = useState("Admin");
+  const [setupPin, setSetupPin] = useState("");
+  const [setupConfirm, setSetupConfirm] = useState("");
+  const [setupErr, setSetupErr] = useState("");
+  const [creating, setCreating] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
         const rows = await query<AppUser>("SELECT * FROM users ORDER BY id");
-        if (rows.length > 0) {
-          setUsers(rows);
-        } else {
-          // First run — no users in DB. Create a default admin and log in immediately.
-          await execute(
-            "INSERT INTO users (name, role, pin_hash, color) VALUES (?,?,?,?)",
-            ["Admin", "admin", null, "#f87171"]
-          );
-          const created = await query<AppUser>("SELECT * FROM users ORDER BY id LIMIT 1");
-          if (created.length > 0) onLogin(created[0]);
-        }
-      } catch {}
+        if (rows.length > 0) setUsers(rows);
+        else setSetupMode(true);
+      } catch {} finally { setLoading(false); }
     })();
   }, []);
+
+  const createFirstUser = async () => {
+    const name = setupName.trim() || "Admin";
+    if (!/^\d{4}$/.test(setupPin)) { setSetupErr("PIN must be 4 digits."); return; }
+    if (setupPin !== setupConfirm) { setSetupErr("PINs don’t match — try again."); return; }
+    setCreating(true); setSetupErr("");
+    try {
+      const ether = (window as any).ether;
+      let pinHash: string = setupPin;
+      if (ether?.users?.hashPin) pinHash = await ether.users.hashPin(setupPin);
+      await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?,?,?,?)", [name, "admin", pinHash, "#f87171"]);
+      const created = await query<AppUser>("SELECT * FROM users ORDER BY id DESC LIMIT 1");
+      if (created.length > 0) { onLogin(created[0]); return; }
+      setCreating(false); setSetupErr("Couldn’t create your profile. Please try again.");
+    } catch {
+      setCreating(false); setSetupErr("Couldn’t create your profile. Please try again.");
+    }
+  };
+
+  const setupInput: React.CSSProperties = {
+    width: "100%", boxSizing: "border-box", padding: "11px 14px", borderRadius: 0,
+    background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)",
+    color: "#f0f0f8", fontSize: 14, outline: "none", marginBottom: 14,
+    fontFamily: "'Inter', system-ui, sans-serif",
+  };
 
   const selectUser = (user: AppUser) => {
     setSelected(user);
@@ -103,7 +124,34 @@ export default function UserLogin({ onLogin }: Props) {
         <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const }}>Technologies</div>
       </div>
 
-      {!selected ? (
+      {loading ? (
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em" }}>Loading…</div>
+      ) : setupMode ? (
+        /* First-run profile setup — name + PIN (twice) */
+        <div style={{ width: "100%", maxWidth: 360 }}>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" as const, marginBottom: 8, textAlign: "center" as const }}>
+            Set up your profile
+          </div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center" as const, marginBottom: 24, lineHeight: 1.5 }}>
+            Name your profile and choose a 4-digit PIN. You can add more profiles later in Preferences.
+          </div>
+
+          <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Profile title</label>
+          <input value={setupName} onChange={e => setSetupName(e.target.value)} placeholder="Admin" style={setupInput} />
+
+          <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>PIN (4 digits)</label>
+          <input value={setupPin} onChange={e => { setSetupPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setSetupErr(""); }} type="password" inputMode="numeric" placeholder="••••" style={{ ...setupInput, letterSpacing: "0.3em", fontFamily: "'DM Mono', monospace" }} />
+
+          <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Confirm PIN</label>
+          <input value={setupConfirm} onChange={e => { setSetupConfirm(e.target.value.replace(/\D/g, "").slice(0, 4)); setSetupErr(""); }} onKeyDown={e => { if (e.key === "Enter") createFirstUser(); }} type="password" inputMode="numeric" placeholder="••••" style={{ ...setupInput, letterSpacing: "0.3em", fontFamily: "'DM Mono', monospace" }} />
+
+          {setupErr && <div style={{ fontSize: 12, color: "#f87171", marginBottom: 12 }}>{setupErr}</div>}
+
+          <button onClick={createFirstUser} disabled={creating} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "#22d3ee", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: creating ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: creating ? 0.7 : 1 }}>
+            {creating ? "Creating…" : "Create profile & continue"}
+          </button>
+        </div>
+      ) : !selected ? (
         <>
           <div style={{ fontSize: 13, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" as const, marginBottom: 24 }}>
             Select your profile
