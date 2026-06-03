@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
+import { setPlanGlobally } from "../hooks/usePlan";
 
 // ── Stripe config ──
 const STRIPE_PK = "pk_live_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
@@ -55,6 +56,12 @@ export default function SubscriptionPanel() {
   const [licenseError, setLicenseError]     = useState("");
   const [licenseSuccess, setLicenseSuccess] = useState(false);
   const [loading, setLoading]               = useState(false);
+  // Account sign-in (desktop activation bridge) — trial users activate with their web email/password.
+  const [showSignIn, setShowSignIn]         = useState(false);
+  const [acctEmail, setAcctEmail]           = useState("");
+  const [acctPassword, setAcctPassword]     = useState("");
+  const [signinError, setSigninError]       = useState("");
+  const [signinLoading, setSigninLoading]   = useState(false);
   const { stationId, isReady } = useActiveStation();
 
   useEffect(() => {
@@ -150,6 +157,51 @@ export default function SubscriptionPanel() {
       setLicenseError("Could not reach the license server. Check your internet connection.");
     }
     setLoading(false);
+  };
+
+  // Desktop activation bridge — sign in with the web account; the backend provisions/returns the
+  // license (Network trial or paid), we store it the same way as a key activation, and unlock.
+  const signInActivate = async () => {
+    if (!acctEmail.trim() || !acctPassword) { setSigninError("Enter your email and password."); return; }
+    setSigninLoading(true); setSigninError("");
+    try {
+      let machine_id = "", machine_name = "";
+      try {
+        const idResp = await (window as any).ether.identity?.get?.();
+        if (idResp?.ok) { machine_id = idResp.machine_id || ""; machine_name = idResp.machine_name || ""; }
+      } catch { /* backend falls back to a per-account seat if absent */ }
+      const res = await fetch(`${ETHER_BACKEND_URL}/api/user/desktop-activate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: acctEmail.trim(), password: acctPassword, machine_id, machine_name, os: navigator.platform }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setSigninError(
+          data.error === "invalid_credentials" ? "Email or password is incorrect."
+          : data.message || "Could not sign in. Please try again."
+        );
+        setSigninLoading(false);
+        return;
+      }
+      const kv = (window as any).ether.stationConfigKv;
+      await kv.upsertByKey(stationId, 'plan_tier', data.plan);
+      if (data.license_key) await kv.upsertByKey(stationId, 'license_key', data.license_key);
+      await kv.upsertByKey(stationId, 'license_email', data.email);
+      // Store/clear the trial end date so TrialGate can run the end-of-trial choice.
+      if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
+      else await kv.removeByKey(stationId, 'trial_ends_at');
+      setPlanGlobally(data.plan as PlanTier);
+      window.dispatchEvent(new CustomEvent('ether:license-changed'));
+      setCurrentPlan(data.plan as PlanTier);
+      setAcctPassword("");
+      setLicenseSuccess(true);
+      setShowSignIn(false);
+      setTimeout(() => setLicenseSuccess(false), 4000);
+    } catch {
+      setSigninError("Could not reach the server. Check your internet connection.");
+    }
+    setSigninLoading(false);
   };
 
   const cancelPlan = async () => {
@@ -298,6 +350,54 @@ export default function SubscriptionPanel() {
             title="Click to copy"
           >
             PHUNT50
+          </div>
+        </div>
+      )}
+
+      {/* Account sign-in — desktop activation bridge */}
+      {showSignIn && (
+        <div style={{
+          background: "var(--bg-secondary)", border: "1px solid rgba(136,104,216,0.35)",
+          borderRadius: 0, padding: 28, marginBottom: 24,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+        }}>
+          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+            Sign in to activate
+          </div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
+            Use the email and password from your Ether account. During your free trial this unlocks the full Network plan.
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
+            <input
+              type="email"
+              placeholder="Email address"
+              value={acctEmail}
+              onChange={e => setAcctEmail(e.target.value)}
+              style={{ padding: "10px 14px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'Inter', sans-serif" }}
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={acctPassword}
+              onChange={e => setAcctPassword(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") signInActivate(); }}
+              style={{ padding: "10px 14px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'Inter', sans-serif" }}
+            />
+            {signinError && <div style={{ fontSize: 12, color: "#f87171" }}>{signinError}</div>}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={signInActivate} disabled={signinLoading} style={{ flex: 1, padding: "10px 0", borderRadius: 0, background: "#8868D8", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif" }}>
+                {signinLoading ? "Signing in..." : "Sign In & Activate"}
+              </button>
+              <button onClick={() => { setShowSignIn(false); setSigninError(""); }} style={{ padding: "10px 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+              No account yet?{" "}
+              <span style={{ color: "#8868D8", cursor: "pointer", fontWeight: 600 }} onClick={() => { try { (window as any).ether.invoke("open_url", { url: "https://signup.ether-technologies.com" }); } catch {} }}>
+                Start a free trial →
+              </span>
+            </div>
           </div>
         </div>
       )}
@@ -600,15 +700,20 @@ export default function SubscriptionPanel() {
         </div>
       )}
 
-      {/* Already have a license */}
-      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      {/* Activate */}
+      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as const }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Already have a license key?</div>
-          <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Enter it below to activate your plan.</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Activate Ether</div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Sign in with your Ether account, or enter a license key.</div>
         </div>
-        <button onClick={() => { setShowLicenseEntry(true); setPendingPlan(null); }} style={{ padding: "9px 20px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-          Enter License Key
-        </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => { setShowSignIn(true); setShowLicenseEntry(false); setSigninError(""); }} style={{ padding: "9px 20px", borderRadius: 0, background: "#8868D8", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            Sign In
+          </button>
+          <button onClick={() => { setShowLicenseEntry(true); setShowSignIn(false); setPendingPlan(null); }} style={{ padding: "9px 20px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            Enter License Key
+          </button>
+        </div>
       </div>
 
       {/* Footer */}

@@ -1,5 +1,6 @@
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
+import TrialGate from "./components/TrialGate";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
@@ -1611,6 +1612,7 @@ export default function App() {
     <EtherErrorBoundary>
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
+      <TrialGate />
 
       {/* ── Header ── */}
       <header style={{ height: viewport.isTablet ? 48 : 56, display: "flex", alignItems: "center", padding: "0 12px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
