@@ -706,6 +706,14 @@ export default function SubscriptionPanel() {
           <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Activate Ether</div>
           <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Sign in with your Ether account, or enter a license key.</div>
         </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => { setShowSignIn(true); setShowLicenseEntry(false); setSigninError(""); }} style={{ padding: "9px 20px", borderRadius: 0, background: "#8868D8", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            Sign In
+          </button>
+          <button onClick={() => { setShowLicenseEntry(true); setShowSignIn(false); setPendingPlan(null); }} style={{ padding: "9px 20px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+            Enter License Key
+          </button>
+        </div>
       </div>
 
       {/* Footer */}
