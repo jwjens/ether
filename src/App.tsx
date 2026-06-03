@@ -1691,6 +1691,15 @@ export default function App() {
               {!viewport.medium && (currentPlan === "free" ? "Upgrade" : "Studio")}
             </button>
           )}
+          {devToolsEnabled && (
+            <button
+              onClick={() => { window.location.hash = "#debug"; }}
+              title="Open Dev Panel (tier override + dev tools)"
+              style={{ height: 44, padding: "0 12px", borderRadius: 0, background: "#f59e0b", border: "none", color: "#1a1a22", cursor: "pointer", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", fontFamily: "'DM Mono', ui-monospace, monospace" }}
+            >
+              DEV
+            </button>
+          )}
           {panel !== "live" && (
             <button
               onClick={() => setPanel("live")}
