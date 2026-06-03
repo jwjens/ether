@@ -101,7 +101,7 @@ import CloudBackup from "./components/CloudBackup";
 import AudioRoutingScreen from "./components/AudioRoutingPanel";
 import StationManager from "./components/StationManager";
 import ManageDevices from "./components/ManageDevices";
-import { usePlan, setPlanGlobally, PlanGate } from "./hooks/usePlan";
+import { usePlan, setPlanGlobally, resolveEffectivePlan, requirePlan, PlanGate } from "./hooks/usePlan";
 import PhoneDesk from "./components/PhoneDesk";
 import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay } from "./components/SkinPicker";
@@ -488,6 +488,10 @@ export default function App() {
   }, []);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [currentPlan, setCurrentPlan] = useState<PlanTier>("free");
+  // Keep App's plan reactive to the live plan cache (license activation AND the dev tier
+  // override), so the header/menu reflect tier changes immediately — not just on reload.
+  const { plan: livePlan } = usePlan();
+  useEffect(() => { setCurrentPlan(livePlan); }, [livePlan]);
   const [panel, setPanel] = useState<Panel>("live");
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const apiKeyRef = useRef<string>("");
@@ -697,11 +701,18 @@ export default function App() {
         if (get('first_run_complete') === "1") setWizardDone(true);
         const name = get('station_name');
         if (name) setStationName(name);
-        const p = get('plan_tier') as PlanTier | undefined;
-        // plan_tier is install-level — only propagate from station 1. Switching
-        // to a station that has its own plan_tier key must not overwrite the
-        // global plan cache (which would hide the operator badge).
-        if (p) { setCurrentPlan(p); if (stationId === 1) setPlanGlobally(p); }
+        // plan_tier is install-level — only propagate from station 1. Resolve through
+        // resolveEffectivePlan so the dev tier override is honored here too (otherwise this
+        // raw read clobbers the override back to the real plan on load). Switching to a
+        // non-1 station must not overwrite the global plan cache (would hide the badge).
+        if (stationId === 1) {
+          const effective = resolveEffectivePlan(rows);
+          setCurrentPlan(effective);
+          setPlanGlobally(effective);
+        } else {
+          const p = get('plan_tier') as PlanTier | undefined;
+          if (p) setCurrentPlan(p);
+        }
         const apiKey = get('license_key');
         if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); }
         // experience_mode key in DB is now ignored — deck visibility is
@@ -1674,10 +1685,10 @@ export default function App() {
             </button>
           )}
           <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
-          {currentPlan === "free" && (
-            <button onClick={() => setPanel("subscription")} title="Upgrade to Studio" style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
+          {!requirePlan("station", currentPlan as PlanTier) && (
+            <button onClick={() => setPanel("subscription")} title={currentPlan === "free" ? "Upgrade your plan" : "Your plan: Studio — see plans"} style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-              {!viewport.medium && "Studio"}
+              {!viewport.medium && (currentPlan === "free" ? "Upgrade" : "Studio")}
             </button>
           )}
           {panel !== "live" && (
@@ -2030,7 +2041,7 @@ export default function App() {
                 </PlanGate>
               )}
               {panel === "stationmanager" && (
-                <PlanGate requires="operator" feature="Multi-Station Console">
+                <PlanGate requires="station" feature="Multi-Station Console">
                   <StationManager onStationSwitch={(id, name) => setStationName(name)} />
                 </PlanGate>
               )}
@@ -2520,11 +2531,13 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         {(currentUser?.role === "admin") && <Item label="Macros"               onClick={() => set("macros")} />}
         {(currentUser?.role === "admin") && <Item label="MIDI Controller"      onClick={() => set("midi")} />}
         <Item separator />
-        <Item label="Remote Dashboard ↗"  onClick={async () => {
-          try {
-            await (window as any).ether.invoke("open_url", { url: `${ETHER_BACKEND_URL}/dashboard` });
-          } catch { window.open(`${ETHER_BACKEND_URL}/dashboard`, "_blank"); }
-        }} />
+        {requirePlan("pro", currentPlan as PlanTier)
+          ? <Item label="Remote Dashboard ↗"  onClick={async () => {
+              try {
+                await (window as any).ether.invoke("open_url", { url: `${ETHER_BACKEND_URL}/dashboard` });
+              } catch { window.open(`${ETHER_BACKEND_URL}/dashboard`, "_blank"); }
+            }} />
+          : <Item label="🔒 Remote Dashboard"  onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} />}
         <Item label="System Health"        onClick={() => set("health")} />
       </Menu>
     ),

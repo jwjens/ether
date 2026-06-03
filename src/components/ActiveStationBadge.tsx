@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { usePlan } from "../hooks/usePlan";
 
 interface Station {
   id: number;
@@ -15,6 +16,7 @@ interface Props {
 
 export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
   const ether = (window as any).ether;
+  const { isStation } = usePlan(); // multi-station console = Network+ (per the pricing tiers)
   const [stations, setStations] = useState<Station[]>([]);
   const [active, setActive]     = useState<Station | null>(null);
   const [open, setOpen]         = useState(false);
@@ -47,6 +49,10 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
+  // Multi-station switching/creation is a Network+ feature — hide the badge entirely on
+  // Solo/Studio. (All hooks run above this so the rule-of-hooks order stays stable.)
+  if (!isStation) return null;
+
   const label = active
     ? (active.callsign || active.name.slice(0, 12).toUpperCase())
     : "STATION";
@@ -62,14 +68,8 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
       <style>{`@keyframes ether-station-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.82)} }`}</style>
       {/* Pill trigger */}
       <button
-        onClick={() => {
-          if (stations.length <= 1) {
-            window.dispatchEvent(new CustomEvent("ether:open-subscription"));
-            return;
-          }
-          setOpen(o => !o);
-        }}
-        title={stations.length > 1 ? `Active station: ${active?.name ?? "—"}. Click to switch or manage.` : "Upgrade to Enterprise to manage multiple stations"}
+        onClick={() => setOpen(o => !o)}
+        title={`Active station: ${active?.name ?? "—"}. Click to switch, add, or manage.`}
         style={{
           display: "inline-flex", alignItems: "center", gap: 7,
           height: 44, padding: "0 16px", borderRadius: 0,

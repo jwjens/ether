@@ -61,15 +61,23 @@ export function DevTierBanner() {
   const code = tier?.code ?? "?";
 
   return (
-    <div style={{
-      width: "100%", padding: "5px 14px", background: ACCENT, color: "#1a1a22",
-      fontSize: 11, fontWeight: 800, letterSpacing: "0.08em",
-      display: "flex", alignItems: "center", justifyContent: "center", gap: 14,
-      fontFamily: "'DM Mono', monospace",
-    }}>
-      <span>▓ DEV TIER OVERRIDE — {display.toUpperCase()} ({code}) ▓</span>
+    // Fixed, content-width pill anchored top-center (the empty gap in the window menu bar)
+    // so it never pushes app layout down. Click the pill to reopen the dev panel.
+    <div
+      onClick={() => { window.location.hash = "#debug"; }}
+      title="Open dev panel"
+      style={{
+        position: "fixed", top: 0, left: "50%", transform: "translateX(-50%)", zIndex: 100000,
+        padding: "3px 12px", background: ACCENT, color: "#1a1a22",
+        fontSize: 11, fontWeight: 800, letterSpacing: "0.08em",
+        display: "flex", alignItems: "center", gap: 12, cursor: "pointer",
+        fontFamily: "'DM Mono', monospace",
+        borderRadius: "0 0 6px 6px", boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+      }}
+    >
+      <span>▓ DEV TIER — {display.toUpperCase()} ({code}) ▓</span>
       <button
-        onClick={() => window.__devClearTier?.()}
+        onClick={(e) => { e.stopPropagation(); window.__devClearTier?.(); }}
         style={{
           padding: "2px 10px", background: "rgba(0,0,0,0.2)", color: "#1a1a22",
           border: "1px solid rgba(0,0,0,0.3)", fontSize: 10, fontWeight: 800,

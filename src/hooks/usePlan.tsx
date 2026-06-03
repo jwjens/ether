@@ -47,26 +47,26 @@ const DEV_TIER_BY_LABEL: Record<string, PlanTier> = {
   solo: "free", studio: "pro", network: "station", enterprise: "operator",
 };
 
+// Resolve the effective plan from a station_config_kv row set. The dev panel override
+// wins over the real license — honored in the dev server, or on the owner install
+// (license_key === ETHER-OWNER-2026) so the tier picker survives reloads there; ignored
+// for customers. Exported so every reader (usePlan AND App's config effect) resolves the
+// plan the SAME way — otherwise a raw plan_tier read clobbers the override.
+export function resolveEffectivePlan(rows: { key: string; value: string }[]): PlanTier {
+  const ownerKey = rows.find((r) => r.key === 'license_key')?.value?.trim() === OWNER_LICENSE_KEY;
+  if (import.meta.env.DEV || ownerKey) {
+    const override = rows.find((r) => r.key === 'plan_tier_dev_override')?.value;
+    if (override && override in DEV_TIER_BY_LABEL) return DEV_TIER_BY_LABEL[override];
+  }
+  return (rows.find((r) => r.key === 'plan_tier')?.value ?? "free") as PlanTier;
+}
+
 function loadFromStation1() {
   (async () => {
     try {
       const result = await (window as any).ether.stationConfigKv.list(1);
       const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
-
-      // Dev panel override wins over both env-var and real license. Honored in the
-      // dev server, or on the owner install (license_key === ETHER-OWNER-2026) so the
-      // tier picker survives reloads there; ignored for customers.
-      const ownerKey = rows.find((r) => r.key === 'license_key')?.value?.trim() === OWNER_LICENSE_KEY;
-      if (import.meta.env.DEV || ownerKey) {
-        const override = rows.find((r) => r.key === 'plan_tier_dev_override')?.value;
-        if (override && override in DEV_TIER_BY_LABEL) {
-          notifyAll(DEV_TIER_BY_LABEL[override]);
-          return;
-        }
-      }
-
-      const p = (rows.find((r: { key: string }) => r.key === 'plan_tier')?.value ?? "free") as PlanTier;
-      notifyAll(p);
+      notifyAll(resolveEffectivePlan(rows));
     } catch {
       notifyAll("free");
     }

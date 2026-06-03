@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
-import { setPlanGlobally } from "../hooks/usePlan";
+import { setPlanGlobally, usePlan } from "../hooks/usePlan";
 
 // ── Stripe config ──
 const STRIPE_PK = "pk_live_51TCwP5QJRnsdUhPMYsv0CIkEkcdiINRMDKgYaLiuOdOiTiBNmdxILemKaPYiNRNCM4hAPOcplpLUl2bjpuqGRzbE00YnjZ0ZEh";
@@ -47,7 +47,10 @@ const FEATURES: PlanFeature[] = [
 ];
 
 export default function SubscriptionPanel() {
-  const [currentPlan, setCurrentPlan]       = useState<PlanTier>("free");
+  // Effective plan from usePlan() — override-aware and reactive, so the dev tier picker
+  // (and any license change) updates THIS screen too, not just the rest of the app.
+  const { plan } = usePlan();
+  const currentPlan = plan as PlanTier;
   const [billingMode, setBillingMode]       = useState<"monthly" | "lifetime">("monthly");
   const [licenseKey, setLicenseKey]         = useState("");
   const [licenseEmail, setLicenseEmail]     = useState("");
@@ -70,8 +73,6 @@ export default function SubscriptionPanel() {
       try {
         const result = await (window as any).ether.stationConfigKv.list(stationId);
         const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
-        const plan = rows.find((r: { key: string }) => r.key === 'plan_tier')?.value;
-        if (plan) setCurrentPlan(plan as PlanTier);
         const email = rows.find((r: { key: string }) => r.key === 'license_email')?.value;
         if (email) setLicenseEmail(email);
       } catch {}
@@ -113,7 +114,7 @@ export default function SubscriptionPanel() {
       if (licenseEmail.trim()) {
         await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
       }
-      setCurrentPlan(tier);
+      setPlanGlobally(tier);
       setLicenseSuccess(true);
       setShowLicenseEntry(false);
       setTimeout(() => setLicenseSuccess(false), 4000);
@@ -149,7 +150,7 @@ export default function SubscriptionPanel() {
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', licenseKey.trim());
       window.dispatchEvent(new CustomEvent('ether:license-changed'));
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
-      setCurrentPlan(data.plan as PlanTier);
+      setPlanGlobally(data.plan as PlanTier);
       setLicenseSuccess(true);
       setShowLicenseEntry(false);
       setTimeout(() => setLicenseSuccess(false), 4000);
@@ -193,7 +194,6 @@ export default function SubscriptionPanel() {
       else await kv.removeByKey(stationId, 'trial_ends_at');
       setPlanGlobally(data.plan as PlanTier);
       window.dispatchEvent(new CustomEvent('ether:license-changed'));
-      setCurrentPlan(data.plan as PlanTier);
       setAcctPassword("");
       setLicenseSuccess(true);
       setShowSignIn(false);
@@ -208,7 +208,7 @@ export default function SubscriptionPanel() {
     if (!confirm("Downgrade to Free? You'll keep access until the end of your billing period.")) return;
     await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', 'free');
     await (window as any).ether.stationConfigKv.removeByKey(stationId, 'license_key');
-    setCurrentPlan("free");
+    setPlanGlobally("free");
   };
 
   const planColor = (plan: PlanTier) => {
