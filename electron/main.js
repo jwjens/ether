@@ -758,14 +758,9 @@ function runMigrations() {
 function seedFreshInstall() {
   db.exec("INSERT OR IGNORE INTO crash_recovery (id) VALUES (1)");
 
-  const userCount = db.prepare("SELECT COUNT(*) as n FROM users").get();
-  if (userCount.n === 0) {
-    db.exec(`
-      INSERT INTO users (name, role, pin_hash, color) VALUES ('Admin', 'admin', '1234', '#f87171');
-      INSERT INTO users (name, role, pin_hash, color) VALUES ('Jock', 'jock', NULL, '#22d3ee');
-      INSERT INTO users (name, role, pin_hash, color) VALUES ('Music Director', 'music_director', '1234', '#a78bfa');
-    `);
-  }
+  // No default users are seeded anymore. A fresh install starts with 0 users so the
+  // first-run PIN/profile setup (UserLogin) lets the first person name their profile and
+  // set their own PIN — instead of preset Admin/Jock/MD profiles with a shared default PIN.
 
   db.prepare("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('multistation_insert_audit_complete', 'true')").run();
 

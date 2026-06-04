@@ -13,7 +13,8 @@ import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 // labels keep working.
 
 type OnboardingState =
-  | 'welcome'            // Screen 1 — path picker
+  | 'auth'               // Screen 0 — account sign in / sign up (email + password, required)
+  | 'welcome'            // Screen 1 — path picker (legacy license-key path; bypassed)
   | 'create'             // Screen 2a — POST /account/create
   | 'connect'            // Screen 2b — POST /account/connect
   | 'pickStation'        // Screen 3  — list from /account/connect
@@ -118,7 +119,7 @@ const ANIMATION_CSS = `
 `;
 
 export default function OnboardingFlow({ onComplete }: Props) {
-  const [state, setState] = useState<OnboardingState>('welcome');
+  const [state, setState] = useState<OnboardingState>('auth');
   const { stationId } = useActiveStation();
 
   // Banner shown on the welcome screen after /account/create returns
@@ -201,7 +202,8 @@ export default function OnboardingFlow({ onComplete }: Props) {
           else if (!venSaved)                                setState('venueType');
           else if (!snSaved)                                 setState('nameStation');
           else if (!get('onboarding_library_source'))        setState('pickAudioLocation');
-          else                                               setState('pulling');
+          else if (get('onboarding_library_source') === 'cloud') setState('pulling');
+          else                                               setState('done');
           setResumeChecking(false);
           return;
         }
@@ -209,7 +211,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
         // ── 3. Connect path mid-pickStation → re-fetch /account/connect ──
         if (get('onboarding_license_entered') === '1' && get('onboarding_path') === 'connect') {
           if (!lkSaved) {
-            setState('welcome');
+            setState('auth');
             setResumeChecking(false);
             return;
           }
@@ -234,11 +236,11 @@ export default function OnboardingFlow({ onComplete }: Props) {
               // Re-fetch failed (seat_limit_reached, invalid_license_key, network) —
               // fall back to welcome. User retries manually.
               console.warn('[onboarding] resume /account/connect returned no stations; falling back to welcome', data);
-              setState('welcome');
+              setState('auth');
             }
           } catch (err) {
             console.error('[onboarding] resume /account/connect threw:', err);
-            if (!cancelled) setState('welcome');
+            if (!cancelled) setState('auth');
           }
           if (!cancelled) setResumeChecking(false);
           return;
@@ -248,12 +250,12 @@ export default function OnboardingFlow({ onComplete }: Props) {
         //    edge case where license_entered=1 but account_joined=0 — should
         //    never happen since /account/create writes both atomically — but
         //    be defensive) → restart from welcome. ──
-        setState('welcome');
+        setState('auth');
         setResumeChecking(false);
       } catch (e) {
         console.error('[onboarding] resume check failed:', e);
         if (!cancelled) {
-          setState('welcome');
+          setState('auth');
           setResumeChecking(false);
         }
       }
@@ -270,6 +272,94 @@ export default function OnboardingFlow({ onComplete }: Props) {
     setFormError(null);
     setStnName(''); setNickname(''); setFrequency(''); setCallLetters('');
     setSelection(null);
+  };
+
+  // ── Account auth (Screen 0) — email/password sign in / sign up. Required for everyone
+  // (including free Solo). Replaces the license-key welcome as the first screen. ──
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const [authName, setAuthName] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authErr, setAuthErr] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+
+  // After auth, ask the backend which stations this account already has, then route into the
+  // existing pick-station (has stations) or add-station (none yet) screens. License/plan are
+  // already stored by activateAndContinue.
+  const routeAfterAuth = async (lk: string) => {
+    setLicenseKey(lk);
+    try {
+      const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
+      const machine_id = idResp?.ok ? idResp.machine_id : '';
+      const machine_name = idResp?.ok ? idResp.machine_name : '';
+      const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: lk, machine_id, machine_name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      const kv = (window as any).ether.stationConfigKv;
+      if (data.account_name) await kv.upsertByKey(stationId, 'account_name', data.account_name);
+      await kv.upsertByKey(stationId, 'onboarding_license_entered', '1');
+      const stations = Array.isArray(data.stations) ? (data.stations as OnboardingStation[]) : [];
+      setConnectAccountName(data.account_name || '');
+      setConnectStations(stations);
+      setState(stations.length > 0 ? 'pickStation' : 'addStation');
+    } catch {
+      setState('addStation');
+    }
+  };
+
+  // desktop-activate provisions/returns the license for this account + machine, stores
+  // plan/license/email/trial, then routes into station setup.
+  const activateAndContinue = async (email: string, password: string) => {
+    const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
+    const machine_id = idResp?.ok ? idResp.machine_id : '';
+    const machine_name = idResp?.ok ? idResp.machine_name : '';
+    const res = await fetch(`${ETHER_BACKEND_URL}/api/user/desktop-activate`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, machine_id, machine_name, os: navigator.platform }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error === 'invalid_credentials' ? 'Email or password is incorrect.' : (data.message || 'Could not activate your account. Please try again.'));
+    }
+    const kv = (window as any).ether.stationConfigKv;
+    await kv.upsertByKey(stationId, 'plan_tier', data.plan);
+    if (data.license_key) await kv.upsertByKey(stationId, 'license_key', data.license_key);
+    await kv.upsertByKey(stationId, 'license_email', data.email || email);
+    if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
+    setPlanGlobally(data.plan as PlanTier);
+    if (!data.license_key) throw new Error('No license returned for this account. Please contact support.');
+    await routeAfterAuth(data.license_key);
+  };
+
+  const doSignIn = async () => {
+    if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
+    setAuthBusy(true); setAuthErr('');
+    try { await activateAndContinue(authEmail.trim(), authPassword); }
+    catch (e: any) { setAuthErr(e?.message || 'Could not sign in.'); setAuthBusy(false); }
+  };
+
+  const doSignUp = async () => {
+    if (!authEmail.trim()) { setAuthErr('Enter your email.'); return; }
+    if (authPassword.length < 8) { setAuthErr('Password must be at least 8 characters.'); return; }
+    setAuthBusy(true); setAuthErr('');
+    try {
+      const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: authEmail.trim(), password: authPassword, name: authName.trim() || null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.token) {
+        throw new Error(
+          data.error === 'email_taken' ? 'That email already has an account — switch to Sign in.'
+          : data.error === 'weak_password' ? 'Password must be at least 8 characters.'
+          : data.error === 'invalid_email' ? 'Enter a valid email address.'
+          : 'Could not create your account. Please try again.'
+        );
+      }
+      await activateAndContinue(authEmail.trim(), authPassword);
+    } catch (e: any) { setAuthErr(e?.message || 'Could not sign up.'); setAuthBusy(false); }
   };
 
   const submitCreate = async () => {
@@ -313,7 +403,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
         setWelcomeBanner(
           "This license already has an account. Choose 'Connect to existing account' on this screen instead."
         );
-        setState('welcome');
+        setState('auth');
         setSubmitting(false);
         return;
       }
@@ -654,6 +744,47 @@ export default function OnboardingFlow({ onComplete }: Props) {
     return null;
   }
 
+  // ── Screen 0 — account sign in / sign up (email + password) ──────────
+  if (state === 'auth') {
+    const authInput: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0f0f8", fontSize: 14, outline: "none", fontFamily: "'Inter', system-ui, sans-serif" };
+    const tab = (active: boolean): React.CSSProperties => ({ flex: 1, padding: "10px 0", borderRadius: 0, cursor: "pointer", fontSize: 13, fontWeight: 700, border: `1px solid ${active ? "#22d3ee" : "rgba(255,255,255,0.1)"}`, background: active ? "rgba(34,211,238,0.1)" : "transparent", color: active ? "#22d3ee" : "rgba(255,255,255,0.5)" });
+    const submit = authMode === 'signin' ? doSignIn : doSignUp;
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <div style={LABEL_STYLE}>Welcome to Ether</div>
+              <h1 style={HEADING_STYLE}>{authMode === 'signin' ? 'Sign in' : 'Create your account'}</h1>
+              <p style={SUB_STYLE}>
+                {authMode === 'signin'
+                  ? 'Sign in with your Ether account to get started.'
+                  : 'Create a free account — your trial starts right away.'}
+              </p>
+            </div>
+            <div style={{ maxWidth: 420, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                <button onClick={() => { setAuthMode('signin'); setAuthErr(''); }} style={tab(authMode === 'signin')}>Sign in</button>
+                <button onClick={() => { setAuthMode('signup'); setAuthErr(''); }} style={tab(authMode === 'signup')}>Sign up</button>
+              </div>
+              {authMode === 'signup' && (
+                <input value={authName} onChange={e => setAuthName(e.target.value)} placeholder="Your name (optional)" style={authInput} />
+              )}
+              <input type="email" autoFocus value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthErr(''); }} placeholder="Email address" style={authInput} />
+              <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthErr(''); }} onKeyDown={e => { if (e.key === 'Enter') submit(); }} placeholder={authMode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} style={authInput} />
+              {authErr && <div style={{ fontSize: 12, color: "#f87171" }}>{authErr}</div>}
+              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "#22d3ee", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
+                {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}
+              </button>
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
   // ── Screen 1 — Welcome / choose path ─────────────────────────────────
   if (state === 'welcome') {
     return (
@@ -775,7 +906,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
 
               <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <button
-                  onClick={() => setState('welcome')}
+                  onClick={() => setState('auth')}
                   disabled={submitting}
                   style={{
                     padding: "12px 24px", borderRadius: 0,
@@ -860,7 +991,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
 
             <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
               <button
-                onClick={() => setState('welcome')}
+                onClick={() => setState('auth')}
                 disabled={submitting}
                 style={{
                   padding: "12px 24px", borderRadius: 0,
@@ -1140,7 +1271,8 @@ export default function OnboardingFlow({ onComplete }: Props) {
     return (
       <PickAudioLocationScreen
         stationId={stationId}
-        onContinue={() => setState('pulling')}
+        onPull={() => setState('pulling')}
+        onDone={() => setState('done')}
       />
     );
   }
@@ -1197,7 +1329,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
 
               <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <button
-                  onClick={() => setState('welcome')}
+                  onClick={() => setState('auth')}
                   disabled={submitting}
                   style={{
                     padding: "12px 24px", borderRadius: 0,
@@ -1236,7 +1368,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
           <h1 style={HEADING_STYLE}>{stateLabel(state)}</h1>
           <p style={SUB_STYLE}>Not implemented yet — building in a follow-up commit.</p>
           <button
-            onClick={() => setState('welcome')}
+            onClick={() => setState('auth')}
             style={{
               marginTop: 32, padding: "12px 28px", borderRadius: 0,
               background: "transparent", color: "rgba(255,255,255,0.4)",
@@ -1256,6 +1388,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
 
 function stateLabel(s: OnboardingState): string {
   switch (s) {
+    case 'auth':              return 'Screen 0 — Sign in or sign up';
     case 'create':            return 'Screen 2a — Create new account';
     case 'connect':           return 'Screen 2b — Connect to existing account';
     case 'pickStation':       return 'Screen 3 — Pick or add a station';
@@ -1561,13 +1694,14 @@ function PullingScreen({ stationId, stationName, onContinue }: PullingScreenProp
 
 interface PickAudioLocationScreenProps {
   stationId:   number;
-  onContinue:  () => void;
+  onPull:      () => void;  // cloud download → show the pulling/progress screen
+  onDone:      () => void;  // skip / local import → straight into the app, no pulling screen
 }
 
 // Inline-shared with ImportDialog.tsx (Q7: do not extract — list is stable).
 const PAL_AUDIO_EXTS = [".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".aiff"];
 
-function PickAudioLocationScreen({ stationId, onContinue }: PickAudioLocationScreenProps) {
+function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocationScreenProps) {
   const { isStation } = usePlan();
   type Sub = 'idle' | 'scanning' | 'preview' | 'applying';
   const [sub, setSub]                   = useState<Sub>('idle');
@@ -1590,7 +1724,7 @@ function PickAudioLocationScreen({ stationId, onContinue }: PickAudioLocationScr
 
   const handleSkip = async () => {
     await writeSourceKv('skip');
-    onContinue();
+    onDone();
   };
 
   const handleCloud = async () => {
@@ -1601,7 +1735,7 @@ function PickAudioLocationScreen({ stationId, onContinue }: PickAudioLocationScr
     (window as any).ether.libraryR2.download().catch((err: any) =>
       console.error('[onboarding] libraryR2.download() invoke failed:', err)
     );
-    onContinue();
+    onPull();
   };
 
   const handleComputer = async () => {
@@ -1675,7 +1809,7 @@ function PickAudioLocationScreen({ stationId, onContinue }: PickAudioLocationScr
       }
       setApplyDone(i + 1);
     }
-    onContinue();
+    onDone();
   };
 
   const handleCancelPreview = () => {
