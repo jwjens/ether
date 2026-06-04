@@ -12,3 +12,15 @@
   IfFileExists "$INSTDIR\resources\ha-setup.exe" 0 +2
     ExecShell "runas" "$INSTDIR\resources\ha-setup.exe" 'disable --result "$TEMP\ether-ha-uninstall.json"' SW_HIDE
 !macroend
+
+; Force-close a running Ether before installing, so the installer never stalls on
+; "Ether cannot be closed" (the app hides to tray instead of quitting on the installer's
+; close request). taskkill /IM Ether.exe kills BOTH the main app and the `--ether-watchdog`
+; instance at once (same binary), so the watchdog can't respawn it mid-install; we also
+; stop the separate audio engine so it relaunches on the new version. Runs hidden, before
+; electron-builder's own running-app check, on every install/update.
+!macro customInit
+  nsExec::Exec 'taskkill /F /T /IM Ether.exe'
+  nsExec::Exec 'taskkill /F /T /IM ether-engine.exe'
+  Sleep 1000
+!macroend
