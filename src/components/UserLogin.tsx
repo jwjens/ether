@@ -54,6 +54,35 @@ export default function UserLogin({ onLogin }: Props) {
     })();
   }, []);
 
+  // Verify whenever the PIN reaches 4 digits — from the numpad OR the physical keyboard.
+  useEffect(() => {
+    if (!selected || pin.length !== 4) return;
+    let cancelled = false;
+    const ether = (window as any).ether;
+    const verify = ether?.users?.verifyPin
+      ? ether.users.verifyPin(pin, selected.pin_hash)
+      : Promise.resolve(pin === selected.pin_hash);
+    verify.then((ok: boolean) => {
+      if (cancelled) return;
+      if (ok) onLogin(selected);
+      else { setError("Incorrect PIN"); setShake(true); setPin(""); setTimeout(() => setShake(false), 500); }
+    });
+    return () => { cancelled = true; };
+  }, [pin, selected]);
+
+  // Physical keyboard support on the PIN screen: digits type the PIN, Backspace deletes,
+  // Esc goes back to the profile list.
+  useEffect(() => {
+    if (!selected || !selected.pin_hash) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key >= "0" && e.key <= "9") { setError(""); setPin(p => (p.length >= 4 ? p : p + e.key)); e.preventDefault(); }
+      else if (e.key === "Backspace") { setError(""); setPin(p => p.slice(0, -1)); e.preventDefault(); }
+      else if (e.key === "Escape") { setSelected(null); setPin(""); setError(""); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
+
   const createFirstUser = async () => {
     const name = setupName.trim() || "Admin";
     if (!/^\d{4}$/.test(setupPin)) { setSetupErr("PIN must be 4 digits."); return; }
@@ -180,17 +209,8 @@ export default function UserLogin({ onLogin }: Props) {
                   (e.currentTarget as HTMLElement).style.borderColor = "rgba(255,255,255,0.08)";
                 }}
               >
-                {/* Avatar */}
-                <div style={{
-                  width: 44, height: 44, borderRadius: 0, flexShrink: 0,
-                  background: `${ROLE_COLORS[user.role]}20`,
-                  border: `1px solid ${ROLE_COLORS[user.role]}40`,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 800,
-                  color: ROLE_COLORS[user.role],
-                }}>
-                  {user.name.charAt(0).toUpperCase()}
-                </div>
+                {/* Role color accent */}
+                <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: ROLE_COLORS[user.role] }} />
 
                 {/* Info */}
                 <div style={{ flex: 1 }}>
@@ -217,17 +237,8 @@ export default function UserLogin({ onLogin }: Props) {
           animation: shake ? "shake 0.4s ease" : "none",
         }}>
           <div style={{ textAlign: "center" as const, marginBottom: 28 }}>
-            <div style={{
-              width: 56, height: 56, borderRadius: 0, margin: "0 auto 12px",
-              background: `${accentColor}20`, border: `1px solid ${accentColor}40`,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800,
-              color: accentColor,
-            }}>
-              {selected.name.charAt(0)}
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: "#f0f0f8" }}>{selected.name}</div>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginTop: 4 }}>Enter your PIN to continue</div>
+            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#f0f0f8" }}>{selected.name}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>Enter your PIN to continue</div>
           </div>
 
           {/* PIN dots */}
@@ -249,19 +260,8 @@ export default function UserLogin({ onLogin }: Props) {
               <button key={i} onClick={() => {
                 if (!k) return;
                 if (k === "⌫") { setPin(p => p.slice(0,-1)); setError(""); return; }
-                const next = pin + k;
-                setPin(next);
-                if (next.length === 4) {
-                  // Verify via async IPC — supports both hashed and legacy plaintext PINs
-                  const ether = (window as any).ether;
-                  const verify = ether?.users?.verifyPin
-                    ? ether.users.verifyPin(next, selected.pin_hash)
-                    : Promise.resolve(next === selected.pin_hash);
-                  verify.then((ok: boolean) => {
-                    if (ok) { onLogin(selected); }
-                    else { setError("Incorrect PIN"); setShake(true); setPin(""); setTimeout(() => setShake(false), 500); }
-                  });
-                }
+                setError("");
+                setPin(p => (p.length >= 4 ? p : p + k));
               }} style={{
                 height: 52, borderRadius: 0,
                 background: k ? "rgba(255,255,255,0.05)" : "transparent",
