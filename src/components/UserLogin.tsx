@@ -22,7 +22,7 @@ const ROLE_LABELS: Record<string, string> = {
 
 const ROLE_COLORS: Record<string, string> = {
   admin: "#f87171",
-  jock: "#22d3ee",
+  jock: "#8868D8",
   music_director: "#a78bfa",
 };
 
@@ -135,7 +135,7 @@ export default function UserLogin({ onLogin }: Props) {
     }
   };
 
-  const accentColor = selected ? selected.color : "#22d3ee";
+  const accentColor = selected ? selected.color : "#8868D8";
 
   return (
     <div style={{
@@ -150,7 +150,7 @@ export default function UserLogin({ onLogin }: Props) {
       <div style={{ marginBottom: 40, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
         <img src={etherLogoMark} width={72} height={72} alt="" style={{ borderRadius: 0 }} />
         <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
-        <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const }}>Technologies</div>
+        <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "#8868D8", textTransform: "uppercase" as const }}>Technologies</div>
       </div>
 
       {loading ? (
@@ -176,7 +176,7 @@ export default function UserLogin({ onLogin }: Props) {
 
           {setupErr && <div style={{ fontSize: 12, color: "#f87171", marginBottom: 12 }}>{setupErr}</div>}
 
-          <button onClick={createFirstUser} disabled={creating} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "#22d3ee", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: creating ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: creating ? 0.7 : 1 }}>
+          <button onClick={createFirstUser} disabled={creating} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "#8868D8", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: creating ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: creating ? 0.7 : 1 }}>
             {creating ? "Creating…" : "Create profile & continue"}
           </button>
         </div>

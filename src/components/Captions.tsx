@@ -375,9 +375,9 @@ export function CaptionsLogPanel({ lines, enabled, status, toggle }: LogProps) {
               <span style={{
                 fontSize:     10, fontWeight: 800, letterSpacing: "0.1em",
                 padding:      "2px 6px", flexShrink: 0,
-                background:   l.speaker === "iris" ? "rgba(0,200,168,0.15)" : "rgba(56,189,248,0.1)",
+                background:   l.speaker === "iris" ? "rgba(0,200,168,0.15)" : "rgba(96,64,192,0.1)",
                 color:        l.speaker === "iris" ? "#00c8a8" : "var(--accent-blue)",
-                border:       `1px solid ${l.speaker === "iris" ? "rgba(0,200,168,0.3)" : "rgba(56,189,248,0.25)"}`,
+                border:       `1px solid ${l.speaker === "iris" ? "rgba(0,200,168,0.3)" : "rgba(96,64,192,0.25)"}`,
                 alignSelf:    "flex-start",
                 marginTop:    1,
               }}>

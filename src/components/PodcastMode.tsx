@@ -107,7 +107,7 @@ interface EpisodeModeProps {
 }
 
 const SEG_COLORS: Record<SegmentType, string> = {
-  intro:   "#38bdf8",
+  intro:   "#6040c0",
   segment: "#34d399",
   ad:      "#f59e0b",
   outro:   "#a78bfa",

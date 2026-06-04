@@ -62,7 +62,7 @@ interface ScheduledRow {
 }
 
 const SLOT_COLORS: Record<string, string> = {
-  music:    "#38bdf8",
+  music:    "#6040c0",
   spot:     "#f59e0b",
   liner:    "#a78bfa",
   news:     "#ef4444",
@@ -282,7 +282,7 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
                   {/* Hour cell */}
                   <div style={{
                     padding: "12px 14px", borderRight: "1px solid var(--border-primary)",
-                    background: isCurrentHour ? "rgba(56,189,248,0.08)" : "var(--bg-tertiary)",
+                    background: isCurrentHour ? "rgba(96,64,192,0.08)" : "var(--bg-tertiary)",
                     display: "flex", flexDirection: "column", justifyContent: "center",
                   }}>
                     <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'JetBrains Mono', monospace", color: isCurrentHour ? "var(--accent-blue)" : "var(--text-primary)" }}>

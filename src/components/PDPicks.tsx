@@ -288,7 +288,7 @@ function PinForm({ stationId, onClose, onSaved }: { stationId: number; onClose: 
         </Field>
 
         {selectedSong && (
-          <div style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)" }}>
+          <div style={{ marginBottom: 12, padding: "8px 12px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)" }}>
             <div style={{ fontSize: 13, color: "var(--text-primary)", fontWeight: 600 }}>{selectedSong.title}</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2, display: "flex", justifyContent: "space-between" }}>
               <span>{selectedSong.artist_name}</span>

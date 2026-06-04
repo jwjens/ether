@@ -81,7 +81,7 @@ const WMO: Record<number, [string, string]> = {
 const MOCK_ADS = [
   { bg: "linear-gradient(135deg,#0f172a,#1e1b4b)", accent: "#a78bfa", logo: "⚡", headline: "Ether Technologies", sub: "Professional Broadcast Automation", tag: "FREE TO DOWNLOAD", url: "ether-technologies.com" },
   { bg: "linear-gradient(135deg,#0c1a0c,#052e16)", accent: "#34d399", logo: "📻", headline: "Broadcast Smarter", sub: "Replace RCS Zetta & WideOrbit — for $0", tag: "OPEN SOURCE", url: "github.com/jwjens/ether" },
-  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "#38bdf8", logo: "🎙️", headline: "Ether Studio", sub: "Cloud backup · Analytics · Remote dashboard", tag: "$19 / MONTH", url: "ether-technologies.com/#pricing" },
+  { bg: "linear-gradient(135deg,#0c1929,#0f2744)", accent: "#6040c0", logo: "🎙️", headline: "Ether Studio", sub: "Cloud backup · Analytics · Remote dashboard", tag: "$19 / MONTH", url: "ether-technologies.com/#pricing" },
   { bg: "linear-gradient(135deg,#1a0a2e,#2d1b69)", accent: "#c084fc", logo: "🏢", headline: "Ether Network", sub: "Multi-station · NexGen import · ASIO audio", tag: "$79 / MONTH", url: "ether-technologies.com/#pricing" },
 ];
 
@@ -255,7 +255,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
             </svg>
             <div>
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{stationName}</div>
-              <div style={{ fontSize: 8, letterSpacing: "0.24em", color: "#22d3ee", textTransform: "uppercase" as const, marginTop: 2 }}>Powered by Ether</div>
+              <div style={{ fontSize: 8, letterSpacing: "0.24em", color: "#8868D8", textTransform: "uppercase" as const, marginTop: 2 }}>Powered by Ether</div>
             </div>
             {isPlaying && <span style={{ padding: "4px 12px", background: "#dc2626", borderRadius: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", boxShadow: "0 0 16px rgba(220,38,38,0.5)", marginLeft: 4 }}>ON AIR</span>}
           </div>
@@ -275,8 +275,8 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
               {upcoming.length === 0
                 ? <div style={{ color: "rgba(255,255,255,0.15)", fontSize: 13, marginTop: 32, textAlign: "center" as const }}>Queue is empty</div>
                 : upcoming.map((s, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: 0, background: i === 0 ? "rgba(34,211,238,0.09)" : "rgba(255,255,255,0.025)", border: `1px solid ${i === 0 ? "rgba(34,211,238,0.2)" : "rgba(255,255,255,0.035)"}` }}>
-                    <div style={{ width: 26, height: 26, borderRadius: 0, flexShrink: 0, background: i === 0 ? "rgba(34,211,238,0.18)" : "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: i === 0 ? "#22d3ee" : "rgba(255,255,255,0.22)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</div>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 11px", borderRadius: 0, background: i === 0 ? "rgba(136,104,216,0.09)" : "rgba(255,255,255,0.025)", border: `1px solid ${i === 0 ? "rgba(136,104,216,0.2)" : "rgba(255,255,255,0.035)"}` }}>
+                    <div style={{ width: 26, height: 26, borderRadius: 0, flexShrink: 0, background: i === 0 ? "rgba(136,104,216,0.18)" : "rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: i === 0 ? "#8868D8" : "rgba(255,255,255,0.22)", fontFamily: "'DM Mono', monospace" }}>{i + 1}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? "#f0f0f8" : "rgba(255,255,255,0.6)", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{s.title}</div>
                       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 1, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{s.artist_name || "Unknown Artist"}</div>
@@ -332,13 +332,13 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
                   </div>}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              {isPlaying && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 4 }}>Now Playing</div>}
+              {isPlaying && <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.22em", color: "#8868D8", textTransform: "uppercase" as const, marginBottom: 4 }}>Now Playing</div>}
               <div style={{ fontSize: 32, fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.03em", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{title}</div>
               {artist && <div style={{ fontSize: 17, color: "rgba(255,255,255,0.45)", marginTop: 4, whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>{artist}</div>}
               {dur > 0 && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ height: 3, background: "rgba(255,255,255,0.1)", borderRadius: 0, overflow: "hidden", marginBottom: 5 }}>
-                    <div ref={progressRef} style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#22d3ee,#8b5cf6)", borderRadius: 0, transition: "width 0.5s linear" }} />
+                    <div ref={progressRef} style={{ height: "100%", width: pct + "%", background: "linear-gradient(90deg,#8868D8,#8b5cf6)", borderRadius: 0, transition: "width 0.5s linear" }} />
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: "'DM Mono', monospace", color: "rgba(255,255,255,0.28)" }}>
                     <span ref={posSpanRef}>{fmtTime(pos)}</span>

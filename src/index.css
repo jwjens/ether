@@ -19,8 +19,8 @@
   --text-inverse: #0e0e12;
   --border-primary: #1a1a22;
   --border-secondary: #1e1e2e;
-  --accent-blue: #38bdf8;
-  --accent-cyan: #22d3ee;
+  --accent-blue: #6040c0;
+  --accent-cyan: #8868D8;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -38,7 +38,7 @@
   --radius-xs: 0;
 
   --deck-a-bg: linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 100%);
-  --deck-b-bg: linear-gradient(180deg, rgba(34,211,238,0.02) 0%, transparent 100%);
+  --deck-b-bg: linear-gradient(180deg, rgba(136,104,216,0.02) 0%, transparent 100%);
   --deck-c-bg: linear-gradient(180deg, rgba(167,139,250,0.02) 0%, transparent 100%);
 
   /* Deck identity colors (per-strip type) */
@@ -142,8 +142,8 @@
   --text-inverse: #0e0e12;
   --border-primary: #1a1a22;
   --border-secondary: #1e1e2e;
-  --accent-blue: #38bdf8;
-  --accent-cyan: #22d3ee;
+  --accent-blue: #6040c0;
+  --accent-cyan: #8868D8;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -155,7 +155,7 @@
   --shadow-md: 0 2px 8px rgba(0,0,0,0.7);
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.8);
   --deck-a-bg: linear-gradient(180deg, rgba(52,211,153,0.03) 0%, transparent 100%);
-  --deck-b-bg: linear-gradient(180deg, rgba(34,211,238,0.02) 0%, transparent 100%);
+  --deck-b-bg: linear-gradient(180deg, rgba(136,104,216,0.02) 0%, transparent 100%);
   --deck-c-bg: linear-gradient(180deg, rgba(167,139,250,0.02) 0%, transparent 100%);
 
   /* Deck identity colors (per-strip type) */
@@ -259,8 +259,8 @@
   --text-inverse: #faf9f7;
   --border-primary: #d4cfc8;
   --border-secondary: #c8c2ba;
-  --accent-blue: #0284c7;
-  --accent-cyan: #0891b2;
+  --accent-blue: #6040c0;
+  --accent-cyan: #6040c0;
   --accent-green: #059669;
   --accent-red: #dc2626;
   --accent-amber: #d97706;
@@ -385,9 +385,9 @@
   --border-secondary: #b0b4bc;
 
   /* Accents — deeper hues for contrast on silver */
-  --accent-blue:  #1e6bb8;
+  --accent-blue:  #6040c0;
   --accent-green: #1a9048;
-  --accent-cyan:  #0e8aaa;
+  --accent-cyan:  #6040c0;
   --accent-red:   #c82535;
   --accent-amber: #c87815;
 

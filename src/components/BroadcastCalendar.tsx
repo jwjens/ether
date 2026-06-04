@@ -224,7 +224,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                   height: 40, display: "flex", flexDirection: "column",
                   alignItems: "center", justifyContent: "center", gap: 1,
                   borderBottom: "1px solid var(--border-primary)",
-                  background: isToday ? "rgba(34,211,238,0.07)" : "var(--bg-secondary)",
+                  background: isToday ? "rgba(136,104,216,0.07)" : "var(--bg-secondary)",
                   position: "sticky", top: 0, zIndex: 2,
                 }}>
                   <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: isToday ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
@@ -245,7 +245,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                       height: ROW_H, borderBottom: "1px solid var(--border-secondary)",
                       boxSizing: "border-box", position: "relative",
                       background: isToday
-                        ? (h % 2 === 0 ? "rgba(34,211,238,0.02)" : "rgba(34,211,238,0.01)")
+                        ? (h % 2 === 0 ? "rgba(136,104,216,0.02)" : "rgba(136,104,216,0.01)")
                         : (h % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)"),
                     }}>
                       {count > 0 && (

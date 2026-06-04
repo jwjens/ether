@@ -70,11 +70,11 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
           {PRESET_NAMES.map(name => (
             <button key={name} onClick={() => applyPreset(name)} style={{
               padding: "3px 9px", borderRadius: 0, border: "none",
-              background: activePreset === name ? (name === "Off" ? "var(--bg-tertiary)" : "rgba(56,189,248,0.15)") : "var(--bg-tertiary)",
+              background: activePreset === name ? (name === "Off" ? "var(--bg-tertiary)" : "rgba(96,64,192,0.15)") : "var(--bg-tertiary)",
               color: activePreset === name ? (name === "Off" ? "var(--text-secondary)" : "var(--accent-cyan)") : "var(--text-tertiary)",
               fontSize: 10, fontWeight: activePreset === name ? 700 : 400,
               cursor: "pointer", transition: "all 0.12s",
-              outline: activePreset === name ? `1px solid ${name === "Off" ? "var(--border-primary)" : "rgba(56,189,248,0.3)"}` : "1px solid transparent",
+              outline: activePreset === name ? `1px solid ${name === "Off" ? "var(--border-primary)" : "rgba(96,64,192,0.3)"}` : "1px solid transparent",
             }}>{name}</button>
           ))}
         </div>
@@ -182,10 +182,10 @@ export default function AudioProcessorPanel({ stream, onProcessorReady, onLevel,
             <button key={name} onClick={() => applyPreset(name)} style={{
               flex: 1, padding: "8px 4px", borderRadius: 0,
               background: activePreset === name
-                ? name === "Off" ? "var(--bg-tertiary)" : "rgba(56,189,248,0.12)"
+                ? name === "Off" ? "var(--bg-tertiary)" : "rgba(96,64,192,0.12)"
                 : "var(--bg-tertiary)",
               border: `1px solid ${activePreset === name
-                ? name === "Off" ? "var(--border-primary)" : "rgba(56,189,248,0.35)"
+                ? name === "Off" ? "var(--border-primary)" : "rgba(96,64,192,0.35)"
                 : "var(--border-primary)"}`,
               color: activePreset === name
                 ? name === "Off" ? "var(--text-secondary)" : "var(--accent-cyan)"

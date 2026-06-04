@@ -41,7 +41,7 @@ const TYPE_DESC: Record<TargetType, string> = {
 };
 
 const TYPE_COLOR: Record<TargetType, string> = {
-  icecast:   "#38bdf8",
+  icecast:   "#6040c0",
   shoutcast: "#a78bfa",
   tunein:    "#22c55e",
   rds:       "#f59e0b",
@@ -298,7 +298,7 @@ function TargetEditor({ initial, onClose, onSave }: {
         </>}
 
         {initial.type === "tunein" && <>
-          <div style={{ padding: "10px 12px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", marginBottom: 12, fontSize: 12, color: "var(--accent-blue)", lineHeight: 1.5 }}>
+          <div style={{ padding: "10px 12px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)", marginBottom: 12, fontSize: 12, color: "var(--accent-blue)", lineHeight: 1.5 }}>
             Get your Partner ID and Partner Key from <strong>tunein.com/broadcasters</strong> → Settings → API Access. Station ID is the "s" number from your TuneIn station URL.
           </div>
           <Field label="Partner ID"><input value={cfg.partnerId || ""} onChange={e => setField("partnerId", e.target.value)} style={inputStyle} /></Field>

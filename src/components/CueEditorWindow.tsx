@@ -40,8 +40,8 @@ import { useEffect, useState } from "react";
             --text-primary: ${v.textPrimary || fg};
             --text-secondary: ${v.textSecondary || (dark ? "#94a3b8" : "#475569")};
             --text-tertiary: ${v.textTertiary || (dark ? "#64748b" : "#94a3b8")};
-            --accent-blue: #0ea5e9;
-            --accent-cyan: #22d3ee;
+            --accent-blue: #6040c0;
+            --accent-cyan: #8868D8;
             --accent-green: #34d399;
           }
         `;

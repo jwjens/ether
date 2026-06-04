@@ -256,7 +256,7 @@ export default function Announcements() {
                         return (
                           <span key={j} style={{
                             fontSize: 9, fontWeight: 700, padding: "2px 5px", borderRadius: 0,
-                            background: on ? "rgba(56,189,248,0.15)" : "var(--bg-tertiary)",
+                            background: on ? "rgba(96,64,192,0.15)" : "var(--bg-tertiary)",
                             color: on ? "var(--accent-blue)" : "var(--text-tertiary)",
                           }}>{name[0]}</span>
                         );

@@ -299,7 +299,7 @@ export function ZettaExportButton({ cards, stationName = "My Station", showTitle
   };
 
   const bg = {
-    idle:      "rgba(56,189,248,0.08)",
+    idle:      "rgba(96,64,192,0.08)",
     exporting: "rgba(251,191,36,0.08)",
     done:      "rgba(52,211,153,0.1)",
     error:     "rgba(239,68,68,0.1)",

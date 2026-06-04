@@ -149,7 +149,7 @@ export default function StreamManager() {
               { label: "Status", value: (health.status || "").toUpperCase(), color: health.status === "live" ? "#22c55e" : health.status === "reconnecting" ? "#fbbf24" : "var(--text-secondary)" },
               { label: "Uptime", value: fmtDuration(health.uptimeSecs || 0), color: "var(--text-primary)" },
               { label: "Drops", value: String(health.dropCount ?? 0), color: health.dropCount > 0 ? "#fbbf24" : "#22c55e" },
-              { label: "Buffer", value: `${health.bufferSecs || 0}s`, color: "#38bdf8" },
+              { label: "Buffer", value: `${health.bufferSecs || 0}s`, color: "#6040c0" },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ padding: "8px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as any, marginBottom: 3 }}>{label}</div>

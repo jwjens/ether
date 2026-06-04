@@ -51,7 +51,7 @@ const HOURS = Array.from({length: 24}, (_, i) => i);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SLOT_TYPES = ["music", "spot_break", "liner", "sweeper", "news", "talkset", "jingle"];
 const CLOCK_SLOT_TYPE_OPTIONS = [
-  { value: "music",      label: "Song",    color: "#38bdf8" },
+  { value: "music",      label: "Song",    color: "#6040c0" },
   { value: "spot_break", label: "Spot",    color: "#ef4444" },
   { value: "talk_break", label: "Talk",    color: "#a78bfa" },
   { value: "liner",      label: "Liner",   color: "#34d399" },
@@ -109,7 +109,7 @@ export default function Scheduler({ defaultTab = "shows", embedded = false }: Sc
           style={{
             padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
             background: "var(--accent-blue)", color: "#fff", border: "none",
-            boxShadow: "0 2px 8px rgba(56,189,248,0.3)",
+            boxShadow: "0 2px 8px rgba(96,64,192,0.3)",
             minHeight: 44, display: "inline-flex", alignItems: "center",
           }}
         >
@@ -693,7 +693,7 @@ function SegmentPicker({ cats, onAdd, onClose }: {
       {step === "type" && (
         <div style={{ display: "flex", gap: 6 }}>
           {[
-            { label: "Song", color: "#38bdf8", next: "song" as const },
+            { label: "Song", color: "#6040c0", next: "song" as const },
             { label: "Commercial", color: "#ef4444", next: "commercial" as const },
             { label: "Talk Break", color: "#a78bfa", next: "talk" as const },
           ].map(b => (
@@ -959,7 +959,7 @@ function ClocksTab() {
 
   // Color per slot type
   const slotColor = (s: ClockSlot) => {
-    if (s.slot_type === "music") return s.category_color || "#38bdf8";
+    if (s.slot_type === "music") return s.category_color || "#6040c0";
     return CLOCK_SLOT_TYPE_OPTIONS.find(o => o.value === s.slot_type)?.color ?? "#94a3b8";
   };
 
@@ -1011,8 +1011,8 @@ function ClocksTab() {
                     <button onClick={() => setSelected(c.id)} style={{
                       flex: 1, padding: "7px 10px", borderRadius: 0, fontSize: 12,
                       fontWeight: selected === c.id ? 700 : 400, textAlign: "left" as const, cursor: "pointer",
-                      background: selected === c.id ? "rgba(56,189,248,0.12)" : "var(--bg-secondary)",
-                      border: selected === c.id ? "1px solid rgba(56,189,248,0.3)" : "1px solid var(--border-primary)",
+                      background: selected === c.id ? "rgba(96,64,192,0.12)" : "var(--bg-secondary)",
+                      border: selected === c.id ? "1px solid rgba(96,64,192,0.3)" : "1px solid var(--border-primary)",
                       color: selected === c.id ? "var(--accent-blue)" : "var(--text-secondary)",
                     }}>{c.name}</button>
                     <button onClick={() => setConfirmDelete(c.id)} style={{ padding: "5px 6px", background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}
@@ -1099,7 +1099,7 @@ function ClocksTab() {
                       background: isSelected
                         ? "rgba(167,139,250,0.12)"
                         : dragOverIdx === i
-                        ? "rgba(56,189,248,0.06)"
+                        ? "rgba(96,64,192,0.06)"
                         : i % 2 === 0 ? "var(--bg-secondary)" : "rgba(255,255,255,0.01)",
                       borderBottom: "1px solid rgba(255,255,255,0.03)",
                       borderLeft: `3px solid ${isSelected ? "#a78bfa" : slotColor(s)}`,
@@ -1202,7 +1202,7 @@ function ClocksTab() {
                       style={{
                         fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", padding: "2px 5px",
                         borderRadius: 0, cursor: "pointer", border: "none",
-                        background: chainType === "stop" ? "rgba(239,68,68,0.15)" : "rgba(56,189,248,0.08)",
+                        background: chainType === "stop" ? "rgba(239,68,68,0.15)" : "rgba(96,64,192,0.08)",
                         color: chainType === "stop" ? "#ef4444" : "#64748b",
                         fontFamily: "'DM Mono', monospace",
                       }}
@@ -1353,7 +1353,7 @@ function ClocksTab() {
                 onClick={() => { setShowPicker(p => !p); if (!showPicker) loadAll(); }}
                 style={{
                   width: "100%", padding: "9px", borderRadius: 0, fontSize: 12, fontWeight: 700,
-                  background: showPicker ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)",
+                  background: showPicker ? "rgba(96,64,192,0.1)" : "var(--bg-secondary)",
                   border: "1px dashed " + (showPicker ? "var(--accent-blue)" : "var(--border-secondary)"),
                   color: showPicker ? "var(--accent-blue)" : "var(--text-tertiary)", cursor: "pointer",
                 }}

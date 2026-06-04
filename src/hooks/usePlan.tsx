@@ -125,7 +125,7 @@ export function UpgradePrompt({ feature, required, compact = false, onUpgrade }:
   if (required === "operator") return null;
 
   const label  = required === "pro" ? "Studio" : "Network";
-  const color  = required === "pro" ? "#22d3ee" : "#a78bfa";
+  const color  = required === "pro" ? "#8868D8" : "#a78bfa";
   const price  = required === "pro" ? "$19/mo" : "$79/mo";
 
   const handleUpgrade = () => {

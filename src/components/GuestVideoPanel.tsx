@@ -236,7 +236,7 @@ function GuestTile({ guest, onMute, onHide }: { guest: GuestVideoState; onMute: 
               {/* Avatar circle */}
               <div style={{
                 width: 44, height: 44, borderRadius: "50%",
-                background: `linear-gradient(135deg, rgba(56,189,248,0.3), rgba(167,139,250,0.3))`,
+                background: `linear-gradient(135deg, rgba(96,64,192,0.3), rgba(167,139,250,0.3))`,
                 border: "1px solid rgba(255,255,255,0.1)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 18, fontWeight: 700, color: "rgba(255,255,255,0.8)",
@@ -263,7 +263,7 @@ function GuestTile({ guest, onMute, onHide }: { guest: GuestVideoState; onMute: 
         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
           <div style={{ width: 6, height: 6, borderRadius: "50%", flexShrink: 0, background: isConnecting ? "#fbbf24" : guest.status === "connected" ? "#34d399" : "#ef4444", boxShadow: guest.status === "connected" ? "0 0 5px #34d399" : "none", animation: isConnecting ? "connecting-pulse 1s ease-in-out infinite" : "none" }} />
           <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{guest.name}</span>
-          {guest.hasVideo && !guest.hidden && <span style={{ fontSize: 9, color: "rgba(56,189,248,0.6)" }}>📷</span>}
+          {guest.hasVideo && !guest.hidden && <span style={{ fontSize: 9, color: "rgba(96,64,192,0.6)" }}>📷</span>}
         </div>
 
         {/* Controls — show on hover */}

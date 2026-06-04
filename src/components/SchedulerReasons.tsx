@@ -37,7 +37,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 const SOURCE_COLOR: Record<string, string> = {
-  clock:  "#38bdf8",
+  clock:  "#6040c0",
   rule:   "#a78bfa",
   random: "#94a3b8",
   manual: "#f59e0b",

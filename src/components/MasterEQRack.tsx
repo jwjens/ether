@@ -227,7 +227,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
                       specPct > 0.9  ? "#ef4444" :
                       specPct > 0.75 ? "#f59e0b" :
                       specPct > 0.5  ? "#22c55e" :
-                                       "#22d3ee";
+                                       "#8868D8";
 
                     return (
                       <div key={idx} style={{

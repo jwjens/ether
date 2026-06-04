@@ -35,7 +35,7 @@ const DATA_TYPE_LABELS: Record<DataType, string> = {
 
 const DATA_TYPE_STYLE: Record<DataType, { background: string; color: string }> = {
   text:          { background: "rgba(148,163,184,0.12)", color: "#94a3b8" },
-  number:        { background: "rgba(56,189,248,0.12)",  color: "#38bdf8" },
+  number:        { background: "rgba(96,64,192,0.12)",  color: "#6040c0" },
   single_choice: { background: "rgba(99,102,241,0.12)",  color: "#818cf8" },
   multi_choice:  { background: "rgba(167,139,250,0.12)", color: "#c084fc" },
   boolean:       { background: "rgba(52,211,153,0.12)",  color: "#34d399" },
@@ -386,7 +386,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
               </div>
               <button
                 onClick={formOpen ? closeDefForm : openDefForm}
-                style={{ padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: formOpen ? "var(--bg-tertiary)" : "rgba(56,189,248,0.08)", color: formOpen ? "var(--text-tertiary)" : "var(--accent-blue)", border: "1px solid " + (formOpen ? "var(--border-primary)" : "rgba(56,189,248,0.3)"), cursor: "pointer", flexShrink: 0 }}>
+                style={{ padding: "5px 10px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: formOpen ? "var(--bg-tertiary)" : "rgba(96,64,192,0.08)", color: formOpen ? "var(--text-tertiary)" : "var(--accent-blue)", border: "1px solid " + (formOpen ? "var(--border-primary)" : "rgba(96,64,192,0.3)"), cursor: "pointer", flexShrink: 0 }}>
                 {formOpen ? "Cancel" : "+ Add Category"}
               </button>
             </div>
@@ -450,13 +450,13 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                       style={{
                         display: "flex", alignItems: "center", gap: 10, padding: "10px 20px",
                         borderBottom: (!isExpanded && idx < definitions.length - 1) ? "1px solid var(--border-primary)" : "none",
-                        background: isHighlight ? "rgba(56,189,248,0.08)" : "transparent",
+                        background: isHighlight ? "rgba(96,64,192,0.08)" : "transparent",
                         transition: "background 0.6s ease",
                         cursor: isChoice ? "pointer" : "default",
                         userSelect: "none" as const,
                       }}
                       onMouseEnter={isChoice ? e => { if (!isHighlight) e.currentTarget.style.background = "var(--bg-hover)"; } : undefined}
-                      onMouseLeave={isChoice ? e => { e.currentTarget.style.background = isHighlight ? "rgba(56,189,248,0.08)" : "transparent"; } : undefined}
+                      onMouseLeave={isChoice ? e => { e.currentTarget.style.background = isHighlight ? "rgba(96,64,192,0.08)" : "transparent"; } : undefined}
                     >
                       {/* Chevron for choice types, spacer for others */}
                       <div style={{ width: 14, flexShrink: 0 }}>
@@ -629,7 +629,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
                           <button
                             onClick={e => { e.stopPropagation(); openVocabForm(def.id); }}
                             style={{ display: "block", width: "100%", padding: "9px 16px", background: "none", border: "none", textAlign: "left" as const, fontSize: 12, color: "var(--text-tertiary)", cursor: "pointer", fontWeight: 600 }}
-                            onMouseEnter={e => { e.currentTarget.style.color = "var(--accent-blue)"; e.currentTarget.style.background = "rgba(56,189,248,0.04)"; }}
+                            onMouseEnter={e => { e.currentTarget.style.color = "var(--accent-blue)"; e.currentTarget.style.background = "rgba(96,64,192,0.04)"; }}
                             onMouseLeave={e => { e.currentTarget.style.color = "var(--text-tertiary)"; e.currentTarget.style.background = "none"; }}
                           >
                             + Add value

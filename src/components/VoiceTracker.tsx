@@ -66,7 +66,7 @@ function fmtDuration(min: number): string {
 
 const SLOT_COLOR: Record<string, string> = {
   talkset: "#a78bfa", talk_break: "#a78bfa", spot_break: "#f87171",
-  music: "#38bdf8", liner: "#fb923c", sweeper: "#34d399",
+  music: "#6040c0", liner: "#fb923c", sweeper: "#34d399",
   news: "#fbbf24", jingle: "#e879f9",
 };
 const isTalkSlot = (t: string) => t === "talkset" || t === "talk_break";
@@ -134,7 +134,7 @@ function HorizontalVU({ level, peak, recording }: { level: number; peak: number;
       // Peak indicator
       if (pk > 0.01 && recording) {
         const pkX = pk * w;
-        ctx.fillStyle = pk > 0.8 ? "#ef4444" : pk > 0.6 ? "#fbbf24" : "#22d3ee";
+        ctx.fillStyle = pk > 0.8 ? "#ef4444" : pk > 0.6 ? "#fbbf24" : "#8868D8";
         ctx.fillRect(pkX - 1 * dpr, barTop, 2 * dpr, barH);
       }
 

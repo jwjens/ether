@@ -266,8 +266,8 @@ export default function EASLogbook({ onClose }: { onClose?: () => void }) {
                   <td style={{ padding: "8px 12px" }}>
                     <span style={{
                       padding: "2px 6px", fontSize: 11, fontWeight: 700, letterSpacing: "0.04em",
-                      background: ALERT_CODES.find(a => a.code === e.alert_code)?.severity === "alert" ? "rgba(239,68,68,0.18)" : "rgba(56,189,248,0.18)",
-                      color:      ALERT_CODES.find(a => a.code === e.alert_code)?.severity === "alert" ? "#ef4444" : "#38bdf8",
+                      background: ALERT_CODES.find(a => a.code === e.alert_code)?.severity === "alert" ? "rgba(239,68,68,0.18)" : "rgba(96,64,192,0.18)",
+                      color:      ALERT_CODES.find(a => a.code === e.alert_code)?.severity === "alert" ? "#ef4444" : "#6040c0",
                     }}>{e.alert_code}</span>
                   </td>
                   <td style={{ padding: "8px 12px", color: "var(--text-secondary)" }}>{ALERT_CODES.find(a => a.code === e.alert_code)?.label || ""}</td>

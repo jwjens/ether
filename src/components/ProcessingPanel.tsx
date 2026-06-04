@@ -87,10 +87,10 @@ export default function ProcessingPanel() {
 
       {/* Progress */}
       {progress && (
-        <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>
+        <div style={{ padding: "10px 14px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>
           {progress}
           {total > 0 && (
-            <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
+            <div style={{ width: "100%", height: 3, background: "rgba(96,64,192,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
               <div style={{ width: (done / total * 100) + "%", height: "100%", background: "var(--accent-blue)", borderRadius: 0, transition: "width 0.3s ease" }} />
             </div>
           )}

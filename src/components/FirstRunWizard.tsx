@@ -172,13 +172,13 @@ export default function FirstRunWizard({ onComplete }: Props) {
       padding: 24,
     }}>
       {/* Background glow */}
-      <div style={{ position: "absolute", width: 700, height: 700, borderRadius: "50%", background: "radial-gradient(circle, rgba(34,211,238,0.05) 0%, transparent 70%)", pointerEvents: "none" }} />
+      <div style={{ position: "absolute", width: 700, height: 700, borderRadius: "50%", background: "radial-gradient(circle, rgba(136,104,216,0.05) 0%, transparent 70%)", pointerEvents: "none" }} />
 
       <div style={{ width: "100%", maxWidth: 640, position: "relative" as any }}>
         {/* Step dots */}
         <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 48 }}>
           {[0,1,2,3].map(i => (
-            <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 0, background: i === step ? "#22d3ee" : i < step ? "rgba(34,211,238,0.4)" : "rgba(255,255,255,0.1)", transition: "all 0.3s ease" }} />
+            <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 0, background: i === step ? "#8868D8" : i < step ? "rgba(136,104,216,0.4)" : "rgba(255,255,255,0.1)", transition: "all 0.3s ease" }} />
           ))}
         </div>
 
@@ -186,7 +186,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
         {step === 0 && (
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#22d3ee", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#8868D8", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
               <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>How do you want<br />to broadcast?</h1>
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>This sets your default deck layout. You can change it anytime in Settings.</p>
             </div>
@@ -197,22 +197,22 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 return (
                   <button key={mode.id} onClick={() => setExperienceMode(mode.id)} style={{
                     padding: "20px 24px", borderRadius: 0, textAlign: "left" as any,
-                    background: selected ? "rgba(34,211,238,0.08)" : "rgba(255,255,255,0.03)",
-                    border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
+                    background: selected ? "rgba(136,104,216,0.08)" : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${selected ? "#8868D8" : "rgba(255,255,255,0.08)"}`,
                     cursor: "pointer", transition: "all 0.2s",
-                    boxShadow: selected ? "0 0 24px rgba(34,211,238,0.12)" : "none",
+                    boxShadow: selected ? "0 0 24px rgba(136,104,216,0.12)" : "none",
                     display: "flex", alignItems: "center", gap: 20,
                   }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: selected ? "#22d3ee" : "#f0f0f8", letterSpacing: "-0.02em" }}>{mode.label}</span>
-                        <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: selected ? "#22d3ee" : "rgba(255,255,255,0.25)", background: selected ? "rgba(34,211,238,0.15)" : "rgba(255,255,255,0.06)", padding: "2px 7px", borderRadius: 0 }}>{mode.badge}</span>
+                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: selected ? "#8868D8" : "#f0f0f8", letterSpacing: "-0.02em" }}>{mode.label}</span>
+                        <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: selected ? "#8868D8" : "rgba(255,255,255,0.25)", background: selected ? "rgba(136,104,216,0.15)" : "rgba(255,255,255,0.06)", padding: "2px 7px", borderRadius: 0 }}>{mode.badge}</span>
                       </div>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: selected ? "rgba(34,211,238,0.7)" : "rgba(255,255,255,0.35)", marginBottom: 4, letterSpacing: "0.02em" }}>{mode.tagline}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: selected ? "rgba(136,104,216,0.7)" : "rgba(255,255,255,0.35)", marginBottom: 4, letterSpacing: "0.02em" }}>{mode.tagline}</div>
                       <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{mode.desc}</div>
                     </div>
-                    <div style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.15)"}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {selected && <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#22d3ee" }} />}
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", border: `2px solid ${selected ? "#8868D8" : "rgba(255,255,255,0.15)"}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {selected && <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#8868D8" }} />}
                     </div>
                   </button>
                 );
@@ -222,12 +222,12 @@ export default function FirstRunWizard({ onComplete }: Props) {
             <div style={{ marginTop: 32, textAlign: "center" as any }}>
               <button onClick={() => experienceMode && setStep(1)} disabled={!experienceMode} style={{
                 padding: "13px 48px", borderRadius: 0,
-                background: experienceMode ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
+                background: experienceMode ? "linear-gradient(135deg, #8868D8, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: experienceMode ? "#000" : "rgba(255,255,255,0.2)",
                 fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
                 border: "none", cursor: experienceMode ? "pointer" : "default",
                 letterSpacing: "0.04em",
-                boxShadow: experienceMode ? "0 0 32px rgba(34,211,238,0.3)" : "none",
+                boxShadow: experienceMode ? "0 0 32px rgba(136,104,216,0.3)" : "none",
                 transition: "all 0.2s",
               }}>
                 Continue →
@@ -240,7 +240,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
         {step === 1 && (
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#22d3ee", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
+              <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "#8868D8", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
               <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>What are you using<br />Ether for?</h1>
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>We'll customize the interface and language to match your setup.</p>
             </div>
@@ -252,15 +252,15 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 return (
                   <button key={type} onClick={() => setVenueType(type)} style={{
                     padding: "24px 20px", borderRadius: 0,
-                    background: selected ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.03)",
-                    border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
+                    background: selected ? "rgba(136,104,216,0.1)" : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${selected ? "#8868D8" : "rgba(255,255,255,0.08)"}`,
                     cursor: "pointer", textAlign: "left" as any, transition: "all 0.2s",
-                    boxShadow: selected ? "0 0 24px rgba(34,211,238,0.15)" : "none",
+                    boxShadow: selected ? "0 0 24px rgba(136,104,216,0.15)" : "none",
                   }}>
                     <div style={{ marginBottom: 10, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: label.icon }} />
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "#22d3ee" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "#8868D8" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{label.tagline}</div>
-                    {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22d3ee" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "#22d3ee", letterSpacing: "0.1em" }}>SELECTED</span></div>}
+                    {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8868D8" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "#8868D8", letterSpacing: "0.1em" }}>SELECTED</span></div>}
                   </button>
                 );
               })}
@@ -272,15 +272,15 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 return (
                   <button key={type} onClick={() => setVenueType(type)} style={{
                     padding: "24px 20px", borderRadius: 0,
-                    background: selected ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.03)",
-                    border: `1.5px solid ${selected ? "#22d3ee" : "rgba(255,255,255,0.08)"}`,
+                    background: selected ? "rgba(136,104,216,0.1)" : "rgba(255,255,255,0.03)",
+                    border: `1.5px solid ${selected ? "#8868D8" : "rgba(255,255,255,0.08)"}`,
                     cursor: "pointer", textAlign: "left" as any, transition: "all 0.2s",
-                    boxShadow: selected ? "0 0 24px rgba(34,211,238,0.15)" : "none",
+                    boxShadow: selected ? "0 0 24px rgba(136,104,216,0.15)" : "none",
                   }}>
                     <div style={{ marginBottom: 10, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: label.icon }} />
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "#22d3ee" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
+                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "#8868D8" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{label.tagline}</div>
-                    {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22d3ee" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "#22d3ee", letterSpacing: "0.1em" }}>SELECTED</span></div>}
+                    {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8868D8" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "#8868D8", letterSpacing: "0.1em" }}>SELECTED</span></div>}
                   </button>
                 );
               })}
@@ -289,12 +289,12 @@ export default function FirstRunWizard({ onComplete }: Props) {
             <div style={{ marginTop: 32, textAlign: "center" as any }}>
               <button onClick={() => venueType && setStep(2)} disabled={!venueType} style={{
                 padding: "13px 48px", borderRadius: 0,
-                background: venueType ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
+                background: venueType ? "linear-gradient(135deg, #8868D8, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: venueType ? "#000" : "rgba(255,255,255,0.2)",
                 fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
                 border: "none", cursor: venueType ? "pointer" : "default",
                 letterSpacing: "0.04em",
-                boxShadow: venueType ? "0 0 32px rgba(34,211,238,0.3)" : "none",
+                boxShadow: venueType ? "0 0 32px rgba(136,104,216,0.3)" : "none",
                 transition: "all 0.2s",
               }}>
                 Continue →
@@ -334,7 +334,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                     boxSizing: "border-box" as any,
                     transition: "border-color 0.2s",
                   }}
-                  onFocus={e => (e.target.style.borderColor = "#22d3ee")}
+                  onFocus={e => (e.target.style.borderColor = "#8868D8")}
                   onBlur={e => (e.target.style.borderColor = "rgba(255,255,255,0.12)")}
                 />
               </div>
@@ -356,7 +356,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                     transition: "border-color 0.2s",
                     fontFamily: "'Inter', system-ui, sans-serif",
                   }}
-                  onFocus={e => (e.target.style.borderColor = "#22d3ee")}
+                  onFocus={e => (e.target.style.borderColor = "#8868D8")}
                   onBlur={e => (e.target.style.borderColor = "rgba(255,255,255,0.08)")}
                 />
               </div>
@@ -366,12 +366,12 @@ export default function FirstRunWizard({ onComplete }: Props) {
               <button onClick={() => setStep(1)} style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: 13 }}>← Back</button>
               <button onClick={() => name.trim() && setStep(3)} disabled={!name.trim()} style={{
                 padding: "13px 48px", borderRadius: 0,
-                background: name.trim() ? "linear-gradient(135deg, #22d3ee, #a78bfa)" : "rgba(255,255,255,0.06)",
+                background: name.trim() ? "linear-gradient(135deg, #8868D8, #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: name.trim() ? "#000" : "rgba(255,255,255,0.2)",
                 fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
                 border: "none", cursor: name.trim() ? "pointer" : "default",
                 letterSpacing: "0.04em",
-                boxShadow: name.trim() ? "0 0 32px rgba(34,211,238,0.3)" : "none",
+                boxShadow: name.trim() ? "0 0 32px rgba(136,104,216,0.3)" : "none",
                 transition: "all 0.2s",
               }}>Continue →</button>
             </div>
@@ -385,10 +385,10 @@ export default function FirstRunWizard({ onComplete }: Props) {
             <div style={{ marginBottom: 28 }}>
               <div style={{
                 width: 72, height: 72, borderRadius: "50%",
-                background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
+                background: "linear-gradient(135deg, #8868D8, #a78bfa)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 margin: "0 auto",
-                boxShadow: "0 0 40px rgba(34,211,238,0.4)",
+                boxShadow: "0 0 40px rgba(136,104,216,0.4)",
                 animation: "wiz-check 0.5s cubic-bezier(0.34,1.56,0.64,1) both",
               }}>
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
@@ -402,7 +402,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
             </h1>
 
             {/* Station name preview */}
-            <div style={{ margin: "20px auto", padding: "16px 28px", borderRadius: 0, background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", display: "inline-block" }}>
+            <div style={{ margin: "20px auto", padding: "16px 28px", borderRadius: 0, background: "rgba(136,104,216,0.08)", border: "1px solid rgba(136,104,216,0.2)", display: "inline-block" }}>
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.03em" }}>{name}</div>
               {tagline && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{tagline}</div>}
             </div>
@@ -423,12 +423,12 @@ export default function FirstRunWizard({ onComplete }: Props) {
 
             <button onClick={handleComplete} disabled={saving} style={{
               padding: "16px 56px", borderRadius: 0,
-              background: "linear-gradient(135deg, #22d3ee, #a78bfa)",
+              background: "linear-gradient(135deg, #8868D8, #a78bfa)",
               color: "#000",
               fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800,
               border: "none", cursor: saving ? "default" : "pointer",
               letterSpacing: "0.04em",
-              boxShadow: "0 0 40px rgba(34,211,238,0.4), 0 0 80px rgba(167,139,250,0.2)",
+              boxShadow: "0 0 40px rgba(136,104,216,0.4), 0 0 80px rgba(167,139,250,0.2)",
               animation: "wiz-glow 2s ease-in-out infinite",
               opacity: saving ? 0.7 : 1,
             }}>
@@ -450,8 +450,8 @@ export default function FirstRunWizard({ onComplete }: Props) {
           to{opacity:1;transform:scale(1);}
         }
         @keyframes wiz-glow {
-          0%,100%{box-shadow:0 0 40px rgba(34,211,238,0.4),0 0 80px rgba(167,139,250,0.2);}
-          50%{box-shadow:0 0 60px rgba(34,211,238,0.6),0 0 100px rgba(167,139,250,0.35);}
+          0%,100%{box-shadow:0 0 40px rgba(136,104,216,0.4),0 0 80px rgba(167,139,250,0.2);}
+          50%{box-shadow:0 0 60px rgba(136,104,216,0.6),0 0 100px rgba(167,139,250,0.35);}
         }
       `}</style>
     </div>

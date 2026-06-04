@@ -212,7 +212,7 @@ export default function SubscriptionPanel() {
   };
 
   const planColor = (plan: PlanTier) => {
-    if (plan === "pro")              return "#22d3ee";
+    if (plan === "pro")              return "#8868D8";
     if (plan === "station")          return "#a78bfa";
     if (plan === "pro_lifetime")     return "#f59e0b";
     if (plan === "station_lifetime") return "#f59e0b";
@@ -492,20 +492,20 @@ export default function SubscriptionPanel() {
           {/* Studio */}
           <div style={{
             background: "var(--bg-secondary)", borderRadius: 0,
-            border: `2px solid ${currentPlan === "pro" ? "#22d3ee" : "rgba(34,211,238,0.25)"}`,
+            border: `2px solid ${currentPlan === "pro" ? "#8868D8" : "rgba(136,104,216,0.25)"}`,
             padding: "24px 20px", position: "relative" as const,
-            boxShadow: "0 0 32px rgba(34,211,238,0.08)",
+            boxShadow: "0 0 32px rgba(136,104,216,0.08)",
           }}>
-            <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "#22d3ee", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#22d3ee", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Studio</div>
+            <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "#8868D8", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#8868D8", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Studio</div>
             <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>per month · solo creator / podcaster</div>
             {currentPlan === "pro" ? (
-              <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(34,211,238,0.1)", border: "1px solid rgba(34,211,238,0.3)", color: "#22d3ee", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
+              <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(136,104,216,0.1)", border: "1px solid rgba(136,104,216,0.3)", color: "#8868D8", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
                 ✓ Active — Cancel Plan
               </button>
             ) : (
-              <button onClick={() => openCheckout("pro")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "#22d3ee", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, boxShadow: "0 0 24px rgba(34,211,238,0.3)", fontFamily: "'Syne', sans-serif" }}>
+              <button onClick={() => openCheckout("pro")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "#8868D8", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, boxShadow: "0 0 24px rgba(136,104,216,0.3)", fontFamily: "'Syne', sans-serif" }}>
                 {currentPlan === "station" ? "Downgrade to Studio" : "Upgrade to Studio →"}
               </button>
             )}
@@ -513,10 +513,10 @@ export default function SubscriptionPanel() {
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontWeight: 600, marginBottom: 4 }}>Everything in Solo, plus:</div>
               {FEATURES.filter(f => f.pro).map(f => (
                 <div key={f.label} style={{ fontSize: 11, color: f.comingSoon ? "var(--text-tertiary)" : "var(--text-secondary)", display: "flex", gap: 8, alignItems: "flex-start" }}>
-                  <span style={{ color: "#22d3ee", flexShrink: 0 }}>✓</span>
+                  <span style={{ color: "#8868D8", flexShrink: 0 }}>✓</span>
                   {f.label}
-                  {f.isNew && <span style={{ fontSize: 8, background: "rgba(34,211,238,0.2)", color: "#22d3ee", padding: "1px 5px", borderRadius: 0, fontWeight: 800, letterSpacing: "0.06em", flexShrink: 0 }}>NEW</span>}
-                  {f.comingSoon && <span style={{ fontSize: 9, background: "rgba(34,211,238,0.15)", color: "#22d3ee", padding: "1px 6px", borderRadius: 0, fontWeight: 700, flexShrink: 0 }}>SOON</span>}
+                  {f.isNew && <span style={{ fontSize: 8, background: "rgba(136,104,216,0.2)", color: "#8868D8", padding: "1px 5px", borderRadius: 0, fontWeight: 800, letterSpacing: "0.06em", flexShrink: 0 }}>NEW</span>}
+                  {f.comingSoon && <span style={{ fontSize: 9, background: "rgba(136,104,216,0.15)", color: "#8868D8", padding: "1px 6px", borderRadius: 0, fontWeight: 700, flexShrink: 0 }}>SOON</span>}
                 </div>
               ))}
             </div>

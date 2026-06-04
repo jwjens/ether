@@ -2015,7 +2015,7 @@ export default function BroadcastEditor({
               browseFile(trackContextMenu.trackId);
               setTrackContextMenu(null);
             }} />
-            <CtxItem icon="✦" label="Open in Cue Editor" color="#22d3ee" onClick={() => {
+            <CtxItem icon="✦" label="Open in Cue Editor" color="#8868D8" onClick={() => {
               const track = tracks.find(t => t.id === trackContextMenu.trackId);
               if (track?.filePath) onOpenCueEditor?.(track.filePath);
               setTrackContextMenu(null);
@@ -2027,7 +2027,7 @@ export default function BroadcastEditor({
             <div style={{ padding: "4px 14px 2px", fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>
               SEND TO LIVE ASSIST DECK
             </div>
-            <CtxItem icon="A" label="Load into Deck A" color="#38bdf8" onClick={() => {
+            <CtxItem icon="A" label="Load into Deck A" color="#6040c0" onClick={() => {
               const track = tracks.find(t => t.id === trackContextMenu.trackId);
               const clip  = clips.find(c => c.trackId === trackContextMenu.trackId);
               if (clip) sendToDeck(clip.id, "A");
@@ -2127,7 +2127,7 @@ export default function BroadcastEditor({
             <div style={{ padding: "4px 14px 2px", fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>
               SEND TO DECK
             </div>
-            <CtxItem icon="A" label="Load into Deck A" color="#38bdf8" onClick={() => {
+            <CtxItem icon="A" label="Load into Deck A" color="#6040c0" onClick={() => {
               sendToDeck(contextMenu.clipId, "A");
             }} />
             <CtxItem icon="B" label="Load into Deck B" color="#34d399" onClick={() => {
@@ -2146,7 +2146,7 @@ export default function BroadcastEditor({
               bounceAndPlace();
               setContextMenu(null);
             }} />
-            <CtxItem icon="✦" label="Open in Cue Editor" color="#22d3ee" onClick={() => {
+            <CtxItem icon="✦" label="Open in Cue Editor" color="#8868D8" onClick={() => {
               const track = tracks.find(t => t.id === contextMenu.trackId);
               if (track?.filePath) onOpenCueEditor?.(track.filePath);
               setContextMenu(null);

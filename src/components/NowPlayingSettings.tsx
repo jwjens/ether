@@ -135,8 +135,8 @@ export default function NowPlayingSettings() {
         {WIDGETS.map(w => (
           <div key={w.id} onClick={() => setWidgetType(w.id)} style={{
             padding: "14px 16px", borderRadius: 0, cursor: "pointer", position: "relative" as const,
-            background: widgetType === w.id ? "rgba(34,211,238,0.08)" : "var(--bg-tertiary)",
-            border: `1px solid ${widgetType === w.id ? "rgba(34,211,238,0.35)" : "var(--border-primary)"}`,
+            background: widgetType === w.id ? "rgba(136,104,216,0.08)" : "var(--bg-tertiary)",
+            border: `1px solid ${widgetType === w.id ? "rgba(136,104,216,0.35)" : "var(--border-primary)"}`,
             transition: "all 0.15s ease",
           }}>
             {w.badge && <div style={{ position: "absolute" as const, top: 8, right: 8, fontSize: 8, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", padding: "2px 6px", borderRadius: 0 }}>{w.badge}</div>}

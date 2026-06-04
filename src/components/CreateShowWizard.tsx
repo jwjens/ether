@@ -24,7 +24,7 @@ function fmtHour(h: number): string {
   return h < 12 ? `${h} AM` : `${h - 12} PM`;
 }
 
-const CAT_COLORS = ["#38bdf8","#a78bfa","#34d399","#f87171","#fbbf24","#fb923c","#e879f9","#22d3ee"];
+const CAT_COLORS = ["#6040c0","#a78bfa","#34d399","#f87171","#fbbf24","#fb923c","#e879f9","#8868D8"];
 
 // ── Shared step card ──────────────────────────────────────────
 
@@ -58,7 +58,7 @@ function ProgressBar({ step, total }: { step: number; total: number }) {
             width: 28, height: 28, borderRadius: "50%",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: 11, fontWeight: 800,
-            background: i < step ? "var(--accent-blue)" : i === step ? "rgba(56,189,248,0.2)" : "var(--bg-tertiary)",
+            background: i < step ? "var(--accent-blue)" : i === step ? "rgba(96,64,192,0.2)" : "var(--bg-tertiary)",
             color: i < step ? "#fff" : i === step ? "var(--accent-blue)" : "var(--text-tertiary)",
             border: i === step ? "1px solid var(--accent-blue)" : "1px solid var(--border-primary)",
             transition: "all 0.2s",
@@ -99,7 +99,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
   const [startHour, setStartHour]     = useState(6);
   const [endHour, setEndHour]         = useState(10);
   const [activeDays, setActiveDays]   = useState("0123456");
-  const [showColor, setShowColor]     = useState("#38bdf8");
+  const [showColor, setShowColor]     = useState("#6040c0");
 
   // Step 2: Format Clock
   const [clocks, setClocks]           = useState<Clock[]>([]);
@@ -113,7 +113,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
   const [selectedCatId, setSelectedCatId] = useState<number | null>(null);
   const [newCatCode, setNewCatCode]   = useState("");
   const [newCatName, setNewCatName]   = useState("");
-  const [newCatColor, setNewCatColor] = useState("#38bdf8");
+  const [newCatColor, setNewCatColor] = useState("#6040c0");
   const [creatingCat, setCreatingCat] = useState(false);
   const [catCreated, setCatCreated]   = useState(false);
 
@@ -162,7 +162,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
       const res = await (window as any).ether.categories.create({ station_id: stationId, code: newCatCode.trim().toUpperCase(), name: newCatName.trim(), color: newCatColor, spins_per_hour: 0, priority: 0 });
       await loadCategories();
       if (res.row?.id) setSelectedCatId(res.row.id);
-      setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
+      setNewCatCode(""); setNewCatName(""); setNewCatColor("#6040c0");
       setCatCreated(true);
       setTimeout(() => setCatCreated(false), 2000);
     } catch {}
@@ -309,8 +309,8 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
                       <button key={c.id} onClick={() => setSelectedClockId(c.id)} style={{
                         display: "flex", alignItems: "center", gap: 10,
                         padding: "9px 12px", borderRadius: 0, cursor: "pointer", textAlign: "left" as const,
-                        background: selectedClockId === c.id ? "rgba(56,189,248,0.12)" : "var(--bg-tertiary)",
-                        border: `1px solid ${selectedClockId === c.id ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`,
+                        background: selectedClockId === c.id ? "rgba(96,64,192,0.12)" : "var(--bg-tertiary)",
+                        border: `1px solid ${selectedClockId === c.id ? "rgba(96,64,192,0.4)" : "var(--border-primary)"}`,
                         color: "var(--text-primary)", fontSize: 13, fontWeight: selectedClockId === c.id ? 700 : 400,
                         transition: "all 0.15s",
                       }}>
@@ -367,8 +367,8 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
                       <button key={c.id} onClick={() => setSelectedCatId(selectedCatId === c.id ? null : c.id)} style={{
                         display: "flex", alignItems: "center", gap: 6,
                         padding: "7px 12px", borderRadius: 0, cursor: "pointer",
-                        background: selectedCatId === c.id ? (c.color ? c.color + "22" : "rgba(56,189,248,0.12)") : "var(--bg-tertiary)",
-                        border: `1px solid ${selectedCatId === c.id ? (c.color || "rgba(56,189,248,0.4)") : "var(--border-primary)"}`,
+                        background: selectedCatId === c.id ? (c.color ? c.color + "22" : "rgba(96,64,192,0.12)") : "var(--bg-tertiary)",
+                        border: `1px solid ${selectedCatId === c.id ? (c.color || "rgba(96,64,192,0.4)") : "var(--border-primary)"}`,
                         color: "var(--text-primary)", fontSize: 12, fontWeight: selectedCatId === c.id ? 700 : 400,
                         transition: "all 0.15s",
                       }}>

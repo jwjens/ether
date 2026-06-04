@@ -299,7 +299,7 @@ function SessionNameBar({ name, onChange, onSave, layouts, onLoadLayout, onDelet
                     <button onClick={() => setRenamingId(null)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}>✕</button>
                   </div>
                 ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, borderRadius: 0, background: l.name === name ? "rgba(56,189,248,0.1)" : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, borderRadius: 0, background: l.name === name ? "rgba(96,64,192,0.1)" : "none" }}>
                     <button
                       onClick={() => { onLoadLayout(l.id); setShowList(false); }}
                       style={{
@@ -1858,7 +1858,7 @@ export default function App() {
                     onClick={() => drawerClick(item.key, item.action)}
                     style={{
                       display: "flex", alignItems: "center", gap: 11, width: "100%",
-                      padding: "10px 16px", background: item.active ? "rgba(56,189,248,0.08)" : "transparent",
+                      padding: "10px 16px", background: item.active ? "rgba(96,64,192,0.08)" : "transparent",
                       border: "none",
                       borderLeft: `3px solid ${item.active ? "var(--accent-cyan)" : "transparent"}`,
                       color: item.active ? "var(--accent-cyan)" : "var(--text-secondary)",
@@ -1866,7 +1866,7 @@ export default function App() {
                       cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s",
                     }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = item.active ? "rgba(56,189,248,0.08)" : "transparent"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = item.active ? "rgba(96,64,192,0.08)" : "transparent"; }}
                   >
                     <span style={{ fontSize: 15, lineHeight: 1 }}>{item.emoji}</span>
                     <span style={{ flex: 1 }}>{item.label}</span>
@@ -2188,7 +2188,7 @@ export default function App() {
       />}
       {restoreInfo && <SessionRestoreToast info={restoreInfo} onDismiss={() => setRestoreInfo(null)} />}
       {switchToast && (
-        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: "1px solid rgba(56,189,248,0.4)", color: "#38bdf8", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
+        <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: "1px solid rgba(96,64,192,0.4)", color: "#6040c0", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
           {switchToast}
         </div>
       )}
@@ -2614,7 +2614,7 @@ function DragHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<H
 function CartWallPanel({ onClose }: { onClose: () => void }) {
   const engine = useAudioEngine();
   const KEYS = ["1","2","3","4","5","6","7","8","9","0","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F"];
-  const COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","#22d3ee","#38bdf8","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16","#f43f5e"];
+  const COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","#8868D8","#6040c0","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16","#f43f5e"];
 
   const [carts, setCarts] = useState(() =>
     KEYS.map((k, i) => ({ key: k, label: `Cart ${i+1}`, filePath: "", color: COLORS[i % COLORS.length], playing: false }))
@@ -3278,7 +3278,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
             // carries the deck-TYPE color (every music deck is green), which can't tell A/B/C apart.
             const deckColor = (slot === "A" || slot === "B" || slot === "C")
               ? deckColors[slot]
-              : (config?.color || deckColors[slot] || "#38bdf8");
+              : (config?.color || deckColors[slot] || "#6040c0");
 
             // Music decks → ConsoleStrip (fader + VU)
             if (deckType === "music") {
@@ -3762,7 +3762,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const [showCreateCat, setShowCreateCat] = useState(false);
   const [newCatCode, setNewCatCode] = useState("");
   const [newCatName, setNewCatName] = useState("");
-  const [newCatColor, setNewCatColor] = useState("#38bdf8");
+  const [newCatColor, setNewCatColor] = useState("#6040c0");
   const [catList, setCatList] = useState<{ id: number; code: string; color: string | null }[]>([]);
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -4068,7 +4068,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     if (!newCatCode.trim() || !newCatName.trim()) return;
     try {
       await (window as any).ether.categories.create({ station_id: stationId, code: newCatCode.trim().toUpperCase(), name: newCatName.trim(), color: newCatColor });
-      setNewCatCode(""); setNewCatName(""); setNewCatColor("#38bdf8");
+      setNewCatCode(""); setNewCatName(""); setNewCatColor("#6040c0");
       setShowCreateCat(false);
       load();
       setStatus("Category created: " + newCatCode.trim().toUpperCase());
@@ -4331,7 +4331,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           style={{ flex: 1, maxWidth: 280, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
         {/* Category filter */}
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
-          style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgba(56,189,248,0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgba(56,189,248,0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
+          style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgba(96,64,192,0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgba(96,64,192,0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">All Categories</option>
           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
         </select>
@@ -4355,7 +4355,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
           onApplied={() => { setShowBulkAssign(false); setSmvReloadKey(k => k + 1); }}
         />
       )}
-      {status && <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
+      {status && <div style={{ padding: "10px 14px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
       {showCreateCat && (
         <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "12px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, marginBottom: 8 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" as any }}>New Category</span>
@@ -4424,7 +4424,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
 
             {/* Discogs lookup */}
             <div style={{ padding: "8px 20px" }}>
-              <button onClick={lookupDiscogs} disabled={discogsLoading} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.12)", color: "var(--accent-blue)", border: "1px solid rgba(56,189,248,0.3)", cursor: "pointer" }}>
+              <button onClick={lookupDiscogs} disabled={discogsLoading} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(96,64,192,0.12)", color: "var(--accent-blue)", border: "1px solid rgba(96,64,192,0.3)", cursor: "pointer" }}>
                 {discogsLoading ? "Searching…" : "🔍 Lookup on Discogs"}
               </button>
               {discogsError && <span style={{ marginLeft: 10, fontSize: 12, color: "var(--accent-red)" }}>{discogsError}</span>}
@@ -4673,7 +4673,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
               </div>
               {/* Right action zone — always visible, no hover gate */}
               <div role="gridcell" style={{ display: "flex", alignItems: "center", gap: 3, padding: "0 6px", borderLeft: "1px solid var(--border-primary)", flexShrink: 0 }}>
-                <button onClick={() => onLoadA(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(56,189,248,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
+                <button onClick={() => onLoadA(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(96,64,192,0.15)", color: "var(--accent-blue)", border: "none", cursor: "pointer" }}>A</button>
                 <button onClick={() => onLoadB(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
                 <button onClick={() => onLoadC(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>C</button>
                 <button onClick={() => onQueue(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
@@ -4741,7 +4741,7 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
   const fillTrackRef2 = useRef<string>("");
   const fillTrackRefs = [fillTrackRef0, fillTrackRef1, fillTrackRef2];
 
-  const DECK_COLORS = ["#38bdf8", "#34d399", "#a78bfa"] as const;
+  const DECK_COLORS = ["#6040c0", "#34d399", "#a78bfa"] as const;
   const DECK_IDS_ALL = ["A", "B", "C"] as const;
 
   useEffect(() => {
@@ -4979,8 +4979,8 @@ function NowPlayingPill() {
           100% { transform: translateY(0);    opacity: 1; }
         }
         @keyframes np-pulse-live {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(34,211,238,0.0); }
-          50%      { box-shadow: 0 0 0 2px rgba(34,211,238,0.18); }
+          0%, 100% { box-shadow: 0 0 0 0 rgba(136,104,216,0.0); }
+          50%      { box-shadow: 0 0 0 2px rgba(136,104,216,0.18); }
         }
       `}</style>
       <div style={{
@@ -4996,8 +4996,8 @@ function NowPlayingPill() {
         {/* Status dot (pulsing when track is playing) */}
         <div style={{
           width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-          background: track ? "#22d3ee" : "#3a3a4a",
-          boxShadow: track ? "0 0 6px rgba(34,211,238,0.7)" : "none",
+          background: track ? "#8868D8" : "#3a3a4a",
+          boxShadow: track ? "0 0 6px rgba(136,104,216,0.7)" : "none",
           animation: track ? "on-air-breathe 2s ease-in-out infinite" : "none",
         }} />
 
@@ -5065,8 +5065,8 @@ function NowPlayingPill() {
           }}>
             <div style={{
               height: "100%", width: `${pct * 100}%`,
-              background: isEndingSoon ? "#fbbf24" : "#22d3ee",
-              boxShadow: isEndingSoon ? "0 0 4px rgba(251,191,36,0.6)" : "0 0 4px rgba(34,211,238,0.5)",
+              background: isEndingSoon ? "#fbbf24" : "#8868D8",
+              boxShadow: isEndingSoon ? "0 0 4px rgba(251,191,36,0.6)" : "0 0 4px rgba(136,104,216,0.5)",
               transition: "width 1s linear, background 0.3s",
             }} />
           </div>

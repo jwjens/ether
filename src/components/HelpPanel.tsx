@@ -481,7 +481,7 @@ export default function HelpPanel({ onClose, initialTopic }: { onClose?: () => v
                   <button key={t.id} onClick={() => setActiveId(t.id)} style={{
                     display: "block", width: "100%", textAlign: "left" as any,
                     padding: "7px 14px", fontSize: 13, border: "none", cursor: "pointer",
-                    background: activeId === t.id ? "rgba(56,189,248,0.12)" : "transparent",
+                    background: activeId === t.id ? "rgba(96,64,192,0.12)" : "transparent",
                     color: activeId === t.id ? "var(--accent-blue)" : "var(--text-secondary)",
                     fontWeight: activeId === t.id ? 700 : 500,
                     borderLeft: activeId === t.id ? "2px solid var(--accent-blue)" : "2px solid transparent",

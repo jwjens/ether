@@ -236,7 +236,7 @@ export default function MacrosPanel() {
 
   const newMacro = (): Macro => ({
     id: 0, name: "", description: null, trigger_type: "manual", trigger_value: null,
-    actions: [], hotkey: null, is_active: 1, color: "#38bdf8",
+    actions: [], hotkey: null, is_active: 1, color: "#6040c0",
   });
 
   const inputStyle: React.CSSProperties = { padding: "6px 10px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 12, outline: "none", width: "100%" };
@@ -317,7 +317,7 @@ export default function MacrosPanel() {
               {editing.actions.map((a, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
                   <span style={{ fontSize: 9, color: "var(--text-tertiary)", width: 16, textAlign: "center" }}>{i + 1}</span>
-                  <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", background: a.type === "wait" ? "rgba(251,191,36,0.15)" : a.type === "log" ? "rgba(56,189,248,0.15)" : "rgba(52,211,153,0.15)", color: a.type === "wait" ? "var(--accent-amber)" : a.type === "log" ? "var(--accent-blue)" : "var(--accent-green)" }}>
+                  <span style={{ fontSize: 8, fontWeight: 700, padding: "1px 5px", background: a.type === "wait" ? "rgba(251,191,36,0.15)" : a.type === "log" ? "rgba(96,64,192,0.15)" : "rgba(52,211,153,0.15)", color: a.type === "wait" ? "var(--accent-amber)" : a.type === "log" ? "var(--accent-blue)" : "var(--accent-green)" }}>
                     {a.type.toUpperCase()}
                   </span>
                   <span style={{ flex: 1, fontSize: 11, color: "var(--text-primary)" }}>

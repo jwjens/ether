@@ -307,7 +307,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
 
   const sourceLabel = (s: CueResult["source"]) => ({
     "id3-promo": { label: "Promo Only", color: "#34d399" },
-    "id3-standard": { label: "ID3 Tag", color: "#38bdf8" },
+    "id3-standard": { label: "ID3 Tag", color: "#6040c0" },
     "analyzed": { label: "Analyzed", color: "#fbbf24" },
     "skipped": { label: "Skipped", color: "#64748b" },
   }[s]);
@@ -359,7 +359,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
               ["id3-only", "Read ID3 tags only (no analysis)", "Best for Promo Only libraries"],
               ["analyze-all", "Analyze all songs with audio AI", `${songs.length} songs — thorough but slow`],
             ] as const).map(([val, label, sub]) => (
-              <label key={val} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 0, border: `1px solid ${mode === val ? "var(--accent-cyan)" : "var(--border-primary)"}`, background: mode === val ? "rgba(56,189,248,0.06)" : "var(--bg-secondary)", cursor: "pointer" }}>
+              <label key={val} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 0, border: `1px solid ${mode === val ? "var(--accent-cyan)" : "var(--border-primary)"}`, background: mode === val ? "rgba(96,64,192,0.06)" : "var(--bg-secondary)", cursor: "pointer" }}>
                 <input type="radio" name="mode" value={val} checked={mode === val} onChange={() => setMode(val)} style={{ marginTop: 2, accentColor: "var(--accent-cyan)" }} />
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{label}</div>
@@ -369,7 +369,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
             ))}
           </div>
 
-          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 0, background: "rgba(56,189,248,0.06)", border: "1px solid rgba(56,189,248,0.2)" }}>
+          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 0, background: "rgba(96,64,192,0.06)", border: "1px solid rgba(96,64,192,0.2)" }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: "var(--accent-cyan)", marginBottom: 4, letterSpacing: "0.08em" }}>PROMO ONLY USERS</div>
             <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5 }}>
               Promo Only files embed <code style={{ background: "var(--bg-tertiary)", padding: "1px 4px", borderRadius: 0, fontSize: 10 }}>TXXX:Intro</code> and <code style={{ background: "var(--bg-tertiary)", padding: "1px 4px", borderRadius: 0, fontSize: 10 }}>TXXX:Outro</code> ID3 tags with exact timing.
@@ -405,7 +405,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
         <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             {promoCount > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(52,211,153,0.15)", color: "#34d399" }}>✓ {promoCount} Promo Only tags</span>}
-            {id3Count > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(56,189,248,0.15)", color: "var(--accent-cyan)" }}>✓ {id3Count} ID3 tags</span>}
+            {id3Count > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(96,64,192,0.15)", color: "var(--accent-cyan)" }}>✓ {id3Count} ID3 tags</span>}
             {analyzedCount > 0 && <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 0, background: "rgba(251,191,36,0.15)", color: "#fbbf24" }}>✓ {analyzedCount} analyzed</span>}
           </div>
           <button onClick={() => { setStatus("idle"); setResults([]); setProgress(0); }}

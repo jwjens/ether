@@ -99,7 +99,7 @@ export default function AboutPanel({ onClose }: Props) {
         borderRadius: 0,
         display: "flex", flexDirection: "column",
         overflow: "hidden",
-        boxShadow: "0 40px 100px rgba(0,0,0,0.7), 0 0 0 1px rgba(34,211,238,0.06)",
+        boxShadow: "0 40px 100px rgba(0,0,0,0.7), 0 0 0 1px rgba(136,104,216,0.06)",
       }}>
 
         {/* ── Hero ── */}
@@ -115,7 +115,7 @@ export default function AboutPanel({ onClose }: Props) {
           <div style={{
             position: "absolute", top: -80, right: -80,
             width: 300, height: 300, borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(34,211,238,0.06) 0%, transparent 70%)",
+            background: "radial-gradient(circle, rgba(136,104,216,0.06) 0%, transparent 70%)",
             pointerEvents: "none",
           }} />
           <div style={{
@@ -129,9 +129,9 @@ export default function AboutPanel({ onClose }: Props) {
             {/* Logo mark */}
             <div style={{
               width: 72, height: 72, borderRadius: 0, flexShrink: 0,
-              background: "linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%)",
+              background: "linear-gradient(135deg, #8868D8 0%, #a78bfa 100%)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 0 40px rgba(34,211,238,0.25), 0 0 80px rgba(167,139,250,0.12)",
+              boxShadow: "0 0 40px rgba(136,104,216,0.25), 0 0 80px rgba(167,139,250,0.12)",
             }}>
               <svg width="40" height="40" viewBox="0 0 44 44" fill="none">
                 <path d="M4 22 C9 12 14 12 19 22 C24 32 29 32 34 22 C39 12 40 12 40 22"
@@ -153,9 +153,9 @@ export default function AboutPanel({ onClose }: Props) {
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{
                   fontFamily: "'DM Mono', monospace",
-                  fontSize: 13, fontWeight: 700, color: "#22d3ee",
-                  background: "rgba(34,211,238,0.1)",
-                  border: "1px solid rgba(34,211,238,0.25)",
+                  fontSize: 13, fontWeight: 700, color: "#8868D8",
+                  background: "rgba(136,104,216,0.1)",
+                  border: "1px solid rgba(136,104,216,0.25)",
                   borderRadius: 0, padding: "2px 10px",
                 }}>v{version}</span>
               </div>
@@ -193,8 +193,8 @@ export default function AboutPanel({ onClose }: Props) {
             <button key={t.id} onClick={() => setTab(t.id)} style={{
               padding: "6px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
               border: "none", cursor: "pointer", transition: "all 0.12s",
-              background: tab === t.id ? "rgba(34,211,238,0.12)" : "transparent",
-              color: tab === t.id ? "#22d3ee" : "rgba(255,255,255,0.35)",
+              background: tab === t.id ? "rgba(136,104,216,0.12)" : "transparent",
+              color: tab === t.id ? "#8868D8" : "rgba(255,255,255,0.35)",
               letterSpacing: "0.02em",
             }}>
               {t.label}
@@ -230,17 +230,17 @@ export default function AboutPanel({ onClose }: Props) {
                   }}>
                     <div style={{
                       width: 40, height: 40, borderRadius: 0, flexShrink: 0,
-                      background: "linear-gradient(135deg, rgba(34,211,238,0.2), rgba(167,139,250,0.2))",
-                      border: "1px solid rgba(34,211,238,0.2)",
+                      background: "linear-gradient(135deg, rgba(136,104,216,0.2), rgba(167,139,250,0.2))",
+                      border: "1px solid rgba(136,104,216,0.2)",
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 800,
-                      color: "#22d3ee",
+                      color: "#8868D8",
                     }}>
                       {member.name.charAt(0)}
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: "#f0f0f8", marginBottom: 2 }}>{member.name}</div>
-                      <div style={{ fontSize: 11, color: "#22d3ee", marginBottom: 1 }}>{member.role}</div>
+                      <div style={{ fontSize: 11, color: "#8868D8", marginBottom: 1 }}>{member.role}</div>
                       <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)" }}>{member.detail}</div>
                     </div>
                   </div>
@@ -252,7 +252,7 @@ export default function AboutPanel({ onClose }: Props) {
                 <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.18em", color: "rgba(255,255,255,0.2)", textTransform: "uppercase", marginBottom: 12 }}>Contact & Support</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {[
-                    { label: "GitHub Repository", value: "github.com/jwjens/ether",   href: "https://github.com/jwjens/ether",          icon: "⌥", accent: "#22d3ee" },
+                    { label: "GitHub Repository", value: "github.com/jwjens/ether",   href: "https://github.com/jwjens/ether",          icon: "⌥", accent: "#8868D8" },
                     { label: "Legal & Licensing",  value: "legal@ether-technologies.com",      href: "mailto:legal@ether-technologies.com",              icon: "⚖", accent: "#a78bfa" },
                     { label: "Support",            value: "support@ether-technologies.com",    href: "mailto:support@ether-technologies.com",            icon: "◎", accent: "#34d399" },
                   ].map(link => (
@@ -311,9 +311,9 @@ export default function AboutPanel({ onClose }: Props) {
                   <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
                     <span style={{
                       fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700,
-                      color: ri === 0 ? "#22d3ee" : "rgba(255,255,255,0.4)",
-                      background: ri === 0 ? "rgba(34,211,238,0.1)" : "rgba(255,255,255,0.04)",
-                      border: `1px solid ${ri === 0 ? "rgba(34,211,238,0.25)" : "rgba(255,255,255,0.06)"}`,
+                      color: ri === 0 ? "#8868D8" : "rgba(255,255,255,0.4)",
+                      background: ri === 0 ? "rgba(136,104,216,0.1)" : "rgba(255,255,255,0.04)",
+                      border: `1px solid ${ri === 0 ? "rgba(136,104,216,0.25)" : "rgba(255,255,255,0.06)"}`,
                       borderRadius: 0, padding: "2px 10px",
                     }}>v{release.version}</span>
                     <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", fontFamily: "'DM Mono', monospace" }}>{release.date}</span>
@@ -322,7 +322,7 @@ export default function AboutPanel({ onClose }: Props) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 5, paddingLeft: 4 }}>
                     {release.changes.map((change, ci) => (
                       <div key={ci} style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 12, color: ri === 0 ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-                        <span style={{ color: ri === 0 ? "#22d3ee" : "rgba(255,255,255,0.2)", flexShrink: 0, marginTop: 1 }}>→</span>
+                        <span style={{ color: ri === 0 ? "#8868D8" : "rgba(255,255,255,0.2)", flexShrink: 0, marginTop: 1 }}>→</span>
                         {change}
                       </div>
                     ))}

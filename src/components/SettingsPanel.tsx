@@ -740,7 +740,7 @@ function ControllersSection() {
           devices.map(name => {
             const isActive = status.connected && status.deviceName === name;
             return (
-              <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 4, background: isActive ? "rgba(56,189,248,0.06)" : "var(--bg-secondary)", border: `1px solid ${isActive ? "rgba(56,189,248,0.25)" : "var(--border-primary)"}` }}>
+              <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 4, background: isActive ? "rgba(96,64,192,0.06)" : "var(--bg-secondary)", border: `1px solid ${isActive ? "rgba(96,64,192,0.25)" : "var(--border-primary)"}` }}>
                 <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)" }}>{name}</span>
                 {isActive ? (
                   <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-blue)", letterSpacing: "0.05em" }}>CONNECTED</span>
@@ -1125,7 +1125,7 @@ const LISTENER_BASE_URL = "https://listen.ether-technologies.com";
 
 const EMPTY_PUBLIC_PAGE = {
   slug: "", display_name: "", logo_url: "", stream_url: "",
-  color_primary: "#6040c0", color_secondary: "#38bdf8", description: "",
+  color_primary: "#6040c0", color_secondary: "#6040c0", description: "",
   socials: { website: "", instagram: "", twitter: "", facebook: "", youtube: "" } as Record<string, string>,
   public_enabled: false,
 };
@@ -1157,7 +1157,7 @@ function PublicPageSettings() {
         const norm = {
           slug: m.slug || "", display_name: m.display_name || "", logo_url: m.logo_url || "",
           stream_url: m.stream_url || "",
-          color_primary: m.color_primary || "#6040c0", color_secondary: m.color_secondary || "#38bdf8",
+          color_primary: m.color_primary || "#6040c0", color_secondary: m.color_secondary || "#6040c0",
           description: m.description || "",
           socials: { ...EMPTY_PUBLIC_PAGE.socials, ...(m.socials || {}) },
           public_enabled: !!m.public_enabled,
@@ -1844,7 +1844,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                 outputs.map(d => (
                   <button key={d.deviceId} onClick={() => setCurrentOutput(d.deviceId)} style={{
                     padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
-                    background: currentOutput === d.deviceId ? "rgba(56,189,248,0.12)" : "var(--bg-tertiary)",
+                    background: currentOutput === d.deviceId ? "rgba(96,64,192,0.12)" : "var(--bg-tertiary)",
                     border: "1px solid " + (currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--border-primary)"),
                     color: currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--text-secondary)",
                     display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -2045,10 +2045,10 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           </div>
         )}
         {processingProgress && (
-          <div style={{ padding: "10px 14px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)", marginBottom: 12 }}>
+          <div style={{ padding: "10px 14px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)", marginBottom: 12 }}>
             {processingProgress}
             {processingTotal > 0 && (
-              <div style={{ width: "100%", height: 3, background: "rgba(56,189,248,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
+              <div style={{ width: "100%", height: 3, background: "rgba(96,64,192,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
                 <div style={{ width: (processingDone / processingTotal * 100) + "%", height: "100%", background: "var(--accent-blue)", transition: "width 0.3s" }} />
               </div>
             )}
@@ -2564,7 +2564,7 @@ const ROLES = [
   { value: "jock",           label: "On-Air Jock" },
   { value: "music_director", label: "Music Director" },
 ];
-const ROLE_COLORS = ["#f87171", "#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#fb923c", "#e879f9", "#38bdf8"];
+const ROLE_COLORS = ["#f87171", "#8868D8", "#a78bfa", "#34d399", "#fbbf24", "#fb923c", "#e879f9", "#6040c0"];
 
 function UserManagement() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -2577,7 +2577,7 @@ function UserManagement() {
   // Add form
   const [addName, setAddName] = useState("");
   const [addRole, setAddRole] = useState("jock");
-  const [addColor, setAddColor] = useState("#22d3ee");
+  const [addColor, setAddColor] = useState("#8868D8");
   const [addPin, setAddPin] = useState("");
 
   const ether = (window as any).ether;
@@ -2597,7 +2597,7 @@ function UserManagement() {
       pinHash = addPin;
     }
     await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor]);
-    setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("#22d3ee");
+    setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("#8868D8");
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
   };

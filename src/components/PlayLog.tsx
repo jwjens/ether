@@ -231,8 +231,8 @@ export default function PlayLog({ onClose }: Props) {
                           padding: "6px 14px 3px",
                           fontSize: 9, fontWeight: 800, letterSpacing: "0.12em",
                           color: "var(--accent-blue)", textTransform: "uppercase" as const,
-                          background: "rgba(56,189,248,0.04)",
-                          borderBottom: "1px solid rgba(56,189,248,0.1)",
+                          background: "rgba(96,64,192,0.04)",
+                          borderBottom: "1px solid rgba(96,64,192,0.1)",
                         }}>
                           {fmtDate(e.played_at)}
                         </td>
@@ -255,8 +255,8 @@ export default function PlayLog({ onClose }: Props) {
                           <span style={{
                             display: "inline-block", padding: "2px 8px",
                             fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
-                            background: "rgba(56,189,248,0.1)", color: "var(--accent-blue)",
-                            border: "1px solid rgba(56,189,248,0.2)", borderRadius: 0,
+                            background: "rgba(96,64,192,0.1)", color: "var(--accent-blue)",
+                            border: "1px solid rgba(96,64,192,0.2)", borderRadius: 0,
                           }}>
                             {e.deck}
                           </span>

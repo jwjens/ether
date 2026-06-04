@@ -56,7 +56,7 @@ const SLOT_META: Record<SlotType, {
   defaultDuration: number;
   icon: string;
 }> = {
-  "song-a":  { label: "Power A",   color: "#38bdf8", bg: "rgba(56,189,248,0.15)",  border: "rgba(56,189,248,0.4)",  defaultDuration: 210, icon: "A" },
+  "song-a":  { label: "Power A",   color: "#6040c0", bg: "rgba(96,64,192,0.15)",  border: "rgba(96,64,192,0.4)",  defaultDuration: 210, icon: "A" },
   "song-b":  { label: "Current B", color: "#34d399", bg: "rgba(52,211,153,0.15)",  border: "rgba(52,211,153,0.4)",  defaultDuration: 210, icon: "B" },
   "song-c":  { label: "Recurrent", color: "#a78bfa", bg: "rgba(167,139,250,0.15)", border: "rgba(167,139,250,0.4)", defaultDuration: 210, icon: "C" },
   "song-d":  { label: "Gold",      color: "#fb923c", bg: "rgba(251,146,60,0.15)",  border: "rgba(251,146,60,0.4)",  defaultDuration: 210, icon: "D" },
@@ -594,7 +594,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
               }}>
                 <Stat label="Total" value={fmtSec(used)} color={overrun ? "#ef4444" : "#34d399"} />
                 <Stat label="Remaining" value={fmtSec(Math.abs(remain))} color={overrun ? "#ef4444" : "var(--text-secondary)"} />
-                <Stat label="Songs" value={String(clock.slots.filter(s => s.type.startsWith("song")).length)} color="#38bdf8" />
+                <Stat label="Songs" value={String(clock.slots.filter(s => s.type.startsWith("song")).length)} color="#6040c0" />
                 <Stat label="Breaks" value={String(clock.slots.filter(s => s.type === "break" || s.type === "spot").length)} color="#f87171" />
                 <Stat label="Slots" value={String(clock.slots.length)} color="var(--text-secondary)" />
               </div>
