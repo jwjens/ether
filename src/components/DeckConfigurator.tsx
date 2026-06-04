@@ -32,10 +32,10 @@ const SLOT_ORDER = ["A", "B", "C", "D", "E", "F"];
 const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; desc: string }> = {
   music:  { label: "Music",        icon: "🎵", color: "#34d399", desc: "Play tracks from library or playlist" },
   mic:    { label: "Mic",          icon: "🎙",  color: "#ef4444", desc: "Live microphone input channel" },
-  guest:  { label: "Guest",        icon: "👤",  color: "#6040c0", desc: "Remote guest audio (WebRTC)" },
+  guest:  { label: "Guest",        icon: "👤",  color: "var(--accent-blue)", desc: "Remote guest audio (WebRTC)" },
   cart:   { label: "Cart",         icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
   desk:   { label: "Desk",         icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
-  video:  { label: "Video Studio", icon: "🎥",  color: "#6040c0", desc: "Live video camera, streaming & recording — spans 3 decks" },
+  video:  { label: "Video Studio", icon: "🎥",  color: "var(--accent-blue)", desc: "Live video camera, streaming & recording — spans 3 decks" },
 };
 
 // ── useDeckConfig ─────────────────────────────────────────────
@@ -457,7 +457,7 @@ interface CartSlot {
 }
 
 const DEFAULT_CART_KEYS = ["1","2","3","4","5","6","7","8","9","0","Q","W","E","R","T","Y","U","I"];
-const CART_COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","#6040c0","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16"];
+const CART_COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","var(--accent-blue)","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16"];
 
 interface CartProps {
   deckSlot: string;

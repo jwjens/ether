@@ -306,7 +306,7 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
             <Stat label="Categories" value={parsed.categories.length} color="#22c55e" enabled={doCats} onToggle={() => setDoCats(v => !v)} />
-            <Stat label="Songs"      value={parsed.songs.length}      color="#6040c0" enabled={doSongs} onToggle={() => setDoSongs(v => !v)} />
+            <Stat label="Songs"      value={parsed.songs.length}      color="var(--accent-blue)" enabled={doSongs} onToggle={() => setDoSongs(v => !v)} />
             <Stat label="Clocks"     value={parsed.clocks.length}     color="#a78bfa" enabled={doClocks} onToggle={() => setDoClocks(v => !v)} />
           </div>
 

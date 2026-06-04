@@ -507,7 +507,7 @@ export default function CloudBackup() {
               />
             </div>
           </div>
-          <button onClick={loadBackups} disabled={loading || !licenseKey || !stationId} style={{ marginTop: 10, padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgba(136,104,216,0.12)", color: "var(--accent-cyan)", border: "1px solid rgba(136,104,216,0.25)", cursor: "pointer", opacity: (!licenseKey || !stationId) ? 0.5 : 1 }}>
+          <button onClick={loadBackups} disabled={loading || !licenseKey || !stationId} style={{ marginTop: 10, padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgb(from var(--accent-cyan) r g b / 0.12)", color: "var(--accent-cyan)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.25)", cursor: "pointer", opacity: (!licenseKey || !stationId) ? 0.5 : 1 }}>
             {loading ? "Loading..." : "Connect"}
           </button>
         </div>
@@ -585,7 +585,7 @@ export default function CloudBackup() {
                 background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
               }}>
                 {/* Icon */}
-                <div style={{ width: 36, height: 36, borderRadius: 0, background: "rgba(136,104,216,0.08)", border: "1px solid rgba(136,104,216,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>☁</div>
+                <div style={{ width: 36, height: 36, borderRadius: 0, background: "rgb(from var(--accent-cyan) r g b / 0.08)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, flexShrink: 0 }}>☁</div>
 
                 {/* Info */}
                 <div style={{ flex: 1, minWidth: 0 }}>

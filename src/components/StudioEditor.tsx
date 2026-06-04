@@ -592,9 +592,9 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
           <button onClick={exportMix} disabled={exporting}
             style={{
               ...btnStyle,
-              background: "rgba(96,64,192,0.1)",
+              background: "rgb(from var(--accent-blue) r g b / 0.1)",
               color: "#7dd3fc",
-              border: "1px solid rgba(96,64,192,0.25)",
+              border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)",
               opacity: exporting ? 0.5 : 1,
             }}>
             {exporting ? "Rendering..." : "⬇ Export WAV"}

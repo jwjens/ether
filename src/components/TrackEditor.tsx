@@ -26,7 +26,7 @@ interface Props {
 
 const HANDLE_W = 8;
 const COLORS = {
-  cueIn:     "#8868D8",
+  cueIn:     "var(--accent-cyan)",
   cueOut:    "#f87171",
   introEnd:  "#34d399",
   outroStart:"#fb923c",
@@ -203,7 +203,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
           style={{
             borderRadius: 0,
             border: `2px dashed ${dragOver ? "var(--accent-cyan)" : "var(--border-primary)"}`,
-            background: dragOver ? "rgba(136,104,216,0.04)" : "var(--bg-secondary)",
+            background: dragOver ? "rgb(from var(--accent-cyan) r g b / 0.04)" : "var(--bg-secondary)",
             padding: "48px 32px",
             textAlign: "center",
             transition: "all 0.15s",
@@ -900,7 +900,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         {/* Cue output device */}
         {outputDevices.length > 1 && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "#8868D8", opacity: 0.8 }}>🎧</span>
+            <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--accent-cyan)", opacity: 0.8 }}>🎧</span>
             <select value={cueDeviceId} onChange={e => setCueDeviceId(e.target.value)} style={{
               padding: "4px 8px", borderRadius: 0, fontSize: 10,
               background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
@@ -972,7 +972,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
 
       {/* ── MusicBrainz status bar ── */}
       {mbStatus && (
-        <div style={{ padding: "6px 20px", background: "rgba(96,64,192,0.06)", borderBottom: "1px solid rgba(96,64,192,0.15)", fontSize: 11, color: "var(--accent-cyan)", flexShrink: 0 }}>
+        <div style={{ padding: "6px 20px", background: "rgb(from var(--accent-blue) r g b / 0.06)", borderBottom: "1px solid rgb(from var(--accent-blue) r g b / 0.15)", fontSize: 11, color: "var(--accent-cyan)", flexShrink: 0 }}>
           {mbStatus}
         </div>
       )}
@@ -1057,7 +1057,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           <div style={{
             position: "absolute" as const, top: 10, left: "50%", transform: "translateX(-50%)",
             zIndex: 10, pointerEvents: "none",
-            background: activeMode === "intro" ? "rgba(136,104,216,0.9)" : "rgba(251,146,60,0.9)",
+            background: activeMode === "intro" ? "rgb(from var(--accent-cyan) r g b / 0.9)" : "rgba(251,146,60,0.9)",
             borderRadius: 0, padding: "4px 16px",
             fontSize: 10, fontWeight: 800, letterSpacing: "0.1em", color: "#000",
           }}>
@@ -1136,10 +1136,10 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
             height: 34, padding: "0 14px", borderRadius: 0,
             fontSize: 10, fontWeight: 700, letterSpacing: "0.07em",
             cursor: "pointer", flexShrink: 0, transition: "all 0.12s",
-            background: activeMode === "intro" ? "#8868D8" : "#8868D818",
-            color:      activeMode === "intro" ? "#000" : "#8868D8",
-            border:     activeMode === "intro" ? "1.5px solid #8868D8" : "1px solid #8868D835",
-            boxShadow:  activeMode === "intro" ? "0 0 16px #8868D844" : "none",
+            background: activeMode === "intro" ? "var(--accent-cyan)" : "var(--accent-cyan)18",
+            color:      activeMode === "intro" ? "#000" : "var(--accent-cyan)",
+            border:     activeMode === "intro" ? "1.5px solid var(--accent-cyan)" : "1px solid var(--accent-cyan)35",
+            boxShadow:  activeMode === "intro" ? "0 0 16px var(--accent-cyan)44" : "none",
           }}
         >INTRO</button>
 

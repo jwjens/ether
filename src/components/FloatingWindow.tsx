@@ -77,7 +77,7 @@ export default function FloatingWindow({
   zIndex = 9999,
   headerContent,
   children,
-  accentColor = "#8868d8",
+  accentColor = "var(--accent-cyan)",
 }: Props) {
   const [layout, setLayout] = useState<Layout>(() => loadLayout(id, {
     x: Math.max(16, (window.innerWidth - defaultWidth) / 2),

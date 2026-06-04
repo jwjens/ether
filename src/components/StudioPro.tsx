@@ -3257,7 +3257,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           { id: "fade",   icon: <span style={{ fontSize: 13 }}>⌒</span>,  label: "Fade",   key: "F" },
         ] as const).map(t => {
           const active = tool === t.id;
-          const accent = selectedTrack?.color || "#6040c0";
+          const accent = selectedTrack?.color || "var(--accent-blue)";
           return (
             <button key={t.id} onClick={() => setTool(t.id as EditTool)} title={`${t.label} (${t.key})`}
               style={{
@@ -4608,7 +4608,7 @@ function Inspector({
   onOpenFx: () => void;
 }) {
   const knob = (label: string, min: number, max: number, val: number, step: number,
-    onChange: (v: number) => void, unit = "", accent = "#6040c0") => (
+    onChange: (v: number) => void, unit = "", accent = "var(--accent-blue)") => (
     <div style={{ marginBottom: 10 }}>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>{label}</span>
@@ -4626,7 +4626,7 @@ function Inspector({
   const masterSection = (
     <div style={{ padding: 8, marginBottom: 10, background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
       <div style={{ fontSize: 10, color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>Master</div>
-      <MeterBar level={masterLevel} color="#6040c0" width={INSPECTOR_W - 32} height={6} />
+      <MeterBar level={masterLevel} color="var(--accent-blue)" width={INSPECTOR_W - 32} height={6} />
       <SpectrumAnalyzer analyser={masterAnalyser} width={INSPECTOR_W - 32} height={50} />
       <div style={{ height: 6 }} />
       {knob("Master gain", -24, 6, masterGainDb, 0.5, setMasterGainDb, " dB")}
@@ -4677,7 +4677,7 @@ function Inspector({
       <button onClick={onOpenFx}
         style={{
           width: "100%", marginBottom: 10, padding: "6px",
-          background: "#1e293b", color: "#6040c0",
+          background: "#1e293b", color: "var(--accent-blue)",
           border: "1px solid #334155", fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0, letterSpacing: 0.5,
         }}
       >OPEN EQ (use FX menu in track header for Comp / Reverb)</button>
@@ -5070,7 +5070,7 @@ function PresetMenu<T>({ store, current, onApply, label }: {
               const name = prompt("Save current settings as preset:");
               if (name && name.trim()) { store.save(name.trim(), current); setOpen(false); }
             }}
-              style={{ width: "100%", padding: "4px", background: "#1e293b", color: "#6040c0", border: "1px solid #334155", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+              style={{ width: "100%", padding: "4px", background: "#1e293b", color: "var(--accent-blue)", border: "1px solid #334155", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
             >+ Save current as preset</button>
           </div>
         </div>
@@ -5149,7 +5149,7 @@ function MasterFxWindow({
       f.getFrequencyResponse(freqArr, mag, phase);
       for (let i = 0; i < POINTS; i++) totalDb[i] += 20 * Math.log10(Math.max(1e-6, mag[i]));
     }
-    g.strokeStyle = "#6040c0"; g.lineWidth = 2;
+    g.strokeStyle = "var(--accent-blue)"; g.lineWidth = 2;
     g.beginPath();
     for (let i = 0; i < POINTS; i++) {
       const x = i / (POINTS - 1) * W;
@@ -5157,7 +5157,7 @@ function MasterFxWindow({
       if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
     }
     g.stroke();
-    g.fillStyle = "#6040c022";
+    g.fillStyle = "var(--accent-blue)22";
     g.lineTo(W, H / 2); g.lineTo(0, H / 2); g.closePath(); g.fill();
   }, [masterEq7, ctx, W, H]);
 
@@ -5181,7 +5181,7 @@ function MasterFxWindow({
           cursor: "grab", userSelect: "none",
         }}
       >
-        <div style={{ width: 8, height: 8, background: "#6040c0" }} />
+        <div style={{ width: 8, height: 8, background: "var(--accent-blue)" }} />
         <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>Master Bus FX</div>
         <button onClick={onClose}
           style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
@@ -5191,7 +5191,7 @@ function MasterFxWindow({
       <div style={{ padding: 10, maxHeight: "75vh", overflowY: "auto" }}>
         {/* Master meter + spectrum + broadcast meters */}
         <FxBlock title="Output">
-          <MeterBar level={masterLevel} color="#6040c0" width={W} height={6} />
+          <MeterBar level={masterLevel} color="var(--accent-blue)" width={W} height={6} />
           <SpectrumAnalyzer analyser={masterAnalyser} width={W} height={50} />
           {compKnob("Master gain", -24, 6, masterGainDb, 0.5, setMasterGainDb, " dB")}
         </FxBlock>
@@ -5221,7 +5221,7 @@ function MasterFxWindow({
                     style={{
                       // @ts-ignore
                       WebkitAppearance: "slider-vertical", writingMode: "vertical-lr",
-                      width: 18, height: 80, accentColor: "#6040c0",
+                      width: 18, height: 80, accentColor: "var(--accent-blue)",
                     } as any}
                   />
                   <span style={{ fontSize: 8, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
@@ -5682,7 +5682,7 @@ function compKnob(label: string, min: number, max: number, val: number, step: nu
       </div>
       <input type="range" min={min} max={max} step={step} value={val}
         onChange={(e) => onChange(+e.target.value)}
-        style={{ width: "100%", accentColor: "#6040c0" }}
+        style={{ width: "100%", accentColor: "var(--accent-blue)" }}
       />
     </div>
   );
@@ -5775,7 +5775,7 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
         <button onClick={onTake}
           style={{
             width: "100%", padding: "6px",
-            background: "#1e293b", color: "#6040c0",
+            background: "#1e293b", color: "var(--accent-blue)",
             border: "1px solid #334155",
             fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0,
             marginBottom: 8, letterSpacing: 0.5,
@@ -5897,7 +5897,7 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
           {groups.map(g => (
             <div key={g.name}>
-              <div style={{ fontSize: 10, color: "#6040c0", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "var(--accent-blue)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
                 {g.name}
               </div>
               {g.rows.map(([k, d]) => (

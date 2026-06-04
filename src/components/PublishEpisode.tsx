@@ -125,7 +125,7 @@ function StepBar({ current }: { current: number }) {
                 color: done || active ? "#000" : "var(--text-tertiary)",
                 border: active ? "2px solid var(--accent-cyan)" : "none",
                 transition: "all 0.3s",
-                boxShadow: active ? "0 0 12px rgba(96,64,192,0.4)" : "none",
+                boxShadow: active ? "0 0 12px rgb(from var(--accent-blue) r g b / 0.4)" : "none",
               }}>
                 {done ? (
                   <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
@@ -526,8 +526,8 @@ ${item}
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{
                 width: 36, height: 36, borderRadius: 0,
-                background: "linear-gradient(135deg, rgba(96,64,192,0.2), rgba(167,139,250,0.2))",
-                border: "1px solid rgba(96,64,192,0.3)",
+                background: "linear-gradient(135deg, rgb(from var(--accent-blue) r g b / 0.2), rgba(167,139,250,0.2))",
+                border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)",
                 display: "flex", alignItems: "center", justifyContent: "center",
               }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" strokeWidth="2" strokeLinecap="round">
@@ -571,8 +571,8 @@ ${item}
                   onClick={pickAudio}
                   style={{
                     width: "100%", padding: "18px 16px", borderRadius: 0,
-                    background: meta.audioPath ? "rgba(96,64,192,0.06)" : "var(--bg-tertiary)",
-                    border: `2px dashed ${meta.audioPath ? "rgba(96,64,192,0.4)" : "var(--border-primary)"}`,
+                    background: meta.audioPath ? "rgb(from var(--accent-blue) r g b / 0.06)" : "var(--bg-tertiary)",
+                    border: `2px dashed ${meta.audioPath ? "rgb(from var(--accent-blue) r g b / 0.4)" : "var(--border-primary)"}`,
                     color: meta.audioPath ? "var(--accent-cyan)" : "var(--text-tertiary)",
                     cursor: "pointer", textAlign: "left",
                     transition: "all 0.2s",
@@ -581,7 +581,7 @@ ${item}
                 >
                   <div style={{
                     width: 40, height: 40, borderRadius: 0, flexShrink: 0,
-                    background: meta.audioPath ? "rgba(96,64,192,0.1)" : "var(--bg-secondary)",
+                    background: meta.audioPath ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-secondary)",
                     display: "flex", alignItems: "center", justifyContent: "center",
                   }}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -817,7 +817,7 @@ ${item}
               </div>
 
               {/* Audio path */}
-              <div style={{ background: "rgba(96,64,192,0.05)", border: "1px solid rgba(96,64,192,0.15)", borderRadius: 0, padding: "12px 16px" }}>
+              <div style={{ background: "rgb(from var(--accent-blue) r g b / 0.05)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.15)", borderRadius: 0, padding: "12px 16px" }}>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 4 }}>Audio</div>
                 <div style={{ fontSize: 11, color: "var(--text-secondary)", fontFamily: "monospace", wordBreak: "break-all" }}>{meta.audioPath}</div>
               </div>

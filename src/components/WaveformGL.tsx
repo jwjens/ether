@@ -197,9 +197,9 @@ export default function WaveformGL({
 
     if (dragRegion) {
       const x0 = toX(dragRegion.start), x1 = toX(dragRegion.end);
-      ctx.fillStyle   = dragRegion.type === "intro" ? "rgba(136,104,216,0.2)" : "rgba(251,146,60,0.2)";
+      ctx.fillStyle   = dragRegion.type === "intro" ? "rgb(from var(--accent-cyan) r g b / 0.2)" : "rgba(251,146,60,0.2)";
       ctx.fillRect(x0, 0, x1-x0, h);
-      ctx.strokeStyle = dragRegion.type === "intro" ? "#8868D8" : "#fb923c";
+      ctx.strokeStyle = dragRegion.type === "intro" ? "var(--accent-cyan)" : "#fb923c";
       ctx.lineWidth   = 1.5; ctx.strokeRect(x0, 0, x1-x0, h);
     }
 

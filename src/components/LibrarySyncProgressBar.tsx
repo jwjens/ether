@@ -132,8 +132,8 @@ export default function LibrarySyncProgressBar() {
         position: "absolute",
         left: 0, top: 0, bottom: 0,
         width: `${pct}%`,
-        background: "linear-gradient(135deg, rgba(136,104,216,0.18), rgba(167,139,250,0.18))",
-        borderRight: pct > 0 && pct < 100 ? "1px solid rgba(136,104,216,0.5)" : "none",
+        background: "linear-gradient(135deg, rgb(from var(--accent-cyan) r g b / 0.18), rgba(167,139,250,0.18))",
+        borderRight: pct > 0 && pct < 100 ? "1px solid rgb(from var(--accent-cyan) r g b / 0.5)" : "none",
         transition: "width 0.15s ease",
       }} />
       {/* Label — right-aligned over the fill */}

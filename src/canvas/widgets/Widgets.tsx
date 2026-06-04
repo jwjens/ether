@@ -184,7 +184,7 @@ export function LibraryWidget({ instance, engine }: EngineProps) {
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{s.artist_name || "—"}</div>
             </div>
             <button onClick={e => { e.stopPropagation(); engine?.getDeck?.("A") && engine.loadToDeck?.("A", s.file_path, s.title, s.artist_name || ""); }}
-              style={{ padding: "3px 7px", borderRadius: 0, background: "rgba(96,64,192,0.15)", color: "var(--accent-cyan)", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>A</button>
+              style={{ padding: "3px 7px", borderRadius: 0, background: "rgb(from var(--accent-blue) r g b / 0.15)", color: "var(--accent-cyan)", border: "none", cursor: "pointer", fontSize: 9, fontWeight: 700, flexShrink: 0 }}>A</button>
           </div>
         ))}
       </div>

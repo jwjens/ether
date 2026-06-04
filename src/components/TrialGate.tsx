@@ -45,10 +45,10 @@ export default function TrialGate() {
     }}>
       <div style={{
         width: "100%", maxWidth: 460, background: "var(--bg-secondary)",
-        border: "1px solid rgba(136,104,216,0.4)", borderRadius: 0,
+        border: "1px solid rgb(from var(--accent-cyan) r g b / 0.4)", borderRadius: 0,
         padding: 36, boxShadow: "0 24px 80px rgba(0,0,0,0.5)",
       }}>
-        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase", color: "#8868D8", marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--accent-cyan)", marginBottom: 14 }}>
           Trial ended
         </div>
         <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", marginBottom: 12 }}>
@@ -59,7 +59,7 @@ export default function TrialGate() {
           Your stations, library, and settings are all saved either way.
         </div>
         <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
-          <button onClick={seePlans} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "#8868D8", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em" }}>
+          <button onClick={seePlans} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em" }}>
             See plans &amp; subscribe →
           </button>
           <button onClick={() => setShow(false)} style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
@@ -67,7 +67,7 @@ export default function TrialGate() {
           </button>
         </div>
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", textAlign: "center" as const, marginTop: 16, lineHeight: 1.6 }}>
-          Already subscribed? Open <span style={{ color: "#8868D8", cursor: "pointer", fontWeight: 600 }} onClick={seePlans}>Subscription</span> and sign in to restore your plan.
+          Already subscribed? Open <span style={{ color: "var(--accent-cyan)", cursor: "pointer", fontWeight: 600 }} onClick={seePlans}>Subscription</span> and sign in to restore your plan.
         </div>
       </div>
     </div>

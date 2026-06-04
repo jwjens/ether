@@ -30,7 +30,7 @@ interface Track {
 }
 
 const STATUS_COLOR: Record<string, string> = {
-  uploaded: "#6040c0",
+  uploaded: "var(--accent-blue)",
   queued:   "#f59e0b",
   played:   "#22c55e",
   archived: "#94a3b8",

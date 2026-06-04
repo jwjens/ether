@@ -556,7 +556,7 @@ export default function ProgramLog({ onClose }: Props) {
   }
   .hour-header .hour-name { font-size: 11px; font-weight: 800; letter-spacing: 0.5px; }
   .hour-header .hour-meta { font-size: 8.5px; color: #94a3b8; }
-  .hour-header .hour-total { font-size: 9px; font-weight: 700; color: #6040c0; font-variant-numeric: tabular-nums; }
+  .hour-header .hour-total { font-size: 9px; font-weight: 700; color: var(--accent-blue); font-variant-numeric: tabular-nums; }
 
   table { width: 100%; border-collapse: collapse; }
   thead tr { background: #f1f5f9; }
@@ -840,12 +840,12 @@ export default function ProgramLog({ onClose }: Props) {
           <button onClick={() => setSelectedShowId(null)} style={{
             width: "100%", display: "flex", alignItems: "center", gap: 6,
             padding: "4px 6px", borderRadius: 0, marginBottom: 2, cursor: "pointer",
-            background: selectedShowId === null ? "rgba(96,64,192,0.1)" : "rgba(255,255,255,0.02)",
-            border: `1px solid ${selectedShowId === null ? "rgba(96,64,192,0.3)" : "var(--border-primary)"}`,
+            background: selectedShowId === null ? "rgb(from var(--accent-blue) r g b / 0.1)" : "rgba(255,255,255,0.02)",
+            border: `1px solid ${selectedShowId === null ? "rgb(from var(--accent-blue) r g b / 0.3)" : "var(--border-primary)"}`,
             textAlign: "left" as const,
           }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#94a3b8", flexShrink: 0 }} />
-            <div style={{ fontSize: 10, fontWeight: selectedShowId === null ? 700 : 400, color: selectedShowId === null ? "#6040c0" : "var(--text-secondary)" }}>
+            <div style={{ fontSize: 10, fontWeight: selectedShowId === null ? 700 : 400, color: selectedShowId === null ? "var(--accent-blue)" : "var(--text-secondary)" }}>
               All Shows
             </div>
           </button>
@@ -864,7 +864,7 @@ export default function ProgramLog({ onClose }: Props) {
               }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: s.color || "#94a3b8", flexShrink: 0 }} />
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 10, fontWeight: isActive ? 700 : 500, color: isActive ? (s.color || "#6040c0") : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                  <div style={{ fontSize: 10, fontWeight: isActive ? 700 : 500, color: isActive ? (s.color || "var(--accent-blue)") : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
                     {s.name}
                   </div>
                   <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>
@@ -887,7 +887,7 @@ export default function ProgramLog({ onClose }: Props) {
           </button>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             <button onClick={exportCSV}
-              style={{ padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(96,64,192,0.1)", color: "#6040c0", border: "1px solid rgba(96,64,192,0.25)" }}>
+              style={{ padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.1)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)" }}>
               ⬇ CSV
             </button>
             <button onClick={exportPrint}
@@ -1036,9 +1036,9 @@ export default function ProgramLog({ onClose }: Props) {
                     style={{
                       padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700,
                       cursor: block.generating ? "default" : "pointer",
-                      background: isScheduled ? "rgba(96,64,192,0.08)" : "rgba(52,211,153,0.12)",
-                      color: isScheduled ? "#6040c0" : "#34d399",
-                      border: `1px solid ${isScheduled ? "rgba(96,64,192,0.25)" : "rgba(52,211,153,0.3)"}`,
+                      background: isScheduled ? "rgb(from var(--accent-blue) r g b / 0.08)" : "rgba(52,211,153,0.12)",
+                      color: isScheduled ? "var(--accent-blue)" : "#34d399",
+                      border: `1px solid ${isScheduled ? "rgb(from var(--accent-blue) r g b / 0.25)" : "rgba(52,211,153,0.3)"}`,
                       opacity: block.generating ? 0.5 : 1, flexShrink: 0,
                     }}
                   >
@@ -1085,7 +1085,7 @@ export default function ProgramLog({ onClose }: Props) {
                     </div>
 
                     {block.entries.map((entry, i) => {
-                      const color = entry.category_color || (entry.slot_type === "spot_break" ? "#ef4444" : entry.slot_type === "talk_break" ? "#a78bfa" : "#6040c0");
+                      const color = entry.category_color || (entry.slot_type === "spot_break" ? "#ef4444" : entry.slot_type === "talk_break" ? "#a78bfa" : "var(--accent-blue)");
                       const isUnfilled = entry.status === "unfilled";
                       const isOverflow = entry.overflow === 1;
                       return (
@@ -1300,7 +1300,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
             </div>
 
             {entries.map((entry, i) => {
-              const color = entry.category_color || "#6040c0";
+              const color = entry.category_color || "var(--accent-blue)";
               const isSwapping = swapTarget?.id === entry.id;
               const isUnfilled = entry.status === "unfilled";
 
@@ -1589,7 +1589,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)" }}>Shows & Dayparts</div>
             <button onClick={() => setEditing({ name: "", start_hour: 0, end_hour: 6, color: "#3b82f6" })}
-              style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgba(96,64,192,0.12)", color: "#6040c0", border: "1px solid rgba(96,64,192,0.3)" }}>
+              style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)" }}>
               + New Show
             </button>
           </div>
@@ -1614,7 +1614,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input type="color" value={editing.color||"#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})}
                   style={{ width: 32, height: 28, borderRadius: 0, border: "1px solid var(--border-primary)", cursor: "pointer", background: "none" }} />
-                <button onClick={save} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgba(96,64,192,0.12)", color: "#6040c0", border: "1px solid rgba(96,64,192,0.3)" }}>Save</button>
+                <button onClick={save} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)" }}>Save</button>
                 <button onClick={() => setEditing(null)} style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Cancel</button>
               </div>
             </div>

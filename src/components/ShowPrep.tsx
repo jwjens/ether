@@ -20,9 +20,9 @@ interface PrepNote {
 
 const LINER_CATS = ["Station ID", "Promo", "Contest", "Weather", "Traffic", "News Tease", "Sweeper", "Custom"];
 const LINER_COLORS: Record<string, string> = {
-  "Station ID": "#6040c0", "Promo": "#a78bfa", "Contest": "#fb923c",
+  "Station ID": "var(--accent-blue)", "Promo": "#a78bfa", "Contest": "#fb923c",
   "Weather": "#34d399", "Traffic": "#fbbf24", "News Tease": "#f87171",
-  "Sweeper": "#8868D8", "Custom": "#94a3b8",
+  "Sweeper": "var(--accent-cyan)", "Custom": "#94a3b8",
 };
 
 const NOTE_CATS = ["Topic", "Music Fact", "Artist Bio", "Listener Story", "Contest", "Local News", "Trivia", "Script"];
@@ -152,7 +152,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
         <div style={{ display: "flex", flexDirection: "column" as any, gap: 6, marginBottom: 12 }}>
           {[deckA, deckB, deckC].map((d, i) => {
             const id = ["A","B","C"][i];
-            const color = i === 0 ? "#6040c0" : i === 1 ? "#34d399" : "#a78bfa";
+            const color = i === 0 ? "var(--accent-blue)" : i === 1 ? "#34d399" : "#a78bfa";
             const isOn = d?.status === "playing";
             const remaining = d && d.durationSec > 0 ? Math.max(0, d.durationSec - d.positionSec) : 0;
             const pct = d && d.durationSec > 0 ? (d.positionSec / d.durationSec) * 100 : 0;
@@ -283,7 +283,7 @@ function LinerCards() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
         <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>Liner Cards</span>
-        <button onClick={() => setEditing({ category: "Station ID", color: "#6040c0" })} style={{ padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>＋ New</button>
+        <button onClick={() => setEditing({ category: "Station ID", color: "var(--accent-blue)" })} style={{ padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>＋ New</button>
       </div>
 
       {/* Category filter */}
@@ -403,9 +403,9 @@ function ScriptWriter() {
   };
 
   const catColor: Record<string, string> = {
-    Script: "#6040c0", Topic: "#34d399", "Music Fact": "#a78bfa",
+    Script: "var(--accent-blue)", Topic: "#34d399", "Music Fact": "#a78bfa",
     "Artist Bio": "#fb923c", Trivia: "#fbbf24", "Local News": "#f87171",
-    "Listener Story": "#8868D8", Contest: "#ec4899",
+    "Listener Story": "var(--accent-cyan)", Contest: "#ec4899",
   };
 
   return (

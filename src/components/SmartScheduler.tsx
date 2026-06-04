@@ -67,7 +67,7 @@ No markdown, no explanation, just the JSON array.`,
 
 const ENERGY_COLORS = {
   high: { bg: "rgba(251,191,36,0.12)", border: "rgba(251,191,36,0.3)", text: "#fbbf24", label: "High Energy" },
-  medium: { bg: "rgba(96,64,192,0.1)", border: "rgba(96,64,192,0.25)", text: "#6040c0", label: "Medium" },
+  medium: { bg: "rgb(from var(--accent-blue) r g b / 0.1)", border: "rgb(from var(--accent-blue) r g b / 0.25)", text: "var(--accent-blue)", label: "Medium" },
   low: { bg: "rgba(167,139,250,0.1)", border: "rgba(167,139,250,0.25)", text: "#a78bfa", label: "Chill" },
   mixed: { bg: "rgba(52,211,153,0.08)", border: "rgba(52,211,153,0.2)", text: "#34d399", label: "Mixed" },
 };
@@ -253,7 +253,7 @@ export default function SmartScheduler({ onClose }: Props) {
           </div>
         )}
         {analyzing && analyzeProgress && (
-          <div style={{ padding:"10px 14px", borderRadius:10, background:"rgba(96,64,192,0.08)", border:"1px solid rgba(96,64,192,0.2)", marginBottom:12 }}>
+          <div style={{ padding:"10px 14px", borderRadius:10, background:"rgb(from var(--accent-blue) r g b / 0.08)", border:"1px solid rgb(from var(--accent-blue) r g b / 0.2)", marginBottom:12 }}>
             <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
               <div style={{ width:11, height:11, borderRadius:"50%", border:"2px solid var(--accent-cyan)", borderTopColor:"transparent", animation:"spin 0.7s linear infinite" }} />
               <span style={{ fontSize:12, fontWeight:600, color:"var(--accent-cyan)" }}>Analyzing library...</span>

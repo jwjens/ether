@@ -146,7 +146,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
                 const startX = e.clientX;
 
                 const ghost = document.createElement("div");
-                ghost.style.cssText = `position:fixed;z-index:99999;padding:6px 12px;background:#8868D8;color:#000;border-radius:8px;font-size:12px;font-weight:600;font-family:Inter,sans-serif;pointer-events:none;opacity:0;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.25);`;
+                ghost.style.cssText = `position:fixed;z-index:99999;padding:6px 12px;background:var(--accent-cyan);color:#000;border-radius:8px;font-size:12px;font-weight:600;font-family:Inter,sans-serif;pointer-events:none;opacity:0;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,0.25);`;
                 ghost.textContent = r.title;
                 document.body.appendChild(ghost);
 
@@ -205,7 +205,7 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
               )}
               <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
                 <button onMouseDown={e => { e.preventDefault(); addToQueue(r); }} style={{ padding: "4px 9px", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", cursor: "pointer" }}>Q</button>
-                <button onMouseDown={e => { e.preventDefault(); loadToDeckA(r); }} style={{ padding: "4px 9px", background: "#6040c0", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>A</button>
+                <button onMouseDown={e => { e.preventDefault(); loadToDeckA(r); }} style={{ padding: "4px 9px", background: "var(--accent-blue)", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>A</button>
                 <button onMouseDown={e => { e.preventDefault(); loadToDeckB(r); }} style={{ padding: "4px 9px", background: "#34d399", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>B</button>
                 <button onMouseDown={e => { e.preventDefault(); loadToDeckC(r); }} style={{ padding: "4px 9px", background: "#a78bfa", border: "none", borderRadius: 0, fontSize: 10, fontWeight: 700, color: "#000", cursor: "pointer" }}>C</button>
               </div>

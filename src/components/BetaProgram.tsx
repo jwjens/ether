@@ -89,7 +89,7 @@ function AboutTab() {
       </ul>
       <p style={{ margin: "0 0 12px" }}>Applications reviewed in order received. Usually a response within a week.</p>
 
-      <div style={{ marginTop: 18, padding: "12px 14px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.25)", fontSize: 12, color: "var(--accent-blue)" }}>
+      <div style={{ marginTop: 18, padding: "12px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)", fontSize: 12, color: "var(--accent-blue)" }}>
         Ether is in active development. Things will break. You'll catch them. That's the whole point.
       </div>
     </div>

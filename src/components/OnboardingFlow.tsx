@@ -83,13 +83,13 @@ const SHELL_STYLE: React.CSSProperties = {
 
 const GLOW_STYLE: React.CSSProperties = {
   position: "absolute", width: 700, height: 700, borderRadius: "50%",
-  background: "radial-gradient(circle, rgba(136,104,216,0.05) 0%, transparent 70%)",
+  background: "radial-gradient(circle, rgb(from var(--accent-cyan) r g b / 0.05) 0%, transparent 70%)",
   pointerEvents: "none",
 };
 
 const LABEL_STYLE: React.CSSProperties = {
   fontSize: 11, fontWeight: 600, letterSpacing: "0.2em",
-  color: "#8868D8", textTransform: "uppercase",
+  color: "var(--accent-cyan)", textTransform: "uppercase",
   marginBottom: 12,
 };
 
@@ -747,7 +747,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
   // ── Screen 0 — account sign in / sign up (email + password) ──────────
   if (state === 'auth') {
     const authInput: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 0, background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)", color: "#f0f0f8", fontSize: 14, outline: "none", fontFamily: "'Inter', system-ui, sans-serif" };
-    const tab = (active: boolean): React.CSSProperties => ({ flex: 1, padding: "10px 0", borderRadius: 0, cursor: "pointer", fontSize: 13, fontWeight: 700, border: `1px solid ${active ? "#8868D8" : "rgba(255,255,255,0.1)"}`, background: active ? "rgba(136,104,216,0.1)" : "transparent", color: active ? "#8868D8" : "rgba(255,255,255,0.5)" });
+    const tab = (active: boolean): React.CSSProperties => ({ flex: 1, padding: "10px 0", borderRadius: 0, cursor: "pointer", fontSize: 13, fontWeight: 700, border: `1px solid ${active ? "var(--accent-cyan)" : "rgba(255,255,255,0.1)"}`, background: active ? "rgb(from var(--accent-cyan) r g b / 0.1)" : "transparent", color: active ? "var(--accent-cyan)" : "rgba(255,255,255,0.5)" });
     const submit = authMode === 'signin' ? doSignIn : doSignUp;
     return (
       <div style={OVERLAY_STYLE}>
@@ -774,7 +774,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
               <input type="email" autoFocus value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthErr(''); }} placeholder="Email address" style={authInput} />
               <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthErr(''); }} onKeyDown={e => { if (e.key === 'Enter') submit(); }} placeholder={authMode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} style={authInput} />
               {authErr && <div style={{ fontSize: 12, color: "#f87171" }}>{authErr}</div>}
-              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "#8868D8", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
+              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
                 {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}
               </button>
             </div>
@@ -1409,8 +1409,8 @@ function PathButton({ title, subtitle, onClick }: { title: string; subtitle: str
       onClick={onClick}
       style={CARD_STYLE}
       onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = "#8868D8";
-        e.currentTarget.style.background  = "rgba(136,104,216,0.06)";
+        e.currentTarget.style.borderColor = "var(--accent-cyan)";
+        e.currentTarget.style.background  = "rgb(from var(--accent-cyan) r g b / 0.06)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
@@ -1425,7 +1425,7 @@ function PathButton({ title, subtitle, onClick }: { title: string; subtitle: str
           {subtitle}
         </div>
       </div>
-      <div style={{ fontSize: 18, color: "rgba(136,104,216,0.5)" }}>→</div>
+      <div style={{ fontSize: 18, color: "rgb(from var(--accent-cyan) r g b / 0.5)" }}>→</div>
     </button>
   );
 }
@@ -1466,7 +1466,7 @@ function InputField({ label, value, onChange, placeholder, required, autoFocus, 
           boxSizing: "border-box",
           transition: "border-color 0.2s",
         }}
-        onFocus={(e) => (e.target.style.borderColor = "#8868D8")}
+        onFocus={(e) => (e.target.style.borderColor = "var(--accent-cyan)")}
         onBlur={(e)  => (e.target.style.borderColor = "rgba(255,255,255,0.12)")}
       />
       {hint && (
@@ -1488,8 +1488,8 @@ interface StationRadioCardProps {
 }
 
 function StationRadioCard({ title, subtitle, description, selected, onClick, isAddNew }: StationRadioCardProps) {
-  const borderColor = selected ? "#8868D8" : (isAddNew ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)");
-  const background  = selected ? "rgba(136,104,216,0.08)" : "rgba(255,255,255,0.03)";
+  const borderColor = selected ? "var(--accent-cyan)" : (isAddNew ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.08)");
+  const background  = selected ? "rgb(from var(--accent-cyan) r g b / 0.08)" : "rgba(255,255,255,0.03)";
   return (
     <button
       onClick={onClick}
@@ -1500,20 +1500,20 @@ function StationRadioCard({ title, subtitle, description, selected, onClick, isA
         cursor: "pointer", transition: "all 0.2s",
         display: "flex", alignItems: "center", gap: 16,
         color: "#f0f0f8",
-        boxShadow: selected ? "0 0 24px rgba(136,104,216,0.12)" : "none",
+        boxShadow: selected ? "0 0 24px rgb(from var(--accent-cyan) r g b / 0.12)" : "none",
       }}
     >
       <div style={{
         width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
-        border: `2px solid ${selected ? "#8868D8" : "rgba(255,255,255,0.2)"}`,
+        border: `2px solid ${selected ? "var(--accent-cyan)" : "rgba(255,255,255,0.2)"}`,
         display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        {selected && <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#8868D8" }} />}
+        {selected && <div style={{ width: 10, height: 10, borderRadius: "50%", background: "var(--accent-cyan)" }} />}
       </div>
       <div style={{ flex: 1 }}>
         <div style={{
           fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700,
-          color: selected ? "#8868D8" : "#f0f0f8",
+          color: selected ? "var(--accent-cyan)" : "#f0f0f8",
           letterSpacing: "-0.02em",
           marginBottom: (subtitle || description) ? 4 : 0,
         }}>
@@ -1539,12 +1539,12 @@ function StatusLine({ done, text }: { done: boolean; text: string }) {
     <div style={{
       display: "flex", alignItems: "center", gap: 12,
       fontSize: 14, lineHeight: 1.4,
-      color: done ? "rgba(136,104,216,0.9)" : "rgba(255,255,255,0.6)",
+      color: done ? "rgb(from var(--accent-cyan) r g b / 0.9)" : "rgba(255,255,255,0.6)",
     }}>
       <span style={{
         fontFamily: "'Inter', system-ui, sans-serif",
         width: 16, display: "inline-block", textAlign: "center",
-        color: done ? "#8868D8" : "rgba(255,255,255,0.4)",
+        color: done ? "var(--accent-cyan)" : "rgba(255,255,255,0.4)",
         fontWeight: 700, fontSize: 14,
       }}>
         {done ? '✓' : '○'}
@@ -1926,7 +1926,7 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
                 <div style={{
                   height: "100%",
                   width: matchedPairs.length > 0 ? `${(applyDone / matchedPairs.length) * 100}%` : "0%",
-                  background: "linear-gradient(135deg, #8868D8, #a78bfa)",
+                  background: "linear-gradient(135deg, var(--accent-cyan), #a78bfa)",
                   transition: "width 0.15s",
                 }} />
               </div>
@@ -1953,8 +1953,8 @@ function SourceCard({ title, subtitle, onClick, disabled }: { title: string; sub
       }}
       onMouseEnter={(e) => {
         if (disabled) return;
-        e.currentTarget.style.borderColor = "#8868D8";
-        e.currentTarget.style.background  = "rgba(136,104,216,0.06)";
+        e.currentTarget.style.borderColor = "var(--accent-cyan)";
+        e.currentTarget.style.background  = "rgb(from var(--accent-cyan) r g b / 0.06)";
       }}
       onMouseLeave={(e) => {
         if (disabled) return;
@@ -1981,12 +1981,12 @@ function PrimaryButton({ label, onClick, disabled }: { label: string; onClick: (
       disabled={disabled}
       style={{
         padding: "13px 32px", borderRadius: 0,
-        background: disabled ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, #8868D8, #a78bfa)",
+        background: disabled ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, var(--accent-cyan), #a78bfa)",
         color: disabled ? "rgba(255,255,255,0.2)" : "#000",
         fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
         border: "none", cursor: disabled ? "default" : "pointer",
         letterSpacing: "0.04em",
-        boxShadow: disabled ? "none" : "0 0 32px rgba(136,104,216,0.3)",
+        boxShadow: disabled ? "none" : "0 0 32px rgb(from var(--accent-cyan) r g b / 0.3)",
         transition: "all 0.2s",
       }}
     >

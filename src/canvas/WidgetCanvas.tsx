@@ -288,8 +288,8 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
         onClick={handleSave}
         style={{
           padding: "4px 10px", borderRadius: 0,
-          background: saving ? "var(--accent-green)" : "rgba(96,64,192,0.25)",
-          border: "1px solid rgba(96,64,192,0.4)",
+          background: saving ? "var(--accent-green)" : "rgb(from var(--accent-blue) r g b / 0.25)",
+          border: "1px solid rgb(from var(--accent-blue) r g b / 0.4)",
           color: saving ? "#000" : "var(--accent-cyan)",
           fontSize: 10, fontWeight: 700, cursor: "pointer",
           transition: "all 0.2s", whiteSpace: "nowrap" as const,
@@ -316,7 +316,7 @@ function LayoutSaver({ engine }: { engine: CanvasEngineState }) {
                 onClick={() => { engine.loadLayout(l.id); setShowLayouts(false); }}
                 style={{
                   flex: 1, textAlign: "left" as const, padding: "6px 8px", borderRadius: 0,
-                  background: l.name === engine.activeLayoutName ? "rgba(96,64,192,0.12)" : "none",
+                  background: l.name === engine.activeLayoutName ? "rgb(from var(--accent-blue) r g b / 0.12)" : "none",
                   border: "none", color: l.name === engine.activeLayoutName ? "var(--accent-cyan)" : "var(--text-primary)",
                   fontSize: 12, fontWeight: l.name === engine.activeLayoutName ? 700 : 400, cursor: "pointer",
                 }}

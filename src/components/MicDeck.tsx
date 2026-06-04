@@ -28,8 +28,8 @@ function DuckToggle() {
         onClick={() => setDuck(d => !d)}
         style={{
           width: "100%", padding: "5px 10px", borderRadius: 0,
-          background: duck ? "rgba(96,64,192,0.1)" : "var(--bg-tertiary)",
-          border: `1px solid ${duck ? "rgba(96,64,192,0.3)" : "var(--border-primary)"}`,
+          background: duck ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-tertiary)",
+          border: `1px solid ${duck ? "rgb(from var(--accent-blue) r g b / 0.3)" : "var(--border-primary)"}`,
           color: duck ? "var(--accent-cyan)" : "var(--text-tertiary)",
           fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
           cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
@@ -221,8 +221,8 @@ export default function MicDeck({ inputDeviceId }: Props) {
           title="Mono EQ"
           style={{
             width: 28, height: 28, borderRadius: 0, flexShrink: 0,
-            background: eqOpen ? "rgba(96,64,192,0.18)" : "var(--bg-tertiary)",
-            border: `1px solid ${eqOpen ? "#6040c0" : "var(--border-primary)"}`,
+            background: eqOpen ? "rgb(from var(--accent-blue) r g b / 0.18)" : "var(--bg-tertiary)",
+            border: `1px solid ${eqOpen ? "var(--accent-blue)" : "var(--border-primary)"}`,
             color: eqOpen ? "#8060e0" : "var(--text-tertiary)",
             cursor: "pointer", display: "flex", alignItems: "center",
             justifyContent: "center", flexDirection: "column" as const, gap: 1,
@@ -301,10 +301,10 @@ export default function MicDeck({ inputDeviceId }: Props) {
       <div style={{ padding: "0 14px 4px" }}>
         <button onClick={() => setShowProcessing((p: boolean) => !p)} style={{
           width: "100%", padding: "5px 10px", borderRadius: 0, border: "none",
-          background: showProcessing ? "rgba(96,64,192,0.12)" : "var(--bg-tertiary)",
+          background: showProcessing ? "rgb(from var(--accent-blue) r g b / 0.12)" : "var(--bg-tertiary)",
           color: showProcessing ? "var(--accent-cyan)" : "var(--text-tertiary)",
           fontSize: 9, fontWeight: 700, cursor: "pointer", letterSpacing: "0.08em",
-          outline: showProcessing ? "1px solid rgba(96,64,192,0.3)" : "1px solid var(--border-primary)",
+          outline: showProcessing ? "1px solid rgb(from var(--accent-blue) r g b / 0.3)" : "1px solid var(--border-primary)",
           transition: "all 0.15s", marginBottom: 4,
           display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
         }}>

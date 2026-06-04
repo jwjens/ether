@@ -261,7 +261,7 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
             return (
               <div key={def.id} style={{
                 ...S.defRow,
-                background: hasPending ? "rgba(96,64,192,0.06)" : "transparent",
+                background: hasPending ? "rgb(from var(--accent-blue) r g b / 0.06)" : "transparent",
               }}>
                 <span style={S.label} title={def.name}>{def.name}</span>
                 <div>{isClearing
@@ -289,7 +289,7 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
           <button
             onClick={apply}
             disabled={changeCount === 0 || applying}
-            style={{ ...S.btn("var(--accent-purple, #6040c0)", "#fff"), opacity: changeCount === 0 || applying ? 0.45 : 1, cursor: changeCount === 0 ? "not-allowed" : "pointer" }}
+            style={{ ...S.btn("var(--accent-purple, var(--accent-blue))", "#fff"), opacity: changeCount === 0 || applying ? 0.45 : 1, cursor: changeCount === 0 ? "not-allowed" : "pointer" }}
           >
             {applying ? "Applying…" : `Apply (${changeCount} change${changeCount !== 1 ? "s" : ""})`}
           </button>

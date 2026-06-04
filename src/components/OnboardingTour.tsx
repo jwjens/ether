@@ -351,7 +351,7 @@ export default function OnboardingTour({ onDone }: Props) {
 
         {/* Waiting for action hint */}
         {waitingForAction && step.waitForEvent && (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "6px 10px", background: "rgba(136,104,216,0.08)", border: "1px solid rgba(136,104,216,0.2)", borderRadius: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, padding: "6px 10px", background: "rgb(from var(--accent-cyan) r g b / 0.08)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.2)", borderRadius: 0 }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)", animation: "tour-pulse 1.2s ease-in-out infinite", flexShrink: 0 }} />
             <span style={{ fontSize: 11, color: "var(--accent-cyan)", fontWeight: 600 }}>
               Waiting for you to {step.actionLabel?.replace(" →", "").toLowerCase() || "complete this step"}...
@@ -389,7 +389,7 @@ export default function OnboardingTour({ onDone }: Props) {
       <style>{`
         @keyframes tour-pulse {
           0%, 100% { opacity: 1; box-shadow: 0 0 0 3px var(--accent-cyan); }
-          50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(136,104,216,0.25); }
+          50% { opacity: 0.7; box-shadow: 0 0 0 6px rgb(from var(--accent-cyan) r g b / 0.25); }
         }
       `}</style>
     </div>

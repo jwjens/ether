@@ -102,9 +102,9 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
         }}>ETHER</div>
         <div style={{
           fontSize: 10, fontWeight: 600, letterSpacing: "0.14em",
-          color: "#8868d8", textTransform: "uppercase" as const,
+          color: "var(--accent-cyan)", textTransform: "uppercase" as const,
           padding: "2px 8px",
-          border: "1px solid rgba(136,104,216,0.3)",
+          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)",
           borderRadius: 3,
         }}>MASTER EQ · 10-BAND</div>
       </div>
@@ -125,7 +125,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
           color: "#a8a8b4", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
           cursor: "pointer", transition: "all 0.15s",
         }}
-        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "#6040c0"; (e.currentTarget as HTMLElement).style.color = "#ececf2"; }}
+        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-blue)"; (e.currentTarget as HTMLElement).style.color = "#ececf2"; }}
         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = "#3a3a48"; (e.currentTarget as HTMLElement).style.color = "#a8a8b4"; }}
       >FLAT</button>
 
@@ -159,7 +159,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
       minHeight={320}
       onClose={onClose}
       headerContent={header}
-      accentColor="#8868d8"
+      accentColor="var(--accent-cyan)"
     >
       {({ width, height }) => {
         // Scale the track height based on available body space
@@ -174,7 +174,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
             <div style={{
               flex: 1,
               padding: "20px 20px 14px",
-              background: "radial-gradient(ellipse at top, rgba(96,64,192,0.06) 0%, transparent 70%), #0a0a0f",
+              background: "radial-gradient(ellipse at top, rgb(from var(--accent-blue) r g b / 0.06) 0%, transparent 70%), #0a0a0f",
               minHeight: 0, overflow: "hidden",
             }}>
               <div style={{ display: "flex", height: "100%" }}>
@@ -210,7 +210,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
                       left: 10, right: 10,
                       top: 12 + p * TRACK_H,
                       height: 1,
-                      background: i === 2 ? "rgba(136,104,216,0.3)" : "rgba(255,255,255,0.04)",
+                      background: i === 2 ? "rgb(from var(--accent-cyan) r g b / 0.3)" : "rgba(255,255,255,0.04)",
                       pointerEvents: "none", zIndex: 1,
                     }} />
                   ))}
@@ -227,7 +227,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
                       specPct > 0.9  ? "#ef4444" :
                       specPct > 0.75 ? "#f59e0b" :
                       specPct > 0.5  ? "#22c55e" :
-                                       "#8868D8";
+                                       "var(--accent-cyan)";
 
                     return (
                       <div key={idx} style={{
@@ -282,16 +282,16 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
                               border: "1px solid #1a1a22",
                               borderRadius: 2,
                               boxShadow: Math.abs(gain) > 0.05
-                                ? "0 0 10px rgba(136,104,216,0.6), 0 1px 0 rgba(255,255,255,0.15) inset, 0 -1px 0 rgba(0,0,0,0.3) inset"
+                                ? "0 0 10px rgb(from var(--accent-cyan) r g b / 0.6), 0 1px 0 rgba(255,255,255,0.15) inset, 0 -1px 0 rgba(0,0,0,0.3) inset"
                                 : "0 1px 0 rgba(255,255,255,0.08) inset, 0 -1px 0 rgba(0,0,0,0.3) inset",
                               transition: "box-shadow 0.18s",
                               zIndex: 3,
                             }}>
                               <div style={{
                                 position: "absolute", top: "50%", left: 2, right: 2,
-                                height: 1, background: Math.abs(gain) > 0.05 ? "#8868d8" : "#5a5a72",
+                                height: 1, background: Math.abs(gain) > 0.05 ? "var(--accent-cyan)" : "#5a5a72",
                                 transform: "translateY(-50%)",
-                                boxShadow: Math.abs(gain) > 0.05 ? "0 0 4px #8868d8" : "none",
+                                boxShadow: Math.abs(gain) > 0.05 ? "0 0 4px var(--accent-cyan)" : "none",
                               }}/>
                             </div>
                           </div>
@@ -300,7 +300,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
                         <div style={{
                           marginTop: 8, fontSize: 10,
                           fontFamily: "'JetBrains Mono', monospace",
-                          color: Math.abs(gain) > 0.05 ? "#8868d8" : "#5a5a72",
+                          color: Math.abs(gain) > 0.05 ? "var(--accent-cyan)" : "#5a5a72",
                           fontWeight: 700, letterSpacing: "0.03em", minHeight: 14,
                         }}>
                           {gain > 0.05 ? "+" : ""}{gain.toFixed(1)}
@@ -334,7 +334,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
               <span style={{ color: isActive ? "#ef4444" : "#5a5a72" }}>
                 {isActive ? "● EQ ENGAGED" : "○ BYPASS"}
               </span>
-              <span style={{ marginLeft: "auto", color: "#8868d8" }}>
+              <span style={{ marginLeft: "auto", color: "var(--accent-cyan)" }}>
                 {isActive
                   ? `BOOST ${Math.max(...bands).toFixed(1)}dB · CUT ${Math.min(...bands).toFixed(1)}dB`
                   : "DOUBLE-CLICK ANY BAND TO RESET"}

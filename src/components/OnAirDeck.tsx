@@ -261,8 +261,8 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       cardShadow = "0 0 12px rgba(251,146,60,0.14)";
     } else {
       accent = "var(--accent-orange)"; statusLabel = "ON AIR"; statusColor = "var(--accent-green)";
-      topBarColor = "#6040c0";
-      cardShadow = "0 0 12px rgba(96,64,192,0.18)";
+      topBarColor = "var(--accent-blue)";
+      cardShadow = "0 0 12px rgb(from var(--accent-blue) r g b / 0.18)";
     }
   } else if (isPaused) {
     accent = "var(--accent-amber)"; statusLabel = "PAUSED"; statusColor = "var(--accent-amber)";
@@ -697,8 +697,8 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
           style={{
             width: 36, height: 36,
             borderRadius: 0,
-            background: eqOpen ? "rgba(96,64,192,0.18)" : "var(--bg-secondary)",
-            border: `1px solid ${eqOpen ? "#6040c0" : "var(--border-secondary)"}`,
+            background: eqOpen ? "rgb(from var(--accent-blue) r g b / 0.18)" : "var(--bg-secondary)",
+            border: `1px solid ${eqOpen ? "var(--accent-blue)" : "var(--border-secondary)"}`,
             color: eqOpen ? "#8060e0" : "var(--text-tertiary)",
             cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",

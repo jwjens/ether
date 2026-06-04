@@ -256,7 +256,7 @@ export default function StationManager({ onStationSwitch }: Props) {
   if (loading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", gap: 10, color: "var(--text-tertiary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
-        <div style={{ width: 16, height: 16, border: "2px solid var(--border-primary)", borderTopColor: "#6040c0", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+        <div style={{ width: 16, height: 16, border: "2px solid var(--border-primary)", borderTopColor: "var(--accent-blue)", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
         Loading stations…
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       </div>

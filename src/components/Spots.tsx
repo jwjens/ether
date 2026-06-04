@@ -20,8 +20,8 @@ function isAudio(n: string) { return AUDIO_EXTS.some(e => n.toLowerCase().endsWi
 function titleFromFile(p: string) { return (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " "); }
 
 const TYPE_COLORS: Record<string, string> = {
-  promo: "#6040c0", psa: "#34d399", jingle: "#a78bfa",
-  liner: "#fb923c", sweeper: "#f472b6", commercial: "#fbbf24", imaging: "#8868D8",
+  promo: "var(--accent-blue)", psa: "#34d399", jingle: "#a78bfa",
+  liner: "#fb923c", sweeper: "#f472b6", commercial: "#fbbf24", imaging: "var(--accent-cyan)",
 };
 
 export default function Spots() {
@@ -242,7 +242,7 @@ export default function Spots() {
         })}
       </div>
 
-      {status && <div style={{ padding: "10px 14px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
+      {status && <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
 
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>

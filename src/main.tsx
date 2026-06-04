@@ -44,7 +44,7 @@ class RootBoundary extends Component<{ children: ReactNode }, { error: Error | n
           <button
             onClick={() => window.location.reload()}
             style={{
-              padding: "8px 24px", background: "#6040c0", border: "none",
+              padding: "8px 24px", background: "var(--accent-blue)", border: "none",
               color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700,
             }}
           >Reload</button>

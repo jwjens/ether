@@ -93,9 +93,9 @@ export const PRESETS: Preset[] = [
       "--text-tertiary":  "#646b78",
       "--border-primary":   "#22222b",
       "--border-secondary": "#2e2e39",
-      "--accent-blue":  "#3b82f6",
+      "--accent-blue":  "#6040c0",
       "--accent-green": "#22c55e",
-      "--accent-cyan":  "#00e0bf",
+      "--accent-cyan":  "#8868D8",
       "--accent-red":   "#ef4444",
       "--accent-amber": "#f59e0b",
       "--wave-played":   "#00e0bf",
@@ -470,6 +470,38 @@ export const PRESETS: Preset[] = [
 
 const DEFAULT_PRESET = PRESETS[0];
 
+// ─── Tier accent ramp ──────────────────────────────────────────
+// On the DEFAULT theme, the accent darkens as the plan tier goes up: Solo (light) →
+// Studio → Network → Enterprise (deep rich purple). Custom/preset themes from Theme
+// Studio keep their own accent (this only touches the default theme). The whole app
+// reads --accent-cyan / --accent-blue, so this re-tints everything.
+const TIER_ACCENT: Record<string, { cyan: string; blue: string }> = {
+  free:             { cyan: "#b9a6f0", blue: "#9a7fe0" }, // Solo — light purple
+  pro:              { cyan: "#8868D8", blue: "#6040c0" }, // Studio — medium
+  pro_lifetime:     { cyan: "#8868D8", blue: "#6040c0" },
+  station:          { cyan: "#6040c0", blue: "#4a2d9e" }, // Network — dark rich
+  station_lifetime: { cyan: "#6040c0", blue: "#4a2d9e" },
+  operator:         { cyan: "#4a2d9e", blue: "#34208a" }, // Enterprise — deepest
+};
+let _tierForAccent = "pro"; // until the plan is known
+
+function applyTierAccentIfDefault() {
+  // Only the default theme follows the tier ramp; a custom/preset theme owns its accent.
+  if (!document.documentElement.classList.contains(`theme-${DEFAULT_PRESET.id}`)) return;
+  const a = TIER_ACCENT[_tierForAccent] || TIER_ACCENT.pro;
+  for (const target of [document.documentElement, document.getElementById("root")]) {
+    if (!target) continue;
+    (target as HTMLElement).style.setProperty("--accent-cyan", a.cyan);
+    (target as HTMLElement).style.setProperty("--accent-blue", a.blue);
+  }
+}
+
+// Called by App when the plan tier changes — re-tints the default theme to that tier.
+export function setTierForAccent(plan: string) {
+  _tierForAccent = plan || "pro";
+  applyTierAccentIfDefault();
+}
+
 // ─── Variable injection ────────────────────────────────────────
 
 export function applyTheme(vars: ThemeVars, fontStack?: string, presetId?: string) {
@@ -700,6 +732,8 @@ export function applyTheme(vars: ThemeVars, fontStack?: string, presetId?: strin
     Array.from(el.classList).forEach(c => { if (shouldStrip(c)) el.classList.remove(c); });
   });
   if (presetId) document.documentElement.classList.add(`theme-${presetId}`);
+  // Default theme: re-tint the accent to the current plan tier (no-op on custom themes).
+  applyTierAccentIfDefault();
 }
 
 // ─── Persistence ───────────────────────────────────────────────

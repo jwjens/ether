@@ -49,7 +49,7 @@ interface Template {
 const STATUS_COLOR: Record<SegmentStatus, string> = {
   pending:    "#94a3b8",
   generating: "#f59e0b",
-  ready:      "#6040c0",
+  ready:      "var(--accent-blue)",
   played:     "#22c55e",
   archived:   "#94a3b8",
   error:      "#ef4444",

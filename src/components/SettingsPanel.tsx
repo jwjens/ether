@@ -253,12 +253,12 @@ function ExperienceModeSelector() {
         {EXP_MODES.map(m => (
           <button key={m.id} onClick={() => save(m.id)} style={{
             display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderRadius: 0, textAlign: "left" as any, cursor: "pointer",
-            background: mode === m.id ? "rgba(96,64,192,0.1)" : "var(--bg-tertiary)",
-            border: `1px solid ${mode === m.id ? "#6040c0" : "var(--border-primary)"}`,
+            background: mode === m.id ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-tertiary)",
+            border: `1px solid ${mode === m.id ? "var(--accent-blue)" : "var(--border-primary)"}`,
             transition: "all 0.12s",
           }}>
-            <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${mode === m.id ? "#6040c0" : "var(--border-secondary)"}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {mode === m.id && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#6040c0" }} />}
+            <div style={{ width: 16, height: 16, borderRadius: "50%", border: `2px solid ${mode === m.id ? "var(--accent-blue)" : "var(--border-secondary)"}`, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {mode === m.id && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-blue)" }} />}
             </div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: mode === m.id ? "#9070e0" : "var(--text-primary)", marginBottom: 2 }}>{m.label}</div>
@@ -269,9 +269,9 @@ function ExperienceModeSelector() {
         ))}
       </div>
       {showUpgrade && (
-        <div style={{ marginTop: 12, padding: "12px 16px", background: "rgba(96,64,192,0.08)", border: "1px solid #6040c060", fontSize: 12, color: "#9070e0", lineHeight: 1.6 }}>
+        <div style={{ marginTop: 12, padding: "12px 16px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid var(--accent-blue)60", fontSize: 12, color: "#9070e0", lineHeight: 1.6 }}>
           <strong>Live Radio unlocked.</strong> All six decks are now visible. Format clocks, hard transitions, and the full rotation engine are active. You can assign purposes to decks in the Deck Configurator.
-          <button onClick={() => setShowUpgrade(false)} style={{ float: "right" as any, background: "none", border: "none", color: "#6040c0", cursor: "pointer", fontSize: 13 }}>✕</button>
+          <button onClick={() => setShowUpgrade(false)} style={{ float: "right" as any, background: "none", border: "none", color: "var(--accent-blue)", cursor: "pointer", fontSize: 13 }}>✕</button>
         </div>
       )}
     </div>
@@ -324,8 +324,8 @@ function InviteGenerator() {
         {(["solo", "standard", "live_radio"] as const).map(m => (
           <button key={m} onClick={() => setMode(m)} style={{
             padding: "6px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600, cursor: "pointer",
-            background: mode === m ? "rgba(96,64,192,0.15)" : "var(--bg-tertiary)",
-            border: `1px solid ${mode === m ? "#6040c0" : "var(--border-primary)"}`,
+            background: mode === m ? "rgb(from var(--accent-blue) r g b / 0.15)" : "var(--bg-tertiary)",
+            border: `1px solid ${mode === m ? "var(--accent-blue)" : "var(--border-primary)"}`,
             color: mode === m ? "#9070e0" : "var(--text-tertiary)",
           }}>{m.replace("_", " ").replace(/\b\w/g, c => c.toUpperCase())}</button>
         ))}
@@ -333,7 +333,7 @@ function InviteGenerator() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <button onClick={generate} disabled={!name.trim()} style={{
           padding: "9px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, cursor: name.trim() ? "pointer" : "default",
-          background: name.trim() ? "#6040c0" : "var(--bg-tertiary)", border: "none", color: name.trim() ? "#fff" : "var(--text-tertiary)",
+          background: name.trim() ? "var(--accent-blue)" : "var(--bg-tertiary)", border: "none", color: name.trim() ? "#fff" : "var(--text-tertiary)",
         }}>Generate Invite File</button>
         <span style={{ fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.08em" }}>BUILT BY DENIRO</span>
       </div>
@@ -740,7 +740,7 @@ function ControllersSection() {
           devices.map(name => {
             const isActive = status.connected && status.deviceName === name;
             return (
-              <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 4, background: isActive ? "rgba(96,64,192,0.06)" : "var(--bg-secondary)", border: `1px solid ${isActive ? "rgba(96,64,192,0.25)" : "var(--border-primary)"}` }}>
+              <div key={name} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", marginBottom: 4, background: isActive ? "rgb(from var(--accent-blue) r g b / 0.06)" : "var(--bg-secondary)", border: `1px solid ${isActive ? "rgb(from var(--accent-blue) r g b / 0.25)" : "var(--border-primary)"}` }}>
                 <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary)" }}>{name}</span>
                 {isActive ? (
                   <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-blue)", letterSpacing: "0.05em" }}>CONNECTED</span>
@@ -1125,7 +1125,7 @@ const LISTENER_BASE_URL = "https://listen.ether-technologies.com";
 
 const EMPTY_PUBLIC_PAGE = {
   slug: "", display_name: "", logo_url: "", stream_url: "",
-  color_primary: "#6040c0", color_secondary: "#6040c0", description: "",
+  color_primary: "var(--accent-blue)", color_secondary: "var(--accent-blue)", description: "",
   socials: { website: "", instagram: "", twitter: "", facebook: "", youtube: "" } as Record<string, string>,
   public_enabled: false,
 };
@@ -1157,7 +1157,7 @@ function PublicPageSettings() {
         const norm = {
           slug: m.slug || "", display_name: m.display_name || "", logo_url: m.logo_url || "",
           stream_url: m.stream_url || "",
-          color_primary: m.color_primary || "#6040c0", color_secondary: m.color_secondary || "#6040c0",
+          color_primary: m.color_primary || "var(--accent-blue)", color_secondary: m.color_secondary || "var(--accent-blue)",
           description: m.description || "",
           socials: { ...EMPTY_PUBLIC_PAGE.socials, ...(m.socials || {}) },
           public_enabled: !!m.public_enabled,
@@ -1844,7 +1844,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                 outputs.map(d => (
                   <button key={d.deviceId} onClick={() => setCurrentOutput(d.deviceId)} style={{
                     padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
-                    background: currentOutput === d.deviceId ? "rgba(96,64,192,0.12)" : "var(--bg-tertiary)",
+                    background: currentOutput === d.deviceId ? "rgb(from var(--accent-blue) r g b / 0.12)" : "var(--bg-tertiary)",
                     border: "1px solid " + (currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--border-primary)"),
                     color: currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--text-secondary)",
                     display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -2045,10 +2045,10 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           </div>
         )}
         {processingProgress && (
-          <div style={{ padding: "10px 14px", background: "rgba(96,64,192,0.08)", border: "1px solid rgba(96,64,192,0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)", marginBottom: 12 }}>
+          <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)", marginBottom: 12 }}>
             {processingProgress}
             {processingTotal > 0 && (
-              <div style={{ width: "100%", height: 3, background: "rgba(96,64,192,0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
+              <div style={{ width: "100%", height: 3, background: "rgb(from var(--accent-blue) r g b / 0.15)", borderRadius: 0, marginTop: 8, overflow: "hidden" }}>
                 <div style={{ width: (processingDone / processingTotal * 100) + "%", height: "100%", background: "var(--accent-blue)", transition: "width 0.3s" }} />
               </div>
             )}
@@ -2564,7 +2564,7 @@ const ROLES = [
   { value: "jock",           label: "On-Air Jock" },
   { value: "music_director", label: "Music Director" },
 ];
-const ROLE_COLORS = ["#f87171", "#8868D8", "#a78bfa", "#34d399", "#fbbf24", "#fb923c", "#e879f9", "#6040c0"];
+const ROLE_COLORS = ["#f87171", "var(--accent-cyan)", "#a78bfa", "#34d399", "#fbbf24", "#fb923c", "#e879f9", "var(--accent-blue)"];
 
 function UserManagement() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -2577,7 +2577,7 @@ function UserManagement() {
   // Add form
   const [addName, setAddName] = useState("");
   const [addRole, setAddRole] = useState("jock");
-  const [addColor, setAddColor] = useState("#8868D8");
+  const [addColor, setAddColor] = useState("var(--accent-cyan)");
   const [addPin, setAddPin] = useState("");
 
   const ether = (window as any).ether;
@@ -2597,7 +2597,7 @@ function UserManagement() {
       pinHash = addPin;
     }
     await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor]);
-    setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("#8868D8");
+    setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("var(--accent-cyan)");
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
   };

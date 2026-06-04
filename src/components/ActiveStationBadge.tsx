@@ -107,7 +107,7 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
                 display: "flex", alignItems: "center", gap: 9, width: "100%",
                 padding: "9px 12px", background: "transparent",
                 border: "none", borderBottom: "1px solid rgba(255,255,255,0.04)",
-                color: s.is_active ? "#6040c0" : "var(--text-primary)",
+                color: s.is_active ? "var(--accent-blue)" : "var(--text-primary)",
                 fontSize: 13, fontWeight: s.is_active ? 700 : 400,
                 cursor: s.is_active ? "default" : "pointer", textAlign: "left",
               }}

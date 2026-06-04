@@ -237,7 +237,7 @@ export default function OnShiftScreen({ onStart }: Props) {
     muted:    "#4a4a6a",
     label:    "#252545",
     iris:     "#8878c0",
-    purple:   "#6040c0",
+    purple:   "var(--accent-blue)",
     amber:    "#b87020",
   } as const;
 

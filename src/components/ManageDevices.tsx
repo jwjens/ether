@@ -274,7 +274,7 @@ export default function ManageDevices() {
   if (loading && seats.length === 0) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", gap: 10, color: "var(--text-tertiary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
-        <div style={{ width: 16, height: 16, border: "2px solid var(--border-primary)", borderTopColor: "#6040c0", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
+        <div style={{ width: 16, height: 16, border: "2px solid var(--border-primary)", borderTopColor: "var(--accent-blue)", borderRadius: "50%", animation: "spin 0.7s linear infinite" }} />
         Loading devices…
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       </div>
@@ -374,7 +374,7 @@ export default function ManageDevices() {
 function Header({ seatsUsed, seatsMax }: { seatsUsed: number; seatsMax: number }) {
   return (
     <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0 }}>
-      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#8868D8", textTransform: "uppercase", marginBottom: 2 }}>Account</div>
+      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 2 }}>Account</div>
       <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Manage Devices</div>
       <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
         {seatsUsed} of {seatsMax} device{seatsMax !== 1 ? "s" : ""} in use · this machine highlighted

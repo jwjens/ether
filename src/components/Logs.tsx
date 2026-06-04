@@ -325,7 +325,7 @@ export default function Logs() {
         const STATUS_STYLE: Record<string, { bg: string; color: string; label: string }> = {
           match: { bg: "rgba(52,211,153,0.12)", color: "var(--accent-green)", label: "✓ MATCH" },
           missed: { bg: "rgba(248,113,113,0.12)", color: "var(--accent-red)", label: "✗ MISSED" },
-          unscheduled: { bg: "rgba(96,64,192,0.12)", color: "var(--accent-blue)", label: "+ UNSCHED" },
+          unscheduled: { bg: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", label: "+ UNSCHED" },
         };
         return (
           <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden" }}>

@@ -46,7 +46,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           gap: 16,
         }}>
           {/* Logo */}
-          <div style={{ width: 48, height: 48, borderRadius: 0, background: "linear-gradient(135deg, #6040c0, #6d28d9)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 0, background: "linear-gradient(135deg, var(--accent-blue), #6d28d9)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 8 }}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
               <path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
             </svg>
@@ -71,7 +71,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           <div style={{ display: "flex", gap: 10 }}>
             <button
               onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
-              style={{ padding: "10px 24px", borderRadius: 0, background: "#6040c0", border: "none", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              style={{ padding: "10px 24px", borderRadius: 0, background: "var(--accent-blue)", border: "none", color: "#000", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
             >
               Restart Interface
             </button>

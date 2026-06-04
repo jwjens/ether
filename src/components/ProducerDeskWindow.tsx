@@ -314,7 +314,7 @@ export default function ProducerDeskWindow() {
         }}
       >
         {/* App icon */}
-        <div style={{ width:22, height:22, borderRadius:6, background:"linear-gradient(135deg, #6040c0, #a78bfa)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, flexShrink:0 }}>✦</div>
+        <div style={{ width:22, height:22, borderRadius:6, background:"linear-gradient(135deg, var(--accent-blue), #a78bfa)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, flexShrink:0 }}>✦</div>
 
         <div style={{ flex:1, display:"flex", alignItems:"center", gap:6 }} data-tauri-drag-region>
           <span style={{ fontSize:11, fontWeight:800, color:"rgba(255,255,255,0.7)", letterSpacing:"0.08em", textTransform:"uppercase" as const, fontFamily:"'Syne', sans-serif" }}>
@@ -433,13 +433,13 @@ export default function ProducerDeskWindow() {
             {messages.map((msg,i) => (
               <div key={i} style={{ display:"flex", gap:10, flexDirection:msg.role==="user"?"row-reverse":"row" }}>
                 {msg.role==="assistant" && (
-                  <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg, rgba(167,139,250,0.3), rgba(96,64,192,0.3))", border:"1px solid rgba(167,139,250,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, flexShrink:0, marginTop:2 }}>✦</div>
+                  <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg, rgba(167,139,250,0.3), rgb(from var(--accent-blue) r g b / 0.3))", border:"1px solid rgba(167,139,250,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, flexShrink:0, marginTop:2 }}>✦</div>
                 )}
                 <div style={{
                   maxWidth:"78%", padding:"10px 13px",
                   borderRadius:msg.role==="user"?"13px 13px 4px 13px":"4px 13px 13px 13px",
-                  background:msg.role==="user"?"linear-gradient(135deg, rgba(96,64,192,0.2), rgba(96,64,192,0.12))":"rgba(255,255,255,0.05)",
-                  border:msg.role==="user"?"1px solid rgba(96,64,192,0.2)":"1px solid rgba(255,255,255,0.07)",
+                  background:msg.role==="user"?"linear-gradient(135deg, rgb(from var(--accent-blue) r g b / 0.2), rgb(from var(--accent-blue) r g b / 0.12))":"rgba(255,255,255,0.05)",
+                  border:msg.role==="user"?"1px solid rgb(from var(--accent-blue) r g b / 0.2)":"1px solid rgba(255,255,255,0.07)",
                   color:"rgba(255,255,255,0.82)", fontSize:12, lineHeight:1.7,
                 }}>
                   <div style={{ whiteSpace:"pre-wrap" }}>{msg.content}</div>
@@ -454,7 +454,7 @@ export default function ProducerDeskWindow() {
             ))}
             {aiLoading && (
               <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg, rgba(167,139,250,0.3), rgba(96,64,192,0.3))", border:"1px solid rgba(167,139,250,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11 }}>✦</div>
+                <div style={{ width:26, height:26, borderRadius:8, background:"linear-gradient(135deg, rgba(167,139,250,0.3), rgb(from var(--accent-blue) r g b / 0.3))", border:"1px solid rgba(167,139,250,0.2)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11 }}>✦</div>
                 <div style={{ display:"flex", gap:4, padding:"11px 14px", background:"rgba(255,255,255,0.05)", borderRadius:"4px 13px 13px 13px", border:"1px solid rgba(255,255,255,0.07)" }}>
                   {[0,1,2].map(i => <div key={i} style={{ width:5, height:5, borderRadius:"50%", background:"rgba(167,139,250,0.6)", animation:`bounce 1.2s ease-in-out ${i*0.15}s infinite` }} />)}
                 </div>
@@ -527,7 +527,7 @@ function ResizeHandles({ onResize }: { onResize: (e: React.MouseEvent, handle: s
           onMouseDown={e => { e.stopPropagation(); onResize(e, handle); }}
           style={{
             position:"absolute", width:H, height:H, borderRadius:2,
-            background:"rgba(96,64,192,0.9)", border:"1.5px solid #fff",
+            background:"rgb(from var(--accent-blue) r g b / 0.9)", border:"1.5px solid #fff",
             boxShadow:"0 1px 4px rgba(0,0,0,0.4)",
             zIndex:200,
             ...style,
@@ -558,7 +558,7 @@ function BoardCard({ item, selected, dragging, onDragStart, onResize, onSelect, 
   const base: React.CSSProperties = {
     width:"100%", height:"100%", minHeight:item.h,
     borderRadius:12, cursor:dragging?"grabbing":"grab",
-    boxShadow:selected?"0 12px 40px rgba(0,0,0,0.6), 0 0 0 1.5px rgba(96,64,192,0.5)":dragging?"0 20px 50px rgba(0,0,0,0.7)":"0 4px 16px rgba(0,0,0,0.4), 0 0 0 0.5px rgba(255,255,255,0.06)",
+    boxShadow:selected?"0 12px 40px rgba(0,0,0,0.6), 0 0 0 1.5px rgb(from var(--accent-blue) r g b / 0.5)":dragging?"0 20px 50px rgba(0,0,0,0.7)":"0 4px 16px rgba(0,0,0,0.4), 0 0 0 0.5px rgba(255,255,255,0.06)",
     transition:dragging?"none":"box-shadow 0.2s", overflow:"hidden",
     position:"relative",
   };
@@ -609,10 +609,10 @@ function BoardCard({ item, selected, dragging, onDragStart, onResize, onSelect, 
 
   if (item.type==="link") return (
     <div style={wrapper}>
-    <div style={{...base, background:"rgba(96,64,192,0.05)", border:"1px solid rgba(96,64,192,0.15)", padding:"10px 12px", display:"flex", alignItems:"center", gap:10}}
+    <div style={{...base, background:"rgb(from var(--accent-blue) r g b / 0.05)", border:"1px solid rgb(from var(--accent-blue) r g b / 0.15)", padding:"10px 12px", display:"flex", alignItems:"center", gap:10}}
       onMouseDown={e=>{onSelect(item.id);onDragStart(e,item.id);}}>
-      <div style={{width:26,height:26,borderRadius:7,background:"rgba(96,64,192,0.1)",border:"1px solid rgba(96,64,192,0.2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(96,64,192,0.7)" strokeWidth="2" strokeLinecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      <div style={{width:26,height:26,borderRadius:7,background:"rgb(from var(--accent-blue) r g b / 0.1)",border:"1px solid rgb(from var(--accent-blue) r g b / 0.2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgb(from var(--accent-blue) r g b / 0.7)" strokeWidth="2" strokeLinecap="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
       </div>
       <div style={{flex:1,minWidth:0}}>
         <div style={{fontSize:11,fontWeight:600,color:"#7dd3fc",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.title}</div>

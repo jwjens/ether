@@ -87,7 +87,7 @@ function timeAgo(epoch: number) {
 
 // ─── Mini bar chart ───────────────────────────────────────────
 
-function BarChart({ data, height = 80, color = "#8868D8" }: {
+function BarChart({ data, height = 80, color = "var(--accent-cyan)" }: {
   data: { label: string; value: number }[];
   height?: number;
   color?: string;
@@ -334,7 +334,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             padding: "6px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
             border: "none", cursor: "pointer", transition: "all 0.12s",
-            background: tab === t.id ? "rgba(136,104,216,0.12)" : "transparent",
+            background: tab === t.id ? "rgb(from var(--accent-cyan) r g b / 0.12)" : "transparent",
             color: tab === t.id ? "var(--accent-cyan)" : "var(--text-tertiary)",
           }}>{t.label}</button>
         ))}

@@ -211,11 +211,11 @@ export default function SpotifyImport({ onClose }: Props) {
     border:  "#1e1e2e",
     text:    "#e0e0f0",
     muted:   "#4a4a6a",
-    purple:  "#6040c0",
+    purple:  "var(--accent-blue)",
     green:   "#34d399",
     amber:   "#f59e0b",
     red:     "#ef4444",
-    blue:    "#6040c0",
+    blue:    "var(--accent-blue)",
   } as const;
 
   const approvedCount = tracks.filter(t => t.approved).length;
