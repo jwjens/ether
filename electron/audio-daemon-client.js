@@ -58,6 +58,15 @@ function appVersion() {
 // in-process engine (rollback); main.js falls back to in-process if the daemon can't connect.
 function isEnabled() { return process.env.ETHER_AUDIO_DAEMON !== "0"; }
 
+// Packaged build vs dev. The whole "survive a gapless update" machinery — staging a renamed
+// external ether-engine.exe + spawning it detached so it outlives the app — only makes sense for
+// an INSTALLED build. In dev (unpackaged) there is no Ether.exe to stage and no installer to dodge,
+// so staging just reuses a stale leftover packaged binary, and detaching leaves a zombie daemon
+// behind on every restart (the dev "two versions playing" / "daemon not connected" mess). Dev runs
+// the in-dir engine from repo source and lets the daemon die with the app instead. Default TRUE if
+// undeterminable — always safer to behave like production.
+function isPackagedApp() { try { return require("electron").app.isPackaged; } catch { return true; } }
+
 let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();
 let onEvent = () => {};            // main sets this → forwards events to windows
@@ -86,8 +95,11 @@ function spawnDaemon() {
   }
   spawnAttempts++;
   try {
+    const dev = !isPackagedApp();
     let exe = process.execPath, script = DAEMON_SCRIPT, tag = "in-dir engine";
-    const staged = stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion() });
+    // Packaged only: stage a renamed, update-proof engine. Dev runs the in-dir repo source (above)
+    // so daemon edits actually take effect and no stale packaged binary is reused.
+    const staged = dev ? null : stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion() });
     if (staged) { exe = staged.exe; script = staged.script; tag = "staged engine (update-proof)"; }
     // Durable daemon log: the daemon is detached/stdio:"ignore" so its console is otherwise lost.
     // We know app userData here (the ELECTRON_RUN_AS_NODE daemon doesn't), so pass the path in.
@@ -97,11 +109,17 @@ function spawnDaemon() {
     const child = cp.spawn(exe, [script], {
       // ETHER_DAEMON_VERSION lets the daemon report (via the `version` cmd) which app version
       // spawned it, so a stale daemon left running across an update can be detected + reloaded.
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DAEMON_VERSION: appVersion(), ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
-      detached: true, stdio: "ignore",
+      // ETHER_DAEMON_DEV (dev only) tells the daemon to self-terminate when its last client (this
+      // app) disconnects, so it never lingers as a zombie across restarts. Packaged OMITS it — the
+      // daemon must outlive the app during a gapless update.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DAEMON_VERSION: appVersion(), ...(dev ? { ETHER_DAEMON_DEV: "1" } : {}), ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
+      // Packaged: detached + unref so an app/UI restart leaves the engine playing (gapless updates).
+      // Dev: attached, so a graceful app exit reaps it too (the self-terminate above is the backstop
+      // for a hard kill, where the OS closes the socket → the daemon sees its last client leave).
+      detached: !dev, stdio: "ignore",
     });
     child.unref();
-    console.log("[audiod-client] spawned daemon (detached) pid", child.pid, "—", tag);
+    console.log(`[audiod-client] spawned daemon (${dev ? "dev, dies-with-app" : "detached"}) pid`, child.pid, "—", tag);
   } catch (e) { console.error("[audiod-client] spawn failed:", e.message); }
 }
 

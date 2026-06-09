@@ -29,6 +29,11 @@ function audiodEndpoint() {
 }
 const PIPE = audiodEndpoint();
 const isFileSocket = !PIPE.startsWith("\\\\.\\pipe\\");
+// Dev mode (set by the app's audio-daemon-client only when unpackaged): the app is the daemon's
+// only client, so when it disconnects (close/restart/hard-kill → OS closes the socket) the daemon
+// must exit instead of lingering as a zombie that holds the audio device + pipe. Packaged daemons
+// NEVER set this — they must outlive the app during a gapless update. Off by default.
+const DEV_REAP = process.env.ETHER_DAEMON_DEV === "1";
 // Test seam (never set in production; mirrors the watchdog's WATCHDOG_TEST_* seams): exit
 // immediately to simulate a daemon that can't start, so the app's audio-backend fallback
 // (electron/main.js setupAudioBackend → in-process engine) can be verified deterministically.
@@ -182,7 +187,16 @@ const server = net.createServer((sock) => {
     let nl;
     while ((nl = buf.indexOf("\n")) >= 0) { const line = buf.slice(0, nl); buf = buf.slice(nl + 1); if (line.trim()) handleLine(sock, line); }
   });
-  sock.on("close", () => { clients.delete(sock); log("client disconnected (" + clients.size + " left)"); });
+  sock.on("close", () => {
+    clients.delete(sock);
+    log("client disconnected (" + clients.size + " left)");
+    // Dev: when the last client (the app) goes away, self-terminate so we don't zombie across a
+    // restart. Short grace so a transient pipe blip + reconnect (client.scheduleReconnect, ~1s)
+    // doesn't kill a daemon the app is about to re-attach to.
+    if (DEV_REAP && clients.size === 0) {
+      setTimeout(() => { if (clients.size === 0) { log("dev: no clients for 3s — exiting (no zombie)"); shutdown(); } }, 3000);
+    }
+  });
   sock.on("error", () => { clients.delete(sock); });
 });
 
