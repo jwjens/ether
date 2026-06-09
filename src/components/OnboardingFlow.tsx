@@ -330,13 +330,22 @@ export default function OnboardingFlow({ onComplete }: Props) {
     if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
     setPlanGlobally(data.plan as PlanTier);
     if (!data.license_key) throw new Error('No license returned for this account. Please contact support.');
-    await routeAfterAuth(data.license_key);
+    return data.license_key as string;
   };
 
+  // Sign in = returning user. The account and its stations already exist (station
+  // management lives inside Ether, not here), so skip the station picker and the
+  // bolted experience/venue/name/audio/pull screens entirely: authenticate, mark
+  // first-run complete, and drop straight to the profile PIN login (UserLogin).
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
     setAuthBusy(true); setAuthErr('');
-    try { await activateAndContinue(authEmail.trim(), authPassword); }
+    try {
+      await activateAndContinue(authEmail.trim(), authPassword);
+      const kv = (window as any).ether.stationConfigKv;
+      await kv.upsertByKey(stationId, 'first_run_complete', '1');
+      setState('done');
+    }
     catch (e: any) { setAuthErr(e?.message || 'Could not sign in.'); setAuthBusy(false); }
   };
 
@@ -358,7 +367,10 @@ export default function OnboardingFlow({ onComplete }: Props) {
           : 'Could not create your account. Please try again.'
         );
       }
-      await activateAndContinue(authEmail.trim(), authPassword);
+      const lk = await activateAndContinue(authEmail.trim(), authPassword);
+      // Sign up = brand-new account: run the full onboarding (pick/create station →
+      // experience → venue → name → audio → pull).
+      await routeAfterAuth(lk);
     } catch (e: any) { setAuthErr(e?.message || 'Could not sign up.'); setAuthBusy(false); }
   };
 
