@@ -29,7 +29,7 @@ const RTMP_PRESETS: { id: string; name: string; url: string; help: string }[] = 
 // ── Color tokens ─────────────────────────────────────────────────────────
 const BG0 = "#0e0e14", BG1 = "#111114", BG2 = "#18181f", BG3 = "#1e1e28";
 const BOR = "#2a2a38";
-const TXT = "#e8e8f0", TXT2 = "#8888a8";
+const TXT = "#e8e8f0", TXT2 = "#aaaac6";
 const PUR = "#7858c8", GRN = "#22c55e", RED = "#ef4444", AMB = "#f59e0b";
 
 const ether: any = (window as any).ether;

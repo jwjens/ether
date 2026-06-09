@@ -36,7 +36,7 @@ export async function getNextTransition(): Promise<NextTransition | null> {
   try {
     const stationId = getActiveStationIdSync();
     const shows = await query<ShowRow>(
-      "SELECT id, name, start_hour, end_hour, days FROM shows WHERE is_active = 1 AND station_id = ?",
+      "SELECT id, name, start_hour, end_hour, days FROM shows WHERE is_active = 1 AND deleted_at IS NULL AND station_id = ?",
       [stationId]
     );
     if (shows.length === 0) return null;

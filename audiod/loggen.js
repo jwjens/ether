@@ -45,7 +45,7 @@ function getActiveShowClock(db, stationId) {
   const day = String(new Date().getDay());
   const rows = db.prepare(
     `SELECT clock_id, name, start_hour, end_hour, days FROM shows
-     WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?
+     WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?
      ORDER BY CASE
        WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
        WHEN end_hour = 0 OR end_hour = start_hour THEN 24
@@ -73,7 +73,7 @@ function getFormatCategoryIds(db, stationId, clockId) {
           WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?`).all(clockId, stationId)
       : db.prepare(`SELECT DISTINCT cs.category_id FROM clock_slots cs
           WHERE cs.slot_type = 'music' AND cs.category_id IS NOT NULL AND cs.deleted_at IS NULL AND cs.station_id = ?
-            AND cs.clock_id IN (SELECT clock_id FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND station_id = ?)`).all(stationId, stationId);
+            AND cs.clock_id IN (SELECT clock_id FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?)`).all(stationId, stationId);
     return rows.map(r => r.category_id).filter(c => c != null);
   } catch { return []; }
 }

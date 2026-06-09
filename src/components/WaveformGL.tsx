@@ -17,6 +17,17 @@ interface Props {
   hoverPos:    number | null;
   dragRegion:  { start: number; end: number; type: "intro" | "outro" } | null;
   onMount?:    (canvas: HTMLCanvasElement) => void;
+  // Optional solid tint (hex). When set, the whole waveform is drawn in this
+  // color instead of the intro/outro/body zone colors — used by the multitrack
+  // timeline so each track's waveform matches its track color.
+  tint?:       string;
+}
+
+function hexToRgb(hex?: string): [number, number, number] {
+  if (!hex) return [0, 0, 0];
+  const m = hex.replace("#", "");
+  const n = parseInt(m.length === 3 ? m.split("").map(c => c + c).join("") : m, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
 // Glow padding — each bar extends slightly beyond the actual amplitude so the
@@ -61,6 +72,8 @@ const FRAG = `#version 300 es
 precision highp float;
 in float v_t, v_amp, v_y;
 uniform float u_ci, u_co, u_ie, u_os;
+uniform vec3  u_tint;
+uniform float u_tintAmt;
 out vec4 color;
 void main() {
   float t = v_t;
@@ -71,6 +84,9 @@ void main() {
   else if (t < u_ie)           c = vec3(0.13, 0.83, 0.93);  // intro — cyan
   else if (t > u_os)           c = vec3(0.98, 0.57, 0.24);  // outro — orange
   else                         c = vec3(0.98, 0.75, 0.14);  // body — gold
+
+  // Optional per-track tint overrides the zone colors entirely.
+  c = mix(c, u_tint, u_tintAmt);
 
   // Distance from the waveform edge (negative = inside, positive = glow zone)
   float dist = abs(v_y) - v_amp;
@@ -93,7 +109,7 @@ void main() {
 export default function WaveformGL({
   peaks, viewStart, viewEnd,
   cueIn, cueOut, introEnd, outroStart,
-  playhead, hoverPos, dragRegion, onMount,
+  playhead, hoverPos, dragRegion, onMount, tint,
 }: Props) {
   const glRef  = useRef<HTMLCanvasElement>(null);
   const ovRef  = useRef<HTMLCanvasElement>(null);
@@ -126,7 +142,7 @@ export default function WaveformGL({
       gl.attachShader(prog, mk(FRAG, gl.FRAGMENT_SHADER));
       gl.linkProgram(prog);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog)!);
-      const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os"];
+      const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os","u_tint","u_tintAmt"];
       const u: Record<string, WebGLUniformLocation | null> = {};
       names.forEach(n => { u[n] = gl.getUniformLocation(prog, n); });
       const vao = gl.createVertexArray()!;
@@ -176,6 +192,9 @@ export default function WaveformGL({
     gl.uniform1f(u.u_vs, viewStart); gl.uniform1f(u.u_ve, viewEnd);
     gl.uniform1f(u.u_ci, cueIn);     gl.uniform1f(u.u_co, cueOut);
     gl.uniform1f(u.u_ie, introEnd);  gl.uniform1f(u.u_os, outroStart);
+    const [tr, tg, tb] = hexToRgb(tint);
+    gl.uniform3f(u.u_tint, tr, tg, tb);
+    gl.uniform1f(u.u_tintAmt, tint ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, s.n * 6);
     gl.bindVertexArray(null);
   });

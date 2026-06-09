@@ -20,7 +20,7 @@ import {
 // ── Color tokens (match Studio.tsx) ──────────────────────────────────────
 const BG0 = "#0e0e14", BG1 = "#111114", BG3 = "#1e1e28";
 const BOR = "#2a2a38";
-const TXT = "#e8e8f0", TXT2 = "#8888a8";
+const TXT = "#e8e8f0", TXT2 = "#aaaac6";
 const PUR = "#7858c8", GRN = "#22c55e", RED = "#ef4444", AMB = "#f59e0b";
 
 const SNAP_PCT = 0.01;     // snap within 1% of an edge / center
@@ -466,10 +466,10 @@ export default function VideoEngineCanvas() {
     }}>
       {/* ── Layout preset strip ───────────────────────────────────── */}
       <div style={{
-        padding: "8px 12px", background: BG1, borderBottom: `1px solid ${BOR}`,
-        display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+        padding: "12px 16px", background: BG1, borderBottom: `1px solid ${BOR}`,
+        display: "flex", alignItems: "center", gap: 8, flexShrink: 0,
       }}>
-        <span style={{ fontSize: 11, color: TXT2, letterSpacing: "0.12em", marginRight: 10, fontWeight: 800 }}>
+        <span style={{ fontSize: 13, color: "#c4c4d6", letterSpacing: "0.14em", marginRight: 14, fontWeight: 800 }}>
           LAYOUT
         </span>
         {LAYOUT_PRESETS.map(p => (
@@ -478,16 +478,16 @@ export default function VideoEngineCanvas() {
             onClick={() => applyLayoutPreset(p.id as LayoutPreset)}
             disabled={layers.length === 0}
             style={{
-              padding: "7px 13px", borderRadius: 0,
-              background: BG3, color: layers.length === 0 ? TXT2 : TXT,
-              border: `1px solid ${BOR}`,
-              fontSize: 12, fontWeight: 700,
+              padding: "9px 16px", borderRadius: 0,
+              background: BG3, color: "#e8e8f0",
+              border: `1px solid #3a3a4a`,
+              fontSize: 14, fontWeight: 700,
               cursor: layers.length === 0 ? "not-allowed" : "pointer",
-              display: "flex", alignItems: "center", gap: 6,
-              opacity: layers.length === 0 ? 0.45 : 1,
+              display: "flex", alignItems: "center", gap: 8,
+              opacity: layers.length === 0 ? 0.82 : 1,
             }}
           >
-            <span style={{ fontSize: 15, fontFamily: "ui-monospace, monospace" }}>{p.icon}</span>
+            <span style={{ fontSize: 17, fontFamily: "ui-monospace, monospace" }}>{p.icon}</span>
             <span>{p.label}</span>
           </button>
         ))}

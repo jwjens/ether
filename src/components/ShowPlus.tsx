@@ -371,7 +371,7 @@ const BG2  = "#18181f";
 const BG3  = "#1e1e28";
 const BOR  = "#2a2a38";
 const TXT  = "#e8e8f0";
-const TXT2 = "#8888a8";
+const TXT2 = "#aaaac6";
 const PUR  = "#7858c8";
 const GRN  = "#22c55e";
 const RED  = "#ef4444";
@@ -1983,7 +1983,7 @@ function EmbeddedStudio({
           <div style={{ padding: "10px 12px" }}>
             <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
               <button onClick={() => setGuestsEnabled(v => !v)} style={{ padding: "4px 10px", fontSize: 13, background: "transparent", border: `1px solid ${BOR}`, color: guestsEnabled ? "#22c55e" : TXT2, cursor: "pointer" }}>{guestsEnabled ? "● Guests On" : "Enable"}</button>
-              <button onClick={generateInvite} style={{ padding: "4px 12px", fontSize: 13, fontWeight: 700, background: inviteLink ? "transparent" : "#6040c0", border: inviteLink ? `1px solid ${BOR}` : "none", color: inviteLink ? TXT2 : "#fff", cursor: "pointer" }}>{inviteLink ? "Refresh Link" : "Get Invite Link"}</button>
+              <button onClick={generateInvite} style={{ padding: "4px 12px", fontSize: 13, fontWeight: 700, background: inviteLink ? "transparent" : "var(--accent-blue)", border: inviteLink ? `1px solid ${BOR}` : "none", color: inviteLink ? TXT2 : "#fff", cursor: "pointer" }}>{inviteLink ? "Refresh Link" : "Get Invite Link"}</button>
             </div>
             {inviteLink && (
               <div style={{ marginBottom: 6 }}>
@@ -2049,7 +2049,7 @@ function EmbeddedStudio({
               <input type="range" min={14} max={48} step={2} value={teleFontSize} onChange={e => setTeleFontSize(Number(e.target.value))} style={{ flex: 1, accentColor: "#00c8a8", height: 3 }} />
               <span style={{ fontSize: 13, color: TXT2, width: 28, textAlign: "right" as const }}>{teleFontSize}px</span>
             </div>
-            <button onClick={() => setTeleOverlay(v => !v)} style={{ padding: "4px 12px", fontSize: 13, fontWeight: 700, background: teleOverlay ? "#6040c0" : "transparent", border: `1px solid ${teleOverlay ? "#6040c0" : BOR}`, color: teleOverlay ? "#fff" : TXT2, cursor: "pointer" }}>
+            <button onClick={() => setTeleOverlay(v => !v)} style={{ padding: "4px 12px", fontSize: 13, fontWeight: 700, background: teleOverlay ? "var(--accent-blue)" : "transparent", border: `1px solid ${teleOverlay ? "var(--accent-blue)" : BOR}`, color: teleOverlay ? "#fff" : TXT2, cursor: "pointer" }}>
               {teleOverlay ? "● Overlay On" : "Overlay Off"}
             </button>
           </div>
@@ -2061,7 +2061,7 @@ function EmbeddedStudio({
               <div style={label}>Resolution</div>
               <div style={{ display: "flex", gap: 4 }}>
                 {(Object.keys(RES) as ResKey[]).map(k => (
-                  <button key={k} onClick={() => setResolution(k)} style={{ flex: 1, padding: "4px 0", fontSize: 13, fontWeight: 700, background: resolution === k ? "#6040c0" : "transparent", border: `1px solid ${resolution === k ? "#6040c0" : BOR}`, color: resolution === k ? "#fff" : TXT2, cursor: "pointer" }}>{RES[k].label}</button>
+                  <button key={k} onClick={() => setResolution(k)} style={{ flex: 1, padding: "4px 0", fontSize: 13, fontWeight: 700, background: resolution === k ? "var(--accent-blue)" : "transparent", border: `1px solid ${resolution === k ? "var(--accent-blue)" : BOR}`, color: resolution === k ? "#fff" : TXT2, cursor: "pointer" }}>{RES[k].label}</button>
                 ))}
               </div>
             </div>
@@ -2069,7 +2069,7 @@ function EmbeddedStudio({
               <div style={label}>Bitrate</div>
               <div style={{ display: "flex", gap: 4 }}>
                 {(Object.keys(BITRATES) as BrKey[]).map(k => (
-                  <button key={k} onClick={() => setBitrate(k)} style={{ flex: 1, padding: "4px 0", fontSize: 13, fontWeight: 700, background: bitrate === k ? "#6040c0" : "transparent", border: `1px solid ${bitrate === k ? "#6040c0" : BOR}`, color: bitrate === k ? "#fff" : TXT2, cursor: "pointer" }}>{BITRATES[k].label}</button>
+                  <button key={k} onClick={() => setBitrate(k)} style={{ flex: 1, padding: "4px 0", fontSize: 13, fontWeight: 700, background: bitrate === k ? "var(--accent-blue)" : "transparent", border: `1px solid ${bitrate === k ? "var(--accent-blue)" : BOR}`, color: bitrate === k ? "#fff" : TXT2, cursor: "pointer" }}>{BITRATES[k].label}</button>
                 ))}
               </div>
             </div>
