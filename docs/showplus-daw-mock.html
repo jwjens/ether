@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Show+ DAW — palette &amp; faders mock</title>
+<style>
+  :root{
+    /* real Ether vars, pulled from src/index.css */
+    --bg-primary:#0d0d0f;
+    --bg-secondary:#111116;
+    --bg-tertiary:#141420;
+    --text-primary:#e8e8f0;
+    --text-secondary:#8878c0;
+    --text-tertiary:#6060a0;
+    --border-primary:#1a1a22;
+    --accent-blue:#6040c0;   /* deeper */
+    --accent-cyan:#8868d8;   /* brand purple */
+    --glow:#8868d8;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg-primary);
+    color:var(--text-primary);
+    font-family:'Inter',system-ui,-apple-system,sans-serif;
+    font-size:13px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:ui-monospace,'SF Mono',Menlo,monospace}
+
+  /* ── top wordmark bar ── */
+  .topbar{
+    display:flex;align-items:center;gap:14px;
+    height:52px;padding:0 18px;
+    background:linear-gradient(180deg,#16121f 0%,var(--bg-secondary) 100%);
+    border-bottom:1px solid var(--border-primary);
+  }
+  .wordmark{display:flex;align-items:baseline;gap:2px;font-family:'Syne',Inter,sans-serif;font-weight:800;letter-spacing:-.03em;font-size:22px}
+  .wordmark .plus{color:var(--accent-cyan);text-shadow:0 0 14px rgba(136,104,216,.55)}
+  .wordmark .daw{font-size:13px;font-weight:700;letter-spacing:.32em;color:var(--text-tertiary);margin-left:8px;align-self:center;text-transform:uppercase}
+  .session{
+    margin-left:6px;padding:4px 12px;border-radius:6px;
+    background:rgba(136,104,216,.07);border:1px solid var(--border-primary);
+    color:var(--text-secondary);font-weight:600;
+  }
+  .topbar .spacer{flex:1}
+  .pill{padding:5px 12px;border-radius:6px;border:1px solid var(--border-primary);background:var(--bg-tertiary);color:var(--text-secondary);font-weight:700;font-size:11px;letter-spacing:.06em}
+
+  /* ── layout ── */
+  .stage{display:grid;grid-template-columns:300px 1fr 280px;gap:0;height:calc(100% - 52px - 132px)}
+  .col{overflow:auto}
+  .tracks{background:var(--bg-secondary);border-right:1px solid var(--border-primary);padding:10px}
+  .timeline{background:var(--bg-primary);position:relative}
+  .inspector{background:var(--bg-secondary);border-left:1px solid var(--border-primary);padding:12px}
+
+  .secLabel{font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:var(--text-tertiary);margin:0 0 8px}
+
+  /* ── track header card (new look) ── */
+  .track{
+    background:linear-gradient(180deg,rgba(255,255,255,.02),transparent);
+    border:1px solid var(--border-primary);border-radius:8px;
+    padding:10px 11px;margin-bottom:9px;position:relative;overflow:hidden;
+  }
+  .track .accentbar{position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:8px 0 0 8px}
+  .track .row1{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 0 3px rgba(0,0,0,.25)}
+  .tname{font-weight:700;color:var(--text-primary);font-size:13px}
+  .chips{display:flex;gap:5px;margin-left:auto}
+  .chip{width:24px;height:22px;display:grid;place-items:center;border-radius:5px;font-size:10px;font-weight:800;
+        background:var(--bg-tertiary);border:1px solid var(--border-primary);color:var(--text-tertiary);cursor:pointer;user-select:none}
+  .chip.on{color:#fff}
+  .chip.m.on{background:#caa23a;border-color:#caa23a}
+  .chip.s.on{background:#3a86c8;border-color:#3a86c8}
+  .chip.rec.on{background:#d94a4a;border-color:#d94a4a}
+  .chip.fx.on{background:var(--accent-blue);border-color:var(--accent-blue)}
+
+  /* ── custom horizontal fader ── */
+  .fader{display:flex;align-items:center;gap:9px}
+  .fader .lab{font-size:10px;color:var(--text-secondary);width:30px;flex:0 0 auto}
+  .fader .val{font-size:10px;color:var(--text-secondary);width:46px;text-align:right;flex:0 0 auto}
+  .ftrack{position:relative;height:18px;flex:1;cursor:pointer}
+  .ftrack .rail{position:absolute;top:7px;left:0;right:0;height:4px;border-radius:2px;background:#07070b;box-shadow:inset 0 1px 1px rgba(0,0,0,.6)}
+  .ftrack .fill{position:absolute;top:7px;left:0;height:4px;border-radius:2px;
+    background:linear-gradient(90deg,var(--accent-blue),var(--accent-cyan));box-shadow:0 0 8px rgba(136,104,216,.45)}
+  .ftrack .cap{position:absolute;top:1px;width:8px;height:16px;border-radius:3px;transform:translateX(-50%);
+    background:linear-gradient(180deg,#efeaff,#bcaef0);border:1px solid #7a68c0;box-shadow:0 1px 3px rgba(0,0,0,.6),0 0 8px rgba(136,104,216,.5)}
+  .ftrack .cap::after{content:"";position:absolute;left:50%;top:3px;bottom:3px;width:1px;background:rgba(60,40,110,.7);transform:translateX(-50%)}
+
+  /* ── timeline ── */
+  .ruler{height:26px;border-bottom:1px solid var(--border-primary);background:var(--bg-secondary);position:relative}
+  .tick{position:absolute;bottom:0;width:1px;height:9px;background:rgba(255,255,255,.18)}
+  .tick.major{height:13px;background:rgba(255,255,255,.3)}
+  .tick span{position:absolute;left:4px;bottom:0;font-size:9px;color:var(--text-tertiary)}
+  .lane{height:74px;border-bottom:1px solid #131318;position:relative}
+  .region{position:absolute;top:8px;height:58px;border-radius:7px;overflow:hidden;border:1px solid rgba(255,255,255,.14);
+    box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  .region .cap{position:absolute;top:5px;left:8px;font-size:10px;font-weight:700;color:rgba(255,255,255,.92);text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  .region .wav{position:absolute;inset:18px 6px 6px;opacity:.55;
+    background:repeating-linear-gradient(90deg,rgba(255,255,255,.5) 0 1px,transparent 1px 3px)}
+  .playhead{position:absolute;top:0;bottom:0;width:2px;background:#d94a4a;box-shadow:0 0 8px rgba(217,74,74,.7)}
+
+  /* ── inspector ── */
+  .panel{background:var(--bg-primary);border:1px solid var(--border-primary);border-radius:8px;padding:11px;margin-bottom:11px}
+  .meter{height:6px;border-radius:3px;background:#07070b;overflow:hidden;margin-bottom:8px}
+  .meter > i{display:block;height:100%;width:62%;background:linear-gradient(90deg,var(--accent-blue),var(--accent-cyan))}
+  .fxrack{display:flex;gap:6px;margin:4px 0 12px}
+  .fxchip{flex:1;text-align:center;padding:7px 0;border-radius:6px;font-size:10px;font-weight:800;letter-spacing:.05em;cursor:pointer;
+    background:var(--bg-tertiary);border:1px solid var(--border-primary);color:var(--text-tertiary)}
+  .fxchip.on{color:#fff;background:linear-gradient(180deg,var(--accent-cyan),var(--accent-blue));border-color:var(--accent-cyan);box-shadow:0 0 10px rgba(136,104,216,.4)}
+  .toggle{padding:7px 12px;border-radius:6px;font-size:11px;font-weight:800;cursor:pointer;width:100%;text-align:center;border:1px solid}
+  .toggle.on{background:#1f7a44;border-color:#27a35a;color:#eafff1}
+  .toggle.off{background:var(--bg-tertiary);border-color:var(--border-primary);color:var(--text-tertiary)}
+
+  /* ── rotary knob ── */
+  .knobwrap{display:flex;flex-direction:column;align-items:center;gap:5px}
+  .knob{width:58px;height:58px;position:relative;cursor:ns-resize}
+  .knob svg{transform:rotate(0deg)}
+  .knob .face{position:absolute;inset:11px;border-radius:50%;
+    background:radial-gradient(circle at 38% 32%,#26203a,#15111f 70%);border:1px solid #2a2440;
+    box-shadow:0 2px 5px rgba(0,0,0,.55),inset 0 1px 1px rgba(255,255,255,.05)}
+  .knob .ind{position:absolute;left:50%;top:14px;width:2px;height:13px;background:var(--accent-cyan);border-radius:2px;
+    transform-origin:50% 15px;box-shadow:0 0 6px rgba(136,104,216,.8)}
+  .knob .kval{position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);text-align:center;font-size:11px;color:var(--text-primary);font-weight:700}
+  .klab{font-size:10px;color:var(--text-secondary);font-weight:600}
+
+  /* ── palette compare strip ── */
+  .compare{height:132px;border-top:1px solid var(--border-primary);background:var(--bg-secondary);padding:12px 18px;display:flex;gap:34px;align-items:center}
+  .swatchset h4{margin:0 0 8px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-tertiary)}
+  .swatches{display:flex;gap:6px}
+  .sw{width:26px;height:40px;border-radius:5px;border:1px solid rgba(255,255,255,.08)}
+  .note{font-size:11px;color:var(--text-tertiary);max-width:240px;line-height:1.5}
+  .arrow{font-size:26px;color:var(--text-tertiary)}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="wordmark">Show<span class="plus">+</span><span class="daw">DAW</span></div>
+    <div class="session">Untitled Session</div>
+    <div class="spacer"></div>
+    <div class="pill">120 BPM</div>
+    <div class="pill" style="color:var(--accent-cyan);border-color:rgba(136,104,216,.4)">⬇ EXPORT</div>
+  </div>
+
+  <div class="stage">
+    <!-- tracks -->
+    <div class="col tracks">
+      <p class="secLabel">Tracks</p>
+      <div id="trackList"></div>
+    </div>
+
+    <!-- timeline -->
+    <div class="col timeline">
+      <div class="ruler" id="ruler"></div>
+      <div id="lanes"></div>
+      <div class="playhead" style="left:188px;top:26px"></div>
+    </div>
+
+    <!-- inspector -->
+    <div class="col inspector">
+      <div class="panel">
+        <p class="secLabel" style="margin-bottom:6px">Master</p>
+        <div class="meter"><i></i></div>
+        <div class="fader" data-fader data-min="-24" data-max="6" data-val="0" data-unit=" dB">
+          <span class="lab">Gain</span><div class="ftrack"></div><span class="val"></span>
+        </div>
+        <div style="height:8px"></div>
+        <div class="toggle on" onclick="this.classList.toggle('on');this.classList.toggle('off');this.textContent=this.classList.contains('on')?'Limiter on':'Limiter off'">Limiter on</div>
+        <div style="height:10px"></div>
+        <div class="fader" data-fader data-min="-24" data-max="0" data-val="-1" data-unit=" dB" data-accent="green">
+          <span class="lab">Thr</span><div class="ftrack"></div><span class="val"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:9px">
+          <span class="dot" style="background:#8868d8"></span>
+          <span class="tname">Track 1</span>
+          <span class="mono" style="margin-left:auto;font-size:10px;color:var(--text-tertiary)">2 regions</span>
+        </div>
+        <div class="fxrack">
+          <div class="fxchip on" onclick="this.classList.toggle('on')">EQ</div>
+          <div class="fxchip" onclick="this.classList.toggle('on')">COMP</div>
+          <div class="fxchip" onclick="this.classList.toggle('on')">REV</div>
+          <div class="fxchip" onclick="this.classList.toggle('on')">SAT</div>
+        </div>
+        <div class="fader" data-fader data-min="-48" data-max="6" data-val="0" data-unit=" dB">
+          <span class="lab">Gain</span><div class="ftrack"></div><span class="val"></span>
+        </div>
+        <div style="height:14px"></div>
+        <div style="display:flex;justify-content:center">
+          <div class="knobwrap">
+            <div class="knob" data-knob data-min="-1" data-max="1" data-val="0">
+              <div class="face"></div><div class="ind"></div><div class="kval">C</div>
+            </div>
+            <span class="klab">Pan</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- palette compare -->
+  <div class="compare">
+    <div class="swatchset">
+      <h4>Before — saturated crayon palette</h4>
+      <div class="swatches" id="oldPal"></div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="swatchset">
+      <h4 style="color:var(--accent-cyan)">After — muted Ether ramp</h4>
+      <div class="swatches" id="newPal"></div>
+    </div>
+    <div class="note">Tracks stay distinguishable but anchor on the brand purple — no color screams louder than the audio. Faders &amp; knob are custom (drag them), not browser defaults.</div>
+  </div>
+
+<script>
+  // current saturated palette (StudioPro.tsx PALETTE)
+  const OLD = ["#ef4444","#f97316","#f59e0b","#eab308","#84cc16","#22c55e","#10b981","#06b6d4","#3b82f6","#8b5cf6","#d946ef","#ec4899"];
+  // proposed muted, purple-anchored ramp
+  const NEW = ["#8868d8","#7c6fd0","#6e7ad4","#5c8ac8","#5aa0b8","#6fa0a8","#9b7cd8","#a878c8","#b57ab0","#8a7cc0","#6c6fb0","#7e88c0"];
+
+  const palBox = (id,arr)=>{const el=document.getElementById(id);arr.forEach(c=>{const d=document.createElement('div');d.className='sw';d.style.background=c;d.title=c;el.appendChild(d)})};
+  palBox('oldPal',OLD);palBox('newPal',NEW);
+
+  // tracks
+  const TRACKS=[
+    {name:'Track 1',c:NEW[0]},
+    {name:'Track 2',c:NEW[3]},
+    {name:'Voice',c:NEW[5]},
+  ];
+  const tl=document.getElementById('trackList');
+  TRACKS.forEach((t,i)=>{
+    const recOn = i===2 ? ' on' : '';
+    tl.insertAdjacentHTML('beforeend',`
+      <div class="track">
+        <div class="accentbar" style="background:${t.c}"></div>
+        <div class="row1">
+          <span class="dot" style="background:${t.c}"></span>
+          <span class="tname">${t.name}</span>
+          <span class="chips">
+            <span class="chip m" onclick="this.classList.toggle('on')">M</span>
+            <span class="chip s" onclick="this.classList.toggle('on')">S</span>
+            <span class="chip rec${recOn}" onclick="this.classList.toggle('on')">●</span>
+            <span class="chip fx on" onclick="this.classList.toggle('on')">FX</span>
+          </span>
+        </div>
+        <div class="fader" data-fader data-min="-48" data-max="6" data-val="${i===2?-3:0}" data-unit=" dB">
+          <span class="lab">Vol</span><div class="ftrack"></div><span class="val"></span>
+        </div>
+      </div>`);
+  });
+
+  // ruler + lanes + regions
+  const ruler=document.getElementById('ruler'), lanes=document.getElementById('lanes');
+  const PPS=78; // px per second
+  for(let s=0;s<=14;s++){const x=s*(PPS/5); // tick every 0.2s? keep simple: major every 5s
+  }
+  for(let s=0;s<=15;s++){
+    const major=s%5===0;const x=s*(PPS/5)*5/5; // 1s spacing scaled
+    const xx=s*(PPS/5);
+    const d=document.createElement('div');d.className='tick'+(s%5===0?' major':'');d.style.left=xx+'px';
+    if(s%5===0){const sp=document.createElement('span');sp.className='mono';sp.textContent='0:'+String(s).padStart(2,'0');d.appendChild(sp);}
+    ruler.appendChild(d);
+  }
+  const LANES=[
+    {c:NEW[0],regions:[{x:8,w:230,n:'Intro_bed.wav'},{x:250,w:150,n:'Hook.wav'}]},
+    {c:NEW[3],regions:[{x:120,w:300,n:'Pad_loop.wav'}]},
+    {c:NEW[5],regions:[{x:60,w:120,n:'VO_take3'}]},
+  ];
+  LANES.forEach(l=>{
+    const lane=document.createElement('div');lane.className='lane';
+    l.regions.forEach(r=>{
+      lane.insertAdjacentHTML('beforeend',`
+        <div class="region" style="left:${r.x}px;width:${r.w}px;
+             background:linear-gradient(180deg,${hex(l.c,.42)},${hex(l.c,.16)})">
+          <span class="cap">${r.n}</span><div class="wav"></div>
+        </div>`);
+    });
+    lanes.appendChild(lane);
+  });
+  function hex(h,a){const n=parseInt(h.slice(1),16);return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`}
+
+  // ── interactive faders ──
+  document.querySelectorAll('[data-fader]').forEach(f=>{
+    const track=f.querySelector('.ftrack');
+    const valEl=f.querySelector('.val');
+    const min=+f.dataset.min,max=+f.dataset.max,unit=f.dataset.unit||'';
+    const green=f.dataset.accent==='green';
+    let val=+f.dataset.val;
+    track.innerHTML='<div class="rail"></div><div class="fill"></div><div class="cap"></div>';
+    const rail=track.querySelector('.rail'),fill=track.querySelector('.fill'),cap=track.querySelector('.cap');
+    if(green){fill.style.background='linear-gradient(90deg,#1f7a44,#27a35a)';fill.style.boxShadow='0 0 8px rgba(39,163,90,.4)';cap.style.background='linear-gradient(180deg,#d7ffe6,#9be0b4)';cap.style.borderColor='#27a35a';}
+    function render(){const p=(val-min)/(max-min);const w=track.clientWidth;const x=p*w;fill.style.width=x+'px';cap.style.left=x+'px';valEl.textContent=(val>0?'+':'')+val.toFixed(1)+unit;}
+    function setFromX(clientX){const b=track.getBoundingClientRect();let p=(clientX-b.left)/b.width;p=Math.max(0,Math.min(1,p));val=min+p*(max-min);val=Math.round(val*2)/2;render();}
+    track.addEventListener('mousedown',e=>{setFromX(e.clientX);const mv=ev=>setFromX(ev.clientX);const up=()=>{window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up)};window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});
+    new ResizeObserver(render).observe(track);render();
+  });
+
+  // ── interactive knob ──
+  document.querySelectorAll('[data-knob]').forEach(k=>{
+    const min=+k.dataset.min,max=+k.dataset.max;let val=+k.dataset.val;
+    const ind=k.querySelector('.ind'),kval=k.querySelector('.kval');
+    function render(){const p=(val-min)/(max-min);const deg=-135+p*270;ind.style.transform=`rotate(${deg}deg)`;
+      kval.textContent=Math.abs(val)<.05?'C':(val<0?'L':'R')+Math.round(Math.abs(val)*100);}
+    k.addEventListener('mousedown',e=>{const sy=e.clientY,sv=val;const mv=ev=>{val=Math.max(min,Math.min(max,sv+(sy-ev.clientY)*0.012));render();};const up=()=>{window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up)};window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);});
+    render();
+  });
+</script>
+</body>
+</html>
