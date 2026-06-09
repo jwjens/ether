@@ -130,7 +130,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
       display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={{
-        width: 580, maxHeight: "80vh", borderRadius: 0,
+        width: 680, maxHeight: "80vh", borderRadius: 0,
         background: "var(--bg-secondary)", border: "1px solid var(--border-secondary)",
         boxShadow: "0 32px 80px rgba(0,0,0,0.5)",
         display: "flex", flexDirection: "column" as const,

@@ -86,6 +86,10 @@ pub struct AudioLevels {
     pub level_c: f32,
     pub level_cart: f32,
     pub level_master: f32,
+    /// 10-band post-EQ master spectrum (0..~1 normalized magnitude), computed by the
+    /// master EQ analyzer and surfaced for the Master EQ rack's live FFT display.
+    #[serde(default)]
+    pub spectrum: [f32; 10],
 }
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
@@ -251,6 +255,9 @@ pub struct BusState {
     /// written by mixer_callback each buffer with VU release ballistics; read by GetLevel.
     pub peaks:       [f32; 7],
     pub master_peak: f32,
+    /// 10-band post-EQ master spectrum snapshot, written by mixer_callback from the
+    /// EQ analyzer each buffer; read by GetLevel into AudioLevels.spectrum.
+    pub spectrum:    [f32; 10],
 }
 
 impl BusState {
@@ -266,6 +273,7 @@ impl BusState {
             sample_rate,
             peaks:       [0.0; 7],
             master_peak: 0.0,
+            spectrum:    [0.0; 10],
         }
     }
 }
@@ -705,6 +713,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.level_c      = bus.peaks[2];
                                     lvl.level_cart   = bus.peaks[6];
                                     lvl.level_master = bus.master_peak;
+                                    lvl.spectrum     = bus.spectrum;
                                 }
                             }
                             AudioCmd::SwitchDevice(name) => {
@@ -908,6 +917,7 @@ fn mixer_callback(
     }
 
     // Apply EQ to the 44100 Hz stereo mix
+    let mut eq_spectrum: Option<[f32; 10]> = None;
     let (out_l, out_r): (Vec<f32>, Vec<f32>) = if let Ok(mut eq) = bus.eq.try_lock() {
         let mut ol = Vec::with_capacity(prog_frames);
         let mut or_ = Vec::with_capacity(prog_frames);
@@ -916,11 +926,16 @@ fn mixer_callback(
             ol.push(l.clamp(-1.0, 1.0));
             or_.push(r.clamp(-1.0, 1.0));
         }
+        // Snapshot the analyzer spectrum while we hold the lock; published to bus below.
+        eq_spectrum = Some(eq.spectrum());
         (ol, or_)
     } else {
         (mix_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect(),
          mix_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
     };
+
+    // Publish the EQ analyzer spectrum (lock already released) for GetLevel → AudioLevels.
+    if let Some(spec) = eq_spectrum { bus.spectrum = spec; }
 
     // Peak diagnostic — confirm mixer is producing audio, not silence
     static PEAK_REPORT_NS: AtomicU64 = AtomicU64::new(0);

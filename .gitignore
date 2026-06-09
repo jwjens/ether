@@ -46,3 +46,4 @@ scripts/dump-all-cols.js
 
 # Rust audio debug artifacts
 debug-stream.f32le
+dist-electron/

@@ -837,6 +837,11 @@ let splashWindow;
 let tray;
 
 const ICON_PNG   = path.join(__dirname, "assets/icon.png");
+const ICON_ICO   = path.join(__dirname, "assets/icon.ico");
+// Windows needs a multi-size .ico for the taskbar button (a PNG is honored for the title bar
+// but the taskbar falls back to electron.exe's icon → the Electron logo in dev). Other platforms
+// use the PNG.
+const WINDOW_ICON = process.platform === "win32" ? ICON_ICO : ICON_PNG;
 const TRAY_PNG   = path.join(__dirname, "assets/tray-icon.png");
 
 function createSplash() {
@@ -872,7 +877,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     title: "ether",
-    icon: ICON_PNG,
+    icon: WINDOW_ICON,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -2017,6 +2022,9 @@ ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient
 ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setVolume", { deck, volume, stationId }) : audio.audioSetVolume(deck, volume, stationId));
 ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
 ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));
+// 10-band post-EQ master spectrum for the Master EQ rack's live FFT display. Routes to the
+// daemon when it owns playout (it has the live audio), else the in-process addon.
+ipcMain.handle("audio:getSpectrum", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getSpectrum", { stationId }) : JSON.parse(audio.audioGetSpectrum(stationId)));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
 // Embedded cover art straight from the audio file (local-first artwork — primary source;
 // iTunes is the caller's fallback). music-metadata is ESM-only (v11), so it's loaded via

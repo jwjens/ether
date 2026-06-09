@@ -153,6 +153,27 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     serde_json::json!({ "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster }).to_string()
 }
 
+/// 10-band post-EQ master spectrum (0..~1 normalized magnitude), for the Master EQ
+/// rack's live FFT display. Mirrors audio_get_levels: nudges the audio thread to
+/// refresh AudioLevels (GetLevel also copies the latest bus spectrum) then reads it.
+/// Returns a JSON array of 10 floats, e.g. "[0.12,0.34,...]".
+#[napi]
+pub fn audio_get_spectrum(station_id: Option<u32>) -> String {
+    let levels_arc = {
+        let engine = get_or_create_engine(station_id.unwrap_or(1), None);
+        let Ok(audio) = engine.lock() else {
+            return "[0,0,0,0,0,0,0,0,0,0]".to_string();
+        };
+        let _ = audio.sender.send(AudioCmd::GetLevel);
+        audio.levels.clone()
+    };
+    let spec: [f32; 10] = match levels_arc.lock() {
+        Ok(lvl) => lvl.spectrum,
+        Err(_)  => [0.0; 10],
+    };
+    serde_json::to_string(&spec).unwrap_or_else(|_| "[0,0,0,0,0,0,0,0,0,0]".to_string())
+}
+
 // ── Broadcast (profanity) delay + dump ────────────────────────────────────────
 // Arms/sets the stream delay in seconds (0 = off). The delay lives on the stream path
 // only; the local monitor stays live so the operator can DUMP before audio airs.

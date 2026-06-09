@@ -94,6 +94,7 @@ const handlers = {
   setEq:              (m) => A.audioSetEq(m.stationId, JSON.stringify(m.bands || [])),
   getState:           (m) => JSON.parse(A.audioGetState(m.stationId)),
   getLevels:          (m) => JSON.parse(A.audioGetLevels(m.stationId)),
+  getSpectrum:        (m) => JSON.parse(A.audioGetSpectrum(m.stationId)),
   getFileDuration:    (m) => A.getFileDuration(m.filePath),
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
   setOutputDevice:    (m) => A.audioSetOutputDevice(m.stationId, m.device),

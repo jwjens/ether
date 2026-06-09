@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EQ_FREQS, EQ_LABELS } from "./GraphicEQ";
 import FloatingWindow from "./FloatingWindow";
+import { getActiveStationIdSync } from "../hooks/useActiveStation";
 
 const MAX_DB  = 12;
 const POLL_MS = 33;
@@ -28,7 +29,7 @@ export default function MasterEQRack({ bands, onChange, onClose }: Props) {
     const tick = async () => {
       if (!alive) return;
       try {
-        const s = await ether?.audio?.getSpectrum?.();
+        const s = await ether?.audio?.getSpectrum?.(getActiveStationIdSync());
         if (Array.isArray(s) && s.length === 10) {
           setSpectrum(s);
           const next = peakRef.current.map((p, i) => Math.max(s[i], p * 0.985));
