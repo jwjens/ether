@@ -788,24 +788,25 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       </div>
 
       {/* Master EQ toggle */}
-      <div style={{ padding: "5px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <div style={{
-            width: 5, height: 5, borderRadius: "50%",
+            width: 7, height: 7, borderRadius: "50%",
             background: eqActive ? "var(--accent-amber)" : "var(--border-primary)",
-            boxShadow: eqActive ? "0 0 4px var(--accent-amber)" : "none",
+            boxShadow: eqActive ? "0 0 6px var(--accent-amber)" : "none",
             transition: "all 0.2s",
           }} />
-          <span style={{ fontSize: 7, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Master EQ</span>
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Master EQ</span>
         </div>
         <button
           onClick={() => setEqOpen(o => !o)}
+          title="Open the live 10-band master EQ"
           style={{
-            fontSize: 7, fontWeight: 700, letterSpacing: "0.1em",
-            padding: "2px 8px", borderRadius: 0,
-            background: eqOpen ? "var(--master-eq-bg)" : "none",
-            border: `1px solid ${eqOpen ? "var(--master-eq-border)" : "var(--border-primary)"}`,
-            color: eqOpen ? "var(--master-eq-text)" : "var(--text-secondary)",
+            fontSize: 10, fontWeight: 800, letterSpacing: "0.1em",
+            padding: "4px 14px", borderRadius: 4,
+            background: eqOpen ? "rgb(from var(--accent-cyan) r g b / 0.2)" : "rgb(from var(--accent-cyan) r g b / 0.1)",
+            border: "1px solid rgb(from var(--accent-cyan) r g b / 0.45)",
+            color: "var(--accent-cyan)",
             cursor: "pointer", transition: "all 0.15s",
           }}
         >{eqOpen ? "CLOSE" : "OPEN"}</button>

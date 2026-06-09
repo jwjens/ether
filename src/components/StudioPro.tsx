@@ -44,10 +44,20 @@ const convertFileSrc = (p: string) => `file:///${p.replace(/\\/g, "/")}`;
 
 // ── Palette ──────────────────────────────────────────────────────
 
+// Rainbow ramp descending the tracks: red → orange → yellow → green → blue → purple.
 const PALETTE = [
-  "#ef4444", "#f97316", "#f59e0b", "#eab308",
-  "#84cc16", "#22c55e", "#10b981", "#06b6d4",
-  "#3b82f6", "#8b5cf6", "#d946ef", "#ec4899",
+  "#ef4444", // red
+  "#f97316", // orange
+  "#f59e0b", // amber
+  "#eab308", // yellow
+  "#84cc16", // lime
+  "#22c55e", // green
+  "#10b981", // teal-green
+  "#06b6d4", // cyan
+  "#3b82f6", // blue
+  "#6366f1", // indigo
+  "#8b5cf6", // violet
+  "#a855f7", // purple
 ];
 
 // ── Layout constants ─────────────────────────────────────────────
@@ -69,9 +79,10 @@ const AUTOMATION_BAR_H  = 28;        // per-track header bar above stacked auto-
 
 // ── EQ definition (frequencies in Hz) ────────────────────────────
 
-const EQ_FREQS = [60, 150, 400, 1000, 2400, 6000, 15000];
-const EQ_LABELS = ["60", "150", "400", "1k", "2.4k", "6k", "15k"];
-const EQ_DB_RANGE = 15;     // ±15 dB
+const EQ_FREQS  = [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const EQ_LABELS = ["31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+const EQ_BANDS  = EQ_FREQS.length;   // 10
+const EQ_DB_RANGE = 12;     // ±12 dB
 
 // ── Reverb defs ──────────────────────────────────────────────────
 
@@ -178,6 +189,7 @@ type Action =
   | { type: "MOVE_REGION_TO_TRACK"; srcTrackId: string; destTrackId: string; regionId: string; offsetMs: number }
   | { type: "TRIM_REGION"; trackId: string; regionId: string; trimStartMs?: number; trimEndMs?: number; offsetMs?: number }
   | { type: "SPLIT_REGION"; trackId: string; regionId: string; atMs: number; bufA: AudioBuffer; peaksA: Float32Array; bufB: AudioBuffer; peaksB: Float32Array; newRightId: string }
+  | { type: "MERGE_REGIONS"; trackId: string; ids: string[]; buffer: AudioBuffer; peaks: Float32Array; newId: string; offsetMs: number; fadeInMs: number; fadeOutMs: number }
   | { type: "ADD_MARKER"; marker: TimelineMarker }
   | { type: "DELETE_MARKER"; id: string }
   | { type: "RENAME_MARKER"; id: string; label: string }
@@ -309,7 +321,7 @@ function newTrack(name: string, color: string): StudioTrack {
     regions: [],
     gainDb: 0, pan: 0,
     muted: false, solo: false, armed: false,
-    eq7: [0, 0, 0, 0, 0, 0, 0],
+    eq7: Array(EQ_BANDS).fill(0),
     compressor: { on: false, threshold: -18, ratio: 3, attack: 20, release: 200, makeup: 0 },
     reverb:     { on: false, type: "plate", wet: 0.25, size: 0.5 },
     saturation: { on: false, drive: 6 },
@@ -626,6 +638,24 @@ function reducer(s: State, a: Action): State {
         return { ...t, regions };
       }) };
     }
+    case "MERGE_REGIONS": {
+      return { ...s, tracks: s.tracks.map(t => {
+        if (t.id !== a.trackId) return t;
+        const idSet = new Set(a.ids);
+        const first = t.regions.find(r => idSet.has(r.id));
+        if (!first) return t;
+        const merged: StudioRegion = {
+          ...first,
+          id: a.newId,
+          buffer: a.buffer, peaks: a.peaks,
+          offsetMs: a.offsetMs, trimStartMs: 0, trimEndMs: 0,
+          fadeInMs: a.fadeInMs, fadeOutMs: a.fadeOutMs,
+        };
+        const regions = [...t.regions.filter(r => !idSet.has(r.id)), merged]
+          .sort((x, y) => x.offsetMs - y.offsetMs);
+        return { ...t, regions };
+      }) };
+    }
     case "ADD_AUTOMATION_LANE": {
       return { ...s, tracks: s.tracks.map(t => t.id === a.trackId
         ? { ...t, automationOpen: true, automationLanes: [...t.automationLanes, { id: uuid(), param: a.param, points: [] }] }
@@ -714,7 +744,7 @@ interface Props {
   deckBTitle: string | undefined;
 }
 
-type EditTool = "select" | "blade" | "trim" | "fade";
+type EditTool = "select" | "grab" | "blade" | "trim" | "fade";
 type FxWindowType = "eq" | "comp" | "reverb";
 
 const FX_WINDOW_LABELS: Record<FxWindowType, string> = {
@@ -764,6 +794,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [zoom, setZoom]               = useState(() => studioCache?.zoom ?? 1);
   const [bpm, setBpm]                 = useState(() => studioCache?.bpm ?? 120);
   const [vtOpen, setVtOpen]           = useState(false);
+  const [editorOpen, setEditorOpen]   = useState(false);
+  const [editorMode, setEditorMode]   = useState<"wave" | "eq">("wave");
+  const [rowHeights, setRowHeights]   = useState<Record<string, number>>({});
+  const [multiSel, setMultiSel]       = useState<{ trackId: string | null; ids: string[] }>({ trackId: null, ids: [] });
   const [status, setStatus]           = useState("");
   const [paletteForTrack, setPaletteForTrack] = useState<string | null>(null);
 
@@ -776,7 +810,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [masterGainDb, setMasterGainDb] = useState(() => studioCache?.masterGainDb ?? 0);
   const [limiterEnabled, setLimiterEnabled] = useState(() => studioCache?.limiterEnabled ?? true);
   const [limiterThresh, setLimiterThresh] = useState(() => studioCache?.limiterThresh ?? -1);
-  const [masterEq7, setMasterEq7] = useState<number[]>(() => studioCache?.masterEq7 ?? [0, 0, 0, 0, 0, 0, 0]);
+  const [masterEq7, setMasterEq7] = useState<number[]>(() => studioCache?.masterEq7 ?? Array(EQ_BANDS).fill(0));
   const [masterComp, setMasterComp] = useState<TrackCompressor>(() => studioCache?.masterComp ?? {
     on: false, threshold: -12, ratio: 2, attack: 30, release: 250, makeup: 0,
   });
@@ -858,8 +892,11 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [, setMeterTick]   = useState(0);
   const rafRef             = useRef<number | null>(null);
   const playStartRef       = useRef<number>(0);
+  const playheadMsRef      = useRef(0);
   const playFromRef        = useRef<number>(0);
   const timelineRef        = useRef<HTMLDivElement>(null);
+  const headerScrollRef    = useRef<HTMLDivElement>(null);
+  const scrollSyncing      = useRef(false);
   const recRef             = useRef<{ mr: MediaRecorder; chunks: Blob[]; trackId: string; startMs: number } | null>(null);
   const stateRef           = useRef(state);
   useEffect(() => { stateRef.current = state; }, [state]);
@@ -975,10 +1012,15 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const bpmRef = useRef(bpm);
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
 
-  // Track height (variable due to automation)
-  const trackHeights = useMemo(() => tracks.map(t =>
-    TRACK_H + (t.automationOpen ? AUTOMATION_BAR_H + t.automationLanes.length * AUTOMATION_LANE_H : 0)
-  ), [tracks]);
+  // Base lane height per track (resizable via the row drag-handle), default TRACK_H.
+  const rowBaseHeights = useMemo(
+    () => tracks.map(t => rowHeights[t.id] ?? TRACK_H),
+    [tracks, rowHeights],
+  );
+  // Track height (base + automation lanes when expanded)
+  const trackHeights = useMemo(() => tracks.map((t, i) =>
+    rowBaseHeights[i] + (t.automationOpen ? AUTOMATION_BAR_H + t.automationLanes.length * AUTOMATION_LANE_H : 0)
+  ), [tracks, rowBaseHeights]);
   const trackTops = useMemo(() => {
     const tops: number[] = [];
     let acc = 0;
@@ -986,6 +1028,97 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     return tops;
   }, [trackHeights]);
   const totalLanesHeight = useMemo(() => trackHeights.reduce((a, b) => a + b, 0), [trackHeights]);
+
+  // Keep the track-header column and the timeline lanes scrolling as one row.
+  const syncScroll = useCallback((from: "header" | "timeline") => {
+    if (scrollSyncing.current) return;
+    const h = headerScrollRef.current, tl = timelineRef.current;
+    if (!h || !tl) return;
+    scrollSyncing.current = true;
+    if (from === "timeline") h.scrollTop = tl.scrollTop;
+    else tl.scrollTop = h.scrollTop;
+    requestAnimationFrame(() => { scrollSyncing.current = false; });
+  }, []);
+
+  // Drag a track row's bottom edge to resize its height (focus a waveform).
+  const beginRowResize = useCallback((e: React.MouseEvent, id: string) => {
+    e.preventDefault(); e.stopPropagation();
+    const startY = e.clientY;
+    const startH = rowHeights[id] ?? TRACK_H;
+    const mv = (ev: MouseEvent) => {
+      const next = Math.max(48, Math.min(400, startH + (ev.clientY - startY)));
+      setRowHeights(prev => ({ ...prev, [id]: next }));
+    };
+    const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+  }, [rowHeights]);
+
+  // Region selection — shift/ctrl/cmd-click adds to a multi-selection (same track).
+  const handleRegionSelect = useCallback((trackId: string, regionId: string, additive: boolean) => {
+    setSelection({ trackId, regionId });
+    setMultiSel(prev => {
+      if (additive && prev.trackId === trackId) {
+        const ids = prev.ids.includes(regionId)
+          ? prev.ids.filter(x => x !== regionId)
+          : [...prev.ids, regionId];
+        return { trackId, ids };
+      }
+      return { trackId, ids: [regionId] };
+    });
+  }, []);
+
+  // Merge the selected adjacent segments on a track into a single clip.
+  const mergeRegions = useCallback((trackId: string, ids: string[]) => {
+    const t = stateRef.current.tracks.find(x => x.id === trackId);
+    if (!t) return;
+    const regs = t.regions
+      .filter(r => ids.includes(r.id) && r.buffer)
+      .sort((a, b) => a.offsetMs - b.offsetMs);
+    if (regs.length < 2) return;
+
+    const ctx = getCtx();
+    const sr = regs[0].buffer!.sampleRate;
+    const numCh = Math.max(...regs.map(r => r.buffer!.numberOfChannels));
+    const slices = regs.map(r => {
+      const buf = r.buffer!;
+      const startF = Math.floor((r.trimStartMs / 1000) * buf.sampleRate);
+      const endF = Math.floor(((buf.duration * 1000 - r.trimEndMs) / 1000) * buf.sampleRate);
+      return { buf, startF, endF: Math.max(startF, endF) };
+    });
+    const totalFrames = slices.reduce((acc, s) => acc + (s.endF - s.startF), 0);
+    if (totalFrames <= 0) return;
+    const out = ctx.createBuffer(numCh, totalFrames, sr);
+    for (let ch = 0; ch < numCh; ch++) {
+      const od = out.getChannelData(ch);
+      let pos = 0;
+      for (const s of slices) {
+        const srcCh = ch < s.buf.numberOfChannels ? s.buf.getChannelData(ch) : s.buf.getChannelData(0);
+        for (let f = s.startF; f < s.endF; f++) od[pos++] = srcCh[f] || 0;
+      }
+    }
+    const peaks = extractPeaks(out);
+    const newId = uuid();
+    dispatch({
+      type: "MERGE_REGIONS", trackId, ids, buffer: out, peaks, newId,
+      offsetMs: regs[0].offsetMs,
+      fadeInMs: regs[0].fadeInMs,
+      fadeOutMs: regs[regs.length - 1].fadeOutMs,
+    });
+    setSelection({ trackId, regionId: newId });
+    setMultiSel({ trackId, ids: [newId] });
+    setStatus(`✓ Merged ${regs.length} clips`);
+  }, []);
+
+  // Track colors follow row position: 1st track = PALETTE[0], 2nd = PALETTE[1], …
+  // This is the single source of color for rendering (headers, lanes, waveforms,
+  // inspector), overriding any color stored in an older saved session.
+  const coloredTracks = useMemo(
+    () => tracks.map((t, i) => {
+      const c = PALETTE[i % PALETTE.length];
+      return t.color === c ? t : { ...t, color: c };
+    }),
+    [tracks],
+  );
 
   const pps = BASE_PPS * zoom;
   const msToX = useCallback((ms: number) => (ms / 1000) * pps, [pps]);
@@ -1008,8 +1141,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const anySolo = useMemo(() => tracks.some(t => t.solo), [tracks]);
 
   const selectedTrack = useMemo(
-    () => selection ? tracks.find(t => t.id === selection.trackId) || null : null,
-    [tracks, selection],
+    () => selection ? coloredTracks.find(t => t.id === selection.trackId) || null : null,
+    [coloredTracks, selection],
   );
   const selectedRegion = useMemo(() => {
     if (!selectedTrack || !selection?.regionId) return null;
@@ -1169,6 +1302,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const saveVersionRef = useRef<() => void>(() => {});
   const playingRef     = useRef(false);
   useEffect(() => { playingRef.current = playing; }, [playing]);
+  useEffect(() => { playheadMsRef.current = playheadMs; }, [playheadMs]);
 
   // ── Keyboard ──────────────────────────────────────────────────
 
@@ -1272,16 +1406,30 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         if (snapshotsOpen)   { setSnapshotsOpen(false); e.preventDefault(); return; }
         if (ctxMenu)         { setCtxMenu(null);     e.preventDefault(); return; }
       }
-      if (k === "v" || k === "c" || k === "t" || k === "f") {
+      if (k === "v" || k === "g" || k === "c" || k === "t" || k === "f") {
         e.preventDefault();
         e.stopImmediatePropagation();
         if (k === "v") { setTool("select"); return; }
+        if (k === "g") { setTool("grab");   return; }
         if (k === "t") { setTool("trim");   return; }
         if (k === "f") { setTool("fade");   return; }
-        if (tool !== "blade") { setTool("blade"); return; }
-        const hv = bladeHover;
-        if (!hv) { setStatus("Hover a region to cut"); return; }
-        splitRegion(hv.trackId, hv.regionId, hv.ms);
+        // "c" = splice. In the Blade tool, cut at the hovered point; in any
+        // other tool, splice the selected clip at the playhead.
+        if (tool === "blade") {
+          const hv = bladeHover;
+          if (!hv) { setStatus("Hover a region to cut"); return; }
+          splitRegion(hv.trackId, hv.regionId, hv.ms);
+          return;
+        }
+        if (!selection?.regionId) { setStatus("Select a clip, then press C to splice at the playhead"); return; }
+        const tk = stateRef.current.tracks.find(x => x.id === selection.trackId);
+        const rg = tk?.regions.find(x => x.id === selection.regionId);
+        const head = playheadMsRef.current;
+        if (rg && head > rg.offsetMs && head < rg.offsetMs + regionDurMs(rg)) {
+          splitRegion(selection.trackId, selection.regionId!, head);
+        } else {
+          setStatus("Move the playhead inside the selected clip, then press C to splice");
+        }
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -1786,6 +1934,31 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   }, [stop, playheadMs, totalDurMs, masterGainDb, limiterEnabled, limiterThresh, masterEq7, masterComp, loopEnabled, loopRange]);
 
   useEffect(() => { playRef.current = play; }, [play]);
+
+  // ── Live param sync ───────────────────────────────────────────
+  // The audio graph is built once at play(); without this, manual edits to
+  // EQ / gain / pan / reverb / comp only take effect on the *next* play.
+  // Push them onto the running AudioParams while playing so drags are audible
+  // immediately (smoothed to avoid zipper noise).
+  useEffect(() => {
+    if (!playingRef.current) return;
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const TC = 0.02;
+    for (const t of tracks) {
+      const p = trackParamsRef.current.get(t.id);
+      if (!p) continue;
+      try { p.trackGainParam.setTargetAtTime(dbToLinear(t.gainDb), now, TC); } catch {}
+      try { p.panParam.setTargetAtTime(clamp(t.pan, -1, 1), now, TC); } catch {}
+      for (let i = 0; i < EQ_BANDS; i++) {
+        const g = p.eqGainParams[i];
+        if (g) { try { g.setTargetAtTime(clamp(t.eq7[i] || 0, -EQ_DB_RANGE, EQ_DB_RANGE), now, TC); } catch {} }
+      }
+      if (p.reverbWetParam) { try { p.reverbWetParam.setTargetAtTime(t.reverb.on ? clamp(t.reverb.wet, 0, 1) : 0, now, TC); } catch {} }
+      if (p.compThresholdParam) { try { p.compThresholdParam.setTargetAtTime(t.compressor.threshold, now, TC); } catch {} }
+    }
+  }, [tracks]);
 
   const returnToStart = useCallback(() => {
     stop();
@@ -2445,12 +2618,14 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       let bestOffset = candidateOffset;
       let bestTarget: number | null = null;
       for (const target of snapTargets) {
+        // The timeline start (0:00) gets a much stronger pull so regions lock to it.
+        const th = target === 0 ? thresholdMs * 4 : thresholdMs;
         const dStart = target - candStart;
         const dEnd   = target - candEnd;
-        if (Math.abs(dStart) < thresholdMs && Math.abs(dStart) < Math.abs(bestDelta)) {
+        if (Math.abs(dStart) < th && Math.abs(dStart) < Math.abs(bestDelta)) {
           bestDelta = dStart; bestOffset = candidateOffset + dStart; bestTarget = target;
         }
-        if (Math.abs(dEnd) < thresholdMs && Math.abs(dEnd) < Math.abs(bestDelta)) {
+        if (Math.abs(dEnd) < th && Math.abs(dEnd) < Math.abs(bestDelta)) {
           bestDelta = dEnd; bestOffset = candidateOffset + dEnd; bestTarget = target;
         }
       }
@@ -3064,12 +3239,12 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       if (template === "vocal") {
         patch = {
           ...patch,
-          eq7: [-3, -2, 0, 1, 3, 4, 2],
+          eq7: [-4, -3, -2, -1, 0, 1, 2, 3, 2, 1],
           compressor: { on: true, threshold: -18, ratio: 3, attack: 15, release: 200, makeup: 3 },
           reverb: { on: true, type: "plate", wet: 0.18, size: 0.5 },
         };
       } else if (template === "music") {
-        patch = { ...patch, eq7: [2, 0, -1, 0, 1, 2, 3] };
+        patch = { ...patch, eq7: [2, 2, 1, 0, -1, 0, 1, 2, 2, 3] };
       } else if (template === "drum") {
         patch = {
           ...patch,
@@ -3085,8 +3260,20 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   const openRegionContextMenu = useCallback((e: React.MouseEvent, trackId: string, regionId: string) => {
     e.preventDefault(); e.stopPropagation();
-    setSelection({ trackId, regionId });
+    // Preserve a multi-selection if this region is part of one; otherwise select just it.
+    const inMulti = multiSel.trackId === trackId && multiSel.ids.includes(regionId) && multiSel.ids.length >= 2;
+    if (!inMulti) {
+      setSelection({ trackId, regionId });
+      setMultiSel({ trackId, ids: [regionId] });
+    } else {
+      setSelection({ trackId, regionId });
+    }
+    const mergeIds = inMulti ? multiSel.ids : [];
     const items = [
+      ...(mergeIds.length >= 2 ? [
+        { label: `⛓ Merge ${mergeIds.length} clips`, onClick: () => mergeRegions(trackId, mergeIds) },
+        { label: "", onClick: () => {}, separator: true },
+      ] : []),
       { label: "Split here", onClick: () => {
         // Use cursor X within the region to compute split point
         const target = e.target as HTMLElement;
@@ -3111,7 +3298,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       { label: "Delete region",  onClick: () => dispatch({ type: "DELETE_REGION", trackId, regionId }), danger: true },
     ];
     setCtxMenu({ x: e.clientX, y: e.clientY, items });
-  }, [copySelectedRegion, splitRegion, xToMs, pps]);
+  }, [copySelectedRegion, splitRegion, xToMs, pps, multiSel, mergeRegions]);
 
   const openTrackContextMenu = useCallback((e: React.MouseEvent, trackId: string) => {
     e.preventDefault(); e.stopPropagation();
@@ -3241,6 +3428,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         )}
         <TBtn onClick={openVerifyFilePicker} title="Verify watermark on any WAV file">🛡 Verify</TBtn>
         <DeckMenu onPick={sendToDeck} />
+        <TBtn onClick={() => setEditorOpen(v => !v)} title="Editor — large waveform for precise trim/fade (select a region)" active={editorOpen}>Editor ⤒</TBtn>
         <TBtn onClick={() => setVtOpen(v => !v)} title="Voice Tracker" active={vtOpen}>VT ▾</TBtn>
       </div>
 
@@ -3251,8 +3439,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
       }}>
         {([
-          { id: "select", icon: <span style={{ fontSize: 13 }}>⬆</span>, label: "Select", key: "V" },
-          { id: "blade",  icon: <IBeamIcon />,                            label: "Blade",  key: "C" },
+          { id: "select", icon: <span style={{ fontSize: 13 }}>⌖</span>, label: "Select", key: "V" },
+          { id: "grab",   icon: <span style={{ fontSize: 13 }}>✋</span>, label: "Grab",   key: "G" },
+          { id: "blade",  icon: <IBeamIcon />,                            label: "Splice", key: "C" },
           { id: "trim",   icon: <span style={{ fontSize: 13 }}>⊢⊣</span>, label: "Trim",   key: "T" },
           { id: "fade",   icon: <span style={{ fontSize: 13 }}>⌒</span>,  label: "Fade",   key: "F" },
         ] as const).map(t => {
@@ -3278,7 +3467,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         })}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
-          {tool === "select" && "Click to select · drag to move"}
+          {tool === "select" && "Click a clip to drop the cursor for a precise cut · Shift-click to multi-select · C splices there"}
+          {tool === "grab"   && "Drag clips to move them"}
           {tool === "blade"  && "Click region to cut at cursor"}
           {tool === "trim"   && "Drag region edges or body to trim"}
           {tool === "fade"   && "Drag top-left for fade-in · top-right for fade-out"}
@@ -3300,12 +3490,15 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           display: "flex", flexDirection: "column",
         }}>
           <div style={{ height: RULER_H, borderBottom: "1px solid var(--border-primary)" }} />
-          <div style={{ flex: 1, overflowY: "auto" }}>
-            {tracks.map((t, i) => (
+          <div ref={headerScrollRef} onScroll={() => syncScroll("header")}
+            style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
+            {coloredTracks.map((t, i) => (
               <TrackHeaderRow
                 key={t.id}
                 track={t}
                 height={trackHeights[i]}
+                onResizeStart={(e) => beginRowResize(e, t.id)}
+                onResizeReset={() => setRowHeights(prev => { const n = { ...prev }; delete n[t.id]; return n; })}
                 level={meterLevelsRef.current.perTrack.get(t.id) || 0}
                 selected={selection?.trackId === t.id && !selection?.regionId}
                 fxOpenSet={new Set(
@@ -3334,6 +3527,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
         {/* TIMELINE */}
         <div ref={timelineRef}
+          onScroll={() => syncScroll("timeline")}
           style={{ flex: 1, overflow: "auto", background: "var(--bg-primary)", position: "relative" }}
           className="studiopro-scroll"
         >
@@ -3489,7 +3683,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
               <BeatGrid totalMs={totalDurMs} bpm={bpm} pps={pps} height={totalLanesHeight} />
             )}
 
-            {tracks.map((t, i) => (
+            {coloredTracks.map((t, i) => (
               <div key={t.id} style={{
                 position: "absolute", top: trackTops[i],
                 left: 0, width: "100%", height: trackHeights[i],
@@ -3497,6 +3691,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 <TrackLane
                   track={t}
                   pps={pps}
+                  laneH={rowBaseHeights[i]}
                   tool={tool}
                   selection={selection}
                   bladeHover={bladeHover?.trackId === t.id ? bladeHover : null}
@@ -3507,8 +3702,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                       startMs: lr.startMs, peaks: lr.peaks, samplePeriodMs: lr.samplePeriodMs,
                     } : null;
                   })()}
-                  onSelectRegion={(regionId) => setSelection({ trackId: t.id, regionId })}
-                  onSelectTrack={() => setSelection({ trackId: t.id, regionId: null })}
+                  selectedRegionIds={multiSel.trackId === t.id ? multiSel.ids : []}
+                  onSelectRegion={(regionId, additive) => handleRegionSelect(t.id, regionId, additive)}
+                  onSelectTrack={() => { setSelection({ trackId: t.id, regionId: null }); setMultiSel({ trackId: null, ids: [] }); }}
                   onDrop={(e) => onLaneDrop(e, t.id)}
                   onRegionDrag={(e, regionId, mode) => beginRegionDrag(e, t.id, regionId, mode)}
                   onBladeHover={(regionId, ms) => setBladeHover({ trackId: t.id, regionId, ms })}
@@ -3516,12 +3712,14 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   onBladeSplit={(regionId, ms) => splitRegion(t.id, regionId, ms)}
                   onFadeDrag={(e, regionId, side) => beginFadeDrag(e, t.id, regionId, side)}
                   onRegionContext={(e, regionId) => openRegionContextMenu(e, t.id, regionId)}
+                  onOpenEditor={(regionId) => { setSelection({ trackId: t.id, regionId }); setEditorMode("wave"); setEditorOpen(true); }}
+                  onSeek={(ms) => setPlayheadMs(Math.max(0, ms))}
                 />
 
                 {t.automationOpen && (
                   <div style={{
-                    position: "absolute", left: 0, top: TRACK_H,
-                    width: "100%", height: trackHeights[i] - TRACK_H,
+                    position: "absolute", left: 0, top: rowBaseHeights[i],
+                    width: "100%", height: trackHeights[i] - rowBaseHeights[i],
                     background: "var(--bg-primary)", borderTop: "1px solid var(--border-primary)",
                   }}>
                     {/* per-lane stack */}
@@ -3617,7 +3815,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             onDeleteRegion={() => selectedTrack && selectedRegion && dispatch({
               type: "DELETE_REGION", trackId: selectedTrack.id, regionId: selectedRegion.id,
             })}
-            onOpenFx={() => selectedTrack && toggleFxWindow(selectedTrack.id, "eq")}
+            onOpenEq={() => { if (selectedTrack) { setEditorMode("eq"); setEditorOpen(true); } }}
           />
         </div>
       </div>
@@ -3659,10 +3857,37 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             onClose={() => toggleFxWindow(win.trackId, win.type)}
             onMove={(x, y) => moveFxWindow(k, x, y)}
             onBringToFront={() => bringFxToFront(k)}
+            getAnalyser={() => trackAnalysersRef.current.get(win.trackId) ?? null}
             onPatch={(patch) => dispatch({ type: "UPDATE_TRACK", id: win.trackId, patch })}
           />
         );
       })}
+
+      {/* EDITOR DRAWER — GarageBand-style push-up editor (waveform / EQ) */}
+      <div style={{
+        height: editorOpen ? (editorMode === "eq" ? 380 : 268) : 0,
+        transition: "height 140ms ease",
+        borderTop: editorOpen ? "1px solid var(--border-primary)" : "none",
+        background: "var(--bg-primary)", overflow: "hidden", flex: "0 0 auto",
+      }}>
+        {editorOpen && (
+          <RegionEditorDrawer
+            track={selectedTrack}
+            region={selectedRegion}
+            playheadMs={playheadMs}
+            mode={editorMode}
+            onMode={setEditorMode}
+            ctx={getCtx()}
+            onClose={() => setEditorOpen(false)}
+            onPatchRegion={(patch) => selectedTrack && selectedRegion && dispatch({
+              type: "UPDATE_REGION", trackId: selectedTrack.id, regionId: selectedRegion.id, patch,
+            })}
+            onPatchTrack={(patch) => selectedTrack && dispatch({ type: "UPDATE_TRACK", id: selectedTrack.id, patch })}
+            onSeek={(ms) => setPlayheadMs(ms)}
+            getAnalyser={() => selectedTrack ? trackAnalysersRef.current.get(selectedTrack.id) ?? null : null}
+          />
+        )}
+      </div>
 
       {/* VT DRAWER */}
       <div style={{
@@ -3876,12 +4101,14 @@ function TrackHeaderRow({
   onColorPick, showPalette, onChooseColor, onClosePalette,
   onToggleFx, onToggleAutomation,
   onAddAutomationLane, onRemoveAutomationLane, onSetAutomationParam,
-  onContext, onToggleOriginal,
+  onContext, onToggleOriginal, onResizeStart, onResizeReset,
 }: {
   track: StudioTrack;
   height: number;
   level: number;
   reductionDb: number;
+  onResizeStart: (e: React.MouseEvent) => void;
+  onResizeReset: () => void;
   selected: boolean;
   fxOpenSet: Set<FxWindowType>;
   onSelect: () => void;
@@ -3917,6 +4144,16 @@ function TrackHeaderRow({
         cursor: "pointer", position: "relative",
       }}
     >
+      {/* Row resize handle (drag the bottom edge) */}
+      <div
+        onMouseDown={onResizeStart}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => { e.stopPropagation(); onResizeReset(); }}
+        title="Drag to resize · double-click to reset height"
+        style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 7, cursor: "row-resize", zIndex: 6 }}
+      >
+        <div style={{ position: "absolute", left: "50%", bottom: 2, transform: "translateX(-50%)", width: 28, height: 2, borderRadius: 2, background: "var(--border-primary)" }} />
+      </div>
       {/* Top row (matches TRACK_H) */}
       <div style={{
         height: TRACK_H, padding: "6px 8px",
@@ -3977,10 +4214,9 @@ function TrackHeaderRow({
               </div>
             )}
           </div>
-          <input type="range" min={-48} max={6} step={0.5} value={track.gainDb}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => onPatch({ gainDb: +e.target.value })}
-            style={{ flex: 1, minWidth: 40, accentColor: track.color }}
+          <Fader min={-48} max={6} step={0.5} value={track.gainDb}
+            onChange={(v) => onPatch({ gainDb: v })}
+            style={{ flex: 1, minWidth: 40 }}
           />
         </div>
 
@@ -4171,18 +4407,20 @@ function BeatGrid({ totalMs, bpm, pps, height }: { totalMs: number; bpm: number;
 }
 
 function TrackLane({
-  track, pps, tool, selection, bladeHover, liveRec,
+  track, pps, laneH, tool, selection, selectedRegionIds, bladeHover, liveRec,
   onSelectRegion, onSelectTrack, onDrop,
   onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag,
-  onRegionContext,
+  onRegionContext, onOpenEditor, onSeek,
 }: {
   track: StudioTrack;
   pps: number;
+  laneH: number;
   tool: EditTool;
   selection: { trackId: string; regionId: string | null } | null;
+  selectedRegionIds: string[];
   bladeHover: { trackId: string; regionId: string; ms: number } | null;
   liveRec: { startMs: number; peaks: number[]; samplePeriodMs: number } | null;
-  onSelectRegion: (regionId: string) => void;
+  onSelectRegion: (regionId: string, additive: boolean) => void;
   onSelectTrack: () => void;
   onDrop: (e: React.DragEvent) => void;
   onRegionDrag: (e: React.MouseEvent, regionId: string, mode: "move" | "trim-l" | "trim-r") => void;
@@ -4191,6 +4429,8 @@ function TrackLane({
   onBladeSplit: (regionId: string, ms: number) => void;
   onFadeDrag: (e: React.MouseEvent, regionId: string, side: "in" | "out") => void;
   onRegionContext: (e: React.MouseEvent, regionId: string) => void;
+  onOpenEditor: (regionId: string) => void;
+  onSeek: (ms: number) => void;
 }) {
   const laneBg = track.color + "0a";
   const empty = track.regions.length === 0;
@@ -4200,7 +4440,7 @@ function TrackLane({
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
       style={{
-        position: "relative", height: TRACK_H,
+        position: "relative", height: laneH,
         background: laneBg,
         borderBottom: "1px solid var(--border-primary)",
         animation: track.armed ? "sp-arm-pulse 1.2s ease-in-out infinite" : undefined,
@@ -4217,20 +4457,22 @@ function TrackLane({
       )}
       {track.regions.map(r => (
         <RegionBlock key={r.id}
-          track={track} region={r} pps={pps} tool={tool}
-          selected={selection?.trackId === track.id && selection?.regionId === r.id}
+          track={track} region={r} pps={pps} laneH={laneH} tool={tool}
+          selected={(selection?.trackId === track.id && selection?.regionId === r.id) || selectedRegionIds.includes(r.id)}
           bladeHoverMs={bladeHover && bladeHover.regionId === r.id ? bladeHover.ms : null}
-          onSelect={() => onSelectRegion(r.id)}
+          onSelect={(additive) => onSelectRegion(r.id, additive)}
           onRegionDrag={(e, mode) => onRegionDrag(e, r.id, mode)}
           onBladeHover={(ms) => onBladeHover(r.id, ms)}
           onBladeLeave={onBladeLeave}
           onBladeSplit={(ms) => onBladeSplit(r.id, ms)}
           onFadeDrag={(e, side) => onFadeDrag(e, r.id, side)}
           onContext={(e) => onRegionContext(e, r.id)}
+          onOpenEditor={() => onOpenEditor(r.id)}
+          onSeek={onSeek}
         />
       ))}
       {liveRec && (
-        <LiveRecordingOverlay color={track.color}
+        <LiveRecordingOverlay color={track.color} laneH={laneH}
           startMs={liveRec.startMs} peaks={liveRec.peaks}
           samplePeriodMs={liveRec.samplePeriodMs} pps={pps} />
       )}
@@ -4244,19 +4486,211 @@ function TrackLane({
   );
 }
 
-function RegionBlock({
-  track, region, pps, tool, selected, bladeHoverMs,
-  onSelect, onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onContext,
+// ── Region Editor Drawer ──────────────────────────────────────────
+// GarageBand-style push-up editor: the selected region's full clip shown
+// large, with draggable trim (left/right) and fade (in/out) handles plus
+// click-to-seek. Editing dispatches the same UPDATE_REGION patches the
+// timeline uses, so it stays in sync.
+function EditorHeader({ title, subtitle, accent, mode, onMode, onClose }: {
+  title: string; subtitle: string; accent: string;
+  mode: "wave" | "eq"; onMode: (m: "wave" | "eq") => void;
+  onClose: () => void;
+}) {
+  const tab = (m: "wave" | "eq", label: string) => (
+    <button onClick={() => onMode(m)}
+      style={{
+        padding: "3px 11px", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", borderRadius: 5,
+        border: `1px solid ${mode === m ? accent : "var(--border-primary)"}`,
+        background: mode === m ? accent : "var(--bg-tertiary)",
+        color: mode === m ? "#fff" : "var(--text-tertiary)",
+      }}
+    >{label}</button>
+  );
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", flexShrink: 0 }}>
+      <span style={{ width: 9, height: 9, borderRadius: "50%", background: accent, boxShadow: `0 0 8px ${accent}` }} />
+      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+      <div style={{ display: "flex", gap: 4, marginLeft: 2 }}>
+        {tab("wave", "WAVEFORM")}
+        {tab("eq", "EQ")}
+      </div>
+      <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subtitle}</span>
+      <button onClick={onClose} title="Close editor"
+        style={{ marginLeft: "auto", background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 16, cursor: "pointer", lineHeight: 1 }}
+      >×</button>
+    </div>
+  );
+}
+
+function RegionEditorDrawer({
+  track, region, playheadMs, mode, onMode, ctx, onClose, onPatchRegion, onPatchTrack, onSeek, getAnalyser,
 }: {
-  track: StudioTrack; region: StudioRegion; pps: number; tool: EditTool;
+  track: StudioTrack | null;
+  region: StudioRegion | null;
+  playheadMs: number;
+  mode: "wave" | "eq";
+  onMode: (m: "wave" | "eq") => void;
+  ctx: AudioContext;
+  onClose: () => void;
+  onPatchRegion: (p: RegionPatch) => void;
+  onPatchTrack: (p: TrackPatch) => void;
+  onSeek: (ms: number) => void;
+  getAnalyser?: () => AnalyserNode | null;
+}) {
+  const waveRef = useRef<HTMLDivElement>(null);
+  const accent = track?.color || "var(--accent-cyan)";
+
+  // ── EQ mode — the 10-band rack for the selected track ──
+  if (mode === "eq") {
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        <EditorHeader title={track ? track.name : "Editor"} subtitle={track ? "10-band EQ" : "no track selected"} accent={accent} mode={mode} onMode={onMode} onClose={onClose} />
+        <div style={{ flex: 1, overflow: "auto", padding: "0 14px 14px" }}>
+          {track
+            ? <EqGraph track={track} ctx={ctx} onPatch={onPatchTrack} getAnalyser={getAnalyser} trackH={230} />
+            : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Select a track to edit its EQ.</div>}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Waveform mode ──
+  if (!track || !region || !region.buffer) {
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        <EditorHeader title="Editor" subtitle="no region selected" accent={accent} mode={mode} onMode={onMode} onClose={onClose} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 12 }}>
+          Double-click a region in the timeline to edit it here.
+        </div>
+      </div>
+    );
+  }
+
+  const durMs     = region.buffer.duration * 1000;
+  const trimStart = region.trimStartMs;
+  const trimEnd   = durMs - region.trimEndMs;       // right trim edge, ms from clip start
+  const visDur    = trimEnd - trimStart;
+  const MIN_BODY  = 100;                             // keep ≥100ms of audio
+  const pct = (ms: number) => `${Math.max(0, Math.min(100, (ms / durMs) * 100))}%`;
+  const u   = (ms: number) => (ms / durMs) * 100;    // 0..100 user units for the svg
+
+  // Drag a handle: convert clientX → clip ms and apply on every move.
+  const dragHandle = (e: React.MouseEvent, apply: (ms: number) => void) => {
+    e.stopPropagation(); e.preventDefault();
+    const el = waveRef.current; if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const toMs = (cx: number) => Math.max(0, Math.min(durMs, ((cx - rect.left) / rect.width) * durMs));
+    apply(toMs(e.clientX));
+    const mv = (ev: MouseEvent) => apply(toMs(ev.clientX));
+    const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+  };
+
+  const setTrimStart = (ms: number) => onPatchRegion({ trimStartMs: Math.max(0, Math.min(ms, trimEnd - MIN_BODY)) });
+  const setTrimEnd   = (ms: number) => onPatchRegion({ trimEndMs:   Math.max(0, Math.min(durMs - ms, durMs - trimStart - MIN_BODY)) });
+  const setFadeIn    = (ms: number) => onPatchRegion({ fadeInMs:    Math.max(0, Math.min(ms - trimStart, visDur)) });
+  const setFadeOut   = (ms: number) => onPatchRegion({ fadeOutMs:   Math.max(0, Math.min(trimEnd - ms, visDur)) });
+
+  const fadeInEdge  = trimStart + region.fadeInMs;
+  const fadeOutEdge = trimEnd - region.fadeOutMs;
+
+  // Global playhead → clip space (region occupies [offsetMs, offsetMs+visDur]).
+  const headClipMs = trimStart + (playheadMs - region.offsetMs);
+  const headVisible = headClipMs >= trimStart - 1 && headClipMs <= trimEnd + 1;
+
+  const handleBar = (leftMs: number, onDown: (e: React.MouseEvent) => void, label: string) => (
+    <div onMouseDown={onDown} title={label}
+      style={{ position: "absolute", top: 0, bottom: 0, left: pct(leftMs), width: 12, transform: "translateX(-50%)", cursor: "ew-resize", zIndex: 4 }}>
+      <div style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 2, transform: "translateX(-50%)", background: track.color, boxShadow: `0 0 6px ${track.color}` }} />
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 10, height: 22, borderRadius: 3, background: track.color, boxShadow: "0 1px 4px rgba(0,0,0,.6)" }} />
+    </div>
+  );
+
+  const fadeHandle = (leftMs: number, onDown: (e: React.MouseEvent) => void, label: string) => (
+    <div onMouseDown={onDown} title={label}
+      style={{ position: "absolute", top: 2, left: pct(leftMs), width: 16, height: 16, transform: "translateX(-50%)", cursor: "ew-resize", zIndex: 5 }}>
+      <div style={{ width: 11, height: 11, margin: "0 auto", borderRadius: "50%", background: "#efeaff", border: `2px solid ${track.color}`, boxShadow: "0 1px 4px rgba(0,0,0,.6)" }} />
+    </div>
+  );
+
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      <EditorHeader
+        title={region.filePath ? (region.filePath.split(/[\\/]/).pop() || track.name) : `${track.name} — recorded`}
+        subtitle={`${fmtDuration(visDur)}  ·  trim ${fmtDuration(trimStart)} / ${fmtDuration(region.trimEndMs)}  ·  fade ${region.fadeInMs.toFixed(0)} / ${region.fadeOutMs.toFixed(0)} ms`}
+        accent={track.color}
+        mode={mode}
+        onMode={onMode}
+        onClose={onClose}
+      />
+      <div
+        ref={waveRef}
+        onMouseDown={(e) => {
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const ms = ((e.clientX - rect.left) / rect.width) * durMs;
+          const clamped = Math.max(trimStart, Math.min(trimEnd, ms));
+          onSeek(region.offsetMs + (clamped - trimStart));
+        }}
+        style={{ position: "relative", flex: 1, margin: "0 14px 14px", border: `1px solid ${track.color}55`, background: "#07070b", cursor: "text", overflow: "hidden" }}
+      >
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          <WaveformGL
+            peaks={region.peaks}
+            viewStart={0} viewEnd={1}
+            cueIn={0} cueOut={1} introEnd={0} outroStart={1}
+            playhead={-1} hoverPos={null} dragRegion={null}
+            tint={track.color}
+          />
+        </div>
+
+        {/* trimmed-out shading */}
+        {trimStart > 0 && (
+          <div style={{ position: "absolute", top: 0, bottom: 0, left: 0, width: pct(trimStart), background: "rgba(0,0,0,0.62)", pointerEvents: "none" }} />
+        )}
+        {region.trimEndMs > 0 && (
+          <div style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: pct(region.trimEndMs), background: "rgba(0,0,0,0.62)", pointerEvents: "none" }} />
+        )}
+
+        {/* fade ramps */}
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
+          {region.fadeInMs > 0 && (
+            <polygon points={`${u(trimStart)},100 ${u(fadeInEdge)},0 ${u(fadeInEdge)},100`} fill={track.color} fillOpacity={0.22} />
+          )}
+          {region.fadeOutMs > 0 && (
+            <polygon points={`${u(fadeOutEdge)},0 ${u(trimEnd)},100 ${u(fadeOutEdge)},100`} fill={track.color} fillOpacity={0.22} />
+          )}
+        </svg>
+
+        {/* playhead */}
+        {headVisible && (
+          <div style={{ position: "absolute", top: 0, bottom: 0, left: pct(headClipMs), width: 2, transform: "translateX(-50%)", background: "#fff", boxShadow: "0 0 6px rgba(255,255,255,.8)", pointerEvents: "none", zIndex: 3 }} />
+        )}
+
+        {/* handles */}
+        {handleBar(trimStart, (e) => dragHandle(e, setTrimStart), "Trim start")}
+        {handleBar(trimEnd,   (e) => dragHandle(e, setTrimEnd),   "Trim end")}
+        {fadeHandle(fadeInEdge,  (e) => dragHandle(e, setFadeIn),  "Fade in")}
+        {fadeHandle(fadeOutEdge, (e) => dragHandle(e, setFadeOut), "Fade out")}
+      </div>
+    </div>
+  );
+}
+
+function RegionBlock({
+  track, region, pps, laneH, tool, selected, bladeHoverMs,
+  onSelect, onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onContext, onOpenEditor, onSeek,
+}: {
+  track: StudioTrack; region: StudioRegion; pps: number; laneH: number; tool: EditTool;
   selected: boolean; bladeHoverMs: number | null;
-  onSelect: () => void;
+  onSelect: (additive: boolean) => void;
   onRegionDrag: (e: React.MouseEvent, mode: "move" | "trim-l" | "trim-r") => void;
   onBladeHover: (ms: number) => void;
   onBladeLeave: () => void;
   onBladeSplit: (ms: number) => void;
   onFadeDrag: (e: React.MouseEvent, side: "in" | "out") => void;
   onContext: (e: React.MouseEvent) => void;
+  onOpenEditor: () => void;
+  onSeek: (ms: number) => void;
 }) {
   const durMs   = regionDurMs(region);
   const regionX = (region.offsetMs / 1000) * pps;
@@ -4271,7 +4705,10 @@ function RegionBlock({
   const onRegionMouseDown = (e: React.MouseEvent) => {
     if (!region.buffer) return;
     const el = e.currentTarget as HTMLElement;
-    onSelect();
+    const additive = e.shiftKey || e.metaKey || e.ctrlKey;
+    onSelect(additive);
+    // Shift/ctrl/cmd-click is a multi-select toggle — don't start a move drag.
+    if (additive) { e.stopPropagation(); e.preventDefault(); return; }
     if (tool === "blade") {
       const ms = regionMouseToMs(e, el);
       onBladeHover(ms); onBladeSplit(ms);
@@ -4291,7 +4728,9 @@ function RegionBlock({
       onRegionDrag(e, x < rect.width / 2 ? "trim-l" : "trim-r");
       return;
     }
-    onRegionDrag(e, "move");
+    // Grab tool moves clips; Select tool drops a precise cursor (playhead) at the click.
+    if (tool === "grab") { onRegionDrag(e, "move"); return; }
+    if (tool === "select") onSeek(regionMouseToMs(e, el));
   };
   const onRegionMouseMove = (e: React.MouseEvent) => {
     if (tool !== "blade" || !region.buffer) return;
@@ -4299,10 +4738,12 @@ function RegionBlock({
     onBladeHover(regionMouseToMs(e, el));
   };
   const regionCursor =
-    tool === "blade" ? "text" :
-    tool === "trim"  ? "ew-resize" :
-    tool === "fade"  ? "cell" :
-                       "grab";
+    tool === "blade"  ? "text" :
+    tool === "select" ? "text" :
+    tool === "trim"   ? "ew-resize" :
+    tool === "fade"   ? "cell" :
+    tool === "grab"   ? "grab" :
+                        "default";
   if (!region.buffer) return null;
   return (
     <div
@@ -4310,10 +4751,11 @@ function RegionBlock({
       onMouseMove={onRegionMouseMove}
       onMouseLeave={onBladeLeave}
       onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => { e.stopPropagation(); onSelect(false); onOpenEditor(); }}
       onContextMenu={onContext}
       style={{
         position: "absolute",
-        left: regionX, top: 4, width: regionW, height: TRACK_H - 8,
+        left: regionX, top: 4, width: regionW, height: laneH - 8,
         background: track.color + "1f",
         border: `${selected ? 2 : 1}px solid ${selected ? "#fff" : track.color + "99"}`,
         cursor: regionCursor, overflow: "hidden",
@@ -4326,20 +4768,21 @@ function RegionBlock({
           viewEnd={  region.buffer ? 1 - region.trimEndMs / (region.buffer.duration * 1000) : 1}
           cueIn={0} cueOut={1} introEnd={0} outroStart={1}
           playhead={-1} hoverPos={null} dragRegion={null}
+          tint={track.color}
         />
       </div>
       {(fadeInX > 0 || fadeOutX > 0) && (
-        <svg width={regionW} height={TRACK_H - 8} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+        <svg width={regionW} height={laneH - 8} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
           {fadeInX > 0 && (
             <>
-              <polygon points={`0,${TRACK_H - 8} ${fadeInX},0 ${fadeInX},${TRACK_H - 8}`} fill={track.color} fillOpacity={0.18} />
-              <line x1={0} y1={TRACK_H - 8} x2={fadeInX} y2={0} stroke={track.color} strokeWidth={1.5} strokeOpacity={0.9} />
+              <polygon points={`0,${laneH - 8} ${fadeInX},0 ${fadeInX},${laneH - 8}`} fill={track.color} fillOpacity={0.18} />
+              <line x1={0} y1={laneH - 8} x2={fadeInX} y2={0} stroke={track.color} strokeWidth={1.5} strokeOpacity={0.9} />
             </>
           )}
           {fadeOutX > 0 && (
             <>
-              <polygon points={`${regionW - fadeOutX},0 ${regionW},${TRACK_H - 8} ${regionW - fadeOutX},${TRACK_H - 8}`} fill={track.color} fillOpacity={0.18} />
-              <line x1={regionW - fadeOutX} y1={0} x2={regionW} y2={TRACK_H - 8} stroke={track.color} strokeWidth={1.5} strokeOpacity={0.9} />
+              <polygon points={`${regionW - fadeOutX},0 ${regionW},${laneH - 8} ${regionW - fadeOutX},${laneH - 8}`} fill={track.color} fillOpacity={0.18} />
+              <line x1={regionW - fadeOutX} y1={0} x2={regionW} y2={laneH - 8} stroke={track.color} strokeWidth={1.5} strokeOpacity={0.9} />
             </>
           )}
         </svg>
@@ -4369,7 +4812,7 @@ function RegionBlock({
         fontFamily: "ui-monospace, monospace",
         textShadow: "0 0 3px rgba(0,0,0,0.8)", pointerEvents: "none",
       }}>{fmtDuration(durMs)}</div>
-      {(tool === "select" || tool === "trim") && (
+      {(tool === "grab" || tool === "trim") && (
         <>
           <div onMouseDown={(e) => onRegionDrag(e, "trim-l")}
             style={{ position: "absolute", left: 0, top: 0, width: HANDLE_W, height: "100%", cursor: "ew-resize", background: "transparent" }} />
@@ -4389,14 +4832,14 @@ function RegionBlock({
   );
 }
 
-function LiveRecordingOverlay({ color, startMs, peaks, samplePeriodMs, pps }: {
-  color: string; startMs: number; peaks: number[]; samplePeriodMs: number; pps: number;
+function LiveRecordingOverlay({ color, laneH, startMs, peaks, samplePeriodMs, pps }: {
+  color: string; laneH: number; startMs: number; peaks: number[]; samplePeriodMs: number; pps: number;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const widthPerSample = (samplePeriodMs / 1000) * pps;
   const w = Math.max(2, Math.ceil(peaks.length * widthPerSample));
   const x = (startMs / 1000) * pps;
-  const h = TRACK_H - 8;
+  const h = laneH - 8;
   useEffect(() => {
     const cv = canvasRef.current;
     if (!cv) return;
@@ -4591,7 +5034,7 @@ function Inspector({
   limiterThresh, setLimiterThresh,
   masterLevel, masterAnalyser,
   loopRange, onClearLoop,
-  onPatchTrack, onPatchRegion, onClear, onDeleteRegion, onOpenFx,
+  onPatchTrack, onPatchRegion, onClear, onDeleteRegion, onOpenEq,
 }: {
   track: StudioTrack | null;
   region: StudioRegion | null;
@@ -4605,22 +5048,14 @@ function Inspector({
   onPatchRegion: (p: RegionPatch) => void;
   onClear: () => void;
   onDeleteRegion: () => void;
-  onOpenFx: () => void;
+  onOpenEq: () => void;
 }) {
   const knob = (label: string, min: number, max: number, val: number, step: number,
     onChange: (v: number) => void, unit = "", accent = "var(--accent-blue)") => (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
-        <span>{label}</span>
-        <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
-          {val.toFixed(step < 1 ? 2 : 1)}{unit}
-        </span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={val}
-        onChange={(e) => onChange(+e.target.value)}
-        style={{ width: "100%", accentColor: accent }}
-      />
-    </div>
+    <Fader label={label} min={min} max={max} step={step} value={val}
+      onChange={onChange} unit={unit}
+      variant={accent === "#22c55e" ? "green" : "purple"}
+    />
   );
 
   const masterSection = (
@@ -4674,16 +5109,21 @@ function Inspector({
         {track.regions.length} region{track.regions.length !== 1 ? "s" : ""}
       </div>
 
-      <button onClick={onOpenFx}
+      <button onClick={onOpenEq}
         style={{
-          width: "100%", marginBottom: 10, padding: "6px",
-          background: "#1e293b", color: "var(--accent-blue)",
-          border: "1px solid #334155", fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0, letterSpacing: 0.5,
+          width: "100%", marginBottom: 10, padding: "7px",
+          background: "rgb(from var(--accent-cyan) r g b / 0.12)", color: "var(--accent-cyan)",
+          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.4)", fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 6, letterSpacing: 0.5,
         }}
-      >OPEN EQ (use FX menu in track header for Comp / Reverb)</button>
+      >⤒ Open 7-Band EQ</button>
 
       {knob("Gain", -18, 6, track.gainDb, 0.5, (v) => onPatchTrack({ gainDb: v }), " dB", track.color)}
-      {knob("Pan",  -1,  1, track.pan,    0.05, (v) => onPatchTrack({ pan: v }), "", track.color)}
+      <div style={{ display: "flex", justifyContent: "center", margin: "4px 0 8px" }}>
+        <Knob label="Pan" min={-1} max={1} step={0.05} value={track.pan}
+          onChange={(v) => onPatchTrack({ pan: v })}
+          format={(v) => Math.abs(v) < 0.025 ? "C" : (v < 0 ? "L" : "R") + Math.round(Math.abs(v) * 100)}
+        />
+      </div>
 
       <div style={{ display: "flex", gap: 4, marginTop: 10 }}>
         <button onClick={() => onPatchTrack({ muted: !track.muted })} style={insBtn(track.muted, "#ef4444")}>
@@ -4713,13 +5153,8 @@ function Inspector({
             {"  "}out: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{region.fadeOutMs.toFixed(0)}ms</span>
           </div>
           <div style={{ marginTop: 8 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
-              <span>Clip gain</span>
-              <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{(region.clipGainDb || 0).toFixed(1)} dB</span>
-            </div>
-            <input type="range" min={-24} max={12} step={0.5} value={region.clipGainDb || 0}
-              onChange={(e) => onPatchRegion({ clipGainDb: +e.target.value })}
-              style={{ width: "100%", accentColor: track.color }}
+            <Fader label="Clip gain" min={-24} max={12} step={0.5} value={region.clipGainDb || 0}
+              onChange={(v) => onPatchRegion({ clipGainDb: v })} unit=" dB"
             />
           </div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, wordBreak: "break-all" }}>
@@ -4748,11 +5183,113 @@ function insBtn(active: boolean, color: string): React.CSSProperties {
   };
 }
 
+// ── Fader ─────────────────────────────────────────────────────────
+// Custom horizontal fader replacing raw <input type=range>. Recessed rail +
+// purple (or green) gradient fill with glow + a slim capped handle. Drag the
+// bar anywhere to set the value. Pass `label` to render the label/value row.
+function Fader({
+  min, max, step, value, onChange,
+  label, unit = "", variant = "purple", style,
+}: {
+  min: number; max: number; step: number; value: number;
+  onChange: (v: number) => void;
+  label?: string; unit?: string; variant?: "purple" | "green";
+  style?: React.CSSProperties;
+}) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const pct = Math.max(0, Math.min(1, (value - min) / (max - min)));
+
+  const setFromX = (clientX: number) => {
+    const el = railRef.current; if (!el) return;
+    const b = el.getBoundingClientRect();
+    let p = (clientX - b.left) / b.width;
+    p = Math.max(0, Math.min(1, p));
+    let v = min + p * (max - min);
+    v = Math.round(v / step) * step;
+    onChange(Math.max(min, Math.min(max, v)));
+  };
+  const onDown = (e: React.MouseEvent) => {
+    e.stopPropagation(); e.preventDefault();
+    setFromX(e.clientX);
+    const mv = (ev: MouseEvent) => setFromX(ev.clientX);
+    const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", mv);
+    window.addEventListener("mouseup", up);
+  };
+
+  const green = variant === "green";
+  const fillBg   = green ? "linear-gradient(90deg,#1f7a44,#27a35a)" : "linear-gradient(90deg,var(--accent-blue),var(--accent-cyan))";
+  const fillGlow = green ? "0 0 8px rgba(39,163,90,.4)" : "0 0 8px rgba(136,104,216,.45)";
+  const capBg    = green ? "linear-gradient(180deg,#d7ffe6,#9be0b4)" : "linear-gradient(180deg,#efeaff,#bcaef0)";
+  const capBor   = green ? "#27a35a" : "#7a68c0";
+
+  const bar = (
+    <div ref={railRef} onMouseDown={onDown} onClick={(e) => e.stopPropagation()}
+      style={{ position: "relative", height: 18, cursor: "pointer", flex: 1, minWidth: 40, ...style }}
+    >
+      <div style={{ position: "absolute", top: 7, left: 0, right: 0, height: 4, borderRadius: 2, background: "#07070b", boxShadow: "inset 0 1px 1px rgba(0,0,0,.6)" }} />
+      <div style={{ position: "absolute", top: 7, left: 0, width: `${pct * 100}%`, height: 4, borderRadius: 2, background: fillBg, boxShadow: fillGlow }} />
+      <div style={{ position: "absolute", top: 1, left: `${pct * 100}%`, transform: "translateX(-50%)", width: 8, height: 16, borderRadius: 3, background: capBg, border: `1px solid ${capBor}`, boxShadow: "0 1px 3px rgba(0,0,0,.6), 0 0 8px rgba(136,104,216,.5)" }} />
+    </div>
+  );
+
+  if (!label) return bar;
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+        <span>{label}</span>
+        <span style={{ fontFamily: "ui-monospace, monospace" }}>{value.toFixed(step < 1 ? 2 : 1)}{unit}</span>
+      </div>
+      {bar}
+    </div>
+  );
+}
+
+// ── Knob ──────────────────────────────────────────────────────────
+// Rotary knob (drag up/down) for bipolar params like Pan. Indicator sweeps
+// −135°→+135° with a purple glow.
+function Knob({
+  min, max, step, value, onChange, label, format,
+}: {
+  min: number; max: number; step: number; value: number;
+  onChange: (v: number) => void; label?: string; format?: (v: number) => string;
+}) {
+  const onDown = (e: React.MouseEvent) => {
+    e.stopPropagation(); e.preventDefault();
+    const startY = e.clientY, startV = value;
+    const mv = (ev: MouseEvent) => {
+      let v = startV + (startY - ev.clientY) * (max - min) * 0.005;
+      v = Math.round(v / step) * step;
+      onChange(Math.max(min, Math.min(max, v)));
+    };
+    const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", mv);
+    window.addEventListener("mouseup", up);
+  };
+  const pct = Math.max(0, Math.min(1, (value - min) / (max - min)));
+  const deg = -135 + pct * 270;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+      <div onMouseDown={onDown} onClick={(e) => e.stopPropagation()}
+        style={{ width: 54, height: 54, position: "relative", cursor: "ns-resize" }}>
+        <div style={{ position: "absolute", inset: 9, borderRadius: "50%", background: "radial-gradient(circle at 38% 32%,#26203a,#15111f 70%)", border: "1px solid #2a2440", boxShadow: "0 2px 5px rgba(0,0,0,.55), inset 0 1px 1px rgba(255,255,255,.05)" }} />
+        <div style={{ position: "absolute", inset: 0, transform: `rotate(${deg}deg)` }}>
+          <div style={{ position: "absolute", left: "50%", top: 6, marginLeft: -1, width: 2, height: 13, borderRadius: 2, background: "var(--accent-cyan)", boxShadow: "0 0 6px rgba(136,104,216,.8)" }} />
+        </div>
+        <div style={{ position: "absolute", inset: 0, top: "50%", transform: "translateY(-50%)", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-primary)", pointerEvents: "none" }}>
+          {format ? format(value) : value.toFixed(2)}
+        </div>
+      </div>
+      {label && <span style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 600 }}>{label}</span>}
+    </div>
+  );
+}
+
 // ── FX Window ───────────────────────────────────────────────────
 
 function FxWindow({
   track, allTracks, type, position, ctx, reductionDb,
-  onClose, onMove, onBringToFront, onPatch,
+  onClose, onMove, onBringToFront, onPatch, getAnalyser,
 }: {
   track: StudioTrack;
   allTracks: StudioTrack[];
@@ -4764,6 +5301,7 @@ function FxWindow({
   onMove: (x: number, y: number) => void;
   onBringToFront: () => void;
   onPatch: (p: TrackPatch) => void;
+  getAnalyser?: () => AnalyserNode | null;
 }) {
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -4785,7 +5323,7 @@ function FxWindow({
     <div onMouseDown={onBringToFront}
       style={{
         position: "absolute",
-        left: position.x, top: position.y, width: 320,
+        left: position.x, top: position.y, width: type === "eq" ? 880 : 320,
         zIndex: 1000 + position.z,
         background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
         boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
@@ -4794,23 +5332,32 @@ function FxWindow({
     >
       <div onMouseDown={startDrag}
         style={{
-          height: 28, background: "var(--bg-secondary)",
-          borderBottom: "1px solid var(--border-primary)",
-          display: "flex", alignItems: "center", padding: "0 8px", gap: 8,
+          height: 42, background: "linear-gradient(180deg,#262632 0%,#1a1a22 100%)",
+          borderBottom: "1px solid #0a0a0f",
+          display: "flex", alignItems: "center", padding: "0 14px", gap: 10,
           cursor: "grab", userSelect: "none",
         }}
       >
-        <div style={{ width: 8, height: 8, background: track.color }} />
-        <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>
-          {track.name} — {FX_WINDOW_LABELS[type]}
-        </div>
-        <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
-        >×</button>
+        <div style={{ width: 9, height: 9, borderRadius: "50%", background: track.color, boxShadow: `0 0 8px ${track.color}` }} />
+        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "#ececf2", textTransform: "uppercase" as const }}>ETHER</span>
+        <span style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", color: "var(--accent-cyan)",
+          textTransform: "uppercase" as const, padding: "2px 8px",
+          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", borderRadius: 3,
+          whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: type === "eq" ? 600 : 220,
+        }}>{track.name} · {FX_WINDOW_LABELS[type]}</span>
+        <div style={{ flex: 1 }} />
+        <button onClick={onClose} title="Close" data-no-drag
+          style={{ width: 28, height: 28, borderRadius: 4, background: "#1a1a22", border: "1px solid #3a3a48", color: "#a8a8b4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+          onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = "#ef4444"; el.style.borderColor = "#ef4444"; el.style.color = "#fff"; }}
+          onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = "#1a1a22"; el.style.borderColor = "#3a3a48"; el.style.color = "#a8a8b4"; }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
       </div>
 
       <div style={{ padding: 10, maxHeight: "70vh", overflowY: "auto" }}>
-        {type === "eq"     && <FxEqSection     track={track} ctx={ctx} onPatch={onPatch} />}
+        {type === "eq"     && <FxEqSection     track={track} ctx={ctx} onPatch={onPatch} getAnalyser={getAnalyser} />}
         {type === "comp"   && <FxCompSection   track={track} reductionDb={reductionDb} onPatch={onPatch} />}
         {type === "reverb" && (
           <>
@@ -4991,13 +5538,14 @@ function usePresets<T>(key: string, builtins: { name: string; value: T }[]): Pre
   return { list, save, delete: del };
 }
 
+// 10-band presets — freqs [31,63,125,250,500,1k,2k,4k,8k,16k]
 const EQ_PRESETS: { name: string; value: number[] }[] = [
-  { name: "Flat",            value: [0, 0, 0, 0, 0, 0, 0] },
-  { name: "Vocal — clarity", value: [-3, -2, 0, 1, 3, 4, 2] },
-  { name: "Vocal — warm",    value: [0, 2, 1, -1, 0, 1, -1] },
-  { name: "Music — radio",   value: [2, 0, -1, 0, 1, 2, 3] },
-  { name: "Loudness smile",  value: [4, 2, 0, -2, 0, 2, 4] },
-  { name: "Telephone",       value: [-12, -8, 2, 4, 2, -6, -12] },
+  { name: "Flat",            value: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+  { name: "Vocal — clarity", value: [-4, -3, -2, -1, 0, 1, 2, 3, 2, 1] },
+  { name: "Vocal — warm",    value: [0, 1, 2, 1, 0, 0, -1, -1, 0, 1] },
+  { name: "Music — radio",   value: [2, 2, 1, 0, -1, 0, 1, 2, 2, 3] },
+  { name: "Loudness smile",  value: [4, 4, 2, 0, -1, -2, -1, 0, 3, 4] },
+  { name: "Telephone",       value: [-12, -12, -6, 2, 4, 4, 2, -6, -12, -12] },
 ];
 
 const COMP_PRESETS: { name: string; value: TrackCompressor }[] = [
@@ -5161,7 +5709,6 @@ function MasterFxWindow({
     g.lineTo(W, H / 2); g.lineTo(0, H / 2); g.closePath(); g.fill();
   }, [masterEq7, ctx, W, H]);
 
-  const eqStore = usePresets<number[]>("master_eq", EQ_PRESETS);
   const compStore = usePresets<TrackCompressor>("master_comp", COMP_PRESETS);
 
   return (
@@ -5204,32 +5751,9 @@ function MasterFxWindow({
         </FxBlock>
 
         {/* Master EQ */}
-        <FxBlock title="Master 7-Band EQ">
-          <PresetMenu store={eqStore} current={masterEq7} onApply={setMasterEq7} label="EQ Presets" />
-          <canvas ref={eqCanvasRef} style={{ width: W, height: H, display: "block", marginBottom: 8 }} />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-            {EQ_FREQS.map((_, i) => {
-              const v = masterEq7[i] || 0;
-              return (
-                <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-                  <input type="range" orient="vertical" min={-EQ_DB_RANGE} max={EQ_DB_RANGE} step={0.5} value={v}
-                    onChange={(e) => {
-                      const next = [...masterEq7];
-                      next[i] = +e.target.value;
-                      setMasterEq7(next);
-                    }}
-                    style={{
-                      // @ts-ignore
-                      WebkitAppearance: "slider-vertical", writingMode: "vertical-lr",
-                      width: 18, height: 80, accentColor: "var(--accent-blue)",
-                    } as any}
-                  />
-                  <span style={{ fontSize: 8, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
-                  <span style={{ fontSize: 8, color: "var(--text-tertiary)" }}>{EQ_LABELS[i]}</span>
-                </div>
-              );
-            })}
-          </div>
+        <FxBlock title="Master 10-Band EQ">
+          <EQRack bands={masterEq7} onChange={setMasterEq7} ctx={ctx}
+            getAnalyser={() => masterAnalyser} presetKey="master_eq" accent="var(--accent-blue)" />
         </FxBlock>
 
         {/* Master compressor */}
@@ -5266,93 +5790,278 @@ function MasterFxWindow({
 }
 
 // EQ section with vertical band sliders + response curve
-function FxEqSection({ track, ctx, onPatch }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const w = 300, h = 100;
+// ── EQRack — 10-band MODEL-10-R rack (faders + live spectrum) ─────
+// Immersive graphic-EQ rack: 10 vertical faders riding a live FFT spectrum,
+// peak-hold, dB scale, presets. Shared by the per-track EQ and the master EQ.
+function EQRack({ bands, onChange, ctx, getAnalyser, presetKey, accent = "var(--accent-cyan)", trackH = 160 }: {
+  bands: number[];
+  onChange: (b: number[]) => void;
+  ctx: AudioContext;
+  getAnalyser?: () => AnalyserNode | null;
+  presetKey: string;
+  accent?: string;
+  trackH?: number;
+}) {
+  const MAX = EQ_DB_RANGE;
+  const [spectrum, setSpectrum] = useState<number[]>(() => Array(EQ_BANDS).fill(0));
+  const [peaks, setPeaks]       = useState<number[]>(() => Array(EQ_BANDS).fill(0));
+  const peakRef   = useRef<number[]>(Array(EQ_BANDS).fill(0));
+  const bandsRef  = useRef(bands); bandsRef.current = bands;
+  const getAnRef  = useRef(getAnalyser); getAnRef.current = getAnalyser;
+  const eqStore   = usePresets<number[]>(presetKey, EQ_PRESETS);
 
-  // Draw the EQ response curve using the actual biquad math
+  // Poll the (per-track or master) analyser ~30fps for the live spectrum.
   useEffect(() => {
-    const cv = canvasRef.current;
-    if (!cv) return;
+    const id = setInterval(() => {
+      const an = getAnRef.current?.();
+      if (!an) { setSpectrum(Array(EQ_BANDS).fill(0)); return; }
+      const bins = new Uint8Array(an.frequencyBinCount);
+      an.getByteFrequencyData(bins);
+      const nyq = an.context.sampleRate / 2;
+      const levels = EQ_FREQS.map(f => {
+        const bin = Math.min(bins.length - 1, Math.max(0, Math.round((f / nyq) * bins.length)));
+        return bins[bin] / 255;
+      });
+      setSpectrum(levels);
+      const np = peakRef.current.map((p, i) => Math.max(levels[i], p * 0.985));
+      peakRef.current = np;
+      setPeaks(np);
+    }, 33);
+    return () => clearInterval(id);
+  }, []);
+
+  const dragBand = (idx: number, trackH: number) => (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    const startY = e.clientY;
+    const startGain = bandsRef.current[idx] ?? 0;
+    const onMove = (me: MouseEvent) => {
+      const dy = startY - me.clientY;
+      const gain = Math.max(-MAX, Math.min(MAX, startGain + (dy / trackH) * MAX * 2));
+      const next = [...bandsRef.current];
+      next[idx] = Math.round(gain * 10) / 10;
+      onChange(next);
+    };
+    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove); window.addEventListener("mouseup", onUp);
+  };
+
+  const isActive = bands.some(g => Math.abs(g) > 0.05);
+  const TRACK_H  = trackH;
+
+  return (
+    <div style={{ width: "100%" }}>
+      {/* Presets row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <PresetMenu store={eqStore} current={bands} onApply={onChange} label="EQ Presets" />
+        </div>
+        <button onClick={() => onChange(Array(EQ_BANDS).fill(0))}
+          style={{ padding: "5px 12px", background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 5 }}
+        >FLAT</button>
+      </div>
+
+      {/* Rack body */}
+      <div style={{ display: "flex", gap: 6 }}>
+        {/* dB scale */}
+        <div style={{ width: 26, height: TRACK_H, display: "flex", flexDirection: "column", justifyContent: "space-between", fontFamily: "ui-monospace, monospace", fontSize: 9, color: "#5a5a72", textAlign: "right" as const, paddingTop: 2, paddingBottom: 16 }}>
+          <span>+{MAX}</span><span>0</span><span>−{MAX}</span>
+        </div>
+        {/* 10 bands over a dark inset */}
+        <div style={{
+          flex: 1, display: "grid", gridTemplateColumns: `repeat(${EQ_BANDS}, 1fr)`, gap: 3,
+          background: "linear-gradient(180deg,#06060a,#0a0a0f)", border: "1px solid #1d1d28",
+          borderRadius: 6, padding: "10px 8px 6px", boxShadow: "inset 0 2px 8px rgba(0,0,0,0.5)",
+        }}>
+          {EQ_FREQS.map((_, idx) => {
+            const gain = bands[idx] ?? 0;
+            const gainPct = gain / MAX;
+            const specPct = Math.min(1, spectrum[idx] ?? 0);
+            const peakPct = Math.min(1, peaks[idx] ?? 0);
+            const barColor = specPct > 0.9 ? "#ef4444" : specPct > 0.75 ? "#f59e0b" : specPct > 0.5 ? "#22c55e" : accent;
+            return (
+              <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <div style={{ position: "relative", width: "100%", height: TRACK_H }}>
+                  {/* center line */}
+                  <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgb(from var(--accent-cyan) r g b / 0.25)", pointerEvents: "none" }} />
+                  {/* live spectrum */}
+                  <div style={{ position: "absolute", bottom: 0, left: "24%", right: "24%", height: `${specPct * 100}%`, background: `linear-gradient(180deg, ${barColor} 0%, ${barColor}40 100%)`, boxShadow: `0 0 8px ${barColor}80`, borderRadius: 1, transition: "height 0.05s linear, background 0.2s", pointerEvents: "none" }} />
+                  {peakPct > 0.02 && (
+                    <div style={{ position: "absolute", bottom: `${peakPct * 100}%`, left: "24%", right: "24%", height: 2, background: "#fff", opacity: 0.8, pointerEvents: "none" }} />
+                  )}
+                  {/* fader */}
+                  <div onMouseDown={dragBand(idx, TRACK_H)}
+                    onDoubleClick={() => { const next = [...bands]; next[idx] = 0; onChange(next); }}
+                    style={{ position: "absolute", inset: 0, cursor: "ns-resize" }}>
+                    <div style={{
+                      position: "absolute", top: `${50 - gainPct * 50}%`, left: "50%",
+                      transform: "translate(-50%,-50%)", width: 26, height: 12,
+                      background: "linear-gradient(180deg,#5a5a72,#2a2a36)", border: "1px solid #1a1a22", borderRadius: 2,
+                      boxShadow: Math.abs(gain) > 0.05 ? "0 0 10px rgb(from var(--accent-cyan) r g b / 0.6)" : "0 1px 0 rgba(255,255,255,0.08) inset",
+                    }}>
+                      <div style={{ position: "absolute", top: "50%", left: 2, right: 2, height: 1, transform: "translateY(-50%)", background: Math.abs(gain) > 0.05 ? accent : "#5a5a72", boxShadow: Math.abs(gain) > 0.05 ? `0 0 4px ${accent}` : "none" }} />
+                    </div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 5, fontSize: 9, fontFamily: "ui-monospace, monospace", color: Math.abs(gain) > 0.05 ? accent : "#5a5a72", fontWeight: 700, minHeight: 12 }}>
+                  {gain > 0.05 ? "+" : ""}{Math.abs(gain) > 0.05 ? gain.toFixed(1) : ""}
+                </div>
+                <div style={{ fontSize: 9, fontWeight: 700, color: "#a8a8b4", fontFamily: "ui-monospace, monospace" }}>{EQ_LABELS[idx]}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Footer strip */}
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 14, fontSize: 9, fontFamily: "ui-monospace, monospace", color: "#5a5a72", letterSpacing: "0.06em" }}>
+        <span>FFT · HANN</span><span>·</span><span>BIQUAD · Q=1.0</span>
+        <span style={{ marginLeft: "auto", color: isActive ? "#ef4444" : "#5a5a72" }}>{isActive ? "● EQ ENGAGED" : "○ BYPASS"}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Per-track EQ — renders the shared 10-band EQRack ──────────────
+function EqGraph({ track, ctx, onPatch, getAnalyser, trackH }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void; getAnalyser?: () => AnalyserNode | null; trackH?: number }) {
+  return (
+    <EQRack
+      bands={track.eq7}
+      onChange={(b) => onPatch({ eq7: b })}
+      ctx={ctx}
+      getAnalyser={getAnalyser}
+      presetKey="track_eq"
+      accent={track.color}
+      trackH={trackH}
+    />
+  );
+}
+
+// ── (legacy curve EQ — replaced by EQRack) ────────────────────────
+function EqGraphLegacy({ track, ctx, onPatch }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void }) {
+  const wrapRef   = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const eqRef     = useRef(track.eq7);
+  eqRef.current   = track.eq7;
+  const [w, setW] = useState(720);
+  const [dragBand, setDragBand] = useState<number | null>(null);
+  const h = 200, PAD = 16;
+
+  useEffect(() => {
+    const el = wrapRef.current; if (!el) return;
+    const apply = () => setW(Math.max(320, el.clientWidth));
+    const ro = new ResizeObserver(apply); ro.observe(el); apply();
+    return () => ro.disconnect();
+  }, []);
+
+  const freqToX = (f: number) => (Math.log(f / 20) / Math.log(1000)) * w;
+  const dbToY   = (db: number) => h / 2 - (db / EQ_DB_RANGE) * (h / 2 - PAD);
+  const yToDb   = (y: number) => clamp(((h / 2 - y) / (h / 2 - PAD)) * EQ_DB_RANGE, -EQ_DB_RANGE, EQ_DB_RANGE);
+
+  useEffect(() => {
+    const cv = canvasRef.current; if (!cv) return;
     const dpr = window.devicePixelRatio || 1;
     cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
-    const g = cv.getContext("2d");
-    if (!g) return;
-    g.scale(dpr, dpr);
+    const g = cv.getContext("2d"); if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
-    // bg
-    g.fillStyle = "#050508"; g.fillRect(0, 0, w, h);
-    g.strokeStyle = "#1a1a22";
-    g.beginPath(); g.moveTo(0, h / 2); g.lineTo(w, h / 2); g.stroke();
+    g.fillStyle = "#07070b"; g.fillRect(0, 0, w, h);
 
-    // Compute response using temp BiquadFilters
-    const POINTS = 200;
+    // grid
+    g.lineWidth = 1;
+    [50, 100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => {
+      const x = freqToX(f); g.strokeStyle = "rgba(255,255,255,0.045)";
+      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
+    });
+    [-12, -6, 0, 6, 12].forEach(db => {
+      const y = dbToY(db); g.strokeStyle = db === 0 ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.05)";
+      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
+      if (db !== 0) { g.fillStyle = "rgba(255,255,255,0.25)"; g.font = "9px ui-monospace, monospace"; g.textAlign = "left"; g.fillText(`${db > 0 ? "+" : ""}${db}`, 3, y - 2); }
+    });
+
+    // response curve
+    const POINTS = Math.max(160, Math.floor(w / 2));
     const freqArr = new Float32Array(POINTS);
     for (let i = 0; i < POINTS; i++) freqArr[i] = 20 * Math.pow(1000, i / (POINTS - 1));
     const totalDb = new Float32Array(POINTS);
-    const mag = new Float32Array(POINTS);
-    const phase = new Float32Array(POINTS);
+    const mag = new Float32Array(POINTS), phase = new Float32Array(POINTS);
     for (let b = 0; b < 7; b++) {
       const f = ctx.createBiquadFilter();
       f.type = b === 0 ? "lowshelf" : b === 6 ? "highshelf" : "peaking";
       f.frequency.value = EQ_FREQS[b];
       if (f.type === "peaking") f.Q.value = 1;
-      f.gain.value = clamp(track.eq7[b] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
+      f.gain.value = clamp(eqRef.current[b] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
       f.getFrequencyResponse(freqArr, mag, phase);
       for (let i = 0; i < POINTS; i++) totalDb[i] += 20 * Math.log10(Math.max(1e-6, mag[i]));
     }
-
-    // Curve
-    g.strokeStyle = track.color; g.lineWidth = 2;
     g.beginPath();
-    for (let i = 0; i < POINTS; i++) {
-      const x = i / (POINTS - 1) * w;
-      const y = h / 2 - (totalDb[i] / EQ_DB_RANGE) * (h / 2 - 4);
-      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
-    }
-    g.stroke();
-    g.fillStyle = track.color + "22";
-    g.lineTo(w, h / 2); g.lineTo(0, h / 2); g.closePath(); g.fill();
+    for (let i = 0; i < POINTS; i++) { const x = i / (POINTS - 1) * w; const y = dbToY(totalDb[i]); if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); }
+    g.strokeStyle = track.color; g.lineWidth = 2.5; g.stroke();
+    g.lineTo(w, h / 2); g.lineTo(0, h / 2); g.closePath(); g.fillStyle = track.color + "26"; g.fill();
 
-    // Band markers
+    // nodes
     for (let b = 0; b < 7; b++) {
-      const fx = (Math.log(EQ_FREQS[b] / 20) / Math.log(1000)) * w;
-      const fy = h / 2 - (track.eq7[b] / EQ_DB_RANGE) * (h / 2 - 4);
-      g.fillStyle = track.color;
-      g.beginPath(); g.arc(fx, fy, 2.5, 0, Math.PI * 2); g.fill();
+      const x = freqToX(EQ_FREQS[b]); const y = dbToY(eqRef.current[b] || 0);
+      const active = dragBand === b;
+      g.beginPath(); g.arc(x, y, active ? 11 : 8, 0, Math.PI * 2); g.fillStyle = track.color; g.globalAlpha = active ? 0.4 : 0.22; g.fill(); g.globalAlpha = 1;
+      g.beginPath(); g.arc(x, y, 5.5, 0, Math.PI * 2); g.fillStyle = "#efeaff"; g.fill(); g.strokeStyle = track.color; g.lineWidth = 2; g.stroke();
+      g.fillStyle = "rgba(255,255,255,0.55)"; g.font = "9px ui-monospace, monospace"; g.textAlign = "center";
+      g.fillText(EQ_LABELS[b], x, h - 4);
+      const v = eqRef.current[b] || 0;
+      if (active || v !== 0) { g.fillStyle = "#efeaff"; g.fillText(`${v > 0 ? "+" : ""}${v.toFixed(1)}`, x, y - 12); }
     }
-  }, [track.eq7, track.color, ctx, w, h]);
+  }, [track.eq7, track.color, ctx, w, h, dragBand]);
+
+  const onDown = (e: React.MouseEvent) => {
+    const cv = canvasRef.current; if (!cv) return;
+    const rect = cv.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (w / rect.width);
+    let bi = 0, best = Infinity;
+    for (let b = 0; b < 7; b++) { const d = Math.abs(freqToX(EQ_FREQS[b]) - mx); if (d < best) { best = d; bi = b; } }
+    setDragBand(bi);
+    const apply = (clientY: number) => {
+      const next = [...eqRef.current];
+      next[bi] = Math.round(yToDb(clientY - rect.top) * 2) / 2;
+      onPatch({ eq7: next });
+    };
+    apply(e.clientY);
+    const mv = (ev: MouseEvent) => apply(ev.clientY);
+    const up = () => { setDragBand(null); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+    window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+  };
+
+  const onDoubleClick = (e: React.MouseEvent) => {
+    // double-click a node → reset that band to 0 dB
+    const cv = canvasRef.current; if (!cv) return;
+    const rect = cv.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (w / rect.width);
+    let bi = 0, best = Infinity;
+    for (let b = 0; b < 7; b++) { const d = Math.abs(freqToX(EQ_FREQS[b]) - mx); if (d < best) { best = d; bi = b; } }
+    const next = [...eqRef.current]; next[bi] = 0; onPatch({ eq7: next });
+  };
 
   const eqStore = usePresets<number[]>("track_eq", EQ_PRESETS);
   return (
-    <FxBlock title="7-Band EQ">
-      <PresetMenu store={eqStore} current={track.eq7} onApply={(v) => onPatch({ eq7: v })} label="EQ Presets" />
-      <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8 }} />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-        {EQ_FREQS.map((_, i) => {
-          const v = track.eq7[i] || 0;
-          return (
-            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <input
-                type="range" orient="vertical" min={-EQ_DB_RANGE} max={EQ_DB_RANGE} step={0.5}
-                value={v}
-                onChange={(e) => {
-                  const next = [...track.eq7];
-                  next[i] = +e.target.value;
-                  onPatch({ eq7: next });
-                }}
-                style={{
-                  // @ts-ignore
-                  WebkitAppearance: "slider-vertical", writingMode: "vertical-lr",
-                  width: 18, height: 80, accentColor: track.color,
-                } as any}
-              />
-              <span style={{ fontSize: 8, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(1)}</span>
-              <span style={{ fontSize: 8, color: "var(--text-tertiary)" }}>{EQ_LABELS[i]}</span>
-            </div>
-          );
-        })}
+    <div ref={wrapRef} style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 220 }}>
+          <PresetMenu store={eqStore} current={track.eq7} onApply={(v) => onPatch({ eq7: v })} label="EQ Presets" />
+        </div>
+        <button onClick={() => onPatch({ eq7: [0, 0, 0, 0, 0, 0, 0] })}
+          style={{ padding: "5px 12px", background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 5 }}
+        >Flat</button>
+        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>drag the curve nodes ↕ · double-click a node to reset</span>
       </div>
+      <canvas ref={canvasRef} onMouseDown={onDown} onDoubleClick={onDoubleClick}
+        style={{ width: "100%", height: h, display: "block", cursor: "ns-resize", borderRadius: 6, border: "1px solid var(--border-primary)" }}
+      />
+    </div>
+  );
+}
+
+function FxEqSection({ track, ctx, onPatch, getAnalyser }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void; getAnalyser?: () => AnalyserNode | null }) {
+  return (
+    <FxBlock title="10-Band EQ">
+      <EqGraph track={track} ctx={ctx} onPatch={onPatch} getAnalyser={getAnalyser} trackH={260} />
     </FxBlock>
   );
 }
@@ -5500,7 +6209,7 @@ function CompressorCurve({
     g.fillText(`thr ${threshold.toFixed(0)} dB`, xFor(threshold) + 3, 10);
   }, [threshold, ratio, makeup, kneeDb, accent, liveReductionDb, w, h]);
 
-  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 6 }} />;
+  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8, borderRadius: 6, border: "1px solid #1d1d28" }} />;
 }
 
 function FxReverbSection({ track, onPatch, ctx }: { track: StudioTrack; onPatch: (p: TrackPatch) => void; ctx: AudioContext }) {
@@ -5516,12 +6225,13 @@ function FxReverbSection({ track, onPatch, ctx }: { track: StudioTrack; onPatch:
         {(["room", "hall", "plate", "spring"] as const).map(t => (
           <button key={t} onClick={() => onPatch({ reverb: { ...r, type: t } })}
             style={{
-              flex: 1, padding: "5px 0",
-              background: r.type === t ? "#8b5cf622" : "#111",
-              color:      r.type === t ? "#8b5cf6" : "#888",
-              border:     `1px solid ${r.type === t ? "#8b5cf6" : "#222"}`,
-              fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0,
-              textTransform: "uppercase", letterSpacing: 0.5,
+              flex: 1, padding: "6px 0",
+              background: r.type === t ? "rgb(from var(--accent-cyan) r g b / 0.18)" : "var(--bg-tertiary)",
+              color:      r.type === t ? "var(--accent-cyan)" : "var(--text-tertiary)",
+              border:     `1px solid ${r.type === t ? "var(--accent-cyan)" : "var(--border-primary)"}`,
+              boxShadow:  r.type === t ? "0 0 8px rgb(from var(--accent-cyan) r g b / 0.3)" : "none",
+              fontSize: 10, fontWeight: 800, cursor: "pointer", borderRadius: 5,
+              textTransform: "uppercase", letterSpacing: 0.5, transition: "all 0.15s",
             }}>{t}</button>
         ))}
       </div>
@@ -5617,7 +6327,7 @@ function ReverbIRDisplay({ ctx, type, size, wet, accent }: {
     g.fillText(`${seconds.toFixed(1)}s`, w - 24, h - 2);
   }, [ctx, type, size, wet, accent, w, h]);
 
-  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 6 }} />;
+  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8, borderRadius: 6, border: "1px solid #1d1d28" }} />;
 }
 
 function FxSatSection({ track, onPatch }: { track: StudioTrack; onPatch: (p: TrackPatch) => void }) {
@@ -5638,9 +6348,9 @@ function FxSidechainSection({ track, allTracks, onPatch }: { track: StudioTrack;
       <select value={track.sidechainSourceId || ""}
         onChange={(e) => onPatch({ sidechainSourceId: e.target.value || null })}
         style={{
-          width: "100%", background: "var(--bg-secondary)", color: "var(--text-primary)",
-          border: "1px solid var(--border-primary)", padding: "4px 6px",
-          fontSize: 11, borderRadius: 0, marginBottom: 6,
+          width: "100%", background: "var(--bg-tertiary)", color: "var(--text-primary)",
+          border: "1px solid var(--border-primary)", padding: "6px 8px",
+          fontSize: 11, borderRadius: 5, marginBottom: 6,
         }}
       >
         <option value="">— off —</option>
@@ -5657,44 +6367,42 @@ function FxSidechainSection({ track, allTracks, onPatch }: { track: StudioTrack;
 function FxBlock({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{
-      marginBottom: 10, padding: 8,
-      background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
+      marginBottom: 12, borderRadius: 8, overflow: "hidden",
+      border: "1px solid #1d1d28",
+      background: "linear-gradient(180deg,#0c0c12 0%,#08080d 100%)",
+      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
     }}>
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
-        <div style={{ flex: 1, fontSize: 9, color: "var(--text-secondary)", letterSpacing: 0.5, textTransform: "uppercase", fontWeight: 700 }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8, padding: "7px 11px",
+        background: "linear-gradient(180deg,#1a1a22 0%,#141420 100%)",
+        borderBottom: "1px solid #0a0a0f",
+      }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)", boxShadow: "0 0 6px var(--accent-cyan)" }} />
+        <div style={{ flex: 1, fontSize: 10, color: "#c8c8d4", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 800 }}>
           {title}
         </div>
         {right}
       </div>
-      {children}
+      <div style={{ padding: 11 }}>{children}</div>
     </div>
   );
 }
 
 function compKnob(label: string, min: number, max: number, val: number, step: number, onChange: (v: number) => void, unit = "") {
   return (
-    <div style={{ marginBottom: 6 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginBottom: 2 }}>
-        <span>{label}</span>
-        <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
-          {val.toFixed(step < 1 ? 2 : 1)}{unit}
-        </span>
-      </div>
-      <input type="range" min={min} max={max} step={step} value={val}
-        onChange={(e) => onChange(+e.target.value)}
-        style={{ width: "100%", accentColor: "var(--accent-blue)" }}
-      />
-    </div>
+    <Fader label={label} min={min} max={max} step={step} value={val} onChange={onChange} unit={unit} />
   );
 }
 
 function miniToggle(active: boolean, color: string): React.CSSProperties {
   return {
-    padding: "3px 8px",
-    background: active ? color : "var(--button-bg, var(--bg-tertiary))",
-    color: active ? "#fff" : "var(--button-text, var(--text-secondary))",
-    border: active ? `1px solid ${color}` : "var(--button-border, 1px solid var(--border-primary))",
-    fontSize: 9, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+    padding: "4px 13px", borderRadius: 5,
+    background: active ? color : "var(--bg-tertiary)",
+    color: active ? "#fff" : "var(--text-tertiary)",
+    border: active ? `1px solid ${color}` : "1px solid var(--border-primary)",
+    boxShadow: active ? `0 0 8px ${color}88` : "none",
+    fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", cursor: "pointer",
+    transition: "all 0.15s",
   };
 }
 
