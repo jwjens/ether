@@ -2581,11 +2581,14 @@ function UserManagement() {
   const [addPin, setAddPin] = useState("");
 
   const ether = (window as any).ether;
+  // Profiles are per-station (account ⊃ station ⊃ profile) — manage only the
+  // active station's roster.
+  const { stationId } = useActiveStation();
 
   const loadUsers = useCallback(async () => {
-    const rows = await query<ManagedUser>("SELECT * FROM users ORDER BY id");
+    const rows = await query<ManagedUser>("SELECT * FROM users WHERE station_id = ? ORDER BY id", [stationId]);
     setUsers(rows || []);
-  }, []);
+  }, [stationId]);
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
   const handleAddUser = async () => {
@@ -2596,7 +2599,7 @@ function UserManagement() {
     } else if (addPin.length === 4) {
       pinHash = addPin;
     }
-    await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor]);
+    await execute("INSERT INTO users (name, role, pin_hash, color, station_id) VALUES (?, ?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor, stationId]);
     setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("var(--accent-cyan)");
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));

@@ -576,6 +576,10 @@ function runMigrations() {
   alterSafe("ALTER TABLE midi_mappings ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
   // ai_voice_segments: add station_id for existing installs
   alterSafe("ALTER TABLE ai_voice_segments ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
+  // users (console profiles): scope per-station — account ⊃ station ⊃ profile.
+  // Existing profiles backfill to station 1 (the owner's original station); a
+  // newly-created station starts with an empty roster → UserLogin shows setup.
+  alterSafe("ALTER TABLE users ADD COLUMN station_id INTEGER NOT NULL DEFAULT 1");
 
   // EQ settings stored in station_config_kv with keys eq_deck_A, eq_deck_B, eq_deck_C, eq_deck_mic, eq_master
   // operators and operator_notes are in schema-v0-baseline.js (moved in Step 6)

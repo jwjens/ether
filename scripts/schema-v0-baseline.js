@@ -448,7 +448,8 @@ module.exports = function applyBaseline(db) {
       name     TEXT NOT NULL,
       role     TEXT NOT NULL DEFAULT 'jock',
       pin_hash TEXT,
-      color    TEXT NOT NULL DEFAULT '#22d3ee'
+      color    TEXT NOT NULL DEFAULT '#22d3ee',
+      station_id INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS rtmp_destinations (

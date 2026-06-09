@@ -28,6 +28,9 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function UserLogin({ onLogin }: Props) {
   const [users, setUsers] = useState<AppUser[]>([]);
+  // Profiles are scoped per-station (account ⊃ station ⊃ profile). Resolved from
+  // the active station on mount; defaults to 1 until then.
+  const [stationId, setStationId] = useState(1);
   const [selected, setSelected] = useState<AppUser | null>(null);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -47,7 +50,10 @@ export default function UserLogin({ onLogin }: Props) {
   useEffect(() => {
     (async () => {
       try {
-        const rows = await query<AppUser>("SELECT * FROM users ORDER BY id");
+        const active = await (window as any).ether?.stations?.getActive?.().catch(() => null);
+        const sid = active?.id ?? 1;
+        setStationId(sid);
+        const rows = await query<AppUser>("SELECT * FROM users WHERE station_id = ? ORDER BY id", [sid]);
         if (rows.length > 0) setUsers(rows);
         else setSetupMode(true);
       } catch {} finally { setLoading(false); }
@@ -92,8 +98,8 @@ export default function UserLogin({ onLogin }: Props) {
       const ether = (window as any).ether;
       let pinHash: string = setupPin;
       if (ether?.users?.hashPin) pinHash = await ether.users.hashPin(setupPin);
-      await execute("INSERT INTO users (name, role, pin_hash, color) VALUES (?,?,?,?)", [name, "admin", pinHash, "#f87171"]);
-      const created = await query<AppUser>("SELECT * FROM users ORDER BY id DESC LIMIT 1");
+      await execute("INSERT INTO users (name, role, pin_hash, color, station_id) VALUES (?,?,?,?,?)", [name, "admin", pinHash, "#f87171", stationId]);
+      const created = await query<AppUser>("SELECT * FROM users WHERE station_id = ? ORDER BY id DESC LIMIT 1", [stationId]);
       if (created.length > 0) { onLogin(created[0]); return; }
       setCreating(false); setSetupErr("Couldn’t create your profile. Please try again.");
     } catch {
