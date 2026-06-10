@@ -1422,6 +1422,21 @@ export default function App() {
     if (n) {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
       await engine.awaitDaemonReady?.();  // settle daemon-vs-local before starting (avoid the race)
+      // Nothing scheduled for now? Ask before auto-populating — never silently live-pick over the plan.
+      try {
+        const nowTs = Math.floor(Date.now() / 1000);
+        const sched = await (window as any).ether.invoke("schedule:get", nowTs - 300, nowTs + 7200);
+        const hasSchedule = Array.isArray(sched?.data) && sched.data.length > 0;
+        if (!hasSchedule) {
+          const populate = window.confirm("Nothing is scheduled to play right now.\n\nAuto-populate the queue with rotation-eligible songs?\n\nOK = Yes    ·    Cancel = No (open the Scheduler and generate a schedule)");
+          if (!populate) {
+            setAutoAdv(false); engine.autoAdvance = false;
+            try { localStorage.setItem("ether_autoAdv", "0"); } catch {}
+            setPanel("calendar");   // send them to the Scheduler to build it
+            return;
+          }
+        }
+      } catch {}
       // daemon-driven → hand the whole fill+play+advance to the daemon.
       if (engine.isDaemonDriven) { (engine as any).queueClearPending?.(); await engine.startDaemonAutomation(); return; }
       resetScheduleCursor();
