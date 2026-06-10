@@ -1645,10 +1645,10 @@ export default function App() {
           </span>
         </div>
 
-        {/* LEFT: Search — width shrinks with viewport, becomes icon-only at <800px */}
-        <div style={{ display: "flex", alignSelf: "stretch", flexShrink: 0, zIndex: 1 }}>
+        {/* LEFT: Search — shrinks to yield space to the clock; becomes icon-only at <800px */}
+        <div style={{ display: "flex", alignSelf: "stretch", flexShrink: 1, minWidth: 0, zIndex: 1 }}>
           {viewport.searchW > 0 ? (
-            <div style={{ width: viewport.searchW, position: "relative" as const, display: "flex", flexDirection: "column" as const, transition: "width 0.18s ease" }}>
+            <div style={{ width: "100%", maxWidth: viewport.searchW, minWidth: 0, position: "relative" as const, display: "flex", flexDirection: "column" as const, transition: "max-width 0.18s ease" }}>
               <JockStrip deckA={deckA} deckB={deckB} dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />
             </div>
           ) : (
@@ -1668,7 +1668,7 @@ export default function App() {
         {/* CENTER: Clock — flexes to fill the space between search and the right controls so it's
             always centered in the available room and never overlapped/clipped by the search box. */}
         {(viewport.clockSize as string) !== "hidden" && (
-          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
+          <div style={{ flex: "1 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 0, pointerEvents: "none", whiteSpace: "nowrap" as const, padding: "0 12px" }}>
             <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
           </div>
         )}
