@@ -74,7 +74,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const { stationId } = useActiveStation();
   const [shows, setShows]           = useState<Show[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
-  const [fullDay, setFullDay]       = useState(false);
+  const [fullDay, setFullDay]       = useState(true);
   const [now, setNow]               = useState(new Date());
   const [trackCounts, setTrackCounts] = useState<TrackCounts>(new Map());
   const [showTracks, setShowTracks] = useState(false);
@@ -293,7 +293,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         <button onClick={() => jumpMonth(1)} title="Next month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: 26, fontWeight: 800, lineHeight: 1 }}>›</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 8px" }} />
         {/* Week navigation */}
-        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}>← Wk</button>
+        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}><span style={{ fontSize: 20, verticalAlign: "middle" }}>←</span> Wk</button>
         <button
           onClick={() => setWeekOffset(0)}
           style={{
@@ -302,8 +302,9 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             borderColor: weekOffset === 0 ? "var(--accent-green)" : "var(--border-primary)",
           }}
         >Today</button>
-        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}>Wk →</button>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginLeft: 6, letterSpacing: "-0.01em" }}>{weekLabel}</span>
+        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}>Wk <span style={{ fontSize: 20, verticalAlign: "middle" }}>→</span></button>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>{weekLabel}</span>
         <div style={{ flex: 1 }} />
         <button
           onClick={() => setShowTracks(t => !t)}
@@ -431,7 +432,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                     if (topH + durH <= 0 || topH >= VISIBLE_H) return null;
 
                     const clampTop = Math.max(0, topH);
-                    const clampDur = Math.min(durH, VISIBLE_H - clampTop);
+                    const clampDur = Math.min(topH + durH, VISIBLE_H) - clampTop; // clip BOTH top & bottom
                     const blockH   = Math.max(16, clampDur * ROW_H - 2);
                     const color    = show.color || "#3b82f6";
 
