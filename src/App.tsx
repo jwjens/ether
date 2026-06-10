@@ -1076,7 +1076,6 @@ export default function App() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
-      if (e.altKey && e.code === "Tab") { e.preventDefault(); setPanel("live"); return; } // Alt+Tab → dashboard
       const dA = engine.getDeck("A"); const dB = engine.getDeck("B");
       switch(e.code) {
         case "Space": {
@@ -1112,7 +1111,6 @@ export default function App() {
             }
           }
           break;
-        case "KeyN": setPanel("live"); break;
         case "KeyL": setPanel("library"); break;
         case "KeyS": setPanel("clocks"); break;
         case "KeyG": setPanel("logs"); break;
