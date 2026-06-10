@@ -1437,6 +1437,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   // Phone hybrid input — set once here, used by PhoneDesk (never touched on the working panel).
   const [phoneInput, setPhoneInput] = useState<string>(() => { try { return localStorage.getItem("ether_phone_input") || ""; } catch { return ""; } });
   const selectPhoneInput = (id: string) => { setPhoneInput(id); try { localStorage.setItem("ether_phone_input", id); } catch { /* ignore */ } };
+  // Cue / headphone output — where PFL (pre-fade listen) plays, separate from the main mix.
+  const [cueOutput, setCueOutput] = useState<string>(() => { try { return localStorage.getItem("ether_cue_device") || ""; } catch { return ""; } });
+  const selectCueOutput = (id: string) => { setCueOutput(id); try { localStorage.setItem("ether_cue_device", id); } catch { /* ignore */ } };
 
   // Connections
   const [dashboardUrl, setDashboardUrl] = useState("");
@@ -1895,6 +1898,26 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                 }}>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
                   {phoneInput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
+                </button>
+              ))}
+          </div>
+        </div>
+        {/* Cue / headphone output — where PFL (pre-fade listen) plays */}
+        <div style={{ minWidth: 0, marginTop: 4, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Cue / headphone output</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Where PFL (pre-fade listen) plays — your cue headphones, separate from the main output</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            {outputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No outputs found</div> :
+              outputs.map(d => (
+                <button key={d.deviceId} onClick={() => selectCueOutput(d.deviceId)} style={{
+                  padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
+                  background: cueOutput === d.deviceId ? "rgba(184,134,11,0.16)" : "var(--bg-tertiary)",
+                  border: "1px solid " + (cueOutput === d.deviceId ? "#d4a017" : "var(--border-primary)"),
+                  color: cueOutput === d.deviceId ? "#d4a017" : "var(--text-secondary)",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
+                  {cueOutput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>CUE</span>}
                 </button>
               ))}
           </div>

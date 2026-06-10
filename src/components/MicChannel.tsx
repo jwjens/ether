@@ -14,10 +14,12 @@ export default function MicChannel({ slot, label }: { slot: string; label: strin
   const [level, setLevel]     = useState(0);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [showPicker, setShowPicker] = useState(false);
+  const [pfl, setPfl]         = useState(false);   // pre-fade listen → cue output
 
   const streamRef = useRef<MediaStream | null>(null);
   const ctxRef    = useRef<AudioContext | null>(null);
   const gainRef   = useRef<GainNode | null>(null);
+  const cueCtxRef = useRef<AudioContext | null>(null);
   const rafRef    = useRef(0);
   const isOnRef   = useRef(isOn);   const volRef = useRef(volume);
   useEffect(() => { isOnRef.current = isOn; }, [isOn]);
@@ -69,6 +71,25 @@ export default function MicChannel({ slot, label }: { slot: string; label: strin
   // On/off + fader → output gain.
   useEffect(() => { if (gainRef.current) gainRef.current.gain.value = isOn ? volume : 0; }, [isOn, volume]);
 
+  // PFL (pre-fade listen) → route the raw mic stream to the CUE output device, in a
+  // separate AudioContext (setSinkId to the cue headphones), independent of on/off + fader.
+  useEffect(() => {
+    if (!pfl || !streamRef.current) {
+      cueCtxRef.current?.close().catch(() => {}); cueCtxRef.current = null;
+      return;
+    }
+    let cancelled = false;
+    let cueDevice = ""; try { cueDevice = localStorage.getItem("ether_cue_device") || ""; } catch { /* ignore */ }
+    const ctx = new AudioContext(); cueCtxRef.current = ctx;
+    (async () => {
+      try { if (cueDevice && (ctx as any).setSinkId) await (ctx as any).setSinkId(cueDevice); }
+      catch (e) { console.warn(`[MicChannel ${slot}] cue setSinkId failed:`, e); }
+      if (cancelled || !streamRef.current) return;
+      ctx.createMediaStreamSource(streamRef.current).connect(ctx.destination);
+    })();
+    return () => { cancelled = true; ctx.close().catch(() => {}); cueCtxRef.current = null; };
+  }, [pfl, deviceId, slot]);
+
   const pickDevice = (id: string) => { setDeviceId(id); setShowPicker(false); try { localStorage.setItem(deviceKey, id); } catch { /* ignore */ } };
   const deviceLabel = devices.find(d => d.deviceId === deviceId)?.label || (deviceId ? "Mic input" : "Pick input ▾");
 
@@ -109,6 +130,7 @@ export default function MicChannel({ slot, label }: { slot: string; label: strin
           isOn={isOn}
           onVolumeChange={setVolume}
           onToggleOn={() => setIsOn(v => !v)}
+          onPfl={() => setPfl(p => !p)}
         />
       </div>
     </div>
