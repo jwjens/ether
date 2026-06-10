@@ -124,17 +124,33 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
-  const [genDays, setGenDays]       = useState(14);
+  const [genScope, setGenScope]     = useState<"week" | "month">("week");
 
-  // Auto-generate the airing log (generated_schedule) for the next `days` days, from the
-  // station's shows + format clocks. This is what actually plays and what VoiceTracker reads.
-  const generate = async (days: number) => {
+  // Generate the airing log (generated_schedule) for exactly the WEEK or MONTH being viewed,
+  // by regenerating each of its days (per-day clear+rebuild — no full wipe).
+  const generate = async () => {
     if (generating) return;
-    setGenerating(true); setGenMsg(`Generating ${days} days…`);
+    setGenerating(true);
+    const mon = getMondayOfWeek(weekOffset);
+    const mid = new Date(mon.getTime() + 3 * 86_400_000);
+    let dates: Date[];
+    if (genScope === "week") {
+      dates = Array.from({ length: 7 }, (_, i) => new Date(mon.getTime() + i * 86_400_000));
+      setGenMsg("Generating this week…");
+    } else {
+      const first = new Date(mid.getFullYear(), mid.getMonth(), 1);
+      const nDays = new Date(mid.getFullYear(), mid.getMonth() + 1, 0).getDate();
+      dates = Array.from({ length: nDays }, (_, i) => new Date(first.getFullYear(), first.getMonth(), 1 + i));
+      setGenMsg("Generating this month…");
+    }
     try {
-      const res = await (window as any).ether.invoke("schedule:generate", days);
-      const n = (res && typeof res === "object") ? (res.count ?? res.rows ?? res.inserted ?? 0) : (res ?? 0);
-      setGenMsg(`✓ Generated ${days} day${days !== 1 ? "s" : ""}${n ? ` · ${n} items` : ""}`);
+      let count = 0;
+      for (const d of dates) {
+        const ts = Math.floor(new Date(d).setHours(0, 0, 0, 0) / 1000);
+        const res = await (window as any).ether.invoke("schedule:generateDay", ts);
+        count += (res?.count || 0);
+      }
+      setGenMsg(`✓ Generated this ${genScope} · ${count} items`);
       setShowTracks(true);
       await loadTrackCounts();
       setTimeout(() => setGenMsg(""), 5000);
@@ -316,12 +332,17 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
-        <select value={genDays} onChange={e => setGenDays(+e.target.value)} disabled={generating}
-          style={{ ...navBtn, height: 26, padding: "0 6px", cursor: "pointer", colorScheme: "dark" as const }}>
-          {[7, 14, 30, 60, 90].map(d => <option key={d} value={d}>{d} days</option>)}
-        </select>
-        <button disabled={generating} onClick={() => generate(genDays)}
-          title={`Fill today → ${new Date(Date.now() + genDays * 86_400_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+        {/* Week / Month scope toggle */}
+        <div style={{ display: "flex", border: "1px solid var(--border-primary)", height: 26 }}>
+          {(["week", "month"] as const).map(s => (
+            <button key={s} onClick={() => setGenScope(s)} disabled={generating}
+              style={{ padding: "0 12px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 800, textTransform: "capitalize" as const,
+                background: genScope === s ? "var(--accent-green)" : "transparent",
+                color: genScope === s ? "#0a160d" : "var(--text-secondary)" }}>{s}</button>
+          ))}
+        </div>
+        <button disabled={generating} onClick={generate}
+          title={`Generate the viewed ${genScope}`}
           style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
           {generating ? "Generating…" : "Generate"}
         </button>
