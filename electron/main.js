@@ -4417,6 +4417,87 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
   }
 });
 
+// Shared generation context (prepared statements + separation rules + tracking maps).
+function _buildScheduleCtx(stationId) {
+  let artistSepMin = 60, songRepeatMin = 180;
+  try {
+    const ar = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get();
+    if (ar) artistSepMin = ar.value;
+    const sr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='song_separation_min' AND is_active=1 LIMIT 1").get();
+    if (sr) songRepeatMin = sr.value;
+  } catch {}
+  return {
+    activeStationId: stationId, artistSepMin, songRepeatMin,
+    songLastTs: new Map(), artistLastTs: new Map(), generatedRows: [],
+    stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
+    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
+    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND ((s.daypart_mask >> ?) & 1) = 1 ORDER BY COALESCE(s.last_played_at, 0) ASC`),
+  };
+}
+
+// Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
+function _generateDayRows(dayBaseDate, ctx) {
+  const { stmtShows, stmtSlots, stmtCandidates, songLastTs, artistLastTs, artistSepMin, songRepeatMin, activeStationId, generatedRows } = ctx;
+  for (let h = 0; h < 24; h++) {
+    const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
+    const jsDay = slotDate.getDay();
+    const hourStartTs = Math.floor(slotDate.getTime() / 1000);
+    const shows = stmtShows.all(String(jsDay), activeStationId);
+    const show = shows.find(s => {
+      if (s.end_hour === 0 || s.end_hour === s.start_hour) return h >= s.start_hour;
+      if (s.end_hour > s.start_hour) return h >= s.start_hour && h < s.end_hour;
+      return h >= s.start_hour || h < s.end_hour;
+    });
+    if (!show || !show.clock_id) continue;
+    const slots = stmtSlots.all(show.clock_id);
+    if (!slots.length) continue;
+    const usedSongIds = new Set(), usedArtistIds = new Set();
+    let currentTs = hourStartTs;
+    for (const slot of slots) {
+      const slotDurationS = (slot.duration_min || 4) * 60;
+      if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
+      const candidates = stmtCandidates.all(slot.category_id, h);
+      let picked = null, softFallback = null;
+      for (const song of candidates) {
+        if (usedSongIds.has(song.id)) continue;
+        const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
+        if (currentTs - lastSongTs < songRepeatMin * 60) continue;
+        const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
+        const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < artistSepMin * 60);
+        if (!artistBlocked) { picked = song; break; }
+        if (!softFallback) softFallback = song;
+      }
+      if (!picked) picked = softFallback;
+      if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
+      if (picked) {
+        usedSongIds.add(picked.id);
+        if (picked.artist_id) usedArtistIds.add(picked.artist_id);
+        songLastTs.set(picked.id, currentTs);
+        if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
+        const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : slotDurationS;
+        generatedRows.push({ scheduled_at: currentTs, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? path.basename(picked.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
+        currentTs += durationS;
+      } else { currentTs += slotDurationS; }
+    }
+  }
+}
+
+// Generate (or regenerate) a SINGLE day — clears just that day's rows, leaves the rest intact.
+ipcMain.handle('schedule:generateDay', (_, dayTs) => {
+  try {
+    const activeStationId = getActiveStationId();
+    const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+    const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
+    const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
+    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(activeStationId, dayStart, dayEnd);
+    const ctx = _buildScheduleCtx(activeStationId);
+    _generateDayRows(dayBase, ctx);
+    generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
+    console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}`);
+    return { ok: true, count: ctx.generatedRows.length };
+  } catch (e) { console.error('[schedule:generateDay]', e.message); return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
   try {
     const rows = db.prepare(

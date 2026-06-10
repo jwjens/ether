@@ -146,6 +146,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [dayRows, setDayRows]         = useState<{ scheduled_at: number; title: string; artist: string; duration_s: number; category_id: number | null; song_id: number | null }[]>([]);
   const [dayLoading, setDayLoading]   = useState(false);
+  const [genDayBusy, setGenDayBusy]   = useState(false);
   const openDay = async (date: Date) => {
     const d = new Date(date); d.setHours(0, 0, 0, 0);
     setSelectedDay(d); setDayLoading(true); setDayRows([]);
@@ -154,6 +155,15 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       const res = await (window as any).ether.invoke("schedule:get", start, end);
       setDayRows(Array.isArray(res?.data) ? res.data : []);
     } catch { /* ignore */ } finally { setDayLoading(false); }
+  };
+  const generateThisDay = async () => {
+    if (!selectedDay || genDayBusy) return;
+    setGenDayBusy(true);
+    try {
+      const ts = Math.floor(new Date(selectedDay).setHours(0, 0, 0, 0) / 1000);
+      await (window as any).ether.invoke("schedule:generateDay", ts);
+      await openDay(selectedDay);
+    } catch { /* ignore */ } finally { setGenDayBusy(false); }
   };
 
   useEffect(() => {
@@ -185,6 +195,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>{dateLabel}{isToday ? " · Today" : ""}</span>
           <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""} scheduled</span>
           <div style={{ flex: 1 }} />
+          <button onClick={generateThisDay} disabled={genDayBusy}
+            style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: genDayBusy ? 0.5 : 1, cursor: genDayBusy ? "default" : "pointer" }}>
+            {genDayBusy ? "⏳ Generating…" : "⚡ Generate This Day"}
+          </button>
           <button onClick={() => openDay(selectedDay)} style={navBtn} title="Reload">↻</button>
         </div>
         {/* Hours */}
