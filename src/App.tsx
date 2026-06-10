@@ -1123,6 +1123,27 @@ export default function App() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [deckA, deckB]);
 
+  // When the schedule is (re)generated, resync the live up-next queue to the new plan from now —
+  // only while AUTO is driving playback (don't disturb a manually-built queue).
+  useEffect(() => {
+    const onRegen = async () => {
+      if (!autoAdv) return;
+      try {
+        resetScheduleCursor();
+        if (engine.isDaemonDriven) {
+          (engine as any).queueClearPending?.();   // daemon refills from the new rows on its next cycle
+        } else {
+          engine.clearQueue?.();
+          await fillQueueFromSchedule();
+        }
+        window.dispatchEvent(new CustomEvent("ether:queue-changed"));
+        console.log("[schedule] resynced live queue to regenerated schedule");
+      } catch (e) { console.warn("[schedule-regen resync] failed:", e); }
+    };
+    window.addEventListener("ether:schedule-regenerated", onRegen);
+    return () => window.removeEventListener("ether:schedule-regenerated", onRegen);
+  }, [autoAdv]);
+
   // Display subscription — re-subscribes whenever the active station changes so
   // deckA/B/C and queueLen always reflect the currently-viewed station.
   useEffect(() => {
@@ -1402,9 +1423,10 @@ export default function App() {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
       await engine.awaitDaemonReady?.();  // settle daemon-vs-local before starting (avoid the race)
       // daemon-driven → hand the whole fill+play+advance to the daemon.
-      if (engine.isDaemonDriven) { await engine.startDaemonAutomation(); return; }
+      if (engine.isDaemonDriven) { (engine as any).queueClearPending?.(); await engine.startDaemonAutomation(); return; }
       resetScheduleCursor();
-      if (engine.getQueue().length === 0) {
+      engine.clearQueue?.();   // the schedule is the source — always (re)load from the now-scheduled song,
+      {                         // never inherit a stale queue from a prior session that has to "catch up"
         const count = await fillQueueFromSchedule();
         if (count === 0) {
           // Continuous refill → guarded scheduler (never a raw whole-library pull).

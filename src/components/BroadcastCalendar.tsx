@@ -168,6 +168,8 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       setGenMsg(`✓ Generated this ${scope} · ${count} items`);
       setShowTracks(true);
       await loadTrackCounts();
+      // Tell the app to resync the live queue to the freshly-generated schedule (from now).
+      window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
       setTimeout(() => setGenMsg(""), 6000);
     } catch (e: any) {
       setGenMsg("✗ " + String(e?.message || e));
@@ -201,6 +203,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       const ts = Math.floor(new Date(selectedDay).setHours(0, 0, 0, 0) / 1000);
       await (window as any).ether.invoke("schedule:generateDay", ts);
       await loadDayRows(selectedDay);   // keep the current show scope
+      window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
     } catch { /* ignore */ } finally { setGenDayBusy(false); }
   };
 
