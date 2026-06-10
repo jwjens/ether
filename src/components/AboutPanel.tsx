@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect } from "react";
+import atomLogo from "../assets/ether-atom.png";
 
 interface Props {
   onClose: () => void;
@@ -126,18 +127,11 @@ export default function AboutPanel({ onClose }: Props) {
           }} />
 
           <div style={{ display: "flex", alignItems: "center", gap: 24, position: "relative" }}>
-            {/* Logo mark */}
-            <div style={{
-              width: 72, height: 72, borderRadius: 0, flexShrink: 0,
-              background: "linear-gradient(135deg, var(--accent-cyan) 0%, #a78bfa 100%)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              boxShadow: "0 0 40px rgb(from var(--accent-cyan) r g b / 0.25), 0 0 80px rgba(167,139,250,0.12)",
-            }}>
-              <svg width="40" height="40" viewBox="0 0 44 44" fill="none">
-                <path d="M4 22 C9 12 14 12 19 22 C24 32 29 32 34 22 C39 12 40 12 40 22"
-                  stroke="#080810" strokeWidth="3.5" strokeLinecap="round"/>
-              </svg>
-            </div>
+            {/* Logo mark — the Ether atom */}
+            <img src={atomLogo} alt="Ether" style={{
+              width: 72, height: 72, flexShrink: 0, objectFit: "contain",
+              filter: "drop-shadow(0 0 28px rgba(136,104,216,0.45))",
+            }} />
 
             {/* Title block */}
             <div>

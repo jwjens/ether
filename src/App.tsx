@@ -1665,9 +1665,10 @@ export default function App() {
           )}
         </div>
 
-        {/* CENTER: Clock — absolutely centered, scales down to xs at narrow widths (never fully hidden) */}
+        {/* CENTER: Clock — flexes to fill the space between search and the right controls so it's
+            always centered in the available room and never overlapped/clipped by the search box. */}
         {(viewport.clockSize as string) !== "hidden" && (
-          <div style={{ position: "absolute" as const, left: "50%", transform: "translateX(-50%)", zIndex: 0, display: "flex", alignItems: "center", gap: 8, pointerEvents: "none" }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
             <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
           </div>
         )}
@@ -2516,8 +2517,8 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
       <Menu>
         {/* Production */}
         <Item label={L.voicetrack}         onClick={() => set("voicetrack")} />
-        <Item label="Studio Editor"        onClick={() => set("studio")} />
-        {/* Video Studio lives as a deck type — configure via Deck Configurator */}
+        <Item label="Show+ DAW"            onClick={() => set("studio")} />
+        <Item label="Show+"                onClick={() => set("videostudio")} />
         <Item label="Production Editor"    onClick={() => set("broadcasteditor")} />
         <Item label="Cue Editor"           onClick={() => set("trackedit")} />
         <Item label="Auto-Cue Library"     onClick={() => set("autocue")} />

@@ -1,4 +1,4 @@
-import etherLogoMark from "../assets/ether-logo.svg";
+import etherLogoMark from "../assets/ether-atom.png";
 
 /**
  * EtherLogo — logo component backed by brand asset files.
