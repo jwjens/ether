@@ -126,7 +126,7 @@ function readGeneratedSchedule(db, count, stationId) {
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
-       WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 ${catClause}
+       WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
   } catch { return []; } // no generated_schedule table / empty
   if (rows.length) _schedCursor = rows[rows.length - 1].row_id;

@@ -461,6 +461,7 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
      LEFT JOIN songs s ON s.id = gs.song_id
      WHERE gs.id > ? AND gs.station_id = ?
        AND gs.scheduled_at >= ? - 300
+       AND gs.deleted_at IS NULL
        ${catClause}
      ORDER BY gs.scheduled_at
      LIMIT ?`,

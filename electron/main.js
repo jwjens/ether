@@ -4503,7 +4503,7 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
     const rows = db.prepare(
       `SELECT id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id
        FROM generated_schedule
-       WHERE scheduled_at >= ? AND scheduled_at < ?
+       WHERE scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL
        ORDER BY scheduled_at`
     ).all(fromTs ?? 0, toTs ?? 9999999999);
     return { data: rows, error: null };
