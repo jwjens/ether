@@ -246,6 +246,17 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     " – " +
     weekEnd.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
+  // Month navigation — the viewed week's "owning" month (its Thursday), with ‹ › to step months.
+  const weekMid    = new Date(monday.getTime() + 3 * 86_400_000);
+  const monthLabel = weekMid.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const goToDate = (target: Date) => {
+    const thisMonday = getMondayOfWeek(0);
+    const t = new Date(target); const day = t.getDay();
+    t.setDate(t.getDate() + (day === 0 ? -6 : 1 - day)); t.setHours(0, 0, 0, 0);
+    setWeekOffset(Math.round((t.getTime() - thisMonday.getTime()) / (7 * 86_400_000)));
+  };
+  const jumpMonth = (delta: number) => goToDate(new Date(weekMid.getFullYear(), weekMid.getMonth() + delta, 1));
+
   return (
     <div style={{
       height: "100%", display: "flex", flexDirection: "column",
@@ -259,10 +270,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         borderBottom: "1px solid var(--border-primary)", flexShrink: 0,
         background: "var(--bg-secondary)",
       }}>
-        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em", marginRight: 4 }}>
+        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em", marginRight: 6 }}>
           Broadcast Calendar
         </span>
-        <button onClick={() => setWeekOffset(w => w - 1)} style={navBtn}>← Prev</button>
+        {/* Month navigation — clear ‹ Month Year › */}
+        <button onClick={() => jumpMonth(-1)} title="Previous month" style={{ ...navBtn, width: 30, padding: 0, fontSize: 16, lineHeight: 1 }}>‹</button>
+        <span style={{ fontSize: 14, fontWeight: 800, minWidth: 140, textAlign: "center" as const, letterSpacing: "-0.01em" }}>{monthLabel}</span>
+        <button onClick={() => jumpMonth(1)} title="Next month" style={{ ...navBtn, width: 30, padding: 0, fontSize: 16, lineHeight: 1 }}>›</button>
+        <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 8px" }} />
+        {/* Week navigation */}
+        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={navBtn}>← Wk</button>
         <button
           onClick={() => setWeekOffset(0)}
           style={{
@@ -270,8 +287,8 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             color: weekOffset === 0 ? "var(--accent-cyan)" : "var(--text-secondary)",
             borderColor: weekOffset === 0 ? "var(--accent-cyan)" : "var(--border-primary)",
           }}
-        >This Week</button>
-        <button onClick={() => setWeekOffset(w => w + 1)} style={navBtn}>Next →</button>
+        >Today</button>
+        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={navBtn}>Wk →</button>
         <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: 2 }}>{weekLabel}</span>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent-cyan)", letterSpacing: "0.04em" }} title="Auto-fills the airing log starting today">⚡ GENERATE FROM TODAY</span>
