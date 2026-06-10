@@ -715,17 +715,43 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
         {/* Top lane: Previous song */}
         <SongLane song={prevSong} label="prev" color="var(--accent-cyan)" />
 
-        {/* Middle lane: YOUR VOICE — waveform hero */}
-        <div style={{ flex: 1, minHeight: 140, position: "relative", overflow: "hidden", borderBottom: "1px solid var(--border-primary)" }}>
+        {/* Middle lane: YOUR VOICE — premium record stage (idle) → waveform (recording) */}
+        <div style={{
+          flex: 1, minHeight: 200, position: "relative", overflow: "hidden",
+          borderBottom: "1px solid var(--border-primary)",
+          background: "radial-gradient(135% 95% at 50% 0%, rgba(136,104,216,0.08), transparent 55%), var(--bg-primary)",
+        }}>
+          <canvas ref={waveCanvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
           {!recording && wavePointsRef.current.length === 0 && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, pointerEvents: "none" }}>
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1.2" strokeLinecap="round">
-                <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
-              </svg>
-              <div style={{ fontSize: 9, color: "rgba(255,255,255,0.08)", letterSpacing: "0.15em", fontWeight: 700 }}>YOUR VOICE TRACK</div>
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, pointerEvents: "none" }}>
+              {/* Hero record button */}
+              <button onClick={startRecording} title="Record (Space)" style={{
+                pointerEvents: "auto", width: 104, height: 104, borderRadius: "50%", flexShrink: 0,
+                background: "radial-gradient(circle at 50% 32%, #241a20 0%, #14141b 70%)",
+                border: "1px solid rgba(248,113,113,0.35)",
+                boxShadow: "0 0 0 6px rgba(136,104,216,0.06), 0 0 48px rgba(248,113,113,0.16), inset 0 1px 0 rgba(255,255,255,0.05)",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "transform 0.18s ease, box-shadow 0.18s ease",
+              }}
+                onMouseEnter={e => { const b = e.currentTarget as HTMLButtonElement; b.style.transform = "scale(1.04)"; b.style.boxShadow = "0 0 0 6px rgba(136,104,216,0.1), 0 0 64px rgba(248,113,113,0.3), inset 0 1px 0 rgba(255,255,255,0.06)"; }}
+                onMouseLeave={e => { const b = e.currentTarget as HTMLButtonElement; b.style.transform = "scale(1)"; b.style.boxShadow = "0 0 0 6px rgba(136,104,216,0.06), 0 0 48px rgba(248,113,113,0.16), inset 0 1px 0 rgba(255,255,255,0.05)"; }}>
+                <span style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--accent-red)", boxShadow: "0 0 18px rgba(248,113,113,0.7), inset 0 -2px 6px rgba(0,0,0,0.3)" }} />
+              </button>
+              {/* Context */}
+              <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
+                  {recordingForSlot ? `Recording for ${recordingForSlot.label || "Talk Break"}` : "Ready to voice track"}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>
+                  {(djName || "DJ")}{matchedShow ? ` · ${matchedShow.name}` : ""} · {fmtHour(selectedHour)}
+                  {recordingForSlot ? ` · target ${fmtDuration(recordingForSlot.duration_min)}` : ""}
+                </div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const, marginTop: 6 }}>
+                  Press <span style={{ color: "var(--accent-cyan)" }}>SPACE</span> or click to record
+                </div>
+              </div>
             </div>
           )}
-          <canvas ref={waveCanvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
         </div>
 
         {/* Bottom lane: Next song */}
@@ -741,23 +767,23 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
           height: 52, padding: "0 16px", display: "flex", alignItems: "center", gap: 12,
           background: "var(--bg-secondary)", flexShrink: 0,
         }}>
-          {!recording ? (
-            <button onClick={startRecording} style={{
+          {recording ? (
+            <button onClick={stopRecording} title="Stop (Space)" style={{
               width: 44, height: 36, borderRadius: 0, flexShrink: 0,
               background: "var(--accent-red)", border: "none", cursor: "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", color: "#fff",
-              fontSize: 14, fontWeight: 700,
-              boxShadow: "0 0 16px rgba(248,113,113,0.3)",
-              transition: "all 0.15s",
-            }}>●</button>
-          ) : (
-            <button onClick={stopRecording} style={{
-              width: 44, height: 36, borderRadius: 0, flexShrink: 0,
-              background: "var(--bg-tertiary)", border: "2px solid var(--accent-red)", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", color: "var(--accent-red)",
               fontSize: 11, fontWeight: 700,
+              boxShadow: "0 0 18px rgba(248,113,113,0.45)",
               animation: "vt-pulse 1s infinite",
             }}>■</button>
+          ) : (
+            <div title="Mic ready" style={{
+              width: 44, height: 36, borderRadius: 0, flexShrink: 0,
+              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+              display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)",
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+            </div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: recording ? "var(--accent-red)" : "var(--text-tertiary)" }}>
