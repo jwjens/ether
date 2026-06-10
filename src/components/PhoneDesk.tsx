@@ -405,6 +405,10 @@ export default function PhoneDesk({ onClose }: Props) {
 
   // Audio capture
   const audioCtxRef                 = useRef<AudioContext | null>(null);
+  // Local monitor — route the selected input to YOUR output (headphones), independent of recording.
+  const [monitoring, setMonitoring] = useState(false);
+  const monitorStreamRef            = useRef<MediaStream | null>(null);
+  const monitorCtxRef               = useRef<AudioContext | null>(null);
   const streamRef                   = useRef<MediaStream | null>(null);
   const processorRef                = useRef<ScriptProcessorNode | null>(null);
   const pcmBufferRef                = useRef<Float32Array[]>([]);
@@ -473,6 +477,31 @@ export default function PhoneDesk({ onClose }: Props) {
         }).catch(() => {});
       });
   }, []);
+
+  // ── Local monitor (your headphones — NOT on air) ──
+  const stopMonitor = () => {
+    try { monitorStreamRef.current?.getTracks().forEach(t => t.stop()); } catch { /* ignore */ }
+    monitorStreamRef.current = null;
+    monitorCtxRef.current?.close().catch(() => {});
+    monitorCtxRef.current = null;
+    setMonitoring(false);
+  };
+  const toggleMonitor = async () => {
+    if (monitoring) { stopMonitor(); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: inputMode === "device"
+          ? { deviceId: selectedDevice ? { exact: selectedDevice } : undefined, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+          : { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      });
+      monitorStreamRef.current = stream;
+      const ctx = new AudioContext();
+      monitorCtxRef.current = ctx;
+      ctx.createMediaStreamSource(stream).connect(ctx.destination);
+      setMonitoring(true);
+    } catch (e) { console.error("[PhoneDesk] monitor failed:", e); alert("Couldn't start monitor: " + String(e)); }
+  };
+  useEffect(() => stopMonitor, []);  // stop monitoring on unmount
 
   // ── Level meter RAF ──
   useEffect(() => {
@@ -966,6 +995,14 @@ export default function PhoneDesk({ onClose }: Props) {
                 <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
                   Select the audio interface input connected to your phone hybrid or hybrid return.
                 </div>
+                <button onClick={toggleMonitor} title="Hear the caller in your headphones (not on air)"
+                  style={{ marginTop: 10, width: "100%", padding: "9px 10px", borderRadius: 0, cursor: "pointer", fontSize: 11, fontWeight: 800, letterSpacing: "0.05em",
+                    border: `1px solid ${monitoring ? "var(--accent-green)" : "var(--border-primary)"}`,
+                    background: monitoring ? "rgba(52,211,153,0.14)" : "var(--bg-tertiary)",
+                    color: monitoring ? "var(--accent-green)" : "var(--text-secondary)",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                  {monitoring ? "● MONITORING — click to stop" : "▶ MONITOR (your headphones · not on air)"}
+                </button>
               </>
             ) : (
               <>
