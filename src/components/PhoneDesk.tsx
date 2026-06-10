@@ -963,13 +963,8 @@ export default function PhoneDesk({ onClose }: Props) {
       {/* ── Body ── */}
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
 
-        {/* ── LEFT: Input config + record controls ── */}
-        <div style={{
-          width: 280, flexShrink: 0,
-          borderRight: "1px solid var(--border-primary)",
-          display: "flex", flexDirection: "column",
-          background: "var(--bg-secondary)",
-        }}>
+        {/* ── LEFT sidebar removed — controls live in the bottom bar now ── */}
+        <div style={{ display: "none" }}>
 
           {/* Input mode toggle */}
           <div style={{ padding: "16px 16px 0" }}>
@@ -1136,16 +1131,16 @@ export default function PhoneDesk({ onClose }: Props) {
             {/* Live level bars during recording */}
             {isRecording && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, padding: "0 24px" }}>
-                {Array.from({ length: 80 }).map((_, i) => (
+                {Array.from({ length: 120 }).map((_, i) => (
                   <div key={i} style={{
                     flex: 1, borderRadius: 0,
-                    background: "#ef4444",
-                    opacity: Math.random() * 0.6 + 0.1,
-                    height: `${(liveWaveRef.current[liveWaveRef.current.length - 80 + i] ?? Math.random() * 0.3) * 80 + 4}%`,
-                    transition: "height 0.1s",
+                    background: "#34d399",
+                    opacity: 0.92,
+                    height: `${(liveWaveRef.current[liveWaveRef.current.length - 120 + i] ?? 0.015) * 92 + 2}%`,
+                    transition: "height 0.08s linear",
                   }} />
                 ))}
-                <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#ef4444", animation: "phone-blink 1s ease-in-out infinite" }}>
+                <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#34d399", animation: "phone-blink 1s ease-in-out infinite" }}>
                   ● RECORDING — {fmtTime(recDuration)}
                 </div>
               </div>
@@ -1328,6 +1323,29 @@ export default function PhoneDesk({ onClose }: Props) {
           {saveError && (
             <div style={{ padding: "8px 16px", background: "rgba(239,68,68,0.08)", borderTop: "1px solid rgba(239,68,68,0.2)", fontSize: 11, color: "#ef4444", flexShrink: 0 }}>
               {saveError}
+            </div>
+          )}
+
+          {/* ── Bottom bar — device + monitor + record (only when not editing a clip) ── */}
+          {!hasClip && (
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderTop: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0 }}>
+              <button onClick={toggleMonitor} title="Hear the caller in your headphones (not on air)"
+                style={{ height: 42, padding: "0 16px", borderRadius: 0, cursor: "pointer", fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", gap: 8,
+                  border: `1px solid ${monitoring ? "var(--accent-green)" : "var(--border-primary)"}`,
+                  background: monitoring ? "rgba(52,211,153,0.14)" : "var(--bg-tertiary)",
+                  color: monitoring ? "var(--accent-green)" : "var(--text-secondary)" }}>
+                {monitoring ? "● MONITORING" : "▶ MONITOR"}
+              </button>
+              <div style={{ flex: 1 }} />
+              {isRecording && <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 18, fontWeight: 700, color: "#34d399", letterSpacing: "-0.02em" }}>● {fmtTime(recDuration)}</span>}
+              <button onClick={handleRecButton}
+                style={{ height: 48, padding: "0 36px", borderRadius: 0, border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 11, fontSize: 16, fontWeight: 800, letterSpacing: "0.08em", color: "#fff",
+                  background: isArmed ? "#fb923c" : "#ef4444",
+                  animation: isArmed ? "phone-blink 0.5s ease-in-out infinite" : "none" }}>
+                {isRecording
+                  ? <><svg width="14" height="14" viewBox="0 0 24 24" fill="#fff"><rect x="3" y="3" width="18" height="18" /></svg> STOP</>
+                  : <><svg width="15" height="15" viewBox="0 0 28 28" fill="#fff"><circle cx="14" cy="14" r="9" /></svg> {isArmed ? "STARTING…" : recState === "stopped" ? "RE-RECORD" : "RECORD"}</>}
+              </button>
             </div>
           )}
         </div>
