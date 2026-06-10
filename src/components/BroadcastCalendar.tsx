@@ -20,7 +20,7 @@ interface Show {
 }
 
 // unix_day (Math.floor(scheduled_at / 86400)) → hour → track count
-type TrackCounts = Map<number, Map<number, number>>;
+type TrackCounts = Map<string, Map<number, number>>;
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -107,13 +107,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const loadTrackCounts = async () => {
     try {
+      // Cover a wide window so future-generated weeks/months show their counts too.
       const nowTs = Math.floor(Date.now() / 1000);
-      const result = await (window as any).ether.invoke("schedule:get", nowTs - 86_400, nowTs + 14 * 86_400);
+      const result = await (window as any).ether.invoke("schedule:get", nowTs - 7 * 86_400, nowTs + 120 * 86_400);
       if (!result?.data) return;
       const counts: TrackCounts = new Map();
       for (const row of result.data as { scheduled_at: number }[]) {
-        const dayKey  = Math.floor(row.scheduled_at / 86_400);
-        const hourKey = Math.floor((row.scheduled_at % 86_400) / 3_600);
+        // Key by LOCAL date + LOCAL hour so they line up with the grid (which is local).
+        const d = new Date(row.scheduled_at * 1000);
+        const dayKey  = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+        const hourKey = d.getHours();
         if (!counts.has(dayKey)) counts.set(dayKey, new Map());
         const h = counts.get(dayKey)!;
         h.set(hourKey, (h.get(hourKey) || 0) + 1);
@@ -124,17 +127,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
-  const [genScope, setGenScope]     = useState<"week" | "month">("week");
 
   // Generate the airing log (generated_schedule) for exactly the WEEK or MONTH being viewed,
   // by regenerating each of its days (per-day clear+rebuild — no full wipe).
-  const generate = async () => {
+  const generate = async (scope: "week" | "month") => {
     if (generating) return;
     setGenerating(true);
     const mon = getMondayOfWeek(weekOffset);
     const mid = new Date(mon.getTime() + 3 * 86_400_000);
     let dates: Date[];
-    if (genScope === "week") {
+    if (scope === "week") {
       dates = Array.from({ length: 7 }, (_, i) => new Date(mon.getTime() + i * 86_400_000));
       setGenMsg("Generating this week…");
     } else {
@@ -150,10 +152,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         const res = await (window as any).ether.invoke("schedule:generateDay", ts);
         count += (res?.count || 0);
       }
-      setGenMsg(`✓ Generated this ${genScope} · ${count} items`);
+      setGenMsg(`✓ Generated this ${scope} · ${count} items`);
       setShowTracks(true);
       await loadTrackCounts();
-      setTimeout(() => setGenMsg(""), 5000);
+      setTimeout(() => setGenMsg(""), 6000);
     } catch (e: any) {
       setGenMsg("✗ " + String(e?.message || e));
     } finally { setGenerating(false); }
@@ -332,20 +334,12 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
-        {/* Week / Month scope toggle */}
-        <div style={{ display: "flex", border: "1px solid var(--border-primary)", height: 26 }}>
-          {(["week", "month"] as const).map(s => (
-            <button key={s} onClick={() => setGenScope(s)} disabled={generating}
-              style={{ padding: "0 12px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 800, textTransform: "capitalize" as const,
-                background: genScope === s ? "var(--accent-green)" : "transparent",
-                color: genScope === s ? "#0a160d" : "var(--text-secondary)" }}>{s}</button>
-          ))}
-        </div>
-        <button disabled={generating} onClick={generate}
-          title={`Generate the viewed ${genScope}`}
-          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
-          {generating ? "Generating…" : "Generate"}
-        </button>
+        {/* Direct generate buttons — fill the viewed week or month */}
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>Generate</span>
+        <button disabled={generating} onClick={() => generate("week")} title="Generate the week you're viewing"
+          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Week</button>
+        <button disabled={generating} onClick={() => generate("month")} title="Generate the month you're viewing"
+          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Month</button>
       </div>
 
       {/* ── Calendar grid ── */}
@@ -405,7 +399,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 {/* Hour-row backgrounds */}
                 <div style={{ position: "relative", height: totalPx }}>
                   {HOURS.map(h => {
-                    const dayKey    = Math.floor(colDate.getTime() / 86_400_000);
+                    const dayKey    = `${colDate.getFullYear()}-${colDate.getMonth()}-${colDate.getDate()}`;
                     const count     = showTracks ? (trackCounts.get(dayKey)?.get(h) ?? 0) : 0;
                     return (
                     <div key={h} style={{
