@@ -1668,13 +1668,13 @@ export default function App() {
         {/* CENTER: Clock — flexes to fill the space between search and the right controls so it's
             always centered in the available room and never overlapped/clipped by the search box. */}
         {(viewport.clockSize as string) !== "hidden" && (
-          <div style={{ flex: "1 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 0, pointerEvents: "none", whiteSpace: "nowrap" as const, padding: "0 12px" }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 0, pointerEvents: "none", whiteSpace: "nowrap" as const, padding: "0 12px" }}>
             <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
           </div>
         )}
 
         {/* RIGHT: Status + Pro + Admin + ☰ menu + ON AIR */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1, marginLeft: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1 }}>
           {videoLive && panel !== "videostudio" && (
             <button
               onClick={() => setPanel("videostudio")}
