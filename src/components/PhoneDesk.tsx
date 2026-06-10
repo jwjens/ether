@@ -422,6 +422,7 @@ export default function PhoneDesk({ onClose }: Props) {
 
   // Live waveform (rolling buffer during record)
   const liveWaveRef                 = useRef<number[]>([]);
+  const liveCanvasRef               = useRef<HTMLCanvasElement>(null);
 
   // Recorded clip
   const [recPCM, setRecPCM]         = useState<Float32Array | null>(null);
@@ -513,6 +514,38 @@ export default function PhoneDesk({ onClose }: Props) {
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
   }, []);
+
+  // ── Streaming live waveform — draws captured peaks left-aligned so it builds
+  //    left→right while recording, then scrolls (an oscilloscope, not bouncing bars). ──
+  useEffect(() => {
+    if (!isRecording) return;
+    const canvas = liveCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    let raf = 0;
+    const draw = () => {
+      const cw = canvas.offsetWidth, ch = canvas.offsetHeight;
+      if (cw === 0) { raf = requestAnimationFrame(draw); return; }
+      if (canvas.width !== Math.round(cw * dpr)) { canvas.width = Math.round(cw * dpr); canvas.height = Math.round(ch * dpr); }
+      const W = canvas.width, H = canvas.height, mid = H / 2;
+      ctx.clearRect(0, 0, W, H);
+      const peaks = liveWaveRef.current;
+      const barW = 3 * dpr;                       // bar + gap
+      const n = Math.floor(W / barW);
+      const start = Math.max(0, peaks.length - n); // last n peaks, left-aligned
+      ctx.fillStyle = "#34d399";
+      for (let i = start; i < peaks.length; i++) {
+        const x = (i - start) * barW;
+        const h = Math.max(dpr, (peaks[i] || 0) * mid * 0.92);
+        ctx.fillRect(x, mid - h, Math.max(dpr, barW - dpr), h * 2);
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [isRecording]);
 
   // ── Recording timer ──
   useEffect(() => {
@@ -1128,18 +1161,10 @@ export default function PhoneDesk({ onClose }: Props) {
               </div>
             )}
 
-            {/* Live level bars during recording */}
+            {/* Live streaming waveform during recording (oscilloscope, builds left→right) */}
             {isRecording && (
-              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 2, padding: "0 24px" }}>
-                {Array.from({ length: 120 }).map((_, i) => (
-                  <div key={i} style={{
-                    flex: 1, borderRadius: 0,
-                    background: "#34d399",
-                    opacity: 0.92,
-                    height: `${(liveWaveRef.current[liveWaveRef.current.length - 120 + i] ?? 0.015) * 92 + 2}%`,
-                    transition: "height 0.08s linear",
-                  }} />
-                ))}
+              <div style={{ position: "absolute", inset: 0 }}>
+                <canvas ref={liveCanvasRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
                 <div style={{ position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "#34d399", animation: "phone-blink 1s ease-in-out infinite" }}>
                   ● RECORDING — {fmtTime(recDuration)}
                 </div>
