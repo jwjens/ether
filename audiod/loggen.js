@@ -123,7 +123,8 @@ function readGeneratedSchedule(db, count, stationId) {
   try {
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
-              s.file_path, s.intro_end, s.outro_start, s.duration_ms
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);

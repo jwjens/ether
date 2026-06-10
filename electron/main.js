@@ -552,6 +552,7 @@ function runMigrations() {
   alterSafe("ALTER TABLE play_log ADD COLUMN deck_id TEXT");
   alterSafe("ALTER TABLE play_log ADD COLUMN session_id TEXT");
   alterSafe("ALTER TABLE play_log ADD COLUMN file_path TEXT");   // v19: affidavit join key
+  alterSafe("ALTER TABLE generated_schedule ADD COLUMN file_path TEXT");   // voice-track placement: direct file for non-song elements
   alterSafe("ALTER TABLE artists ADD COLUMN gender TEXT DEFAULT 'unknown'");
 
   // Part 1 — deck purpose (controls mode-based visibility)
@@ -4242,6 +4243,33 @@ let _playoutLastPing = 0;  // epoch ms of last successful play POST
 // ── Schedule Generator ────────────────────────────────────────────────────────
 // Reads shows → clocks → clock_slots, picks songs per rotation rules, and
 // writes a full week of timestamped entries to generated_schedule.
+// Place a voice track into the playout log so it airs at a chosen transition.
+// We slot it just before the upcoming scheduled row for the song the break sits in front of
+// (matched by title/artist), giving it a direct file_path (it isn't a library song).
+ipcMain.handle('schedule:insertVoiceTrack', (_, { stationId, hour, beforeTitle, beforeArtist, filePath, title, artist, durationMs }) => {
+  try {
+    const sid = stationId ?? getActiveStationId();
+    const nowTs = Math.floor(Date.now() / 1000);
+    let row = db.prepare(
+      `SELECT id, scheduled_at FROM generated_schedule
+       WHERE station_id = ? AND title = ? AND (artist = ? OR ? = '') AND scheduled_at >= ? - 300 AND deleted_at IS NULL
+       ORDER BY scheduled_at LIMIT 1`
+    ).get(sid, beforeTitle, beforeArtist || '', beforeArtist || '', nowTs);
+    if (!row) row = db.prepare(
+      `SELECT id, scheduled_at FROM generated_schedule
+       WHERE station_id = ? AND title = ? AND scheduled_at >= ? - 300 AND deleted_at IS NULL
+       ORDER BY scheduled_at LIMIT 1`
+    ).get(sid, beforeTitle, nowTs);
+    if (!row) return { ok: false, error: 'that song is not in the upcoming schedule yet' };
+    const at = row.scheduled_at - 1;
+    db.prepare(
+      `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, duration_s, station_id, uuid, generated_at)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, unixepoch())`
+    ).run(at, title, artist || '', filePath, Math.round((durationMs || 0) / 1000), sid, require('crypto').randomUUID());
+    return { ok: true, scheduledAt: at };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('schedule:generate', (_, days = 7) => {
   try {
     // Load separation rules (fall back to safe defaults)

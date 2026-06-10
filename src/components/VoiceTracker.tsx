@@ -378,6 +378,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   const [scheduledSongs, setScheduledSongs] = useState<ScheduledSong[]>([]);
   const [selectedSlotPos, setSelectedSlotPos] = useState<number | null>(null);
   const [breakLen, setBreakLen] = useState<Record<number, number>>({});   // talk-break index → planned seconds
+  const [placedBreaks, setPlacedBreaks] = useState<Record<number, boolean>>({}); // index → a take is placed/airing here
 
   // Hour/clock selection
   const [selectedHour, setSelectedHour]   = useState<number>(new Date().getHours());
@@ -714,38 +715,58 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   // ── Send the cleaned take ──
   const takeTitle = () => trackTitle.trim() || `Break ${fmtHour(selectedHour)} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  const takeUrl   = () => wavToDataUrl(encodeWav(editBuffer!));
-  const sendToDeck = (deck: "A" | "B" | "C") => {
-    if (!editBuffer) return;
-    stopEditPlayback();
-    window.dispatchEvent(new CustomEvent("ether:deck-load", { detail: { deck, filePath: takeUrl(), title: "[VT] " + takeTitle() } }));
-    discardEdit();
+  // Write the take to a REAL .wav on disk — the on-air engine plays files, not data URLs.
+  const writeTakeFile = async (): Promise<string> => {
+    const bytes  = new Uint8Array(encodeWav(editBuffer!));
+    const appDir = await (window as any).ether.system.getAppDataDir();
+    const filePath = `${appDir}/voice-tracks/vt_${Date.now()}.wav`;
+    const res = await (window as any).ether.ffmpeg.writeAudio(bytes, filePath);
+    if (!res?.ok) throw new Error(res?.error || "writeAudio failed");
+    return filePath;
   };
-  const sendToQueue = () => {
+  const sendToDeck = async (deck: "A" | "B" | "C") => {
     if (!editBuffer) return;
     stopEditPlayback();
-    engine.addToQueue([{ filePath: takeUrl(), title: "[VT] " + takeTitle(), artist: djName || "DJ" }]);
-    discardEdit();
+    try {
+      const fp = await writeTakeFile();
+      window.dispatchEvent(new CustomEvent("ether:deck-load", { detail: { deck, filePath: fp, title: "[VT] " + takeTitle() } }));
+      discardEdit();
+    } catch (e) { console.error("[VoiceTracker] send to deck failed:", e); alert("Failed to send: " + String(e)); }
+  };
+  const sendToQueue = async () => {
+    if (!editBuffer) return;
+    stopEditPlayback();
+    try {
+      const fp = await writeTakeFile();
+      engine.addToQueue([{ filePath: fp, title: "[VT] " + takeTitle(), artist: djName || "DJ" }]);
+      discardEdit();
+    } catch (e) { console.error("[VoiceTracker] send to queue failed:", e); alert("Failed to send: " + String(e)); }
   };
   const saveEdit = async () => {
     if (!editBuffer) return;
     stopEditPlayback();
     try {
-      const dataUrl = takeUrl();
+      const filePath = await writeTakeFile();
       const title = takeTitle();
+      const durMs = Math.round(editBuffer.duration * 1000);
       const matchingShow = shows.find(s => { const end = s.end_hour <= s.start_hour ? s.end_hour + 24 : s.end_hour; return selectedHour >= s.start_hour && selectedHour < end; });
-      await (window as any).ether.voiceTracks.create({ station_id: stationId, title, file_path: dataUrl, show_id: matchingShow?.id ?? null, duration_ms: Math.round(editBuffer.duration * 1000), recorded_by: djName, clock_slot_id: null });
+      await (window as any).ether.voiceTracks.create({ station_id: stationId, title, file_path: filePath, show_id: matchingShow?.id ?? null, duration_ms: durMs, recorded_by: djName, clock_slot_id: null });
+      // Place the take into the playout log at the chosen transition so it airs there.
+      // Isolated so a placement miss never loses the recorded take (it's already in the library).
+      const pos = selectedSlotPos;
+      if (pos !== null && nextSong) {
+        try {
+          const res = await (window as any).ether.invoke("schedule:insertVoiceTrack", {
+            stationId, hour: selectedHour,
+            beforeTitle: nextSong.title, beforeArtist: nextSong.artist || "",
+            filePath, title: "[VT] " + title, artist: djName || "DJ", durationMs: durMs,
+          });
+          if (res?.ok) setPlacedBreaks(p => ({ ...p, [pos]: true }));
+          else { console.warn("[VoiceTracker] placement skipped:", res?.error); alert("Saved to library, but couldn't place it on air: " + (res?.error || "unknown")); }
+        } catch (e) { console.warn("[VoiceTracker] placement IPC unavailable:", e); alert("Saved to library. On-air placement needs an app restart to activate."); }
+      }
       setTrackTitle("");
       await load();
-      if (recordingForSlot) {
-        const latest = await queryScoped<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 1", [], stationId);
-        if (latest.length > 0) {
-          await (window as any).ether.voiceTracks.clearClockSlotId(recordingForSlot.id);
-          await (window as any).ether.voiceTracks.updateById(latest[0].id, { clock_slot_id: recordingForSlot.id });
-          await load();
-        }
-        setRecordingForSlot(null);
-      }
       discardEdit();
     } catch (e) { console.error("[VoiceTracker] save failed:", e); alert("Failed to save: " + String(e)); }
   };
@@ -1100,9 +1121,9 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
               {recording ? "Recording — press SPACE or click ■ to stop" : "Press SPACE or click ● to record"}
             </div>
             <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 1 }}>
-              {recordingForSlot
-                ? `Slot ${recordingForSlot.position + 1} · target ${fmtDuration(recordingForSlot.duration_min)} · ${recordingForSlot.label || "Talk Break"}`
-                : selectedSlotPos !== null ? "Recording for selected slot" : "Select a break slot on the right to set target duration"
+              {selectedSlotPos !== null && nextSong
+                ? `Talk break before "${nextSong.title}" — record, edit, then ＋ BREAK`
+                : "Pick a talk break in the Hour Log to place your take"
               }
             </div>
           </div>
@@ -1141,6 +1162,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             songs.map((s, i) => {
               const sel = selectedSlotPos === i;
               const len = breakLen[i] ?? 0;
+              const placed = !!placedBreaks[i];
               return (
                 <div key={i}>
                   {/* Song row — large */}
@@ -1155,12 +1177,12 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
                   {/* Talk-break transition — click to select + choose its length */}
                   {i < songs.length - 1 && (
                     <div style={{ display: "flex", alignItems: "stretch", marginBottom: 2,
-                      borderLeft: `3px solid ${sel ? "var(--accent-cyan)" : "transparent"}`,
-                      background: sel ? "rgb(from var(--accent-cyan) r g b / 0.12)" : "none" }}>
+                      borderLeft: `3px solid ${placed ? "var(--accent-green)" : sel ? "var(--accent-cyan)" : "transparent"}`,
+                      background: placed ? "rgb(from var(--accent-green) r g b / 0.10)" : sel ? "rgb(from var(--accent-cyan) r g b / 0.12)" : "none" }}>
                       <button onClick={() => { setSelectedSlotPos(sel ? null : i); setRecordingForSlot(null); }}
-                        style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left" as const, color: sel ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
-                        <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>{sel ? "▸" : "+"}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em" }}>{sel ? "TALK BREAK" : "talk break"}</span>
+                        style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left" as const, color: placed ? "var(--accent-green)" : sel ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>{placed ? "●" : sel ? "▸" : "+"}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em" }}>{placed ? "VOICE TRACK PLACED" : sel ? "TALK BREAK" : "talk break"}</span>
                       </button>
                       <select value={len} onChange={e => setBreakLen(b => ({ ...b, [i]: +e.target.value }))} onClick={e => e.stopPropagation()}
                         style={{ fontSize: 16, fontWeight: 800, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)",
