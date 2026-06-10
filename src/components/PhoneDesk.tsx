@@ -230,15 +230,15 @@ function WaveformView({
       const x     = i * barW;
       const barH  = peaks[i] * mid * 0.88;
       const inReg = x >= inX && x <= outX;
-      ctx.fillStyle = inReg ? "#008878" : "#27272a";
-      ctx.fillRect(x, mid - barH, Math.max(1, barW - 0.5), barH * 2);
+      ctx.fillStyle = inReg ? "#c4b5fd" : "#34d399";
+      ctx.fillRect(x, mid - barH, Math.max(1, barW - 0.4), Math.max(1, barH * 2));
     }
 
     // Cue In handle
-    ctx.strokeStyle = "#008878";
+    ctx.strokeStyle = "#8868D8";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(inX, 0); ctx.lineTo(inX, H); ctx.stroke();
-    ctx.fillStyle = "#008878";
+    ctx.fillStyle = "#8868D8";
     ctx.fillRect(inX, 0, 28, 14);
     ctx.fillStyle = "#000";
     ctx.font = "bold 8px 'DM Mono', monospace";
@@ -246,10 +246,10 @@ function WaveformView({
     ctx.fillText("IN", inX + 4, 10);
 
     // Cue Out handle
-    ctx.strokeStyle = "#f87171";
+    ctx.strokeStyle = "#8868D8";
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(outX, 0); ctx.lineTo(outX, H); ctx.stroke();
-    ctx.fillStyle = "#f87171";
+    ctx.fillStyle = "#8868D8";
     ctx.fillRect(outX - 32, 0, 32, 14);
     ctx.fillStyle = "#000";
     ctx.textAlign = "right";
@@ -258,11 +258,9 @@ function WaveformView({
     // Playhead
     if (playhead > 0 && playhead < duration) {
       const phX = (playhead / duration) * W;
-      ctx.strokeStyle = "#c07820";
+      ctx.strokeStyle = "#e8e8f0";
       ctx.lineWidth = 1.5;
-      ctx.setLineDash([3, 3]);
       ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, H); ctx.stroke();
-      ctx.setLineDash([]);
     }
 
     // Time ruler
@@ -1027,45 +1025,27 @@ export default function PhoneDesk({ onClose }: Props) {
             )}
           </div>
 
-          {/* BIG record button */}
-          <div style={{ padding: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+          {/* Transport — rectangular record / stop (no more circle) */}
+          <div style={{ padding: 16, display: "flex", justifyContent: "center", alignItems: "center" }}>
             <button
               onClick={handleRecButton}
+              onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.97)"; }}
+              onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
               style={{
-                width: 96, height: 96, borderRadius: "50%", border: "none",
-                cursor: "pointer", flexShrink: 0,
-                background: isRecording
-                  ? "radial-gradient(circle, #ef4444, #b91c1c)"
-                  : isArmed
-                  ? "radial-gradient(circle, #fb923c, #c2410c)"
-                  : "radial-gradient(circle, #27272a, #18181b)",
-                boxShadow: isRecording
-                  ? "0 0 0 4px rgba(239,68,68,0.2), 0 0 40px rgba(239,68,68,0.35)"
-                  : isArmed
-                  ? "0 0 0 4px rgba(251,146,60,0.25), 0 0 24px rgba(251,146,60,0.3)"
-                  : "0 0 0 1px var(--border-primary), inset 0 1px 0 rgba(255,255,255,0.05)",
-                transition: "all 0.2s",
+                height: 46, padding: "0 32px", borderRadius: 0, border: "none", cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 10,
+                background: isArmed ? "#fb923c" : "#ef4444",
+                color: "#fff", fontSize: 14, fontWeight: 800, letterSpacing: "0.08em",
+                transition: "transform 0.1s, background 0.2s",
                 animation: isArmed ? "phone-blink 0.5s ease-in-out infinite" : "none",
               }}
-              onMouseDown={e => { (e.currentTarget as HTMLElement).style.transform = "scale(0.94)"; }}
-              onMouseUp={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
             >
               {isRecording ? (
-                // Stop square
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="#fff">
-                  <rect x="4" y="4" width="16" height="16" rx="3"/>
-                </svg>
+                <><svg width="12" height="12" viewBox="0 0 24 24" fill="#fff"><rect x="3" y="3" width="18" height="18"/></svg> STOP</>
               ) : (
-                // Record circle
-                <svg width="28" height="28" viewBox="0 0 28 28" fill={isArmed ? "#fff" : "#ef4444"}>
-                  <circle cx="14" cy="14" r="10"/>
-                </svg>
+                <><svg width="13" height="13" viewBox="0 0 28 28" fill="#fff"><circle cx="14" cy="14" r="9"/></svg> {isArmed ? "STARTING…" : recState === "stopped" ? "RE-RECORD" : "RECORD"}</>
               )}
             </button>
-
-            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: isRecording ? "#ef4444" : "var(--text-tertiary)", textAlign: "center" }}>
-              {isRecording ? "CLICK TO STOP" : isArmed ? "STARTING..." : recState === "stopped" ? "RE-RECORD" : "RECORD"}
-            </div>
           </div>
 
           {/* Clip info */}
