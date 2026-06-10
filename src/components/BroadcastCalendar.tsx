@@ -147,14 +147,20 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const [dayRows, setDayRows]         = useState<{ scheduled_at: number; title: string; artist: string; duration_s: number; category_id: number | null; song_id: number | null }[]>([]);
   const [dayLoading, setDayLoading]   = useState(false);
   const [genDayBusy, setGenDayBusy]   = useState(false);
-  const openDay = async (date: Date) => {
-    const d = new Date(date); d.setHours(0, 0, 0, 0);
-    setSelectedDay(d); setDayLoading(true); setDayRows([]);
+  const [dayShow, setDayShow]         = useState<{ name: string; startHour: number; endHour: number } | null>(null);
+  const loadDayRows = async (d: Date) => {
+    setDayLoading(true); setDayRows([]);
     try {
-      const start = Math.floor(d.getTime() / 1000), end = start + 86_400;
+      const start = Math.floor(new Date(d).setHours(0, 0, 0, 0) / 1000), end = start + 86_400;
       const res = await (window as any).ether.invoke("schedule:get", start, end);
       setDayRows(Array.isArray(res?.data) ? res.data : []);
     } catch { /* ignore */ } finally { setDayLoading(false); }
+  };
+  const openDay = async (date: Date, show?: Show) => {
+    const d = new Date(date); d.setHours(0, 0, 0, 0);
+    setSelectedDay(d);
+    setDayShow(show ? { name: show.name, startHour: show.start_hour, endHour: show.end_hour } : null);
+    await loadDayRows(d);
   };
   const generateThisDay = async () => {
     if (!selectedDay || genDayBusy) return;
@@ -162,7 +168,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     try {
       const ts = Math.floor(new Date(selectedDay).setHours(0, 0, 0, 0) / 1000);
       await (window as any).ether.invoke("schedule:generateDay", ts);
-      await openDay(selectedDay);
+      await loadDayRows(selectedDay);   // keep the current show scope
     } catch { /* ignore */ } finally { setGenDayBusy(false); }
   };
 
@@ -185,15 +191,25 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       byHour.get(h)!.push(r);
     }
     const dateLabel = selectedDay.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
-    const total = dayRows.length;
     const isToday = sameDay(selectedDay, new Date());
+    // When a show was clicked, scope the hours to that show's range; otherwise the whole day.
+    const hours = dayShow
+      ? Array.from({ length: Math.max(1, (dayShow.endHour === 0 || dayShow.endHour <= dayShow.startHour ? 24 : dayShow.endHour) - dayShow.startHour) }, (_, i) => (dayShow.startHour + i) % 24)
+      : Array.from({ length: 24 }, (_, h) => h);
+    const total = dayShow ? hours.reduce((n, h) => n + (byHour.get(h)?.length || 0), 0) : dayRows.length;
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-ui, 'Inter', sans-serif)" }}>
         {/* Day toolbar */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, background: "var(--bg-secondary)" }}>
           <button onClick={() => setSelectedDay(null)} style={navBtn}>← Calendar</button>
           <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>{dateLabel}{isToday ? " · Today" : ""}</span>
-          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""} scheduled</span>
+          {dayShow && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-cyan)", display: "flex", alignItems: "center", gap: 6 }}>
+              {dayShow.name} ({fmtHour(dayShow.startHour)}–{fmtHour(dayShow.endHour === 0 ? 24 : dayShow.endHour)})
+              <button onClick={() => setDayShow(null)} title="Show the full day" style={{ ...navBtn, height: 20, padding: "0 7px", fontSize: 9 }}>full day</button>
+            </span>
+          )}
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""}{dayShow ? " in show" : " scheduled"}</span>
           <div style={{ flex: 1 }} />
           <button onClick={generateThisDay} disabled={genDayBusy}
             style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: genDayBusy ? 0.5 : 1, cursor: genDayBusy ? "default" : "pointer" }}>
@@ -205,7 +221,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         <div style={{ flex: 1, overflowY: "auto" }}>
           {dayLoading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Loading…</div>
-          ) : Array.from({ length: 24 }, (_, h) => {
+          ) : hours.map((h) => {
             const items = byHour.get(h) || [];
             return (
               <div key={h} style={{ display: "flex", borderBottom: "1px solid var(--border-secondary)" }}>
@@ -424,7 +440,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                       <div
                         key={show.id}
                         title={`${show.name}\n${fmtHour(start)} – ${fmtHour(end >= 24 ? 0 : end)}${show.clock_name ? `\nClock: ${show.clock_name}` : ""}`}
-                        onClick={() => openDay(colDate)}
+                        onClick={(e) => { e.stopPropagation(); openDay(colDate, show); }}
                         style={{
                           position: "absolute",
                           top: clampTop * ROW_H + 1,
