@@ -4346,9 +4346,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
         const usedSongIds   = new Set();
         const usedArtistIds = new Set();
 
+        const hourEnd = hourStartTs + 3600;
         let currentTs = hourStartTs;
 
         for (const slot of slots) {
+          if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
           const slotDurationS = (slot.duration_min || 4) * 60;
 
           if (slot.slot_type !== 'music' || !slot.category_id) {
@@ -4452,8 +4454,10 @@ function _generateDayRows(dayBaseDate, ctx) {
     const slots = stmtSlots.all(show.clock_id);
     if (!slots.length) continue;
     const usedSongIds = new Set(), usedArtistIds = new Set();
+    const hourEnd = hourStartTs + 3600;
     let currentTs = hourStartTs;
     for (const slot of slots) {
+      if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
       const slotDurationS = (slot.duration_min || 4) * 60;
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
       const candidates = stmtCandidates.all(slot.category_id, h);

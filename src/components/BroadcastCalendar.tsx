@@ -371,14 +371,11 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
               if (!cell) return <div key={i} style={{ background: "var(--bg-secondary)", opacity: 0.25 }} />;
               const jsDay = cell.getDay();
               const cellShows = shows.filter(s => s.days.includes(String(jsDay)));
-              const dk = `${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`;
-              const cellCount = showTracks ? Array.from(trackCounts.get(dk)?.values() || []).reduce((a, b) => a + b, 0) : 0;
               const cellToday = sameDay(cell, now);
               return (
                 <div key={i} onClick={() => openDay(cell)} style={{ background: "var(--bg-secondary)", border: `1px solid ${cellToday ? "var(--accent-green)" : "var(--border-primary)"}`, padding: 5, cursor: "pointer", display: "flex", flexDirection: "column" as const, gap: 2, overflow: "hidden" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 15, fontWeight: 800, color: cellToday ? "var(--accent-green)" : "var(--text-primary)" }}>{cell.getDate()}</span>
-                    {cellCount > 0 && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399" }}>{cellCount}</span>}
                   </div>
                   {cellShows.map(s => (
                     <div key={s.id} onClick={(e) => { e.stopPropagation(); openDay(cell, s); }} title={s.name}
