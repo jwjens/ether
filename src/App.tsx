@@ -524,7 +524,7 @@ export default function App() {
   const [showCarts, setShowCarts] = useState(false);
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
-  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library">(null);
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar">(null);
   // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
   // operator can dump before audio airs; DUMP becomes active once the buffer is full.
   const DELAY_SEC = 8;
@@ -2239,6 +2239,7 @@ export default function App() {
           { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
           { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
           { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
+          { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
@@ -2252,25 +2253,7 @@ export default function App() {
             onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
           >{label}</button>
         ))}
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          {/* Version — always-visible source-of-truth for "what am I running?" */}
-          {version && (
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--text-tertiary)",
-                fontFamily: "'DM Mono', monospace",
-                letterSpacing: "0.06em",
-                opacity: 0.55,
-                cursor: "pointer",
-              }}
-              title={devToolsEnabled ? "Click for About — triple-click for debug panel" : "Click for About / version details"}
-              onClick={handleVersionClick}
-            >
-              v{version}
-            </span>
-          )}
-        </div>
+        <div style={{ flex: 1 }} />
         {/* Broadcast (profanity) delay — arm builds the cushion; bar shows buffer fill */}
         <button onClick={toggleDelay} title={delayArmed ? "Broadcast delay armed — click to disarm" : "Arm broadcast (profanity) delay"} style={{
           height: 36, padding: "0 12px", borderRadius: 0, marginRight: 2,
@@ -3424,9 +3407,11 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 // LibraryPanel relies on its parent for scrolling (like the full-screen view),
                 // so wrap it in a scroll container sized to the dock.
                 ? <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 16px" }}>{libraryDock}</div>
-                : progPanel
-                  ? <Scheduler defaultTab={progPanel} embedded />
-                  : <BoutiqueCartWall deckSlot="C" variant="strip" />}
+                : progPanel === "calendar"
+                  ? <BroadcastCalendar />
+                  : progPanel
+                    ? <Scheduler defaultTab={progPanel} embedded />
+                    : <BoutiqueCartWall deckSlot="C" variant="strip" />}
             </div>
           </>
         );
