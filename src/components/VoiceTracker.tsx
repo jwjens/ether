@@ -1,8 +1,11 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import WaveformEditor from "./WaveformEditor";
+import { decodeBlobToBuffer, extractPeaks, extractPeaksRange, encodeWav, wavToDataUrl, spliceOut, sliceRegion, insertAt, makeSilence, applyFadeRegion } from "../audio/wavEdit";
+import { vuSmooth, vuPeak } from "../lib/vuMeter";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -75,7 +78,17 @@ const isTalkSlot = (t: string) => t === "talkset" || t === "talk_break";
 
 function HorizontalVU({ level, peak, recording }: { level: number; peak: number; recording: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rafRef = useRef(0);
+  const rafRef    = useRef(0);
+  // Live values fed in via refs so the draw loop is PERSISTENT (no per-frame effect teardown,
+  // which is what made it glitchy). Smoothing uses Ether's shared attack/decay ballistics.
+  const targetRef = useRef(0);
+  const recRef    = useRef(recording);
+  const smoothRef = useRef(0);
+  const peakRef   = useRef(0);
+  const peakAtRef = useRef(0);
+  const lastMsRef = useRef(0);
+  useEffect(() => { targetRef.current = level; }, [level]);
+  useEffect(() => { recRef.current = recording; if (!recording) { smoothRef.current = 0; peakRef.current = 0; } }, [recording]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -83,9 +96,9 @@ function HorizontalVU({ level, peak, recording }: { level: number; peak: number;
     const ro = new ResizeObserver(entries => {
       for (const e of entries) {
         const dpr = window.devicePixelRatio || 1;
-        canvas.width = Math.floor(e.contentRect.width * dpr);
+        canvas.width  = Math.floor(e.contentRect.width * dpr);
         canvas.height = Math.floor(e.contentRect.height * dpr);
-        canvas.style.width = e.contentRect.width + "px";
+        canvas.style.width  = e.contentRect.width + "px";
         canvas.style.height = e.contentRect.height + "px";
       }
     });
@@ -95,15 +108,16 @@ function HorizontalVU({ level, peak, recording }: { level: number; peak: number;
       const ctx = canvas.getContext("2d");
       if (!ctx) { rafRef.current = requestAnimationFrame(draw); return; }
       const w = canvas.width, h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
+      const dpr = window.devicePixelRatio || 1;
+      const now = (typeof performance !== "undefined" ? performance.now() : Date.now());
+      const dt = Math.min(now - (lastMsRef.current || now), 100); lastMsRef.current = now;
 
-      // Background
+      ctx.clearRect(0, 0, w, h);
       const cs = getComputedStyle(canvas);
       ctx.fillStyle = cs.getPropertyValue("--bg-primary").trim() || "#0d0d0f";
       ctx.fillRect(0, 0, w, h);
 
-      // dB scale labels along top
-      const dpr = window.devicePixelRatio || 1;
+      // dB scale labels
       ctx.font = `${8 * dpr}px 'DM Mono', monospace`;
       ctx.fillStyle = "rgba(255,255,255,0.18)";
       ctx.textBaseline = "top";
@@ -111,45 +125,40 @@ function HorizontalVU({ level, peak, recording }: { level: number; peak: number;
       for (const l of labels) {
         const x = l.pct * w;
         ctx.fillText(`${l.db}`, x + 2 * dpr, 2 * dpr);
-        ctx.fillStyle = "rgba(255,255,255,0.06)";
-        ctx.fillRect(x, 0, 1, h);
-        ctx.fillStyle = "rgba(255,255,255,0.18)";
+        ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(x, 0, 1, h); ctx.fillStyle = "rgba(255,255,255,0.18)";
       }
 
-      // Meter bar area
-      const barTop = 14 * dpr;
-      const barH = h - barTop - 4 * dpr;
-      const lvl = Math.min(1, level * 5); // scale up for visibility
-      const pk = Math.min(1, peak * 5);
-      const barW = lvl * w;
+      // Smoothed level (delta-time attack/decay) — independent of the 20 Hz feed → no jitter
+      const target = recRef.current ? Math.min(1, targetRef.current * 5) : 0;
+      smoothRef.current = vuSmooth(smoothRef.current, target, dt);
+      const lvl = smoothRef.current;
+      const pkb = vuPeak(peakRef.current, peakAtRef.current, lvl, now, dt);
+      peakRef.current = pkb.peak; peakAtRef.current = pkb.at;
 
-      // Gradient fill
+      const barTop = 14 * dpr, barH = h - barTop - 4 * dpr;
       const grad = ctx.createLinearGradient(0, 0, w, 0);
-      grad.addColorStop(0, "#00c8a8");
-      grad.addColorStop(0.6, "#c0a020");
-      grad.addColorStop(0.85, "#c02828");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, barTop, barW, barH);
+      grad.addColorStop(0, "#34d399"); grad.addColorStop(0.6, "#c0a020"); grad.addColorStop(0.85, "#c02828");
+      ctx.fillStyle = grad; ctx.fillRect(0, barTop, lvl * w, barH);
 
-      // Peak indicator
-      if (pk > 0.01 && recording) {
-        const pkX = pk * w;
-        ctx.fillStyle = pk > 0.8 ? "#ef4444" : pk > 0.6 ? "#fbbf24" : "var(--accent-cyan)";
+      // Peak-hold line
+      if (recRef.current && peakRef.current > 0.02) {
+        const pkX = peakRef.current * w;
+        ctx.fillStyle = peakRef.current > 0.8 ? "#ef4444" : peakRef.current > 0.6 ? "#fbbf24" : "#34d399";
         ctx.fillRect(pkX - 1 * dpr, barTop, 2 * dpr, barH);
       }
 
       // Status label
       ctx.font = `bold ${9 * dpr}px Inter, system-ui, sans-serif`;
       ctx.textBaseline = "middle";
-      ctx.fillStyle = !recording ? "rgba(255,255,255,0.12)" : lvl > 0.8 ? "#ef4444" : lvl > 0.4 ? "#fbbf24" : "#00c8a8";
-      const label = !recording ? "STANDBY" : lvl > 0.8 ? "HOT" : lvl > 0.4 ? "GOOD" : "LOW";
+      ctx.fillStyle = !recRef.current ? "rgba(255,255,255,0.12)" : lvl > 0.8 ? "#ef4444" : lvl > 0.4 ? "#fbbf24" : "#34d399";
+      const label = !recRef.current ? "STANDBY" : lvl > 0.8 ? "HOT" : lvl > 0.4 ? "GOOD" : "LOW";
       ctx.fillText(label, w - ctx.measureText(label).width - 4 * dpr, barTop + barH / 2);
 
       rafRef.current = requestAnimationFrame(draw);
     };
     draw();
     return () => { ro.disconnect(); cancelAnimationFrame(rafRef.current); };
-  }, [level, peak, recording]);
+  }, []);
 
   return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />;
 }
@@ -315,6 +324,44 @@ function TrackCard({
   );
 }
 
+// ─── 60-minute hour-fill meter ────────────────────────────────
+// Vertical gauge: 0 at top → 60 min at bottom, filled by the hour's total time
+// (songs + planned talk breaks). Yellow while building, green on-target (59–60),
+// red when over the hour.
+
+function HourMeter({ totalSec }: { totalSec: number }) {
+  const pct = Math.min(1, totalSec / 3600);
+  const over = totalSec > 3600;
+  const onTarget = totalSec >= 3540 && totalSec <= 3600;
+  const color = over ? "#ef4444" : onTarget ? "#34d399" : "#fbbf24";
+  const mm = Math.floor(totalSec / 60), ss = Math.floor(totalSec % 60);
+  return (
+    <div style={{ width: 60, flexShrink: 0, borderLeft: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", background: "var(--bg-primary)" }}>
+      <div style={{ padding: "8px 4px 6px", textAlign: "center", borderBottom: "1px solid var(--border-primary)" }}>
+        <div style={{ fontSize: 7, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>HOUR FILL</div>
+        <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Mono', monospace", color, fontVariantNumeric: "tabular-nums", marginTop: 2 }}>
+          {mm}:{String(ss).padStart(2, "0")}
+        </div>
+      </div>
+      <div style={{ flex: 1, display: "flex", padding: "10px 6px 10px 4px", gap: 3, minHeight: 0 }}>
+        {/* minute labels 0 (top) → 60 (bottom) */}
+        <div style={{ position: "relative", width: 14, fontSize: 7, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)" }}>
+          {[0, 10, 20, 30, 40, 50, 60].map(m => (
+            <div key={m} style={{ position: "absolute", top: (m / 60 * 100) + "%", right: 0, transform: "translateY(-50%)" }}>{m}</div>
+          ))}
+        </div>
+        {/* gauge */}
+        <div style={{ flex: 1, position: "relative", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)" }}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: (pct * 100) + "%", background: color, opacity: 0.9, transition: "height 0.3s ease, background 0.3s" }} />
+          {[10, 20, 30, 40, 50].map(m => (
+            <div key={m} style={{ position: "absolute", top: (m / 60 * 100) + "%", left: 0, right: 0, height: 1, background: "rgba(0,0,0,0.45)" }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Component ────────────────────────────────────────────
 
 export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string }) {
@@ -330,6 +377,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   // Scheduled songs for prev/next context (Zetta-style three-track)
   const [scheduledSongs, setScheduledSongs] = useState<ScheduledSong[]>([]);
   const [selectedSlotPos, setSelectedSlotPos] = useState<number | null>(null);
+  const [breakLen, setBreakLen] = useState<Record<number, number>>({});   // talk-break index → planned seconds
 
   // Hour/clock selection
   const [selectedHour, setSelectedHour]   = useState<number>(new Date().getHours());
@@ -355,6 +403,26 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   // View
   const [libExpanded, setLibExpanded] = useState(true);
+
+  // ── Edit mode (record → select+delete dead air → send to deck/queue/save) ──
+  const [editBuffer, setEditBuffer]   = useState<AudioBuffer | null>(null);
+  const [editPeaks, setEditPeaks]     = useState<Float32Array | null>(null);
+  const [editDur, setEditDur]         = useState(0);          // seconds
+  const [editPlayhead, setEditPlayhead] = useState(0);
+  const [selection, setSelection]     = useState<{ start: number; end: number } | null>(null);
+  const undoRef      = useRef<{ buffer: AudioBuffer; peaks: Float32Array; dur: number }[]>([]);
+  const redoRef      = useRef<{ buffer: AudioBuffer; peaks: Float32Array; dur: number }[]>([]);
+  const clipboardRef = useRef<AudioBuffer | null>(null);
+  const editCtxRef   = useRef<AudioContext | null>(null);
+  const editSrcRef   = useRef<AudioBufferSourceNode | null>(null);
+  const editRafRef   = useRef<number>(0);
+  const editStartRef = useRef(0);
+  const editPlayheadRef = useRef(0);
+  const markRef      = useRef<number | null>(null);   // VoxPro-style pending mark (M sets in, next M sets out)
+  useEffect(() => { editPlayheadRef.current = editPlayhead; }, [editPlayhead]);
+  const [zoomLevel, setZoomLevel] = useState(1);   // 1 | 4 | 10
+  const [viewStart, setViewStart] = useState(0);   // seconds — left edge of the zoom window
+  const editing = editBuffer !== null;
 
   // Refs
   const mediaRecRef   = useRef<MediaRecorder | null>(null);
@@ -419,12 +487,13 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   // Derive prev/next songs for the selected slot
   const songs = scheduledSongs || [];
-  const prevSong = selectedSlotPos !== null
-    ? songs.filter(s => s.position < selectedSlotPos).sort((a, b) => b.position - a.position)[0] || null
-    : null;
-  const nextSong = selectedSlotPos !== null
-    ? songs.filter(s => s.position > selectedSlotPos).sort((a, b) => a.position - b.position)[0] || null
-    : null;
+  // selectedSlotPos = the ARRAY INDEX of the song the talk break sits AFTER (between
+  // songs[i] and songs[i+1]). Index-based so duplicate/non-sequential log positions can't
+  // collide two gaps or skip a song.
+  const prevSong = selectedSlotPos !== null ? (songs[selectedSlotPos] ?? null) : null;
+  const nextSong = selectedSlotPos !== null ? (songs[selectedSlotPos + 1] ?? null) : null;
+  const hourTotalSec = songs.reduce((a, s) => a + (s.duration_ms || 0) / 1000, 0)
+    + Object.values(breakLen).reduce((a, b) => a + b, 0);
 
   // ── Waveform drawing (upgraded with grid + time ruler) ──
   const drawWaveform = useCallback(() => {
@@ -450,31 +519,28 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     const vStep = 80 * dpr;
     for (let x = vStep; x < w; x += vStep) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, waveH); ctx.stroke(); }
 
-    // Waveform
-    if (pts.length > 1) {
-      const step = w / Math.max(pts.length, 200);
+    // Waveform — green symmetric bars at a FIXED pixel step, so it flows steadily left→right
+    // as it records and scrolls once it fills the width (no more squash-to-fit compression).
+    const mid = waveH / 2;
+    if (pts.length > 0) {
+      const stepPx = 2 * dpr;
+      const barW = Math.max(1 * dpr, stepPx * 0.82);
+      const visibleCount = Math.max(1, Math.floor(w / stepPx));
+      const startIdx = Math.max(0, pts.length - visibleCount);
       const grad = ctx.createLinearGradient(0, 0, 0, waveH);
-      grad.addColorStop(0, "rgba(248,113,113,0.7)"); grad.addColorStop(0.5, "rgba(248,113,113,0.15)"); grad.addColorStop(1, "rgba(248,113,113,0.03)");
-      ctx.beginPath(); ctx.moveTo(0, waveH / 2);
-      pts.forEach((v, i) => ctx.lineTo(i * step, waveH / 2 - v * (waveH / 2) * 0.85));
-      ctx.lineTo(pts.length * step, waveH / 2); ctx.fillStyle = grad; ctx.fill();
-
-      const gradB = ctx.createLinearGradient(0, waveH, 0, 0);
-      gradB.addColorStop(0, "rgba(248,113,113,0.5)"); gradB.addColorStop(0.5, "rgba(248,113,113,0.06)");
-      ctx.beginPath(); ctx.moveTo(0, waveH / 2);
-      pts.forEach((v, i) => ctx.lineTo(i * step, waveH / 2 + v * (waveH / 2) * 0.85));
-      ctx.lineTo(pts.length * step, waveH / 2); ctx.fillStyle = gradB; ctx.fill();
-
-      ctx.beginPath(); ctx.moveTo(0, waveH / 2);
-      pts.forEach((v, i) => ctx.lineTo(i * step, waveH / 2 - v * (waveH / 2) * 0.85));
-      ctx.strokeStyle = "#f87171"; ctx.lineWidth = 2 * dpr;
-      ctx.shadowColor = "#f87171"; ctx.shadowBlur = 8 * dpr; ctx.stroke(); ctx.shadowBlur = 0;
+      grad.addColorStop(0, "#6ee7b7"); grad.addColorStop(0.5, "#34d399"); grad.addColorStop(1, "#6ee7b7");
+      ctx.fillStyle = grad;
+      for (let i = startIdx; i < pts.length; i++) {
+        const x = (i - startIdx) * stepPx;
+        const amp = Math.min(1, pts[i]) * mid * 0.92;
+        ctx.fillRect(x, mid - amp, barW, Math.max(1 * dpr, amp * 2));
+      }
     }
 
     // Center line
-    ctx.beginPath(); ctx.moveTo(0, waveH / 2); ctx.lineTo(w, waveH / 2);
-    ctx.strokeStyle = "rgba(255,255,255,0.06)"; ctx.lineWidth = 1;
-    ctx.setLineDash([4, 8]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid);
+    ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
+    ctx.stroke();
 
     // Time ruler
     ctx.fillStyle = "rgba(255,255,255,0.03)";
@@ -546,45 +612,142 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     cancelAnimationFrame(levelRafRef.current);
     cancelAnimationFrame(waveRafRef.current);
     setRecording(false); setInputLevel(0);
-    const durMs = Date.now() - startTimeRef.current;
-    let saved = false;
+    let done = false;
     try { mr.requestData(); } catch {}
-    const saveRecording = async () => {
-      if (saved) return; saved = true;
+    // On stop → decode the take into an editable buffer. Do NOT auto-save; the DJ trims/edits, then Saves.
+    const finalize = async () => {
+      if (done) return; done = true;
       try {
         if (chunksRef.current.length === 0) { alert("Recording failed — no audio was captured."); return; }
         const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
-        const title = trackTitle.trim() || `Break ${fmtHour(selectedHour)} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-        const matchingShow = shows.find(s => { const end = s.end_hour <= s.start_hour ? s.end_hour + 24 : s.end_hour; return selectedHour >= s.start_hour && selectedHour < end; });
-        await new Promise<void>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onerror = () => reject(reader.error);
-          reader.onload = async () => {
-            try {
-              await (window as any).ether.voiceTracks.create({ station_id: stationId, title, file_path: reader.result as string, show_id: matchingShow?.id ?? null, duration_ms: durMs, recorded_by: djName, clock_slot_id: null });
-              setTrackTitle("");
-              load().then(async () => {
-                if (recordingForSlot) {
-                  const latest = await queryScoped<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 1", [], stationId);
-                  if (latest.length > 0) {
-                    await (window as any).ether.voiceTracks.clearClockSlotId(recordingForSlot.id);
-                    await (window as any).ether.voiceTracks.updateById(latest[0].id, { clock_slot_id: recordingForSlot.id });
-                    load();
-                  }
-                  setRecordingForSlot(null);
-                }
-              });
-              resolve();
-            } catch (e) { reject(e); }
-          };
-          reader.readAsDataURL(blob);
-        });
-      } catch (e) { console.error("[VoiceTracker] save failed:", e); alert("Failed to save recording: " + String(e)); }
-      finally { mr.stream.getTracks().forEach(t => t.stop()); audioCtxRef.current?.close().catch(() => {}); }
+        const buf = await decodeBlobToBuffer(blob);
+        setEditBuffer(buf);
+        setEditPeaks(extractPeaks(buf, 2000));
+        setEditDur(buf.duration);
+        setSelection(null); setEditPlayhead(0); undoRef.current = []; redoRef.current = []; setZoomLevel(1); setViewStart(0);
+      } catch (e) {
+        console.error("[VoiceTracker] decode failed:", e);
+        alert("Couldn't process the recording: " + String(e));
+      } finally {
+        mr.stream.getTracks().forEach(t => t.stop());
+        audioCtxRef.current?.close().catch(() => {});
+      }
     };
-    mr.addEventListener("stop", saveRecording, { once: true });
-    setTimeout(() => saveRecording(), 3000);
+    mr.addEventListener("stop", finalize, { once: true });
+    setTimeout(() => finalize(), 3000);
     mr.stop();
+  };
+
+  // ── Edit-mode playback (plays the trimmed region cueIn → cueOut) ──
+  const stopEditPlayback = useCallback(() => {
+    try { editSrcRef.current?.stop(); } catch {}
+    editSrcRef.current = null;
+    cancelAnimationFrame(editRafRef.current);
+  }, []);
+  const playEdit = () => {
+    if (!editBuffer) return;
+    stopEditPlayback();
+    const ctx = editCtxRef.current || new AudioContext(); editCtxRef.current = ctx;
+    const src = ctx.createBufferSource(); src.buffer = editBuffer; src.connect(ctx.destination);
+    const end = editBuffer.duration;
+    const from = (editPlayhead >= end - 0.05 || editPlayhead < 0) ? 0 : editPlayhead;
+    src.start(0, from);
+    editSrcRef.current = src;
+    editStartRef.current = ctx.currentTime - from;
+    const tick = () => {
+      const pos = ctx.currentTime - editStartRef.current;
+      if (pos >= end || !editSrcRef.current) { stopEditPlayback(); setEditPlayhead(0); return; }
+      setEditPlayhead(pos); ensureVisible(pos);
+      editRafRef.current = requestAnimationFrame(tick);
+    };
+    editRafRef.current = requestAnimationFrame(tick);
+  };
+  // Trim tool: splice the selected dead-air region out of the take (Backspace/Delete)
+  // History-managed buffer replace (pushes current to undo, clears redo)
+  const applyBuffer = (nb: AudioBuffer, clampPlayhead = true) => {
+    undoRef.current.push({ buffer: editBuffer!, peaks: editPeaks!, dur: editDur });
+    redoRef.current = [];
+    setEditBuffer(nb); setEditPeaks(extractPeaks(nb, 2000)); setEditDur(nb.duration);
+    if (clampPlayhead) setEditPlayhead(p => Math.min(p, nb.duration));
+  };
+  const hasSel = () => !!(selection && selection.end - selection.start >= 0.005);
+  const deleteSelection = () => { if (!editBuffer || !hasSel()) return; stopEditPlayback(); applyBuffer(spliceOut(editBuffer, selection!.start, selection!.end)); setSelection(null); };
+  const cutSelection    = () => { if (!editBuffer || !hasSel()) return; stopEditPlayback(); clipboardRef.current = sliceRegion(editBuffer, selection!.start, selection!.end); applyBuffer(spliceOut(editBuffer, selection!.start, selection!.end)); setSelection(null); };
+  const copySelection   = () => { if (!editBuffer || !hasSel()) return; clipboardRef.current = sliceRegion(editBuffer, selection!.start, selection!.end); };
+  const pasteClip       = () => { if (!editBuffer || !clipboardRef.current) return; stopEditPlayback(); applyBuffer(insertAt(editBuffer, editPlayheadRef.current, clipboardRef.current)); };
+  const insertSilence   = (sec = 0.5) => { if (!editBuffer) return; stopEditPlayback(); applyBuffer(insertAt(editBuffer, editPlayheadRef.current, makeSilence(editBuffer.sampleRate, editBuffer.numberOfChannels, sec))); };
+  const fadeSelection   = (type: "in" | "out") => { if (!editBuffer || !hasSel()) return; stopEditPlayback(); applyBuffer(applyFadeRegion(editBuffer, selection!.start, selection!.end, type), false); };
+  const selectAll       = () => { if (editDur > 0) setSelection({ start: 0, end: editDur }); };
+  const undoEdit = () => {
+    const prev = undoRef.current.pop(); if (!prev) return; stopEditPlayback();
+    redoRef.current.push({ buffer: editBuffer!, peaks: editPeaks!, dur: editDur });
+    setEditBuffer(prev.buffer); setEditPeaks(prev.peaks); setEditDur(prev.dur); setSelection(null);
+  };
+  const redoEdit = () => {
+    const nxt = redoRef.current.pop(); if (!nxt) return; stopEditPlayback();
+    undoRef.current.push({ buffer: editBuffer!, peaks: editPeaks!, dur: editDur });
+    setEditBuffer(nxt.buffer); setEditPeaks(nxt.peaks); setEditDur(nxt.dur); setSelection(null);
+  };
+
+  // ── Zoom (Q cycles x1 → x4 → x10) ──
+  const clampView = (s: number, vl: number) => Math.max(0, Math.min(Math.max(0, editDur - vl), s));
+  const ensureVisible = (ph: number) => {
+    if (zoomLevel <= 1) return;
+    const vl = editDur / zoomLevel;
+    setViewStart(vs => ph < vs ? clampView(ph - vl * 0.15, vl) : ph > vs + vl ? clampView(ph - vl * 0.85, vl) : vs);
+  };
+  const cycleZoom = () => {
+    const next = zoomLevel === 1 ? 4 : zoomLevel === 4 ? 10 : 1;
+    setZoomLevel(next);
+    setViewStart(next > 1 ? clampView(editPlayheadRef.current - (editDur / next) / 2, editDur / next) : 0);
+  };
+  const panViewTo = (clientX: number, rect: DOMRect) => {
+    if (zoomLevel <= 1) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const vl = editDur / zoomLevel;
+    setViewStart(clampView(ratio * editDur - vl / 2, vl));
+  };
+  const discardEdit = () => {
+    stopEditPlayback();
+    setEditBuffer(null); setEditPeaks(null); setEditDur(0); setSelection(null); setEditPlayhead(0); undoRef.current = [];
+  };
+
+  // ── Send the cleaned take ──
+  const takeTitle = () => trackTitle.trim() || `Break ${fmtHour(selectedHour)} · ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  const takeUrl   = () => wavToDataUrl(encodeWav(editBuffer!));
+  const sendToDeck = (deck: "A" | "B" | "C") => {
+    if (!editBuffer) return;
+    stopEditPlayback();
+    window.dispatchEvent(new CustomEvent("ether:deck-load", { detail: { deck, filePath: takeUrl(), title: "[VT] " + takeTitle() } }));
+    discardEdit();
+  };
+  const sendToQueue = () => {
+    if (!editBuffer) return;
+    stopEditPlayback();
+    engine.addToQueue([{ filePath: takeUrl(), title: "[VT] " + takeTitle(), artist: djName || "DJ" }]);
+    discardEdit();
+  };
+  const saveEdit = async () => {
+    if (!editBuffer) return;
+    stopEditPlayback();
+    try {
+      const dataUrl = takeUrl();
+      const title = takeTitle();
+      const matchingShow = shows.find(s => { const end = s.end_hour <= s.start_hour ? s.end_hour + 24 : s.end_hour; return selectedHour >= s.start_hour && selectedHour < end; });
+      await (window as any).ether.voiceTracks.create({ station_id: stationId, title, file_path: dataUrl, show_id: matchingShow?.id ?? null, duration_ms: Math.round(editBuffer.duration * 1000), recorded_by: djName, clock_slot_id: null });
+      setTrackTitle("");
+      await load();
+      if (recordingForSlot) {
+        const latest = await queryScoped<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 1", [], stationId);
+        if (latest.length > 0) {
+          await (window as any).ether.voiceTracks.clearClockSlotId(recordingForSlot.id);
+          await (window as any).ether.voiceTracks.updateById(latest[0].id, { clock_slot_id: recordingForSlot.id });
+          await load();
+        }
+        setRecordingForSlot(null);
+      }
+      discardEdit();
+    } catch (e) { console.error("[VoiceTracker] save failed:", e); alert("Failed to save: " + String(e)); }
   };
 
   // ── Playback ──
@@ -617,15 +780,57 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   // ── SPACE keyboard shortcut ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== "Space") return;
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.tagName === "SELECT") return;
-      e.preventDefault();
-      if (recording) stopRecording(); else startRecording();
+      if (e.code === "Space") {
+        e.preventDefault();
+        if (recording) stopRecording();
+        else if (editing) { if (editSrcRef.current) stopEditPlayback(); else playEdit(); }
+        else startRecording();
+      } else if (editing && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+        // Nudge the playhead (VoxPro-style scrub). Shift = 1s, plain = 0.1s.
+        e.preventDefault();
+        stopEditPlayback();
+        const delta = (e.code === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 0.1);
+        const newPh = Math.max(0, Math.min(editDur, editPlayheadRef.current + delta));
+        setEditPlayhead(newPh); ensureVisible(newPh);
+      } else if (editing && e.code === "KeyQ") {
+        e.preventDefault(); cycleZoom();
+      } else if (editing && e.code === "BracketLeft") {
+        // VoxPro Mark In ([) — set the left edge of the selection at the playhead.
+        e.preventDefault();
+        const ph = editPlayheadRef.current;
+        setSelection(sel => ({ start: ph, end: Math.max(ph, sel?.end ?? ph) }));
+      } else if (editing && e.code === "BracketRight") {
+        // VoxPro Mark Out (]) — set the right edge of the selection at the playhead.
+        e.preventDefault();
+        const ph = editPlayheadRef.current;
+        setSelection(sel => ({ start: Math.min(ph, sel?.start ?? ph), end: ph }));
+      } else if (editing && e.code === "KeyK") {
+        // VoxPro deselect.
+        e.preventDefault(); setSelection(null); markRef.current = null;
+      } else if (editing && e.code === "KeyM") {
+        // Convenience toggle-mark (first M = in, second M = out → selection).
+        e.preventDefault();
+        const ph = editPlayheadRef.current;
+        if (markRef.current === null) { markRef.current = ph; setSelection(null); }
+        else { const a = markRef.current; setSelection({ start: Math.min(a, ph), end: Math.max(a, ph) }); markRef.current = null; }
+      } else if (editing && (e.key === "Backspace" || e.key === "Delete")) {
+        e.preventDefault(); deleteSelection();
+      } else if (editing && (e.ctrlKey || e.metaKey)) {
+        const k = e.key.toLowerCase();
+        if (k === "z" && e.shiftKey) { e.preventDefault(); redoEdit(); }
+        else if (k === "z") { e.preventDefault(); undoEdit(); }
+        else if (k === "y") { e.preventDefault(); redoEdit(); }
+        else if (k === "a") { e.preventDefault(); selectAll(); }
+        else if (k === "c") { e.preventDefault(); copySelection(); }
+        else if (k === "x") { e.preventDefault(); cutSelection(); }
+        else if (k === "v") { e.preventDefault(); pasteClip(); }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [recording]);
+  }, [recording, editing, selection, zoomLevel, editDur]);
 
   // ── Derived ──
   const talkSlots   = (clockSlots || []).filter(s => isTalkSlot(s.slot_type));
@@ -635,6 +840,15 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
 
   const targetMs = recordingForSlot ? recordingForSlot.duration_min * 60000 : 0;
   const over = targetMs > 0 && recordTime > targetMs;
+
+  // Zoom view window + range peaks (real detail at high zoom, not stretched pixels)
+  const viewLen = (zoomLevel <= 1 || editDur === 0) ? editDur : editDur / zoomLevel;
+  const effViewStart = zoomLevel <= 1 ? 0 : Math.max(0, Math.min(viewStart, Math.max(0, editDur - viewLen)));
+  const effViewEnd = Math.min(editDur, effViewStart + (viewLen || editDur));
+  const viewPeaks = useMemo(
+    () => editBuffer ? extractPeaksRange(editBuffer, effViewStart, Math.min(editBuffer.duration, effViewEnd) || editBuffer.duration, 2000) : null,
+    [editBuffer, effViewStart, effViewEnd, editPeaks],
+  );
 
   // ─── Render ────────────────────────────────────────────────────
 
@@ -668,7 +882,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
           <input value={trackTitle} onChange={e => setTrackTitle(e.target.value)} placeholder="Break title..." disabled={recording}
             style={{ width: 140, padding: "3px 8px", fontSize: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, outline: "none" }} />
           {/* Elapsed timer */}
-          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 16, fontWeight: 300, color: recording ? (over ? "var(--accent-amber)" : "var(--accent-red)") : "var(--text-tertiary)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", minWidth: 70, textAlign: "right" as const }}>
+          <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 26, fontWeight: 800, color: recording ? (over ? "var(--accent-amber)" : "var(--accent-red)") : "var(--text-secondary)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", minWidth: 104, textAlign: "right" as const }}>
             {fmtMsFull(recordTime)}
           </span>
           <button title="Pop out" onClick={() => (window as any).ether?.invoke("window:popout", "voicetrack")}
@@ -697,15 +911,12 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
               <span style={{ fontSize: 10, color: "var(--text-secondary)" }}>{matchedShow.name}</span>
             </div>
           )}
-          {talkSlots.length > 0 && (
+          {selectedSlotPos !== null && (prevSong || nextSong) && (
             <>
               <div style={{ flex: 1 }} />
-              <span style={{ fontSize: 9, fontWeight: 700, color: filled === talkSlots.length ? "var(--accent-green)" : "var(--accent-red)" }}>
-                {filled}/{talkSlots.length} filled
+              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-cyan)" }}>
+                #{(selectedSlotPos ?? 0) + 1} {prevSong ? "→" : ""} #{(selectedSlotPos ?? 0) + 2}
               </span>
-              <div style={{ width: 60, height: 4, background: "var(--bg-tertiary)", overflow: "hidden" }}>
-                <div style={{ height: "100%", width: ((filled / Math.max(talkSlots.length, 1)) * 100) + "%", background: filled === talkSlots.length ? "var(--accent-green)" : "var(--accent-red)", transition: "width 0.3s" }} />
-              </div>
             </>
           )}
         </div>
@@ -721,36 +932,47 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
           borderBottom: "1px solid var(--border-primary)",
           background: "radial-gradient(135% 95% at 50% 0%, rgba(136,104,216,0.08), transparent 55%), var(--bg-primary)",
         }}>
-          <canvas ref={waveCanvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
-          {!recording && wavePointsRef.current.length === 0 && (
-            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, pointerEvents: "none" }}>
-              {/* Hero record button */}
-              <button onClick={startRecording} title="Record (Space)" style={{
-                pointerEvents: "auto", width: 104, height: 104, borderRadius: "50%", flexShrink: 0,
-                background: "radial-gradient(circle at 50% 32%, #241a20 0%, #14141b 70%)",
-                border: "1px solid rgba(248,113,113,0.35)",
-                boxShadow: "0 0 0 6px rgba(136,104,216,0.06), 0 0 48px rgba(248,113,113,0.16), inset 0 1px 0 rgba(255,255,255,0.05)",
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "transform 0.18s ease, box-shadow 0.18s ease",
-              }}
-                onMouseEnter={e => { const b = e.currentTarget as HTMLButtonElement; b.style.transform = "scale(1.04)"; b.style.boxShadow = "0 0 0 6px rgba(136,104,216,0.1), 0 0 64px rgba(248,113,113,0.3), inset 0 1px 0 rgba(255,255,255,0.06)"; }}
-                onMouseLeave={e => { const b = e.currentTarget as HTMLButtonElement; b.style.transform = "scale(1)"; b.style.boxShadow = "0 0 0 6px rgba(136,104,216,0.06), 0 0 48px rgba(248,113,113,0.16), inset 0 1px 0 rgba(255,255,255,0.05)"; }}>
-                <span style={{ width: 34, height: 34, borderRadius: "50%", background: "var(--accent-red)", boxShadow: "0 0 18px rgba(248,113,113,0.7), inset 0 -2px 6px rgba(0,0,0,0.3)" }} />
-              </button>
-              {/* Context */}
-              <div style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
-                  {recordingForSlot ? `Recording for ${recordingForSlot.label || "Talk Break"}` : "Ready to voice track"}
-                </div>
-                <div style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>
-                  {(djName || "DJ")}{matchedShow ? ` · ${matchedShow.name}` : ""} · {fmtHour(selectedHour)}
-                  {recordingForSlot ? ` · target ${fmtDuration(recordingForSlot.duration_min)}` : ""}
-                </div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.14em", textTransform: "uppercase" as const, marginTop: 6 }}>
-                  Press <span style={{ color: "var(--accent-cyan)" }}>SPACE</span> or click to record
-                </div>
+          {editing ? (
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column" }}>
+              <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+                <WaveformEditor
+                  peaks={viewPeaks} duration={editDur} viewStart={effViewStart} viewEnd={effViewEnd}
+                  playhead={editPlayhead} selection={selection}
+                  onSelectionChange={setSelection}
+                  onSeek={(s) => { stopEditPlayback(); setEditPlayhead(s); ensureVisible(s); }}
+                />
+                {zoomLevel > 1 && (
+                  <div style={{ position: "absolute", top: 6, right: 8, fontSize: 9, fontWeight: 800, letterSpacing: "0.05em", color: "var(--accent-cyan)", background: "rgba(0,0,0,0.55)", padding: "2px 7px", pointerEvents: "none" }}>×{zoomLevel}</div>
+                )}
               </div>
+              {zoomLevel > 1 && editDur > 0 && (
+                <div onMouseDown={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  panViewTo(e.clientX, rect);
+                  const move = (ev: MouseEvent) => panViewTo(ev.clientX, rect);
+                  const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+                  window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+                }}
+                  style={{ height: 10, flexShrink: 0, background: "var(--bg-tertiary)", borderTop: "1px solid var(--border-primary)", position: "relative", cursor: "grab" }}>
+                  <div style={{ position: "absolute", top: 1, bottom: 1, left: (effViewStart / editDur * 100) + "%", width: (Math.max(0.02, (effViewEnd - effViewStart) / editDur) * 100) + "%", background: "var(--accent-cyan)", opacity: 0.45 }} />
+                </div>
+              )}
             </div>
+          ) : (
+            <>
+              <canvas ref={waveCanvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
+              {!recording && wavePointsRef.current.length === 0 && (
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 5, pointerEvents: "none" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.01em" }}>
+                    {recordingForSlot ? `Ready — ${recordingForSlot.label || "Talk Break"}` : "Ready to voice track"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                    {(djName || "DJ")}{matchedShow ? ` · ${matchedShow.name}` : ""} · {fmtHour(selectedHour)}
+                    {recordingForSlot ? ` · target ${fmtDuration(recordingForSlot.duration_min)}` : ""}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -767,24 +989,112 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
           height: 52, padding: "0 16px", display: "flex", alignItems: "center", gap: 12,
           background: "var(--bg-secondary)", flexShrink: 0,
         }}>
-          {recording ? (
-            <button onClick={stopRecording} title="Stop (Space)" style={{
-              width: 44, height: 36, borderRadius: 0, flexShrink: 0,
-              background: "var(--accent-red)", border: "none", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", color: "#fff",
-              fontSize: 11, fontWeight: 700,
-              boxShadow: "0 0 18px rgba(248,113,113,0.45)",
-              animation: "vt-pulse 1s infinite",
-            }}>■</button>
-          ) : (
-            <div title="Mic ready" style={{
-              width: 44, height: 36, borderRadius: 0, flexShrink: 0,
-              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-              display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)",
+          {editing ? (
+            <>
+              {/* Edit transport — play / undo, then send to deck/queue/save */}
+              <div style={{ display: "flex", alignItems: "stretch", gap: 1, flexShrink: 0, height: 34 }}>
+                <button onClick={() => editSrcRef.current ? stopEditPlayback() : playEdit()} title="Play / stop (Space)" style={{
+                  width: 40, borderRadius: 0, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: editSrcRef.current ? "var(--accent-green)" : "var(--bg-tertiary)",
+                  border: `1px solid ${editSrcRef.current ? "var(--accent-green)" : "var(--border-secondary)"}`,
+                  color: editSrcRef.current ? "#0a160d" : "var(--text-secondary)",
+                }}>
+                  {editSrcRef.current
+                    ? <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><rect width="8" height="8"/></svg>
+                    : <svg width="9" height="11" viewBox="0 0 6 8" fill="currentColor"><polygon points="0,0 6,4 0,8"/></svg>}
+                </button>
+                <button onClick={undoEdit} disabled={undoRef.current.length === 0} title="Undo cut (Ctrl+Z)" style={{
+                  width: 38, borderRadius: 0, cursor: undoRef.current.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)",
+                  color: undoRef.current.length ? "var(--text-secondary)" : "var(--text-tertiary)",
+                }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-1"/></svg>
+                </button>
+                <button onClick={redoEdit} disabled={redoRef.current.length === 0} title="Redo (Ctrl+Y)" style={{
+                  width: 38, borderRadius: 0, cursor: redoRef.current.length ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)",
+                  color: redoRef.current.length ? "var(--text-secondary)" : "var(--text-tertiary)",
+                }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 14l5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h1"/></svg>
+                </button>
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: selection ? "var(--accent-cyan)" : "var(--text-primary)" }}>
+                  {selection ? `Selection ${fmtMs(Math.round(selection.start * 1000))}–${fmtMs(Math.round(selection.end * 1000))} · Del to cut` : `Take ${fmtMs(Math.round(editDur * 1000))}`}
+                </div>
+                <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 1 }}>
+                  Drag or [ ] mark in/out · ←→ scrub · Del cut · K deselect · then send →{recordingForSlot ? ` ${recordingForSlot.label || "slot"}` : ""}
+                </div>
+              </div>
+              {/* FX — fade in / fade out / insert silence */}
+              <div style={{ display: "flex", alignItems: "stretch", gap: 1, flexShrink: 0, height: 34 }}>
+                <button onClick={() => fadeSelection("in")} disabled={!hasSel()} title="Fade in across selection" style={{
+                  width: 32, borderRadius: 0, cursor: hasSel() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: hasSel() ? "var(--text-secondary)" : "var(--text-tertiary)",
+                }}><svg width="14" height="11" viewBox="0 0 24 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 16 L22 3"/><path d="M2 16 L22 16"/></svg></button>
+                <button onClick={() => fadeSelection("out")} disabled={!hasSel()} title="Fade out across selection" style={{
+                  width: 32, borderRadius: 0, cursor: hasSel() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: hasSel() ? "var(--text-secondary)" : "var(--text-tertiary)",
+                }}><svg width="14" height="11" viewBox="0 0 24 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 3 L22 16"/><path d="M2 16 L22 16"/></svg></button>
+                <button onClick={() => insertSilence(0.5)} title="Insert 0.5s silence at playhead" style={{
+                  padding: "0 8px", borderRadius: 0, cursor: "pointer", fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)",
+                }}>SIL</button>
+              </div>
+              {/* Send targets — Deck A/B/C + Queue */}
+              <div style={{ display: "flex", alignItems: "stretch", gap: 1, flexShrink: 0, height: 34 }}>
+                {(["A", "B", "C"] as const).map(d => (
+                  <button key={d} onClick={() => sendToDeck(d)} title={`Send to Deck ${d}`} style={{
+                    width: 34, borderRadius: 0, cursor: "pointer", fontSize: 12, fontWeight: 800,
+                    background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--accent-cyan)",
+                  }}>{d}</button>
+                ))}
+                <button onClick={sendToQueue} title="Add to queue" style={{
+                  width: 34, borderRadius: 0, cursor: "pointer", fontSize: 12, fontWeight: 800,
+                  background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--accent-cyan)",
+                }}>Q</button>
+              </div>
+              <button onClick={saveEdit} disabled={selectedSlotPos === null}
+                title={selectedSlotPos === null ? "Pick a talk break in the Hour Log first" : "Add this take to the selected talk break"}
+                style={{ height: 34, padding: "0 16px", borderRadius: 0, cursor: selectedSlotPos !== null ? "pointer" : "default", fontSize: 11, fontWeight: 800, letterSpacing: "0.04em",
+                  background: selectedSlotPos !== null ? "var(--accent-green)" : "var(--bg-tertiary)",
+                  border: selectedSlotPos !== null ? "none" : "1px solid var(--border-secondary)",
+                  color: selectedSlotPos !== null ? "#0a160d" : "var(--text-tertiary)" }}>＋ BREAK</button>
+              <button onClick={discardEdit} title="Discard take" style={{ height: 34, padding: "0 11px", borderRadius: 0, cursor: "pointer", fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-tertiary)" }}>✕</button>
+            </>
+          ) : (<>
+          {/* Transport toolbar — rectangular DAW controls */}
+          <div style={{ display: "flex", alignItems: "stretch", gap: 1, flexShrink: 0, height: 34 }}>
+            {/* Record */}
+            <button onClick={startRecording} disabled={recording} title="Record (Space)" style={{
+              padding: "0 14px", borderRadius: 0, cursor: recording ? "default" : "pointer",
+              display: "flex", alignItems: "center", gap: 7, fontSize: 11, fontWeight: 800, letterSpacing: "0.06em",
+              background: recording ? "var(--accent-red)" : "var(--bg-tertiary)",
+              border: `1px solid ${recording ? "var(--accent-red)" : "var(--border-secondary)"}`,
+              color: recording ? "#160a0c" : "var(--accent-red)",
+              animation: recording ? "vt-pulse 1s infinite" : "none",
             }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 11a7 7 0 0 1-14 0"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
-            </div>
-          )}
+              <span style={{ width: 9, height: 9, borderRadius: "50%", background: recording ? "#160a0c" : "var(--accent-red)", display: "inline-block" }} />REC
+            </button>
+            {/* Play */}
+            <button onClick={() => { const t = tracks[0]; if (t) playTrack(t); }} disabled={tracks.length === 0 || recording} title="Play latest" style={{
+              width: 38, borderRadius: 0, cursor: tracks.length && !recording ? "pointer" : "default",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: playingId ? "var(--accent-green)" : "var(--bg-tertiary)",
+              border: `1px solid ${playingId ? "var(--accent-green)" : "var(--border-secondary)"}`,
+              color: playingId ? "#0a160d" : (tracks.length && !recording ? "var(--text-secondary)" : "var(--text-tertiary)"),
+            }}>
+              <svg width="9" height="11" viewBox="0 0 6 8" fill="currentColor"><polygon points="0,0 6,4 0,8"/></svg>
+            </button>
+            {/* Stop */}
+            <button onClick={() => { if (recording) stopRecording(); else if (audioRef.current) { audioRef.current.pause(); setPlayingId(null); } }} title="Stop" style={{
+              width: 38, borderRadius: 0, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)",
+            }}>
+              <svg width="9" height="9" viewBox="0 0 8 8" fill="currentColor"><rect x="0" y="0" width="8" height="8"/></svg>
+            </button>
+          </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: recording ? "var(--accent-red)" : "var(--text-tertiary)" }}>
               {recording ? "Recording — press SPACE or click ■ to stop" : "Press SPACE or click ● to record"}
@@ -806,47 +1116,71 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
               </span>
             </div>
           )}
+          </>)}
         </div>
       </div>
 
       {/* ══════════════ RIGHT — Break Slots + Library ══════════════ */}
-      <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-secondary)" }}>
+      <div style={{ width: 460, flexShrink: 0, display: "flex", overflow: "hidden", background: "var(--bg-secondary)", borderLeft: "1px solid var(--border-primary)" }}>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-        {/* Slot header */}
-        <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>BREAK SLOTS</div>
-          {selectedTrackId && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 9, color: "#a78bfa", fontWeight: 700 }}>Click a slot to assign</span>
-              <button onClick={() => setSelectedTrackId(null)} style={{ fontSize: 8, padding: "1px 6px", background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", cursor: "pointer", borderRadius: 0, marginLeft: "auto" }}>cancel</button>
-            </div>
-          )}
+        {/* Hour log header */}
+        <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>HOUR LOG</div>
+          <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginLeft: "auto", fontFamily: "'DM Mono', monospace" }}>{fmtHour(selectedHour)} · {songs.length} cuts</div>
         </div>
 
-        {/* Slots list */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4 }}>
-          {!selectedClock ? (
+        {/* Hour log — click a transition between two cuts to talk over it (Zetta-style) */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px", display: "flex", flexDirection: "column" }}>
+          {songs.length === 0 ? (
             <div style={{ padding: "24px 12px", textAlign: "center" }}>
-              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>No clock for {fmtHour(selectedHour)}</div>
-              <div style={{ fontSize: 9, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-                Set up shows and clocks in Schedule to see break slots here.
-              </div>
-            </div>
-          ) : talkSlots.length === 0 ? (
-            <div style={{ padding: "24px 12px", textAlign: "center", fontSize: 10, color: "var(--text-tertiary)" }}>
-              No talk break slots in this clock.
+              <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>No log for {fmtHour(selectedHour)}</div>
+              <div style={{ fontSize: 9, color: "var(--text-tertiary)", lineHeight: 1.5 }}>Generate the hour in Schedule, then click a transition to talk over it.</div>
             </div>
           ) : (
-            talkSlots.map(slot => (
-              <SlotCard key={slot.id} slot={slot} tracks={tracks} selectedTrackId={selectedTrackId}
-                isSelected={selectedSlotPos === slot.position}
-                onAssign={(slotId, trackId) => { assignToSlot(slotId, trackId); setSelectedTrackId(null); }}
-                onUnassign={unassignFromSlot} onPlay={playTrack}
-                onRecordFor={s => { setRecordingForSlot(s); setTrackTitle(s.label || "Talk Break"); setSelectedSlotPos(s.position); }}
-                onSelect={s => setSelectedSlotPos(s.position === selectedSlotPos ? null : s.position)}
-                playingId={playingId}
-              />
-            ))
+            songs.map((s, i) => {
+              const sel = selectedSlotPos === i;
+              const len = breakLen[i] ?? 0;
+              return (
+                <div key={i}>
+                  {/* Song row — large */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", marginBottom: 2 }}>
+                    <div style={{ width: 20, fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0, textAlign: "right" as const }}>{i + 1}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 2 }}>{s.title}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.artist || "—"}</div>
+                    </div>
+                    <div style={{ fontSize: 17, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{fmtMs(s.duration_ms)}</div>
+                  </div>
+                  {/* Talk-break transition — click to select + choose its length */}
+                  {i < songs.length - 1 && (
+                    <div style={{ display: "flex", alignItems: "stretch", marginBottom: 2,
+                      borderLeft: `3px solid ${sel ? "var(--accent-cyan)" : "transparent"}`,
+                      background: sel ? "rgb(from var(--accent-cyan) r g b / 0.12)" : "none" }}>
+                      <button onClick={() => { setSelectedSlotPos(sel ? null : i); setRecordingForSlot(null); }}
+                        style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "6px 12px", background: "none", border: "none", cursor: "pointer", textAlign: "left" as const, color: sel ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1 }}>{sel ? "▸" : "+"}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em" }}>{sel ? "TALK BREAK" : "talk break"}</span>
+                      </button>
+                      <select value={len} onChange={e => setBreakLen(b => ({ ...b, [i]: +e.target.value }))} onClick={e => e.stopPropagation()}
+                        style={{ fontSize: 16, fontWeight: 800, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)",
+                          color: len ? "var(--accent-cyan)" : "var(--text-tertiary)", padding: "2px 6px", margin: "3px 6px", borderRadius: 0, cursor: "pointer", outline: "none", colorScheme: "dark" as const }}>
+                        <option value={0}>—:—</option>
+                        <option value={5}>0:05</option>
+                        <option value={10}>0:10</option>
+                        <option value={15}>0:15</option>
+                        <option value={20}>0:20</option>
+                        <option value={30}>0:30</option>
+                        <option value={45}>0:45</option>
+                        <option value={60}>1:00</option>
+                        <option value={90}>1:30</option>
+                        <option value={120}>2:00</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
 
@@ -870,6 +1204,8 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
             ))}
           </div>
         )}
+        </div>{/* log column */}
+        <HourMeter totalSec={hourTotalSec} />
       </div>
 
       <style>{`
