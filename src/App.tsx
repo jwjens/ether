@@ -1076,6 +1076,7 @@ export default function App() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
+      if (e.altKey && e.code === "Tab") { e.preventDefault(); setPanel("live"); return; } // Alt+Tab → dashboard
       const dA = engine.getDeck("A"); const dB = engine.getDeck("B");
       switch(e.code) {
         case "Space": {
@@ -1669,8 +1670,8 @@ export default function App() {
         </div>
         </div>{/* LEFT zone close */}
 
-        {/* CENTER: Clock — grid cell, mathematically centered with equal space on both sides */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap" as const, padding: "0 12px", pointerEvents: "none" }}>
+        {/* CENTER: Clock — grid-centered; click to return to the dashboard (Mixer) */}
+        <div onClick={() => setPanel("live")} title="Back to dashboard" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap" as const, padding: "0 12px", cursor: "pointer" }}>
           <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
         </div>
 
@@ -1686,7 +1687,6 @@ export default function App() {
               VIDEO LIVE
             </button>
           )}
-          <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
           {!requirePlan("station", currentPlan as PlanTier) && (
             <button onClick={() => setPanel("subscription")} title={currentPlan === "free" ? "Upgrade your plan" : "Your plan: Studio — see plans"} style={{ height: 44, padding: viewport.medium ? "0 12px" : "0 16px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", cursor: "pointer", fontSize: 14, fontWeight: 700, letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
@@ -1702,27 +1702,8 @@ export default function App() {
               DEV
             </button>
           )}
-          {panel !== "live" && (
-            <button
-              onClick={() => setPanel("live")}
-              style={{
-                padding: "6px 12px",
-                background: "var(--button-bg, var(--bg-tertiary))",
-                border: "var(--button-border, 1px solid var(--border-primary))",
-                borderRadius: "var(--button-radius, 4px)",
-                color: "var(--button-text, var(--text-primary))",
-                fontSize: 11, fontWeight: 700, letterSpacing: "0.1em",
-                cursor: "pointer", textTransform: "uppercase" as const, transition: "all 0.15s",
-              }}
-              onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--button-bg-hover, var(--bg-hover))"; }}
-              onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "var(--button-bg, var(--bg-tertiary))"; }}
-            >
-              Mixer
-            </button>
-          )}
-          <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ height: 44, padding: viewport.narrow ? "0 12px" : "0 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", cursor: "pointer", fontSize: 15, fontWeight: 800, display: "flex", alignItems: "center", gap: 7 }}>
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-            {!viewport.narrow && currentUser?.name}
+          <button onClick={() => setCurrentUser(null)} title={currentUser?.name || "Account"} style={{ width: 44, height: 44, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
           </button>
 
           {/* AUTO / MANUAL toggle — sits next to On-Air. AUTO = automated rotation (fill+play+advance);
@@ -2199,6 +2180,9 @@ export default function App() {
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}
       <footer style={{ height: 52, display: "flex", alignItems: "center", padding: "0 10px", gap: 0, background: "var(--bg-secondary)", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        {/* Station switcher — moved here from the header */}
+        <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
+        <div style={{ width: 1, height: 24, background: "var(--border-primary)", margin: "0 8px" }} />
         {/* NOMINAL health indicator — same height as tabs */}
         <HealthStatusDot onClick={() => setPanel("health")} height={36} />
         {/* Clear queue — moved here from the (removed) queue header */}
@@ -2252,18 +2236,6 @@ export default function App() {
             </span>
           )}
         </div>
-        {/* LIVE nav — only when not on live panel */}
-        {panel !== "live" && (
-          <button onClick={() => setPanel("live")} title="Back to Live" style={{
-            height: 36, padding: "0 10px", marginRight: 8, borderRadius: 0,
-            background: "var(--accent-cyan)", border: "none",
-            color: "#000", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
-            cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
-          }}>
-            <svg width="7" height="8" viewBox="0 0 8 10" fill="currentColor"><polygon points="0,0 8,5 0,10"/></svg>
-            LIVE
-          </button>
-        )}
         {/* Broadcast (profanity) delay — arm builds the cushion; bar shows buffer fill */}
         <button onClick={toggleDelay} title={delayArmed ? "Broadcast delay armed — click to disarm" : "Arm broadcast (profanity) delay"} style={{
           height: 36, padding: "0 12px", borderRadius: 0, marginRight: 2,
