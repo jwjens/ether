@@ -531,15 +531,9 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                         onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.filter = "brightness(1.25)"; }}
                         onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.filter = ""; }}
                       >
-                        <div style={{ fontSize: 9, fontWeight: 800, color: "#fff", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "0.02em" }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "0.01em" }}>
                           {show.name}
                         </div>
-                        {clampDur >= 1.5 && (
-                          <div style={{ fontSize: 8, color: "rgba(255,255,255,0.75)", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {fmtHour(start)}–{fmtHour(end >= 24 ? 0 : end)}
-                            {show.clock_name ? ` · ${show.clock_name}` : ""}
-                          </div>
-                        )}
                         {showTracks && blockSongs.length > 0 && clampDur >= 1 && (
                           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 3 }}>
                             {blockSongs.map((s, i) => (
