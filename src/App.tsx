@@ -524,7 +524,7 @@ export default function App() {
   const [showCarts, setShowCarts] = useState(false);
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
-  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar">(null);
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone">(null);
   // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
   // operator can dump before audio airs; DUMP becomes active once the buffer is full.
   const DELAY_SEC = 8;
@@ -2240,6 +2240,7 @@ export default function App() {
           { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
           { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
           { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
+          { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
         ] as const).map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
@@ -3409,9 +3410,11 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 ? <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 16px" }}>{libraryDock}</div>
                 : progPanel === "calendar"
                   ? <BroadcastCalendar />
-                  : progPanel
-                    ? <Scheduler defaultTab={progPanel} embedded />
-                    : <BoutiqueCartWall deckSlot="C" variant="strip" />}
+                  : progPanel === "phone"
+                    ? <PhoneDesk onClose={() => setProgPanel(null)} />
+                    : progPanel
+                      ? <Scheduler defaultTab={progPanel} embedded />
+                      : <BoutiqueCartWall deckSlot="C" variant="strip" />}
             </div>
           </>
         );
