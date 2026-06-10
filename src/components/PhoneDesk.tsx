@@ -23,7 +23,8 @@
  *     Encodes the raw float PCM to a WAV file at a temp path and returns the path.
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import TakeEditor from "./TakeEditor";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { DeckId } from "../audio/engine-rodio";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -733,6 +734,28 @@ export default function PhoneDesk({ onClose }: Props) {
     }
   }, [recPCM, sendTarget, sending]);
 
+  // ── Edit buffer (recorded PCM → AudioBuffer for the full editor) + send the edited clip ──
+  const editBuffer = useMemo(() => {
+    if (!recPCM) return null;
+    const b = new AudioBuffer({ length: recPCM.length, numberOfChannels: 1, sampleRate: SAMPLE_RATE });
+    b.copyToChannel(recPCM, 0);
+    return b;
+  }, [recPCM]);
+  const sendEditedToTarget = async (buf: AudioBuffer, target: SendTarget) => {
+    try {
+      const wavBuf = encodeWAV(buf.getChannelData(0) as Float32Array, buf.sampleRate);
+      const bytes  = new Uint8Array(wavBuf);
+      const appDir = await (window as any).ether.system.getAppDataDir();
+      const filePath = appDir + `/phone-recordings/phone_clip_${Date.now()}.wav`;
+      const res = await (window as any).ether.ffmpeg.writeAudio(bytes, filePath);
+      if (!res?.ok) throw new Error(res?.error ?? "writeAudio failed");
+      const title = `Phone Clip ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+      if (target === "cart") window.dispatchEvent(new CustomEvent("ether:phone-clip", { detail: { filePath, title } }));
+      else await engine.loadToDeck(target as DeckId, filePath, title, "Phone");
+    } catch (e) { console.error("[PhoneDesk] send failed:", e); alert("Send failed: " + String(e)); }
+  };
+  const discardClip = () => { setRecPCM(null); setRecState("idle"); recStateRef.current = "idle"; };
+
   // ── Save recording to disk ──
   const [saving, setSaving]     = useState(false);
   const [savedPath, setSavedPath] = useState("");
@@ -1128,27 +1151,24 @@ export default function PhoneDesk({ onClose }: Props) {
               </div>
             )}
 
-            {hasClip && (
-              <WaveformView
-                peaks={waveformPeaks}
-                duration={clipDuration}
-                cueIn={cueIn}
-                cueOut={cueOut}
-                playhead={playhead}
-                onSeek={(sec) => {
-                  setPlayhead(sec);
-                  if (previewing) startPreview(sec);
-                }}
-                onCueInChange={(sec) => setCueIn(Math.max(0, sec))}
-                onCueOutChange={(sec) => setCueOut(Math.min(clipDuration, sec))}
-                region={region}
-                onRegionChange={setRegion}
-              />
+            {hasClip && editBuffer && (
+              <div style={{ position: "absolute", inset: 0, display: "flex" }}>
+                <TakeEditor
+                  initialBuffer={editBuffer}
+                  onDiscard={discardClip}
+                  sendActions={[
+                    { label: "A", title: "Send to Deck A", onSend: b => sendEditedToTarget(b, "A") },
+                    { label: "B", title: "Send to Deck B", onSend: b => sendEditedToTarget(b, "B") },
+                    { label: "C", title: "Send to Deck C", onSend: b => sendEditedToTarget(b, "C") },
+                    { label: "CART", title: "Send to the cart wall", onSend: b => sendEditedToTarget(b, "cart") },
+                  ]}
+                />
+              </div>
             )}
           </div>
 
-          {/* Cue controls */}
-          {hasClip && (
+          {/* Cue controls — replaced by the full TakeEditor above */}
+          {false && (
             <div style={{
               display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
               borderTop: "1px solid var(--border-primary)",
