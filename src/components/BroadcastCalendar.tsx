@@ -260,10 +260,13 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         <button onClick={() => setWeekOffset(w => w + 1)} style={navBtn}>Next →</button>
         <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: 2 }}>{weekLabel}</span>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
-        <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent-cyan)", letterSpacing: "0.04em" }}>⚡ GENERATE</span>
-        <button disabled={generating} onClick={() => generate(7)}  style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Week</button>
-        <button disabled={generating} onClick={() => generate(14)} style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>2 Weeks</button>
-        <button disabled={generating} onClick={() => generate(30)} style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Month</button>
+        <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent-cyan)", letterSpacing: "0.04em" }} title="Auto-fills the airing log starting today">⚡ GENERATE FROM TODAY</span>
+        {[7, 14, 30].map(d => (
+          <button key={d} disabled={generating}
+            title={`Fill today → ${new Date(Date.now() + d * 86_400_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+            onClick={() => generate(d)}
+            style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>{d} days</button>
+        ))}
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{shows.length} show{shows.length !== 1 ? "s" : ""}</span>
@@ -317,7 +320,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             const colShows = shows.filter(s => s.days.includes(String(jsDay)));
 
             return (
-              <div key={colIdx} style={{ flex: 1, minWidth: 76, borderLeft: "1px solid var(--border-primary)", position: "relative" }}>
+              <div key={colIdx} onClick={() => openDay(colDate)} style={{ flex: 1, minWidth: 76, borderLeft: "1px solid var(--border-primary)", position: "relative", cursor: "pointer" }}>
 
                 {/* Day header — click to open the day */}
                 <div
@@ -390,7 +393,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                       <div
                         key={show.id}
                         title={`${show.name}\n${fmtHour(start)} – ${fmtHour(end >= 24 ? 0 : end)}${show.clock_name ? `\nClock: ${show.clock_name}` : ""}`}
-                        onClick={() => onShowClick?.(show.id)}
+                        onClick={() => openDay(colDate)}
                         style={{
                           position: "absolute",
                           top: clampTop * ROW_H + 1,
@@ -398,7 +401,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                           height: blockH,
                           background: color + "cc",   // 80% opacity via hex alpha
                           borderLeft: `3px solid ${color}`,
-                          cursor: onShowClick ? "pointer" : "default",
+                          cursor: "pointer",
                           overflow: "hidden",
                           padding: "3px 5px",
                           boxSizing: "border-box",
