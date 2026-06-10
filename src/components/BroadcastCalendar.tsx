@@ -205,7 +205,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           <button onClick={() => setSelectedDay(null)} style={navBtn}>← Calendar</button>
           <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>{dateLabel}{isToday ? " · Today" : ""}</span>
           {dayShow && (
-            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-cyan)", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-green)", display: "flex", alignItems: "center", gap: 6 }}>
               {dayShow.name} ({fmtHour(dayShow.startHour)}–{fmtHour(dayShow.endHour === 0 ? 24 : dayShow.endHour)})
               <button onClick={() => setDayShow(null)} title="Show the full day" style={{ ...navBtn, height: 20, padding: "0 7px", fontSize: 9 }}>full day</button>
             </span>
@@ -237,7 +237,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                       <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: it.song_id ? "var(--text-primary)" : "var(--accent-cyan)" }}>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: it.song_id ? "var(--text-primary)" : "var(--accent-green)" }}>
                         {it.title}{!it.song_id ? "  ·  voice track" : ""}
                       </span>
                       <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
@@ -288,30 +288,29 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         background: "var(--bg-secondary)",
       }}>
         {/* Month navigation — clear ‹ Month Year › */}
-        <button onClick={() => jumpMonth(-1)} title="Previous month" style={{ ...navBtn, width: 30, padding: 0, fontSize: 16, lineHeight: 1 }}>‹</button>
-        <span style={{ fontSize: 14, fontWeight: 800, minWidth: 140, textAlign: "center" as const, letterSpacing: "-0.01em" }}>{monthLabel}</span>
-        <button onClick={() => jumpMonth(1)} title="Next month" style={{ ...navBtn, width: 30, padding: 0, fontSize: 16, lineHeight: 1 }}>›</button>
+        <button onClick={() => jumpMonth(-1)} title="Previous month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: 26, fontWeight: 800, lineHeight: 1 }}>‹</button>
+        <span style={{ fontSize: 16, fontWeight: 800, minWidth: 150, textAlign: "center" as const, letterSpacing: "-0.01em" }}>{monthLabel}</span>
+        <button onClick={() => jumpMonth(1)} title="Next month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: 26, fontWeight: 800, lineHeight: 1 }}>›</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 8px" }} />
         {/* Week navigation */}
-        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={navBtn}>← Wk</button>
+        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}>← Wk</button>
         <button
           onClick={() => setWeekOffset(0)}
           style={{
-            ...navBtn,
-            color: weekOffset === 0 ? "var(--accent-cyan)" : "var(--text-secondary)",
-            borderColor: weekOffset === 0 ? "var(--accent-cyan)" : "var(--border-primary)",
+            ...navBtn, fontSize: 13, fontWeight: 800, height: 30,
+            color: weekOffset === 0 ? "var(--accent-green)" : "var(--text-secondary)",
+            borderColor: weekOffset === 0 ? "var(--accent-green)" : "var(--border-primary)",
           }}
         >Today</button>
-        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={navBtn}>Wk →</button>
+        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}>Wk →</button>
         <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginLeft: 6, letterSpacing: "-0.01em" }}>{weekLabel}</span>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{shows.length} show{shows.length !== 1 ? "s" : ""}</span>
         <button
           onClick={() => setShowTracks(t => !t)}
           style={{
             ...navBtn,
-            color: showTracks ? "var(--accent-cyan)" : "var(--text-secondary)",
-            borderColor: showTracks ? "var(--accent-cyan)" : "var(--border-primary)",
+            color: showTracks ? "var(--accent-green)" : "var(--text-secondary)",
+            borderColor: showTracks ? "var(--accent-green)" : "var(--border-primary)",
           }}
           title="Show generated schedule track counts per hour"
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
@@ -319,8 +318,8 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           onClick={() => setFullDay(f => !f)}
           style={{
             ...navBtn,
-            color: fullDay ? "var(--accent-cyan)" : "var(--text-secondary)",
-            borderColor: fullDay ? "var(--accent-cyan)" : "var(--border-primary)",
+            color: fullDay ? "var(--accent-green)" : "var(--text-secondary)",
+            borderColor: fullDay ? "var(--accent-green)" : "var(--border-primary)",
           }}
         >{fullDay ? "Daytime (5 AM–Midnight)" : "Full 24h"}</button>
         <button onClick={() => { load(); loadTrackCounts(); }} style={navBtn} title="Refresh">↻</button>
@@ -377,16 +376,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                   height: 40, display: "flex", flexDirection: "column",
                   alignItems: "center", justifyContent: "center", gap: 1,
                   borderBottom: "1px solid var(--border-primary)",
-                  background: isToday ? "rgb(from var(--accent-cyan) r g b / 0.07)" : "var(--bg-secondary)",
+                  background: isToday ? "rgb(from var(--accent-green) r g b / 0.07)" : "var(--bg-secondary)",
                   position: "sticky", top: 0, zIndex: 2, cursor: "pointer",
                 }}
-                onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgb(from var(--accent-cyan) r g b / 0.14)"; }}
-                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isToday ? "rgb(from var(--accent-cyan) r g b / 0.07)" : "var(--bg-secondary)"; }}
+                onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgb(from var(--accent-green) r g b / 0.14)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isToday ? "rgb(from var(--accent-green) r g b / 0.07)" : "var(--bg-secondary)"; }}
                 >
-                  <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: isToday ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
+                  <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: isToday ? "var(--accent-green)" : "var(--text-tertiary)" }}>
                     {label}
                   </span>
-                  <span style={{ fontSize: 19, fontWeight: 800, color: isToday ? "var(--accent-cyan)" : "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.01em" }}>
+                  <span style={{ fontSize: 19, fontWeight: 800, color: isToday ? "var(--accent-green)" : "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.01em" }}>
                     {colDate.getDate()}
                   </span>
                 </div>
@@ -401,14 +400,14 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                       height: ROW_H, borderBottom: "1px solid var(--border-secondary)",
                       boxSizing: "border-box", position: "relative",
                       background: isToday
-                        ? (h % 2 === 0 ? "rgb(from var(--accent-cyan) r g b / 0.02)" : "rgb(from var(--accent-cyan) r g b / 0.01)")
+                        ? (h % 2 === 0 ? "rgb(from var(--accent-green) r g b / 0.02)" : "rgb(from var(--accent-green) r g b / 0.01)")
                         : (h % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)"),
                     }}>
                       {count > 0 && (
                         <span style={{
                           position: "absolute", bottom: 2, right: 3,
                           fontSize: 8, fontWeight: 700, lineHeight: 1,
-                          color: "rgba(139,92,246,0.8)",
+                          color: "#34d399",
                           pointerEvents: "none",
                         }}>{count}</span>
                       )}
