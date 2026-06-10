@@ -122,6 +122,40 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     } catch {}
   };
 
+  const [generating, setGenerating] = useState(false);
+  const [genMsg, setGenMsg]         = useState("");
+
+  // Auto-generate the airing log (generated_schedule) for the next `days` days, from the
+  // station's shows + format clocks. This is what actually plays and what VoiceTracker reads.
+  const generate = async (days: number) => {
+    if (generating) return;
+    setGenerating(true); setGenMsg(`Generating ${days} days…`);
+    try {
+      const res = await (window as any).ether.invoke("schedule:generate", days);
+      const n = (res && typeof res === "object") ? (res.count ?? res.rows ?? res.inserted ?? 0) : (res ?? 0);
+      setGenMsg(`✓ Generated ${days} day${days !== 1 ? "s" : ""}${n ? ` · ${n} items` : ""}`);
+      setShowTracks(true);
+      await loadTrackCounts();
+      setTimeout(() => setGenMsg(""), 5000);
+    } catch (e: any) {
+      setGenMsg("✗ " + String(e?.message || e));
+    } finally { setGenerating(false); }
+  };
+
+  // ── Day view — click a day to open its date and see the airing log hour-by-hour ──
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  const [dayRows, setDayRows]         = useState<{ scheduled_at: number; title: string; artist: string; duration_s: number; category_id: number | null; song_id: number | null }[]>([]);
+  const [dayLoading, setDayLoading]   = useState(false);
+  const openDay = async (date: Date) => {
+    const d = new Date(date); d.setHours(0, 0, 0, 0);
+    setSelectedDay(d); setDayLoading(true); setDayRows([]);
+    try {
+      const start = Math.floor(d.getTime() / 1000), end = start + 86_400;
+      const res = await (window as any).ether.invoke("schedule:get", start, end);
+      setDayRows(Array.isArray(res?.data) ? res.data : []);
+    } catch { /* ignore */ } finally { setDayLoading(false); }
+  };
+
   useEffect(() => {
     load();
     loadTrackCounts();
@@ -129,6 +163,66 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     const tick    = setInterval(() => setNow(new Date()), 30_000);
     return () => { clearInterval(refresh); clearInterval(tick); };
   }, []);
+
+  // ── Day view render ──
+  if (selectedDay) {
+    const dayStart = Math.floor(new Date(selectedDay).setHours(0, 0, 0, 0) / 1000);
+    const byHour = new Map<number, typeof dayRows>();
+    for (const r of dayRows) {
+      const h = Math.floor((r.scheduled_at - dayStart) / 3600);
+      if (h < 0 || h > 23) continue;
+      if (!byHour.has(h)) byHour.set(h, []);
+      byHour.get(h)!.push(r);
+    }
+    const dateLabel = selectedDay.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const total = dayRows.length;
+    const isToday = sameDay(selectedDay, new Date());
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-ui, 'Inter', sans-serif)" }}>
+        {/* Day toolbar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, background: "var(--bg-secondary)" }}>
+          <button onClick={() => setSelectedDay(null)} style={navBtn}>← Calendar</button>
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>{dateLabel}{isToday ? " · Today" : ""}</span>
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""} scheduled</span>
+          <div style={{ flex: 1 }} />
+          <button onClick={() => openDay(selectedDay)} style={navBtn} title="Reload">↻</button>
+        </div>
+        {/* Hours */}
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {dayLoading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Loading…</div>
+          ) : Array.from({ length: 24 }, (_, h) => {
+            const items = byHour.get(h) || [];
+            return (
+              <div key={h} style={{ display: "flex", borderBottom: "1px solid var(--border-secondary)" }}>
+                <div style={{ width: 70, flexShrink: 0, padding: "8px 10px", textAlign: "right" as const, borderRight: "1px solid var(--border-primary)", background: "var(--bg-secondary)", fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)" }}>
+                  {fmtHour(h)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0, padding: "4px 0" }}>
+                  {items.length === 0 ? (
+                    <div style={{ padding: "8px 12px", fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>— empty —</div>
+                  ) : items.map((it, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px" }}>
+                      <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
+                        {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: it.song_id ? "var(--text-primary)" : "var(--accent-cyan)" }}>
+                        {it.title}{!it.song_id ? "  ·  voice track" : ""}
+                      </span>
+                      <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
+                      <span style={{ flexShrink: 0, width: 40, textAlign: "right" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
+                        {Math.floor((it.duration_s || 0) / 60)}:{String((it.duration_s || 0) % 60).padStart(2, "0")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   // ── Render helpers ────────────────────────────────────────────────
 
@@ -165,6 +259,12 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         >This Week</button>
         <button onClick={() => setWeekOffset(w => w + 1)} style={navBtn}>Next →</button>
         <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: 2 }}>{weekLabel}</span>
+        <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
+        <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent-cyan)", letterSpacing: "0.04em" }}>⚡ GENERATE</span>
+        <button disabled={generating} onClick={() => generate(7)}  style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Week</button>
+        <button disabled={generating} onClick={() => generate(14)} style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>2 Weeks</button>
+        <button disabled={generating} onClick={() => generate(30)} style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Month</button>
+        {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{shows.length} show{shows.length !== 1 ? "s" : ""}</span>
         <button
@@ -219,14 +319,20 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             return (
               <div key={colIdx} style={{ flex: 1, minWidth: 76, borderLeft: "1px solid var(--border-primary)", position: "relative" }}>
 
-                {/* Day header */}
-                <div style={{
+                {/* Day header — click to open the day */}
+                <div
+                  onClick={() => openDay(colDate)}
+                  title={`Open ${colDate.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })}`}
+                  style={{
                   height: 40, display: "flex", flexDirection: "column",
                   alignItems: "center", justifyContent: "center", gap: 1,
                   borderBottom: "1px solid var(--border-primary)",
                   background: isToday ? "rgb(from var(--accent-cyan) r g b / 0.07)" : "var(--bg-secondary)",
-                  position: "sticky", top: 0, zIndex: 2,
-                }}>
+                  position: "sticky", top: 0, zIndex: 2, cursor: "pointer",
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgb(from var(--accent-cyan) r g b / 0.14)"; }}
+                onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isToday ? "rgb(from var(--accent-cyan) r g b / 0.07)" : "var(--bg-secondary)"; }}
+                >
                   <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: isToday ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
                     {label}
                   </span>
