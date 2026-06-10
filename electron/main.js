@@ -4438,12 +4438,13 @@ function _buildScheduleCtx(stationId) {
 }
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
-function _generateDayRows(dayBaseDate, ctx) {
+function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
   const { stmtShows, stmtSlots, stmtCandidates, songLastTs, artistLastTs, artistSepMin, songRepeatMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
     const hourStartTs = Math.floor(slotDate.getTime() / 1000);
+    if (hourStartTs < minTs) continue; // never regenerate an hour that has already aired
     const shows = stmtShows.all(String(jsDay), activeStationId);
     const show = shows.find(s => {
       if (s.end_hour === 0 || s.end_hour === s.start_hour) return h >= s.start_hour;
@@ -4493,9 +4494,12 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
     const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
-    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(activeStationId, dayStart, dayEnd);
+    const nowTs = Math.floor(Date.now() / 1000);
+    const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600); // next top-of-hour; never the past
+    if (effStart >= dayEnd) return { ok: true, count: 0, skipped: true }; // whole day already aired — leave it
+    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(activeStationId, effStart, dayEnd);
     const ctx = _buildScheduleCtx(activeStationId);
-    _generateDayRows(dayBase, ctx);
+    _generateDayRows(dayBase, ctx, effStart);
     generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
     console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}`);
     return { ok: true, count: ctx.generatedRows.length };
