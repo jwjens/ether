@@ -234,6 +234,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       ? Array.from({ length: Math.max(1, (dayShow.endHour === 0 || dayShow.endHour <= dayShow.startHour ? 24 : dayShow.endHour) - dayShow.startHour) }, (_, i) => (dayShow.startHour + i) % 24)
       : Array.from({ length: 24 }, (_, h) => h);
     const total = dayShow ? hours.reduce((n, h) => n + (byHour.get(h)?.length || 0), 0) : dayRows.length;
+    // Current scheduled song (today only) = the last one whose start time has already passed.
+    const nowSec = Math.floor(now.getTime() / 1000);
+    let currentAt = -1;
+    if (isToday) { for (const r of dayRows) { if (r.scheduled_at <= nowSec) currentAt = r.scheduled_at; else break; } }
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-ui, 'Inter', sans-serif)" }}>
         {/* Day toolbar */}
@@ -267,20 +271,23 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 <div style={{ flex: 1, minWidth: 0, padding: "4px 0" }}>
                   {items.length === 0 ? (
                     <div style={{ padding: "8px 12px", fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>— empty —</div>
-                  ) : items.map((it, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px" }}>
-                      <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
+                  ) : items.map((it, i) => {
+                    const isNow = isToday && it.scheduled_at === currentAt;
+                    return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px", background: isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : "transparent", borderLeft: `3px solid ${isNow ? "var(--accent-green)" : "transparent"}` }}>
+                      <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isNow ? "var(--accent-green)" : "var(--text-tertiary)" }}>
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: it.song_id ? "var(--text-primary)" : "var(--accent-green)" }}>
-                        {it.title}{!it.song_id ? "  ·  voice track" : ""}
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : it.song_id ? "var(--text-primary)" : "var(--accent-green)" }}>
+                        {isNow ? "▶ " : ""}{it.title}{!it.song_id ? "  ·  voice track" : ""}
                       </span>
                       <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
                       <span style={{ flexShrink: 0, width: 40, textAlign: "right" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
                         {Math.floor((it.duration_s || 0) / 60)}:{String((it.duration_s || 0) % 60).padStart(2, "0")}
                       </span>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );
