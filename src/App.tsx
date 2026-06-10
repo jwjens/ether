@@ -71,6 +71,7 @@ import Spots from "./components/Spots";
 import MacrosPanel, { useMacroHotkeys, useMacroClock } from "./components/MacroEngine";
 import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
 import ConsoleStrip from "./components/ConsoleStrip";
+import MicChannel from "./components/MicChannel";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
 import NowPlayingSettings from "./components/NowPlayingSettings";
@@ -3295,28 +3296,12 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               );
             }
 
-            // Mic decks → ConsoleStrip in fader mode (same design as music decks)
+            // Mic decks → independent MicChannel: own device + capture + meter + output gate per slot.
+            // Up to 6 mics, each on a different physical input (device saved per slot).
             if (deckType === "mic" || slot === "mic") {
-              const micIsOn = consoleMicOn[slot] ?? false;
               return (
                 <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
-                  <ConsoleStrip
-                    label={config?.label || "MIC"}
-                    color="#ef4444"
-                    volume={consoleMicVol[slot] ?? 1}
-                    deckId="mic"
-                    isPlaying={micIsOn}
-                    isOn={micIsOn}
-                    onVolumeChange={v => {
-                      setConsoleMicVol(prev => ({ ...prev, [slot]: v }));
-                      window.dispatchEvent(new CustomEvent("ether:mic-volume", { detail: { slot, volume: v } }));
-                    }}
-                    onToggleOn={() => {
-                      const next = !micIsOn;
-                      setConsoleMicOn(prev => ({ ...prev, [slot]: next }));
-                      window.dispatchEvent(new CustomEvent("ether:mic-toggle", { detail: { slot, active: next } }));
-                    }}
-                  />
+                  <MicChannel slot={slot} label={config?.label || "MIC"} />
                 </div>
               );
             }
