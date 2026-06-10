@@ -216,7 +216,6 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: genDayBusy ? 0.5 : 1, cursor: genDayBusy ? "default" : "pointer" }}>
             {genDayBusy ? "Generating…" : "Generate"}
           </button>
-          <button onClick={() => openDay(selectedDay)} style={navBtn} title="Reload">↻</button>
         </div>
         {/* Hours */}
         <div style={{ flex: 1, overflowY: "auto" }}>
@@ -323,7 +322,6 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             borderColor: fullDay ? "var(--accent-green)" : "var(--border-primary)",
           }}
         >{fullDay ? "Daytime (5 AM–Midnight)" : "Full 24h"}</button>
-        <button onClick={() => { load(); loadTrackCounts(); }} style={navBtn} title="Refresh">↻</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
         <select value={genDays} onChange={e => setGenDays(+e.target.value)} disabled={generating}
