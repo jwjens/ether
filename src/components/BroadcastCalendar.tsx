@@ -124,6 +124,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
+  const [genDays, setGenDays]       = useState(14);
 
   // Auto-generate the airing log (generated_schedule) for the next `days` days, from the
   // station's shows + format clocks. This is what actually plays and what VoiceTracker reads.
@@ -213,7 +214,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           <div style={{ flex: 1 }} />
           <button onClick={generateThisDay} disabled={genDayBusy}
             style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: genDayBusy ? 0.5 : 1, cursor: genDayBusy ? "default" : "pointer" }}>
-            {genDayBusy ? "⏳ Generating…" : "⚡ Generate This Day"}
+            {genDayBusy ? "Generating…" : "Generate"}
           </button>
           <button onClick={() => openDay(selectedDay)} style={navBtn} title="Reload">↻</button>
         </div>
@@ -307,13 +308,15 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={navBtn}>Wk →</button>
         <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: 2 }}>{weekLabel}</span>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
-        <span style={{ fontSize: 10, fontWeight: 800, color: "var(--accent-cyan)", letterSpacing: "0.04em" }} title="Auto-fills the airing log starting today">⚡ GENERATE FROM TODAY</span>
-        {[7, 14, 30].map(d => (
-          <button key={d} disabled={generating}
-            title={`Fill today → ${new Date(Date.now() + d * 86_400_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
-            onClick={() => generate(d)}
-            style={{ ...navBtn, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>{d} days</button>
-        ))}
+        <select value={genDays} onChange={e => setGenDays(+e.target.value)} disabled={generating}
+          style={{ ...navBtn, height: 26, padding: "0 6px", cursor: "pointer", colorScheme: "dark" as const }}>
+          {[7, 14, 30, 60, 90].map(d => <option key={d} value={d}>{d} days</option>)}
+        </select>
+        <button disabled={generating} onClick={() => generate(genDays)}
+          title={`Fill today → ${new Date(Date.now() + genDays * 86_400_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
+          {generating ? "Generating…" : "Generate"}
+        </button>
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{shows.length} show{shows.length !== 1 ? "s" : ""}</span>
