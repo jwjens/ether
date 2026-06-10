@@ -104,10 +104,13 @@ export default function MicDeck({ inputDeviceId }: Props) {
 
   const startMic = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: inputDeviceId ? { deviceId: { exact: inputDeviceId } } : true,
-        video: false,
-      });
+      // Broadcast mic: disable browser DSP (AEC/AGC/NS). Default AEC — notably on Intel
+      // "Smart Sound" arrays — injects the program audio into the mic stream in perfect
+      // sync and buries the voice. Same fix as the mixer mic strip.
+      const micConstraint: any = inputDeviceId
+        ? { deviceId: { exact: inputDeviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+        : { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: micConstraint, video: false });
       streamRef.current = stream;
       const ctx = new AudioContext();
       audioCtxRef.current = ctx;

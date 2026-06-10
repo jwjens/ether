@@ -39,7 +39,10 @@ export default function MixerChannelStrip({
     if (!isMic) return;
     if (!deviceId) return;
     let cancelled = false;
-    const audioConstraint: any = { deviceId: { exact: deviceId } };
+    // Broadcast mic: disable browser DSP. Default AEC/AGC/NS — especially on Intel
+    // "Smart Sound" arrays — injects the program/render audio into the captured stream
+    // in perfect sync ("exactly parallel with the music") and crushes the actual voice.
+    const audioConstraint: any = { deviceId: { exact: deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     navigator.mediaDevices.getUserMedia({ audio: audioConstraint, video: false }).then(stream => {
       if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
       streamRef.current = stream;
