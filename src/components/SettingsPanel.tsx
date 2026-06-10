@@ -1434,6 +1434,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [devices, setDevices] = useState<{ deviceId: string; label: string; kind: string }[]>([]);
   const [currentOutput, setCurrentOutput] = useState("");
   const [currentInput, setCurrentInput] = useState("");
+  // Phone hybrid input — set once here, used by PhoneDesk (never touched on the working panel).
+  const [phoneInput, setPhoneInput] = useState<string>(() => { try { return localStorage.getItem("ether_phone_input") || ""; } catch { return ""; } });
+  const selectPhoneInput = (id: string) => { setPhoneInput(id); try { localStorage.setItem("ether_phone_input", id); } catch { /* ignore */ } };
 
   // Connections
   const [dashboardUrl, setDashboardUrl] = useState("");
@@ -1874,6 +1877,26 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
                   </button>
                 ))}
             </div>
+          </div>
+        </div>
+        {/* Phone hybrid input — set once, used by the Phone Desk */}
+        <div style={{ minWidth: 0, marginTop: 4, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Phone hybrid input</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>The interface input your phone hybrid / caller audio is connected to — used by the Phone Desk</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            {inputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No inputs found</div> :
+              inputs.map(d => (
+                <button key={d.deviceId} onClick={() => selectPhoneInput(d.deviceId)} style={{
+                  padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
+                  background: phoneInput === d.deviceId ? "rgba(136,104,216,0.14)" : "var(--bg-tertiary)",
+                  border: "1px solid " + (phoneInput === d.deviceId ? "#8868D8" : "var(--border-primary)"),
+                  color: phoneInput === d.deviceId ? "#a78bfa" : "var(--text-secondary)",
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
+                  {phoneInput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
+                </button>
+              ))}
           </div>
         </div>
         <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>

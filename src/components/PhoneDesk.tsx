@@ -465,7 +465,8 @@ export default function PhoneDesk({ onClose }: Props) {
       .then(devs => {
         const inputs = devs.filter((d: any) => d.is_input !== false);
         setDevices(inputs);
-        const def = inputs.find(d => d.is_default) || inputs[0];
+        let saved = ""; try { saved = localStorage.getItem("ether_phone_input") || ""; } catch { /* ignore */ }
+        const def = inputs.find(d => d.id === saved) || inputs.find(d => d.is_default) || inputs[0];
         if (def) setSelectedDevice(def.id);
       })
       .catch(() => {
@@ -473,7 +474,9 @@ export default function PhoneDesk({ onClose }: Props) {
         navigator.mediaDevices.enumerateDevices().then(devs => {
           const inputs = devs.filter(d => d.kind === "audioinput");
           setDevices(inputs.map(d => ({ id: d.deviceId, name: d.label || d.deviceId.slice(0, 16), is_default: d.deviceId === "default" })));
-          if (inputs.length > 0) setSelectedDevice(inputs[0].deviceId);
+          let saved = ""; try { saved = localStorage.getItem("ether_phone_input") || ""; } catch { /* ignore */ }
+          const pick = inputs.find(d => d.deviceId === saved) || inputs[0];
+          if (pick) setSelectedDevice(pick.deviceId);
         }).catch(() => {});
       });
   }, []);
