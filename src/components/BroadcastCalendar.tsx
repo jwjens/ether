@@ -362,11 +362,11 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
       {/* ── Calendar grid ── */}
       {viewMode === "month" ? (
-        <div style={{ flex: 1, overflow: "auto", padding: 12, background: "var(--bg-primary)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: 12, background: "var(--bg-primary)", display: "flex", flexDirection: "column" as const }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4, flexShrink: 0 }}>
             {DAY_LABELS.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: "var(--text-secondary)", letterSpacing: "0.1em" }}>{d}</div>)}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "minmax(96px, 1fr)", gap: 4 }}>
+          <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "1fr", gap: 4 }}>
             {monthCells.map((cell, i) => {
               if (!cell) return <div key={i} style={{ background: "var(--bg-secondary)", opacity: 0.25 }} />;
               const jsDay = cell.getDay();
@@ -380,11 +380,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                     <span style={{ fontSize: 15, fontWeight: 800, color: cellToday ? "var(--accent-green)" : "var(--text-primary)" }}>{cell.getDate()}</span>
                     {cellCount > 0 && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399" }}>{cellCount}</span>}
                   </div>
-                  {cellShows.slice(0, 4).map(s => (
+                  {cellShows.map(s => (
                     <div key={s.id} onClick={(e) => { e.stopPropagation(); openDay(cell, s); }} title={s.name}
-                      style={{ fontSize: 8, fontWeight: 700, color: "#fff", background: (s.color || "#3b82f6") + "cc", borderLeft: `2px solid ${s.color || "#3b82f6"}`, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, cursor: "pointer" }}>{s.name}</div>
+                      style={{ flex: 1, minHeight: 14, display: "flex", alignItems: "center", fontSize: 9, fontWeight: 700, color: "#fff", background: (s.color || "#3b82f6") + "cc", borderLeft: `2px solid ${s.color || "#3b82f6"}`, padding: "0 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, cursor: "pointer" }}>{s.name}</div>
                   ))}
-                  {cellShows.length > 4 && <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>+{cellShows.length - 4}</div>}
                 </div>
               );
             })}
