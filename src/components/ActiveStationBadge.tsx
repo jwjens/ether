@@ -93,7 +93,7 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
       {/* Dropdown */}
       {open && (
         <div style={{
-          position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 999,
+          position: "absolute", bottom: "calc(100% + 4px)", left: 0, zIndex: 999,
           background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
           minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
           fontFamily: "'Inter', system-ui, sans-serif",
