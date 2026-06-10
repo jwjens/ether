@@ -1631,8 +1631,11 @@ export default function App() {
       <KeyboardHelp />
       <TrialGate />
 
-      {/* ── Header ── */}
-      <header style={{ height: viewport.isTablet ? 48 : 56, display: "flex", alignItems: "center", padding: "0 12px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+      {/* ── Header — 3-column grid (1fr | clock | 1fr) keeps the clock mathematically centered ── */}
+      <header style={{ height: viewport.isTablet ? 48 : 56, display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 12px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
+
+        {/* LEFT zone: show name + search (search shrinks/clips; never reaches the centered clock) */}
+        <div style={{ display: "flex", alignItems: "center", minWidth: 0, alignSelf: "stretch" }}>
 
         {/* Show name — top-left (replaces the old logo). Click returns to Mixer. */}
         <div
@@ -1664,17 +1667,15 @@ export default function App() {
             </button>
           )}
         </div>
+        </div>{/* LEFT zone close */}
 
-        {/* CENTER: Clock — flexes to fill the space between search and the right controls so it's
-            always centered in the available room and never overlapped/clipped by the search box. */}
-        {(viewport.clockSize as string) !== "hidden" && (
-          <div style={{ flex: "1 1 auto", minWidth: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, zIndex: 0, pointerEvents: "none", whiteSpace: "nowrap" as const, padding: "0 12px" }}>
-            <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
-          </div>
-        )}
+        {/* CENTER: Clock — grid cell, mathematically centered with equal space on both sides */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, whiteSpace: "nowrap" as const, padding: "0 12px", pointerEvents: "none" }}>
+          <ClockDisplay size={viewport.clockSize} accentColor={nowPlayingDeckColor} />
+        </div>
 
         {/* RIGHT: Status + Pro + Admin + ☰ menu + ON AIR */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", minWidth: 0, zIndex: 1 }}>
           {videoLive && panel !== "videostudio" && (
             <button
               onClick={() => setPanel("videostudio")}
