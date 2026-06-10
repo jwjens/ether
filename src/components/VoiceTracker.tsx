@@ -418,7 +418,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   const editRafRef   = useRef<number>(0);
   const editStartRef = useRef(0);
   const editPlayheadRef = useRef(0);
-  const markRef      = useRef<number | null>(null);   // VoxPro-style pending mark (M sets in, next M sets out)
+  const markRef      = useRef<number | null>(null);   // pending mark (M sets in, next M sets out)
   useEffect(() => { editPlayheadRef.current = editPlayhead; }, [editPlayhead]);
   const [zoomLevel, setZoomLevel] = useState(1);   // 1 | 4 | 10
   const [viewStart, setViewStart] = useState(0);   // seconds — left edge of the zoom window
@@ -788,7 +788,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
         else if (editing) { if (editSrcRef.current) stopEditPlayback(); else playEdit(); }
         else startRecording();
       } else if (editing && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
-        // Nudge the playhead (VoxPro-style scrub). Shift = 1s, plain = 0.1s.
+        // Nudge the playhead (scrub). Shift = 1s, plain = 0.1s.
         e.preventDefault();
         stopEditPlayback();
         const delta = (e.code === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 0.1);
@@ -797,17 +797,17 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
       } else if (editing && e.code === "KeyQ") {
         e.preventDefault(); cycleZoom();
       } else if (editing && e.code === "BracketLeft") {
-        // VoxPro Mark In ([) — set the left edge of the selection at the playhead.
+        // Mark In ([) — set the left edge of the selection at the playhead.
         e.preventDefault();
         const ph = editPlayheadRef.current;
         setSelection(sel => ({ start: ph, end: Math.max(ph, sel?.end ?? ph) }));
       } else if (editing && e.code === "BracketRight") {
-        // VoxPro Mark Out (]) — set the right edge of the selection at the playhead.
+        // Mark Out (]) — set the right edge of the selection at the playhead.
         e.preventDefault();
         const ph = editPlayheadRef.current;
         setSelection(sel => ({ start: Math.min(ph, sel?.start ?? ph), end: ph }));
       } else if (editing && e.code === "KeyK") {
-        // VoxPro deselect.
+        // Deselect.
         e.preventDefault(); setSelection(null); markRef.current = null;
       } else if (editing && e.code === "KeyM") {
         // Convenience toggle-mark (first M = in, second M = out → selection).

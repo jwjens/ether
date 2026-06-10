@@ -329,7 +329,7 @@ export default function ClipEditor() {
       if (!filePath) return;
       const resp = await fetch(clipUrl);
       const buf  = await resp.arrayBuffer();
-      await (window as any).ether.invoke("voxpro:writeAudio", {
+      await (window as any).ether.invoke("media:writeAudio", {
         data: Array.from(new Uint8Array(buf)),
         filePath,
       });

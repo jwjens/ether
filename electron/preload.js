@@ -170,9 +170,9 @@ contextBridge.exposeInMainWorld("ether", {
     mixAudio:     (opts) => ipcRenderer.invoke("ffmpeg:mix-audio", opts),
     bounceVideo:  (audioPath, videoPath, outputPath) => ipcRenderer.invoke("ffmpeg:bounce-video", { audioPath, videoPath, outputPath }),
     export:       (sourcePath, defaultName, filters) => ipcRenderer.invoke("ffmpeg:export", { sourcePath, defaultName, filters }),
-    writeAudio:   (data, filePath) => ipcRenderer.invoke("voxpro:writeAudio", { data, filePath }),
-    getSaveDir:   () => ipcRenderer.invoke("voxpro:getSaveDir"),
-    getTempDir:   () => ipcRenderer.invoke("voxpro:getTempDir"),
+    writeAudio:   (data, filePath) => ipcRenderer.invoke("media:writeAudio", { data, filePath }),
+    getSaveDir:   () => ipcRenderer.invoke("media:getSaveDir"),
+    getTempDir:   () => ipcRenderer.invoke("media:getTempDir"),
   },
   // ── Video engine (renderer composites; main spawns ffmpeg for RTMP/MP4) ─
   video: {

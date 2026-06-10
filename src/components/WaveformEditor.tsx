@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback } from "react";
 
-// Voice-track editor waveform — Audacity/VoxPro style: click-drag to SELECT, click to seek.
+// Voice-track editor waveform — Audacity-style: click-drag to SELECT, click to seek.
 // Renders a VIEW WINDOW [viewStart, viewEnd] of the take (for zoom); `peaks` are already
 // extracted for that window. Times (playhead/selection) map through the window.
 

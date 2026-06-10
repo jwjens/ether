@@ -3017,7 +3017,7 @@ ipcMain.handle("studio:rtmp:delete", (_, id) => {
   return { ok: true };
 });
 
-// ── VoxPro / FFmpeg ───────────────────────────────────────────
+// ── Audio I/O / FFmpeg ───────────────────────────────────────────
 let ffmpegBin = null;
 try {
   ffmpegBin = require("ffmpeg-static");
@@ -3131,8 +3131,8 @@ function runFFmpeg(args) {
   });
 }
 
-// Write raw binary (Uint8Array / Buffer) to disk — used by VoxPro to persist recorded audio
-ipcMain.handle("voxpro:writeAudio", (_, { data, filePath }) => {
+// Write raw binary (Uint8Array / Buffer) to disk — used to persist recorded audio
+ipcMain.handle("media:writeAudio", (_, { data, filePath }) => {
   try {
     const dir = path.dirname(filePath);
     fs.mkdirSync(dir, { recursive: true });
@@ -3188,7 +3188,7 @@ ipcMain.handle("ffmpeg:bounce-video", async (_, { audioPath, videoPath, outputPa
 // Export: open save dialog and copy the rendered file there
 ipcMain.handle("ffmpeg:export", async (_, { sourcePath, defaultName, filters }) => {
   const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: path.join(app.getPath("downloads"), defaultName || "voxpro-export"),
+    defaultPath: path.join(app.getPath("downloads"), defaultName || "clip-export"),
     filters: filters || [{ name: "Audio Files", extensions: ["mp3"] }],
   });
   if (result.canceled || !result.filePath) return null;
@@ -3196,16 +3196,16 @@ ipcMain.handle("ffmpeg:export", async (_, { sourcePath, defaultName, filters }) 
   return result.filePath;
 });
 
-// Return the VoxPro auto-save directory path
-ipcMain.handle("voxpro:getSaveDir", () => {
-  const dir = path.join(app.getPath("userData"), "voxpro");
+// Return the clip auto-save directory path
+ipcMain.handle("media:getSaveDir", () => {
+  const dir = path.join(app.getPath("userData"), "clips");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 });
 
 // Return a temp directory path for intermediate files
-ipcMain.handle("voxpro:getTempDir", () => {
-  const dir = path.join(app.getPath("temp"), "ether-voxpro");
+ipcMain.handle("media:getTempDir", () => {
+  const dir = path.join(app.getPath("temp"), "ether-clips");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 });
