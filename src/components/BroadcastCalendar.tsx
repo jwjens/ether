@@ -314,14 +314,6 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           }}
           title="Show generated schedule track counts per hour"
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
-        <button
-          onClick={() => setFullDay(f => !f)}
-          style={{
-            ...navBtn,
-            color: fullDay ? "var(--accent-green)" : "var(--text-secondary)",
-            borderColor: fullDay ? "var(--accent-green)" : "var(--border-primary)",
-          }}
-        >{fullDay ? "Daytime (5 AM–Midnight)" : "Full 24h"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
         <select value={genDays} onChange={e => setGenDays(+e.target.value)} disabled={generating}
