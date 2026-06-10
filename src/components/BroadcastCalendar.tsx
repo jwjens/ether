@@ -364,7 +364,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       {viewMode === "month" ? (
         <div style={{ flex: 1, overflow: "auto", padding: 12, background: "var(--bg-primary)" }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
-            {DAY_LABELS.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: 10, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: "0.08em" }}>{d}</div>)}
+            {DAY_LABELS.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: "var(--text-secondary)", letterSpacing: "0.1em" }}>{d}</div>)}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "minmax(96px, 1fr)", gap: 4 }}>
             {monthCells.map((cell, i) => {
@@ -436,7 +436,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgb(from var(--accent-green) r g b / 0.14)"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isToday ? "rgb(from var(--accent-green) r g b / 0.07)" : "var(--bg-secondary)"; }}
                 >
-                  <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: isToday ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: isToday ? "var(--accent-green)" : "var(--text-secondary)" }}>
                     {label}
                   </span>
                   <span style={{ fontSize: 19, fontWeight: 800, color: isToday ? "var(--accent-green)" : "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.01em" }}>
