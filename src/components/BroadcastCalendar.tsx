@@ -127,6 +127,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
+  const [viewMode, setViewMode]     = useState<"week" | "month">("week");
 
   // Generate the airing log (generated_schedule) for exactly the WEEK or MONTH being viewed,
   // by regenerating each of its days (per-day clear+rebuild — no full wipe).
@@ -283,6 +284,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   // Month navigation — the viewed week's "owning" month (its Thursday), with ‹ › to step months.
   const weekMid    = new Date(monday.getTime() + 3 * 86_400_000);
   const monthLabel = weekMid.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  // Month-view cells (Monday-aligned, padded to full weeks)
+  const monthCells: (Date | null)[] = [];
+  if (viewMode === "month") {
+    const y = weekMid.getFullYear(), mo = weekMid.getMonth();
+    const lead = (new Date(y, mo, 1).getDay() + 6) % 7;
+    const dim = new Date(y, mo + 1, 0).getDate();
+    for (let i = 0; i < lead; i++) monthCells.push(null);
+    for (let d = 1; d <= dim; d++) monthCells.push(new Date(y, mo, d));
+    while (monthCells.length % 7 !== 0) monthCells.push(null);
+  }
   const goToDate = (target: Date) => {
     const thisMonday = getMondayOfWeek(0);
     const t = new Date(target); const day = t.getDay();
@@ -334,15 +345,52 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
-        {/* Direct generate buttons — fill the viewed week or month */}
-        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>Generate</span>
-        <button disabled={generating} onClick={() => generate("week")} title="Generate the week you're viewing"
-          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Week</button>
-        <button disabled={generating} onClick={() => generate("month")} title="Generate the month you're viewing"
-          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>Month</button>
+        {/* Week / Month scope toggle */}
+        <div style={{ display: "flex", border: "1px solid var(--border-primary)", height: 26 }}>
+          {(["week", "month"] as const).map(s => (
+            <button key={s} onClick={() => setViewMode(s)} disabled={generating}
+              style={{ padding: "0 12px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 800, textTransform: "capitalize" as const,
+                background: viewMode === s ? "var(--accent-green)" : "transparent",
+                color: viewMode === s ? "#0a160d" : "var(--text-secondary)" }}>{s}</button>
+          ))}
+        </div>
+        <button disabled={generating} onClick={() => generate(viewMode)} title={`Generate the viewed ${viewMode}`}
+          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
+          {generating ? "Generating…" : "Generate"}
+        </button>
       </div>
 
       {/* ── Calendar grid ── */}
+      {viewMode === "month" ? (
+        <div style={{ flex: 1, overflow: "auto", padding: 12, background: "var(--bg-primary)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4 }}>
+            {DAY_LABELS.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: 10, fontWeight: 800, color: "var(--text-tertiary)", letterSpacing: "0.08em" }}>{d}</div>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "minmax(96px, 1fr)", gap: 4 }}>
+            {monthCells.map((cell, i) => {
+              if (!cell) return <div key={i} style={{ background: "var(--bg-secondary)", opacity: 0.25 }} />;
+              const jsDay = cell.getDay();
+              const cellShows = shows.filter(s => s.days.includes(String(jsDay)));
+              const dk = `${cell.getFullYear()}-${cell.getMonth()}-${cell.getDate()}`;
+              const cellCount = showTracks ? Array.from(trackCounts.get(dk)?.values() || []).reduce((a, b) => a + b, 0) : 0;
+              const cellToday = sameDay(cell, now);
+              return (
+                <div key={i} onClick={() => openDay(cell)} style={{ background: "var(--bg-secondary)", border: `1px solid ${cellToday ? "var(--accent-green)" : "var(--border-primary)"}`, padding: 5, cursor: "pointer", display: "flex", flexDirection: "column" as const, gap: 2, overflow: "hidden" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: cellToday ? "var(--accent-green)" : "var(--text-primary)" }}>{cell.getDate()}</span>
+                    {cellCount > 0 && <span style={{ fontSize: 9, fontWeight: 700, color: "#34d399" }}>{cellCount}</span>}
+                  </div>
+                  {cellShows.slice(0, 4).map(s => (
+                    <div key={s.id} onClick={(e) => { e.stopPropagation(); openDay(cell, s); }} title={s.name}
+                      style={{ fontSize: 8, fontWeight: 700, color: "#fff", background: (s.color || "#3b82f6") + "cc", borderLeft: `2px solid ${s.color || "#3b82f6"}`, padding: "1px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, cursor: "pointer" }}>{s.name}</div>
+                  ))}
+                  {cellShows.length > 4 && <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>+{cellShows.length - 4}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
       <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
         <div style={{ display: "flex", minWidth: 620 }}>
 
@@ -497,6 +545,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           })}
         </div>
       </div>
+      )}
     </div>
   );
 }
