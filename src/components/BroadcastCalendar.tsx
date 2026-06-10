@@ -287,9 +287,6 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         borderBottom: "1px solid var(--border-primary)", flexShrink: 0,
         background: "var(--bg-secondary)",
       }}>
-        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "-0.01em", marginRight: 6 }}>
-          Broadcast Calendar
-        </span>
         {/* Month navigation — clear ‹ Month Year › */}
         <button onClick={() => jumpMonth(-1)} title="Previous month" style={{ ...navBtn, width: 30, padding: 0, fontSize: 16, lineHeight: 1 }}>‹</button>
         <span style={{ fontSize: 14, fontWeight: 800, minWidth: 140, textAlign: "center" as const, letterSpacing: "-0.01em" }}>{monthLabel}</span>
@@ -306,18 +303,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           }}
         >Today</button>
         <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={navBtn}>Wk →</button>
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: 2 }}>{weekLabel}</span>
-        <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
-        <select value={genDays} onChange={e => setGenDays(+e.target.value)} disabled={generating}
-          style={{ ...navBtn, height: 26, padding: "0 6px", cursor: "pointer", colorScheme: "dark" as const }}>
-          {[7, 14, 30, 60, 90].map(d => <option key={d} value={d}>{d} days</option>)}
-        </select>
-        <button disabled={generating} onClick={() => generate(genDays)}
-          title={`Fill today → ${new Date(Date.now() + genDays * 86_400_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
-          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
-          {generating ? "Generating…" : "Generate"}
-        </button>
-        {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
+        <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginLeft: 6, letterSpacing: "-0.01em" }}>{weekLabel}</span>
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{shows.length} show{shows.length !== 1 ? "s" : ""}</span>
         <button
@@ -338,6 +324,17 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           }}
         >{fullDay ? "Daytime (5 AM–Midnight)" : "Full 24h"}</button>
         <button onClick={() => { load(); loadTrackCounts(); }} style={navBtn} title="Refresh">↻</button>
+        <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
+        {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
+        <select value={genDays} onChange={e => setGenDays(+e.target.value)} disabled={generating}
+          style={{ ...navBtn, height: 26, padding: "0 6px", cursor: "pointer", colorScheme: "dark" as const }}>
+          {[7, 14, 30, 60, 90].map(d => <option key={d} value={d}>{d} days</option>)}
+        </select>
+        <button disabled={generating} onClick={() => generate(genDays)}
+          title={`Fill today → ${new Date(Date.now() + genDays * 86_400_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+          style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
+          {generating ? "Generating…" : "Generate"}
+        </button>
       </div>
 
       {/* ── Calendar grid ── */}
@@ -389,7 +386,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                   <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: isToday ? "var(--accent-cyan)" : "var(--text-tertiary)" }}>
                     {label}
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: isToday ? "var(--accent-cyan)" : "var(--text-secondary)", lineHeight: 1 }}>
+                  <span style={{ fontSize: 19, fontWeight: 800, color: isToday ? "var(--accent-cyan)" : "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.01em" }}>
                     {colDate.getDate()}
                   </span>
                 </div>
