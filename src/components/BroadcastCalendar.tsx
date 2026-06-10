@@ -77,7 +77,9 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const [fullDay, setFullDay]       = useState(true);
   const [now, setNow]               = useState(new Date());
   const [trackCounts, setTrackCounts] = useState<TrackCounts>(new Map());
+  const [scheduleByDay, setScheduleByDay] = useState<Map<string, { scheduled_at: number; title: string; artist: string; song_id: number | null }[]>>(new Map());
   const [showTracks, setShowTracks] = useState(false);
+  const [viewMode, setViewMode]     = useState<"week" | "month">("week");
 
   const MIN_HOUR    = fullDay ? 0 : 5;
   const MAX_HOUR    = 24;
@@ -105,29 +107,39 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     } catch { /* ignore — DB may not be ready yet on first render */ }
   };
 
+  // Load the viewed range's schedule once: per-hour counts AND the songs grouped by local day
+  // (so the week-view blocks can list their songs). Keyed local so it lines up with the grid.
   const loadTrackCounts = async () => {
     try {
-      // Cover a wide window so future-generated weeks/months show their counts too.
-      const nowTs = Math.floor(Date.now() / 1000);
-      const result = await (window as any).ether.invoke("schedule:get", nowTs - 7 * 86_400, nowTs + 120 * 86_400);
+      const mon = getMondayOfWeek(weekOffset);
+      let startMs: number, endMs: number;
+      if (viewMode === "month") {
+        const mid = new Date(mon.getTime() + 3 * 86_400_000);
+        startMs = new Date(mid.getFullYear(), mid.getMonth(), 1).getTime() - 7 * 86_400_000;
+        endMs   = new Date(mid.getFullYear(), mid.getMonth() + 1, 1).getTime() + 7 * 86_400_000;
+      } else {
+        startMs = mon.getTime();
+        endMs   = mon.getTime() + 7 * 86_400_000;
+      }
+      const result = await (window as any).ether.invoke("schedule:get", Math.floor(startMs / 1000), Math.floor(endMs / 1000));
       if (!result?.data) return;
       const counts: TrackCounts = new Map();
-      for (const row of result.data as { scheduled_at: number }[]) {
-        // Key by LOCAL date + LOCAL hour so they line up with the grid (which is local).
+      const byDay = new Map<string, { scheduled_at: number; title: string; artist: string; song_id: number | null }[]>();
+      for (const row of result.data as { scheduled_at: number; title: string; artist: string; song_id: number | null }[]) {
         const d = new Date(row.scheduled_at * 1000);
-        const dayKey  = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-        const hourKey = d.getHours();
+        const dayKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
         if (!counts.has(dayKey)) counts.set(dayKey, new Map());
-        const h = counts.get(dayKey)!;
-        h.set(hourKey, (h.get(hourKey) || 0) + 1);
+        const hm = counts.get(dayKey)!; hm.set(d.getHours(), (hm.get(d.getHours()) || 0) + 1);
+        if (!byDay.has(dayKey)) byDay.set(dayKey, []);
+        byDay.get(dayKey)!.push(row);
       }
       setTrackCounts(counts);
+      setScheduleByDay(byDay);
     } catch {}
   };
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
-  const [viewMode, setViewMode]     = useState<"week" | "month">("week");
 
   // Generate the airing log (generated_schedule) for exactly the WEEK or MONTH being viewed,
   // by regenerating each of its days (per-day clear+rebuild — no full wipe).
@@ -194,11 +206,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   useEffect(() => {
     load();
-    loadTrackCounts();
-    const refresh = setInterval(() => { load(); loadTrackCounts(); }, 60_000);
-    const tick    = setInterval(() => setNow(new Date()), 30_000);
-    return () => { clearInterval(refresh); clearInterval(tick); };
+    const tick = setInterval(() => setNow(new Date()), 30_000);
+    return () => clearInterval(tick);
   }, []);
+
+  // Reload the schedule (counts + songs) whenever the viewed range changes, plus a slow refresh.
+  useEffect(() => {
+    loadTrackCounts();
+    const refresh = setInterval(() => loadTrackCounts(), 60_000);
+    return () => clearInterval(refresh);
+  }, [weekOffset, viewMode]);
 
   // ── Day view render ──
   if (selectedDay) {
@@ -484,6 +501,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                     const clampDur = Math.min(topH + durH, VISIBLE_H) - clampTop; // clip BOTH top & bottom
                     const blockH   = Math.max(16, clampDur * ROW_H - 2);
                     const color    = show.color || "#3b82f6";
+                    const blockSongs = showTracks
+                      ? (scheduleByDay.get(`${colDate.getFullYear()}-${colDate.getMonth()}-${colDate.getDate()}`) || [])
+                          .filter(r => { const hr = new Date(r.scheduled_at * 1000).getHours(); const e2 = end >= 24 ? 24 : end; return hr >= start && hr < e2; })
+                      : [];
 
                     return (
                       <div
@@ -517,6 +538,15 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                           <div style={{ fontSize: 8, color: "rgba(255,255,255,0.75)", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                             {fmtHour(start)}–{fmtHour(end >= 24 ? 0 : end)}
                             {show.clock_name ? ` · ${show.clock_name}` : ""}
+                          </div>
+                        )}
+                        {showTracks && blockSongs.length > 0 && clampDur >= 1 && (
+                          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 3 }}>
+                            {blockSongs.map((s, i) => (
+                              <div key={i} style={{ fontSize: 8, color: "rgba(255,255,255,0.92)", lineHeight: 1.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                <span style={{ opacity: 0.6, fontFamily: "'DM Mono', monospace" }}>{new Date(s.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span> {s.title}
+                              </div>
+                            ))}
                           </div>
                         )}
                       </div>
