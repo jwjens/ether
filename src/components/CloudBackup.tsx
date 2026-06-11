@@ -199,6 +199,20 @@ export default function CloudBackup() {
     setR2Running(false);
   };
 
+  // ── Song library (audio files) → R2, via the existing libraryR2.upload pipeline ──
+  const [libUploading, setLibUploading] = useState(false);
+  const [libProgress, setLibProgress]   = useState<{ done: number; total: number }>({ done: 0, total: 0 });
+  const uploadLibrary = async () => {
+    setLibUploading(true); setLibProgress({ done: 0, total: 0 });
+    const offP = (window as any).ether.libraryR2.onUploadProgress((v: any) => setLibProgress({ done: v.done ?? 0, total: v.total ?? 0 }));
+    const offD = (window as any).ether.libraryR2.onUploadDone((v: any) => {
+      setLibUploading(false); offP?.(); offD?.();
+      setR2Status({ msg: `✓ Library uploaded — ${v.done ?? 0} files${v.errors ? `, ${v.errors} errors` : ""}`, type: v.errors ? "err" : "ok" });
+    });
+    try { await (window as any).ether.libraryR2.upload(); }
+    catch (e: any) { setLibUploading(false); offP?.(); offD?.(); setR2Status({ msg: "Library upload failed: " + e.message, type: "err" }); }
+  };
+
   const loadBackups = useCallback(async () => {
     if (!licenseKey || !stationId) return;
     setLoading(true);
@@ -458,6 +472,22 @@ export default function CloudBackup() {
             <button onClick={runR2Backup} disabled={r2Running}
               style={{ padding: "7px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: r2Running ? "var(--bg-tertiary)" : "#f97316", color: r2Running ? "var(--text-tertiary)" : "#000", border: "none", cursor: r2Running ? "default" : "pointer", transition: "all 0.15s" }}>
               {r2Running ? "⏳ Backing up..." : "▲ Backup to R2 Now"}
+            </button>
+          </div>
+
+          {/* Song library (audio files) → cloud — restored upload button */}
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 3 }}>Song Library → Cloud</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.5 }}>
+              Upload your audio files to your R2 bucket so a new install can sync the whole library down after sign-in.
+            </div>
+            <button onClick={uploadLibrary} disabled={libUploading}
+              style={{ padding: "8px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700,
+                background: libUploading ? "var(--bg-tertiary)" : "#f97316", color: libUploading ? "var(--text-tertiary)" : "#000",
+                border: "none", cursor: libUploading ? "default" : "pointer" }}>
+              {libUploading
+                ? `⏳ Uploading library… ${libProgress.done}${libProgress.total ? ` / ${libProgress.total}` : ""}`
+                : "▲ Back Up Song Library to Cloud"}
             </button>
           </div>
 
