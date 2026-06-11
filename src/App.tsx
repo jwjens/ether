@@ -1335,7 +1335,10 @@ export default function App() {
         if (!row || !row.saved_at) return;
         if (Date.now() / 1000 - row.saved_at > 3600) return;
         const queue: { filePath: string; title: string; artist: string; durationMs?: number }[] = JSON.parse(row.queue_json || '[]');
-        if (queue.length > 0) {
+        // Only restore the saved queue in MANUAL. In AUTO the generated_schedule is the single
+        // source — the startup timer loads it from now — so restoring last session's queue here
+        // would mix stale/non-scheduled songs into the plan (queue ≠ calendar). Skip it.
+        if (queue.length > 0 && !autoAdv) {
           // Enrich any queue items missing durationMs from the songs table
           const paths = queue.filter(i => !i.durationMs).map(i => i.filePath);
           if (paths.length > 0) {

@@ -514,9 +514,10 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
           introEnd:   s.intro_end ?? undefined,
           outroStart: s.outro_start ?? undefined,
           durationMs: s.duration_ms ?? 0,
+          scheduledAt: s.scheduled_at,   // generated_schedule row identity — single source for the calendar
         } : null;
       }));
-      const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string }[];
+      const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string; durationMs?: number; scheduledAt?: number }[];
       if (items.length > 0) {
         engine.addToQueue(items);
         console.log(`[loggen] fillQueue: source=generated_schedule | ${items.length} tracks`);
