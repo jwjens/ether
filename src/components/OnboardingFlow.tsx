@@ -18,6 +18,7 @@ type OnboardingState =
   | 'create'             // Screen 2a — POST /account/create
   | 'connect'            // Screen 2b — POST /account/connect
   | 'pickStation'        // Screen 3  — list from /account/connect
+  | 'cloudSync'          // Sign-in on a fresh machine — pull account stations from the cloud
   | 'addStation'         // Screen 3b — POST /account/add-station
   | 'experienceMode'     // bolted, restyled FirstRunWizard step 0
   | 'venueType'          // bolted, restyled FirstRunWizard step 1
@@ -151,6 +152,15 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const [chosenExperience, setChosenExperience] = useState<string | null>(null);
   const [chosenVenue,      setChosenVenue]      = useState<string | null>(null);
   const [displayTagline,   setDisplayTagline]   = useState('');
+
+  // ── Cloud-sync step (sign-in on a fresh machine) ─────────────
+  // Returning user on a new computer: offer to pull the account's stations
+  // (profiles, color theme, shows, calendar, rotation schedules) from the
+  // cloud DB backup before forcing a new profile. syncSel = the uuids the
+  // operator chose to keep visible; phase drives the install/progress UI.
+  const [syncSel,   setSyncSel]   = useState<Set<string>>(new Set());
+  const [syncPhase, setSyncPhase] = useState<'choose' | 'installing' | 'error'>('choose');
+  const [syncMsg,   setSyncMsg]   = useState('');
 
   // ── Resumption ───────────────────────────────────────────────
   // True until the on-mount KV read completes. Renders an empty dark
@@ -333,21 +343,109 @@ export default function OnboardingFlow({ onComplete }: Props) {
     return data.license_key as string;
   };
 
-  // Sign in = returning user. The account and its stations already exist (station
-  // management lives inside Ether, not here), so skip the station picker and the
-  // bolted experience/venue/name/audio/pull screens entirely: authenticate, mark
-  // first-run complete, and drop straight to the profile PIN login (UserLogin).
+  // Sign in = returning user. On a FRESH machine the account already has stations
+  // in the cloud (profiles, theme, shows, calendar, rotations) but nothing locally
+  // — so instead of dropping straight to "create a profile", offer to pull them
+  // down (the 'cloudSync' step). If the account has no stations there is nothing to
+  // sync: mark first-run complete and go straight to the profile PIN login.
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
     setAuthBusy(true); setAuthErr('');
     try {
-      await activateAndContinue(authEmail.trim(), authPassword);
+      const lk = await activateAndContinue(authEmail.trim(), authPassword);
+      setLicenseKey(lk);
+
+      // Ask the backend which stations this account already has (license-key authed).
+      let stations: OnboardingStation[] = [];
+      try {
+        const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
+        const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            license_key:  lk,
+            machine_id:   idResp?.ok ? idResp.machine_id   : '',
+            machine_name: idResp?.ok ? idResp.machine_name : '',
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (Array.isArray(data.stations)) {
+          stations = data.stations as OnboardingStation[];
+          setConnectAccountName(data.account_name || '');
+        }
+      } catch { /* network/seat error — fall through to a fresh profile setup */ }
+
+      if (stations.length > 0) {
+        setConnectStations(stations);
+        setSyncSel(new Set(stations.map(s => s.uuid))); // default: everything selected
+        setSyncPhase('choose'); setSyncMsg('');
+        setAuthBusy(false);
+        setState('cloudSync');
+        return;
+      }
+
       const kv = (window as any).ether.stationConfigKv;
       await kv.upsertByKey(stationId, 'first_run_complete', '1');
       setState('done');
     }
     catch (e: any) { setAuthErr(e?.message || 'Could not sign in.'); setAuthBusy(false); }
   };
+
+  // ── Cloud-sync handlers ──────────────────────────────────────
+  // Pull the account's whole-DB backup (immediate: profiles/theme/shows/calendar/
+  // rotations), optionally hide the stations the operator didn't pick, then pull the
+  // shared audio library and relaunch into the restored database.
+  const runCloudInstall = async (keepUuids: string[] | null) => {
+    const ether = (window as any).ether;
+    setSyncPhase('installing');
+    setSyncMsg('Downloading your station database…');
+    try {
+      let r = await ether.invoke('station:install-from-cloud', {});
+      if (!r?.ok && r?.hasData) r = await ether.invoke('station:install-from-cloud', { force: true });
+      if (!r?.ok) {
+        setSyncPhase('error');
+        setSyncMsg(r?.error || 'Could not install your station from the cloud.');
+        return;
+      }
+
+      // "Sync selected": soft-hide the stations the operator didn't choose (reuses the
+      // ghost-sweep pattern). Non-destructive — their scoped rows stay inert and the
+      // active station's profiles are the only ones UserLogin shows. Switch to the
+      // first kept station first so it is is_active=1 and never swept.
+      if (keepUuids && keepUuids.length > 0) {
+        try {
+          const keep = new Set(keepUuids);
+          const list = await ether.stations.list();
+          const rows = Array.isArray(list) ? list : [];
+          const firstKeep = rows.find((s: any) => s.uuid === keepUuids[0]);
+          if (firstKeep?.id) await ether.stations.switch(firstKeep.id);
+          const after = await ether.stations.list();
+          for (const s of (Array.isArray(after) ? after : [])) {
+            if (s.uuid && !keep.has(s.uuid) && !s.is_active) await ether.stations.delete(s.id);
+          }
+        } catch (e) { console.error('[cloudSync] prune/switch threw:', e); }
+      }
+
+      // Shared audio library (account-wide R2 pull), then relaunch into the restored DB.
+      setSyncMsg(`Database installed${r.stationName ? ` — ${r.stationName}` : ''} (${r.songs} songs). Downloading audio…`);
+      const offP = ether.libraryR2.onDownloadProgress?.((v: any) =>
+        setSyncMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
+      await ether.libraryR2.download();
+      offP?.();
+      setSyncMsg('Done. Restarting Ether…');
+      await ether.invoke('app:relaunch').catch(() => {});
+    } catch (e: any) {
+      setSyncPhase('error');
+      setSyncMsg(String(e?.message || e));
+    }
+  };
+
+  const syncAllStations = () => runCloudInstall(null);
+  const syncSelectedStations = () => { if (syncSel.size > 0) runCloudInstall([...syncSel]); };
+  const toggleSyncSel = (uuid: string) => setSyncSel(prev => {
+    const next = new Set(prev);
+    if (next.has(uuid)) next.delete(uuid); else next.add(uuid);
+    return next;
+  });
 
   const doSignUp = async () => {
     if (!authEmail.trim()) { setAuthErr('Enter your email.'); return; }
@@ -945,6 +1043,106 @@ export default function OnboardingFlow({ onComplete }: Props) {
   }
 
   // ── Screen 3 — Pick or add a station ─────────────────────────────────
+  // ── Cloud sync — pull the account's stations onto a fresh machine ────
+  if (state === 'cloudSync') {
+    // Installing / error: progress card (DB → audio → relaunch).
+    if (syncPhase !== 'choose') {
+      return (
+        <div style={OVERLAY_STYLE}>
+          <div style={GLOW_STYLE} />
+          <div style={SHELL_STYLE}>
+            <div style={{ animation: "onb-in 0.4s ease both", textAlign: "center" }}>
+              <div style={LABEL_STYLE}>Syncing from the cloud</div>
+              <h1 style={HEADING_STYLE}>{syncPhase === 'error' ? 'Sync failed' : 'Bringing your\nstation down…'}</h1>
+              <p style={{ ...SUB_STYLE, maxWidth: 460, margin: "0 auto", color: syncPhase === 'error' ? "#fca5a5" : "rgba(255,255,255,0.55)" }}>
+                {syncMsg}
+              </p>
+              {syncPhase === 'error' && (
+                <div style={{ marginTop: 24, display: "flex", justifyContent: "center", gap: 12 }}>
+                  <button
+                    onClick={() => { setSyncPhase('choose'); setSyncMsg(''); }}
+                    style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
+                  >
+                    ← Back
+                  </button>
+                  <PrimaryButton label="Retry" onClick={() => runCloudInstall(syncSel.size > 0 && syncSel.size < connectStations.length ? [...syncSel] : null)} />
+                </div>
+              )}
+            </div>
+          </div>
+          <style>{ANIMATION_CSS}</style>
+        </div>
+      );
+    }
+
+    const allSelected = syncSel.size === connectStations.length;
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <div style={LABEL_STYLE}>Welcome back{connectAccountName ? `, ${connectAccountName}` : ''}</div>
+              <h1 style={HEADING_STYLE}>Sync your stations<br />to this computer</h1>
+              <p style={SUB_STYLE}>
+                Pull your stations — profiles, color theme, shows, calendar and<br />
+                rotation schedules — down from the cloud. The music library<br />
+                downloads once, shared across them all.
+              </p>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 520, margin: "0 auto" }}>
+              {connectStations.length > 1 && (
+                <button
+                  onClick={() => setSyncSel(allSelected ? new Set() : new Set(connectStations.map(s => s.uuid)))}
+                  style={{ alignSelf: "flex-end", background: "transparent", border: "none", color: "var(--accent-cyan)", fontSize: 12, fontWeight: 700, cursor: "pointer", padding: "2px 4px" }}
+                >
+                  {allSelected ? "Clear all" : "Select all"}
+                </button>
+              )}
+              {connectStations.map(s => (
+                <StationRadioCard
+                  key={s.uuid}
+                  selected={syncSel.has(s.uuid)}
+                  onClick={() => toggleSyncSel(s.uuid)}
+                  title={`${s.frequency ? s.frequency + ' ' : ''}${s.name}`}
+                  subtitle={s.call_letters || s.nickname || undefined}
+                />
+              ))}
+            </div>
+
+            <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", flexDirection: "column", gap: 12 }}>
+              <PrimaryButton
+                label={allSelected ? `Sync all ${connectStations.length > 1 ? connectStations.length + ' stations' : 'stations'}` : `Sync ${syncSel.size} selected`}
+                onClick={allSelected ? syncAllStations : syncSelectedStations}
+                disabled={syncSel.size === 0}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                <button
+                  onClick={() => { resetForWelcomePath(); setState('addStation'); }}
+                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.12)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", flex: 1 }}
+                >
+                  + Create new station
+                </button>
+                <button
+                  onClick={async () => {
+                    const kv = (window as any).ether.stationConfigKv;
+                    await kv.upsertByKey(stationId, 'first_run_complete', '1');
+                    setState('done');
+                  }}
+                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
+                >
+                  Skip
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
   if (state === 'pickStation') {
     const onContinue = () => {
       if (!selection) return;
@@ -1404,6 +1602,7 @@ function stateLabel(s: OnboardingState): string {
     case 'create':            return 'Screen 2a — Create new account';
     case 'connect':           return 'Screen 2b — Connect to existing account';
     case 'pickStation':       return 'Screen 3 — Pick or add a station';
+    case 'cloudSync':         return 'Sync your stations from the cloud';
     case 'addStation':        return 'Screen 3b — Add a new station';
     case 'experienceMode':    return 'Choose your deck layout';
     case 'venueType':         return 'What are you using Ether for?';
