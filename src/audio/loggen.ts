@@ -520,6 +520,7 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
       const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string; durationMs?: number; scheduledAt?: number }[];
       if (items.length > 0) {
         engine.addToQueue(items);
+        (engine as any).purgeUnscheduled?.();   // schedule is authoritative — drop any live-picked/restored pollutant
         console.log(`[loggen] fillQueue: source=generated_schedule | ${items.length} tracks`);
         return items.length;
       }

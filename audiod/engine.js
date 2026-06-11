@@ -393,6 +393,13 @@ class DaemonEngine {
     const items = this._ensureIds(this._playable(fill.items));
     if (items.length) {
       this.queue.push(...items);
+      // Schedule is authoritative — once a generated_schedule fill lands, drop any live-picked /
+      // restored pollutant (no scheduledAt) so the daemon queue can ONLY hold scheduled rows.
+      if (fill.source === "generated_schedule") {
+        const before = this.queue.length;
+        this.queue = this.queue.filter(q => typeof q.scheduledAt === "number");
+        if (this.queue.length !== before) this._log("purgeUnscheduled: dropped " + (before - this.queue.length) + " non-scheduled");
+      }
       this._log("refill: +" + items.length + " from " + fill.source + " (queue=" + this.queue.length + ")");
       this.emit("queue", { stationId: this.stationId, source: fill.source, items: this.queue });
     } else {

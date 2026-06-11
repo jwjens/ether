@@ -573,6 +573,15 @@ export class AudioEngine {
   getQueue() { return [...this.queue]; }
   /** The generated_schedule scheduled_at of the row currently loaded on a deck (exact, not text-matched). */
   getDeckSched(id: DeckId | string): number | undefined { return this.deckSched[String(id)]; }
+  /** Drop any queued item that is NOT a generated_schedule row (no scheduledAt). Called after a
+   *  schedule fill so a live-picked / crash-restored pollutant can never sit in a schedule-driven
+   *  queue — the queue can then only ever contain rows the Calendar also shows. */
+  purgeUnscheduled() {
+    if (this.daemonDriven) return;   // daemon purges its own queue in its fill cycle
+    const before = this.queue.length;
+    this.queue = this.queue.filter(q => typeof q.scheduledAt === "number");
+    if (this.queue.length !== before) rotLog(`[ROT] purgeUnscheduled — dropped ${before - this.queue.length} non-scheduled item(s)`);
+  }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
   replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
     // Stage 2b: the renderer may NO LONGER push its whole queue mirror to the daemon — that echo was
