@@ -76,6 +76,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const [weekOffset, setWeekOffset] = useState(0);
   const [fullDay, setFullDay]       = useState(true);
   const [now, setNow]               = useState(new Date());
+  const [nowPlaying, setNowPlaying] = useState<{ title: string; artist: string }>({ title: "", artist: "" });
   const [trackCounts, setTrackCounts] = useState<TrackCounts>(new Map());
   const [scheduleByDay, setScheduleByDay] = useState<Map<string, { scheduled_at: number; title: string; artist: string; song_id: number | null }[]>>(new Map());
   const [showTracks, setShowTracks] = useState(false);
@@ -213,6 +214,14 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     return () => clearInterval(tick);
   }, []);
 
+  // Track what the engine is ACTUALLY playing so the day view highlights the real on-air
+  // song, not just the clock-scheduled position (broadcast from App as ether:now-playing).
+  useEffect(() => {
+    const h = (e: any) => setNowPlaying({ title: e.detail?.title || "", artist: e.detail?.artist || "" });
+    window.addEventListener("ether:now-playing", h);
+    return () => window.removeEventListener("ether:now-playing", h);
+  }, []);
+
   // Reload the schedule (counts + songs) whenever the viewed range changes, plus a slow refresh.
   useEffect(() => {
     loadTrackCounts();
@@ -237,10 +246,24 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       ? Array.from({ length: Math.max(1, (dayShow.endHour === 0 || dayShow.endHour <= dayShow.startHour ? 24 : dayShow.endHour) - dayShow.startHour) }, (_, i) => (dayShow.startHour + i) % 24)
       : Array.from({ length: 24 }, (_, h) => h);
     const total = dayShow ? hours.reduce((n, h) => n + (byHour.get(h)?.length || 0), 0) : dayRows.length;
-    // Current scheduled song (today only) = the last one whose start time has already passed.
+    // Current song (today only): prefer the row the ENGINE is actually playing — match by
+    // title, choosing the occurrence nearest the wall clock if a song repeats. Falls back to
+    // the clock-scheduled position when nothing matches (engine idle / off-schedule track).
     const nowSec = Math.floor(now.getTime() / 1000);
     let currentAt = -1;
-    if (isToday) { for (const r of dayRows) { if (r.scheduled_at <= nowSec) currentAt = r.scheduled_at; else break; } }
+    if (isToday) {
+      const npTitle = nowPlaying.title.trim().toLowerCase();
+      if (npTitle) {
+        let bestDelta = Infinity;
+        for (const r of dayRows) {
+          if ((r.title || "").trim().toLowerCase() === npTitle) {
+            const d = Math.abs(r.scheduled_at - nowSec);
+            if (d < bestDelta) { bestDelta = d; currentAt = r.scheduled_at; }
+          }
+        }
+      }
+      if (currentAt === -1) { for (const r of dayRows) { if (r.scheduled_at <= nowSec) currentAt = r.scheduled_at; else break; } }
+    }
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-ui, 'Inter', sans-serif)" }}>
         {/* Day toolbar */}
