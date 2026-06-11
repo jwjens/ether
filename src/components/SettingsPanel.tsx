@@ -3,6 +3,7 @@ const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any)
 import { query, execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
 import { processLibrary as processAllSongs, getProcessingStats } from "../audio/songAnalysis";
@@ -838,6 +839,7 @@ function DiscogsCredentialForm() {
 
 function SyncSection() {
   const { stationId } = useActiveStation();
+  const { isStation, plan } = usePlan();   // Multi-Device Sync is a NETWORK-tier feature only
   const [enabled, setEnabled]   = useState(false);
   const [dirty, setDirty]       = useState(false);
   const [stats, setStats]       = useState<{
@@ -907,7 +909,13 @@ function SyncSection() {
         </div>
       </div>
       <div style={{ padding: "16px 20px" }}>
-        <SettingRow label="Enable sync" hint="Pushes and pulls mutations every 5 seconds. Requires an active Studio or Network license.">
+        {!isStation ? (
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+            Multi-Device Sync is a <b style={{ color: "var(--accent-blue)" }}>Network</b>-plan feature{plan ? <> (your plan: <b>{plan}</b>)</> : null}. It keeps multiple Ether installs — your studio, a backup PC, a remote board op — in sync across the cloud, and lets a new install pull your whole station down. Upgrade to Network to turn it on.
+          </div>
+        ) : (
+        <>
+        <SettingRow label="Enable sync" hint="Pushes and pulls mutations every 5 seconds. Requires an active Network license.">
           <Toggle value={enabled} onChange={toggle} label="" />
         </SettingRow>
 
@@ -990,6 +998,8 @@ function SyncSection() {
           <div style={{ marginTop: 14, padding: "8px 12px", background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 12, color: "var(--accent-amber)" }}>
             Restart Ether to apply this change
           </div>
+        )}
+        </>
         )}
       </div>
     </div>
