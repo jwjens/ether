@@ -83,6 +83,7 @@ const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.dura
 const toItem = (r) => ({
   filePath: r.file_path, title: r.title, artist: r.artist_name || r.artist || "",
   durationMs: r.duration_ms || 0, introEnd: r.intro_end ?? undefined, outroStart: r.outro_start ?? undefined,
+  scheduledAt: r.scheduled_at ?? undefined,   // generated_schedule row identity (single source for the calendar)
 });
 
 function pickFromClock(db, clockId, count, hour, sepSec, stationId) {

@@ -43,6 +43,9 @@ class DaemonEngine {
     this.stateA = makeState("A"); this.stateB = makeState("B"); this.stateC = makeState("C");
     this.lastFired = {};
     this.lastReady = {};   // Stage 0: track deckReady per deck so a ready-flip re-emits a deck event.
+    // generated_schedule scheduled_at of the row on each deck — emitted with deck events so the
+    // renderer/Calendar matches the exact row (single source). Survives native state rebuilds.
+    this.deckSched = {};
     this.deckChainType = { A: "segue", B: "segue", C: "segue" };
     this.deckReady = new Set();
     // Decks an operator hand-loaded via the A/B/C buttons. Marked ready so the self-heal won't
@@ -232,7 +235,7 @@ class DaemonEngine {
     // Stage 0: deck events now carry deckReady (cued/ready) so the renderer can mirror cued state
     // instead of guessing. Emit on a status/title/position change OR a ready flip.
     if (this._changed(this.lastFired[id], st) || this.lastReady[id] !== ready) {
-      this.emit("deck", { stationId: this.stationId, deck: id, state: st, ready });
+      this.emit("deck", { stationId: this.stationId, deck: id, state: { ...st, scheduledAt: this.deckSched[id] ?? null }, ready });
     }
     this.lastFired[id] = st;
     this.lastReady[id] = ready;
@@ -433,6 +436,7 @@ class DaemonEngine {
     try { ok = this._load(id, item.filePath, item.title, item.artist, item.gainDb); }
     catch (e) { this.emit("error", { stationId: this.stationId, where: "loadToDeck", error: String(e) }); return false; }
     if (ok === false) return false;
+    this.deckSched[id] = item.scheduledAt ?? null;   // remember this deck's schedule-row identity
     this._setDeck(id, { title: item.title || "", artist: item.artist || "", filePath: item.filePath, positionSec: 0, durationSec: (item.durationMs ?? 0) / 1000, status: "idle", volume: 1 });
     this.endTriggered.delete(id);
     const d = this._dur(item.filePath);

@@ -183,6 +183,9 @@ export class AudioEngine {
         const id = m?.deck as DeckId;
         if (id !== "A" && id !== "B" && id !== "C") return;
         const st = makeState(id, m.state || {});
+        // Daemon is authoritative for the schedule-row identity too — absorb it so getDeckSched()
+        // (and the Calendar) match the exact row in daemon mode, same as in-process.
+        this.deckSched[String(id)] = typeof m.state?.scheduledAt === "number" ? m.state.scheduledAt : undefined;
         if (id === "A") this.stateA = st; else if (id === "B") this.stateB = st; else this.stateC = st;
         if (m.ready) this.deckReady.add(id); else this.deckReady.delete(id);
         this.lastFiredState[id] = st;   // keep poll()'s change-detector aligned so it doesn't double-fire
