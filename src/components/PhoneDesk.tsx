@@ -521,7 +521,7 @@ export default function PhoneDesk({ onClose }: Props) {
   // ── Streaming live waveform — draws captured peaks left-aligned so it builds
   //    left→right while recording, then scrolls (an oscilloscope, not bouncing bars). ──
   useEffect(() => {
-    if (!isRecording) return;
+    if (recState !== "recording") return;   // use recState (declared above) — isRecording is derived later
     const canvas = liveCanvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -548,7 +548,7 @@ export default function PhoneDesk({ onClose }: Props) {
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [isRecording]);
+  }, [recState]);
 
   // ── Recording timer ──
   useEffect(() => {
