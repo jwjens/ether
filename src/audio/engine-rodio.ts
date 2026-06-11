@@ -82,7 +82,11 @@ export class AudioEngine {
   private lastPollTime = Date.now();
   private lastFiredState: { A?: DeckState; B?: DeckState; C?: DeckState } = {};
 
-  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number; qid?: string }[] = [];
+  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number; qid?: string; scheduledAt?: number }[] = [];
+  // generated_schedule scheduled_at of the row currently on each deck — the exact single-source
+  // identity the Calendar matches (no text/clock guessing). Lives here so native state
+  // round-trips don't wipe it.
+  private deckSched: Record<string, number | undefined> = {};
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   // Per-deck chain type: what happens when THIS deck finishes.
   // Loaded from the queue item at deck-load time.
@@ -429,7 +433,7 @@ export class AudioEngine {
         if (this.queue.length === 0) return;
         const next = this.dequeue();
         this.deckChainType[deckId] = next.chainType || "segue";
-        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
+        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt);
         await invoke("audio_play", { deck: deckId, stationId: this.stationId });
         if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
         if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
@@ -453,7 +457,7 @@ export class AudioEngine {
     rotLog(`[ROT] preload ${deckId}[${queueIndex}] → "${next.title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     try {
       this.deckChainType[deckId] = next.chainType || "segue";
-      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
+      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt);
       this.deckReady.add(deckId);
     } catch (e) { console.error(`[ROT] preload ${deckId} FAILED:`, e); }
   }
@@ -524,9 +528,10 @@ export class AudioEngine {
     };
   }
 
-  async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number) {
+  async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number, scheduledAt?: number) {
     rotLog(`[ROT] loadToDeck ${id}: "${title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     this.init();
+    this.deckSched[String(id)] = scheduledAt;   // remember this deck's schedule-row identity
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0, stationId: this.stationId });
     const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
     if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
@@ -551,7 +556,7 @@ export class AudioEngine {
     this.playStartCallbacks.forEach(fn => fn(deckId, title, artist, filePath));
   }
 
-  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
+  addToQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number; scheduledAt?: number }[]) {
     if (this.daemonDriven) { (window as any).ether?.audio?.daemon?.("enqueue", { stationId: this.stationId, items: songs }); return; }
     rotLog(`[ROT] addToQueue +${songs.length} | before: [${this.queue.map(q => `"${q.title}"`).join(", ")}] | adding: [${songs.map(s => `"${s.title}"`).join(", ")}]`);
     this.queue.push(...songs);
@@ -563,6 +568,8 @@ export class AudioEngine {
     this.queue = [];
   }
   getQueue() { return [...this.queue]; }
+  /** The generated_schedule scheduled_at of the row currently loaded on a deck (exact, not text-matched). */
+  getDeckSched(id: DeckId | string): number | undefined { return this.deckSched[String(id)]; }
   /** Reorder/replace pending queue without touching decks or triggering any load. Safe to call while playing. */
   replaceQueue(songs: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number }[]) {
     // Stage 2b: the renderer may NO LONGER push its whole queue mirror to the daemon — that echo was
@@ -600,7 +607,7 @@ export class AudioEngine {
     this.advancePromise = Promise.resolve();
     const next = this.dequeue();
     try {
-      await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
+      await this.loadToDeck("A", next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt);
       await invoke("audio_play", { deck: "A", stationId: this.stationId });
       this.stateA = { ...this.stateA, status: "playing", positionSec: 0 };
       this.endTriggered.delete("A");

@@ -1550,11 +1550,13 @@ export default function App() {
     : "";
   const anyDeckPlaying = [deckA, deckB, deckC].some(d => d?.status === "playing");
 
-  // Broadcast the engine's ACTUAL playing track so views (e.g. the Calendar day view)
-  // can highlight what's really on air, not just the clock-scheduled position.
+  // Broadcast the engine's ACTUAL playing track so views (e.g. the Calendar day view) can
+  // highlight what's really on air. scheduledAt is the exact generated_schedule row identity
+  // (single source) — the calendar matches on it, no text/clock guessing.
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent("ether:now-playing", { detail: { title: nowPlayingDeck?.title || "", artist: nowPlayingDeck?.artist || "" } }));
-  }, [nowPlayingDeck?.title, nowPlayingDeck?.artist]);
+    const scheduledAt = nowPlayingDeck ? (engine as any).getDeckSched?.(nowPlayingDeck.id) : undefined;
+    window.dispatchEvent(new CustomEvent("ether:now-playing", { detail: { title: nowPlayingDeck?.title || "", artist: nowPlayingDeck?.artist || "", scheduledAt } }));
+  }, [nowPlayingDeck?.title, nowPlayingDeck?.artist, nowPlayingDeck?.id]);
 
   const handleStationSwitch = async (id: number, name: string): Promise<boolean> => {
     const r = await (window as any).ether.stations.switch(id);
