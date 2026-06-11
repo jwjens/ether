@@ -656,7 +656,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
         <div style={{
           flex: 1, padding: 12, overflowY: "auto" as const,
-          display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8,
+          display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8,
           alignContent: "start",
         }}>
         {carts.map(cart => (
@@ -679,7 +679,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
               overflow: "hidden",
               display: "flex",
               flexDirection: "column" as const,
-              height: 46,
+              aspectRatio: "1",
             }}
           >
             {/* 4px color strip */}
@@ -688,10 +688,10 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             {/* Name row */}
             <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "2px 22px 2px 6px", minWidth: 0 }}>
               <span style={{
-                fontSize: 9, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.25,
+                fontSize: 12, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.3,
                 color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
                 overflow: "hidden",
-                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+                display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const,
                 fontStyle: cart.filePath ? "normal" : "italic",
                 wordBreak: "break-word" as const,
               }}>
