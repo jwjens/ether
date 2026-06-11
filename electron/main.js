@@ -4349,8 +4349,13 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
         const hourEnd = hourStartTs + 3600;
         let currentTs = hourStartTs;
 
-        for (const slot of slots) {
-          if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
+        // Fill the whole hour by TIME, not by slot count: cycle the clock's slots until we reach the
+        // next :00. A clock whose slots sum to < 60 min would otherwise leave a gap at the end of the
+        // hour (its "missing last song"). The last song starts before :00 and is cut off at :00.
+        let slotIdx = 0, slotGuard = 0;
+        while (currentTs < hourEnd && slots.length > 0 && slotGuard++ < 500) {
+          const slot = slots[slotIdx % slots.length];
+          slotIdx++;
           const slotDurationS = (slot.duration_min || 4) * 60;
 
           if (slot.slot_type !== 'music' || !slot.category_id) {
