@@ -213,6 +213,26 @@ export default function CloudBackup() {
     catch (e: any) { setLibUploading(false); offP?.(); offD?.(); setR2Status({ msg: "Library upload failed: " + e.message, type: "err" }); }
   };
 
+  // ── Install station from cloud — seed a new install (DB then audio) ──
+  const [installing, setInstalling] = useState(false);
+  const [installMsg, setInstallMsg] = useState("");
+  const installFromCloud = async () => {
+    if (!confirm("Install this account's station from the cloud?\n\nThis replaces the local database with the latest cloud backup, then downloads the audio library. Intended for a fresh install.")) return;
+    setInstalling(true); setInstallMsg("Downloading database…");
+    try {
+      let r = await (window as any).ether.invoke("station:install-from-cloud", {});
+      if (!r?.ok && r?.hasData) {
+        if (!confirm(`${r.error}\n\nReplace the local database anyway?`)) { setInstalling(false); setInstallMsg(""); return; }
+        r = await (window as any).ether.invoke("station:install-from-cloud", { force: true });
+      }
+      if (!r?.ok) { setInstalling(false); setInstallMsg("✗ " + (r?.error || "Install failed")); return; }
+      setInstallMsg(`Database installed${r.stationName ? ` (${r.stationName})` : ""} — ${r.songs} songs. Downloading audio…`);
+      const offP = (window as any).ether.libraryR2.onDownloadProgress?.((v: any) => setInstallMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
+      const offD = (window as any).ether.libraryR2.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setInstalling(false); setInstallMsg(`✓ Installed — ${v?.done ?? r.songs} files. Restart Ether to finish.`); });
+      await (window as any).ether.libraryR2.download();
+    } catch (e: any) { setInstalling(false); setInstallMsg("✗ " + String(e?.message || e)); }
+  };
+
   const loadBackups = useCallback(async () => {
     if (!licenseKey || !stationId) return;
     setLoading(true);
@@ -489,6 +509,23 @@ export default function CloudBackup() {
                 ? `⏳ Uploading library… ${libProgress.done}${libProgress.total ? ` / ${libProgress.total}` : ""}`
                 : "▲ Back Up Song Library to Cloud"}
             </button>
+          </div>
+
+          {/* Install station from cloud — seed a fresh install (DB then audio) */}
+          <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 3 }}>Install Station from Cloud</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.5 }}>
+              On a new computer, pull your whole station down — database (library, clocks, shows, schedule, settings) then the audio files. Replaces the local database; intended for a fresh install.
+            </div>
+            <button onClick={installFromCloud} disabled={installing}
+              style={{ padding: "8px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700,
+                background: installing ? "var(--bg-tertiary)" : "#34d399", color: installing ? "var(--text-tertiary)" : "#000",
+                border: "none", cursor: installing ? "default" : "pointer" }}>
+              {installing ? "⏳ Installing…" : "↓ Install Station from Cloud"}
+            </button>
+            {installMsg && (
+              <div style={{ marginTop: 8, fontSize: 11, color: installMsg.startsWith("✗") ? "#ef4444" : installMsg.startsWith("✓") ? "#34d399" : "var(--text-secondary)" }}>{installMsg}</div>
+            )}
           </div>
 
           {/* R2 history */}

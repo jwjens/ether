@@ -2494,6 +2494,69 @@ ipcMain.handle("restore_db", (_, { backupName } = {}) => {
   } catch (e) { throw new Error(e.message); }
 });
 
+// station:install-from-cloud — seed a NEW install from this account's latest cloud DB backup,
+// then the renderer pulls the audio library. Restores the full openair.db (songs, clocks, shows,
+// categories, schedule, config) but PRESERVES this machine's client_id (= its sync seat id) so it
+// stays a distinct node, not a clone of the source machine. SAFE ONLY ON A FRESH INSTALL: refuses
+// if the local DB already has songs unless force=true.
+ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
+  try {
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const licenseKey = lic?.value?.trim();
+    if (!licenseKey) return { ok: false, error: "No license key — sign in first." };
+
+    let songCount = 0;
+    try { songCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
+    if (songCount > 0 && !force) {
+      return { ok: false, error: `This install already has ${songCount} songs. Installing from cloud replaces the local database.`, hasData: true, songs: songCount };
+    }
+
+    // Preserve this machine's identity (also its sync seat / machine_id) across the DB swap.
+    let myClientId = null;
+    try { myClientId = db.prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || null; } catch {}
+
+    const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+    const urlRes = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ license_key: licenseKey }),
+    });
+    if (!urlRes.ok) {
+      if (urlRes.status === 404) return { ok: false, error: "No cloud backup found for this account yet. Back up from the original machine first." };
+      const t = await urlRes.text().catch(() => "");
+      return { ok: false, error: `Couldn't get download URL (${urlRes.status}): ${t.slice(0, 160)}` };
+    }
+    const { db_signed_url } = await urlRes.json();
+    if (!db_signed_url) return { ok: false, error: "Backend returned no download URL." };
+
+    const dbRes = await fetchFn(db_signed_url);
+    if (!dbRes.ok) return { ok: false, error: `Backup download failed (${dbRes.status}).` };
+    const raw = require("zlib").gunzipSync(Buffer.from(await dbRes.arrayBuffer()));
+
+    // Swap in (close → copy → reopen), like db:restore. Drop WAL sidecars so the fresh file is clean.
+    const tmp = path.join(app.getPath("userData"), "cloud-restore.db");
+    fs.writeFileSync(tmp, raw);
+    db.close();
+    fs.copyFileSync(tmp, getDbPath());
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+    for (const suffix of ["-wal", "-shm", "-journal"]) { try { fs.rmSync(getDbPath() + suffix, { force: true }); } catch {} }
+    initDb();
+
+    // Re-stamp this machine's identity so it isn't the source machine's clone, and keep the
+    // license key the operator signed in with.
+    if (myClientId) { try { db.prepare("UPDATE client_identity SET client_id = ?").run(myClientId); } catch (e) { console.warn("[install-from-cloud] client_id restore:", e.message); } }
+    try { db.prepare("UPDATE station_config_kv SET value = ? WHERE key = 'license_key'").run(licenseKey); } catch {}
+
+    let newCount = 0, stationName = "";
+    try { newCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
+    try { stationName = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name' LIMIT 1").get()?.value || ""; } catch {}
+    console.log(`[station:install-from-cloud] restored DB — ${newCount} songs, station="${stationName}"`);
+    return { ok: true, songs: newCount, stationName };
+  } catch (e) {
+    console.error("[station:install-from-cloud]", e);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ── Clean Filenames ───────────────────────────────────────────
 ipcMain.handle("clean_filenames", async (_evt, { folderPath, commit, stringsToRemove }) => {
   try {
