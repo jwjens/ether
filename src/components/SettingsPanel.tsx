@@ -846,6 +846,10 @@ function SyncSection() {
     pushedToday: number;
     pulledToday: number;
   }>({ running: false, lastSyncAt: null, pushedToday: 0, pulledToday: 0 });
+  const [devices, setDevices] = useState<{ machine_id: string; machine_name: string | null; os: string | null; last_seen: string | null }[]>([]);
+  const [thisId, setThisId]   = useState<string | null>(null);
+  const [devLimit, setDevLimit] = useState<number | null>(null);
+  const [devErr, setDevErr]   = useState<string | null>(null);
 
   useEffect(() => {
     (window as any).ether.invoke('sync:getStats').then((s: any) => {
@@ -857,6 +861,10 @@ function SyncSection() {
         pushedToday: s?.pushedToday ?? 0,
       });
     }).catch(() => {});
+    (window as any).ether.invoke('sync:devices').then((r: any) => {
+      if (r?.ok) { setDevices(r.devices || []); setThisId(r.thisMachineId || null); setDevLimit(r.limit ?? null); }
+      else setDevErr(r?.error || 'Could not load devices');
+    }).catch((e: any) => setDevErr(String(e?.message || e)));
   }, []);
 
   const toggle = async () => {
@@ -922,6 +930,60 @@ function SyncSection() {
             <span style={{ color: "var(--text-tertiary)" }}>Pulled today</span>
             <span style={{ color: "var(--text-secondary)" }}>{stats.pulledToday}</span>
           </div>
+        </div>
+
+        {/* Synced devices — which computers are on this account + when each was last seen */}
+        <div style={{ marginTop: 16, borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 }}>
+            Synced devices{devLimit ? ` · ${devices.length}/${devLimit}` : devices.length ? ` · ${devices.length}` : ""}
+          </div>
+          {devErr ? (
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>{devErr}</div>
+          ) : devices.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No other devices yet — this is your only install.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {devices.map(d => {
+                const isMe = d.machine_id === thisId;
+                const seenMs = d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : Infinity;
+                const online = seenMs < 2 * 60 * 1000;
+                const seenLabel = !d.last_seen ? "—"
+                  : online ? "online"
+                  : seenMs < 3600e3   ? `${Math.round(seenMs / 60000)}m ago`
+                  : seenMs < 86400e3  ? `${Math.round(seenMs / 3600e3)}h ago`
+                  : `${Math.round(seenMs / 86400e3)}d ago`;
+                return (
+                  <div key={d.machine_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "var(--bg-tertiary)", border: `1px solid ${isMe ? "var(--accent-blue)" : "var(--border-primary)"}` }}>
+                    <span style={{ fontSize: 16 }}>🖥</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {d.machine_name || d.machine_id.slice(0, 12)}{isMe ? <span style={{ color: "var(--accent-blue)", fontWeight: 600 }}> · this machine</span> : ""}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{d.os || "—"}</div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: online ? "var(--accent-green)" : "var(--text-tertiary)" }} />
+                      <span style={{ fontSize: 11, color: online ? "var(--accent-green)" : "var(--text-tertiary)" }}>{seenLabel}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* What syncs */}
+        <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>What syncs</div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+            Your <b>library, clocks, shows, categories, schedule, and settings</b> (the database) sync across every device above.
+            <br /><span style={{ color: "var(--text-tertiary)" }}>Audio files sync separately via Cloud Backup.</span>
+          </div>
+        </div>
+
+        {/* How to add a device */}
+        <div style={{ marginTop: 14, padding: "10px 12px", background: "rgba(96,128,192,0.08)", border: "1px solid rgba(96,128,192,0.25)", fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+          <b>Add a device:</b> install Ether on another computer and sign in with this account — it appears here automatically and syncs both ways.
         </div>
 
         {dirty && (

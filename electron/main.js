@@ -4961,6 +4961,25 @@ ipcMain.handle('identity:get', () => {
   }
 });
 
+// sync:devices — list the machines on this account (backend /account/devices) and tag which
+// row is THIS machine (machine_id = our client_id). Powers the Multi-Device Sync clarity panel.
+ipcMain.handle('sync:devices', async () => {
+  try {
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const licenseKey = lic?.value?.trim();
+    if (!licenseKey) return { ok: false, error: 'No license key — sign in first.' };
+    const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
+    const res = await fetchFn(`${ETHER_BACKEND_URL}/account/devices`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ license_key: licenseKey }),
+    });
+    if (!res.ok) return { ok: false, error: `devices ${res.status}` };
+    const data = await res.json();
+    const me = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get()?.client_id || null;
+    return { ok: true, devices: data.devices || [], limit: data.limit ?? null, plan: data.plan ?? null, thisMachineId: me };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 let _libSyncAbort = false;
 let _libDownloadAbort = false;   // mirror flag for the B.2 download handler
 
