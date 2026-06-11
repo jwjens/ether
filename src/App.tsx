@@ -2,6 +2,7 @@ import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import TrialGate from "./components/TrialGate";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
+import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
 import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory } from "./lib/ccData";
@@ -2223,6 +2224,7 @@ export default function App() {
         </div>
       )}
       <LibrarySyncProgressBar />
+      <CloudInstallPrompt />
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}

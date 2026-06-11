@@ -2444,6 +2444,14 @@ ipcMain.handle("system:factoryReset", () => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// Clean relaunch — used after a cloud install (the DB was swapped under the app) so the
+// renderer reloads against the new database. Mirrors the factory-reset relaunch.
+ipcMain.handle("app:relaunch", () => {
+  try { markHaExpectedRestart(); } catch {}
+  app.relaunch(); app.exit(0);
+  return { ok: true };
+});
+
 // ── Legacy Tauri command aliases — called by SettingsPanel ────
 ipcMain.handle("get_local_ip", () => audio.getLocalIp());
 // These were Tauri commands in the original build. Now aliased here so
@@ -2555,6 +2563,28 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     console.error("[station:install-from-cloud]", e);
     return { ok: false, error: e.message };
   }
+});
+
+// station:cloud-install-available — lightweight check for the post-sign-in prompt: is this
+// install fresh (no local library) AND does the account have a cloud DB backup to pull?
+ipcMain.handle("station:cloud-install-available", async () => {
+  try {
+    let songCount = 0;
+    try { songCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
+    if (songCount > 0) return { available: false, reason: "has_library" };
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const licenseKey = lic?.value?.trim();
+    if (!licenseKey) return { available: false, reason: "no_license" };
+    const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+    const res = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ license_key: licenseKey }),
+    });
+    if (res.status === 404) return { available: false, reason: "no_backup" };
+    if (!res.ok) return { available: false, reason: `http_${res.status}` };
+    const data = await res.json().catch(() => ({}));
+    return { available: true, timestamp: data.timestamp || null };
+  } catch (e) { return { available: false, reason: e.message }; }
 });
 
 // ── Clean Filenames ───────────────────────────────────────────
