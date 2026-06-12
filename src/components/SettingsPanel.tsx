@@ -2665,6 +2665,8 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
 
       <SyncSection />
 
+      <StationManagementSection />
+
       <UserManagement />
 
           </>
@@ -2877,6 +2879,134 @@ function UserManagement() {
                 <button onClick={handleChangePin} style={{ ...btnStyle, flex: 1, background: "var(--accent-blue)", color: "#fff" }}>Save PIN</button>
                 <button onClick={() => { setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError(""); }} style={{ ...btnStyle, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>Cancel</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ── Manage Stations (delete) ──────────────────────────────────
+// Station deletion lives here in Preferences (admin-only panel) so it's always
+// reachable regardless of the header switcher, which is hidden below the Network
+// tier. The active station can't be deleted — switch away first. Each delete is
+// confirmed with the operator's admin PIN (verified against this station's admin
+// profiles) so it can't be done casually.
+interface ManageStation { id: number; name: string; callsign?: string; is_active: number; }
+
+function StationManagementSection() {
+  const ether = (window as any).ether;
+  const { stationId: activeStationId } = useActiveStation();
+  const [stations, setStations] = useState<ManageStation[]>([]);
+  const [target, setTarget]     = useState<ManageStation | null>(null);
+  const [pin, setPin]           = useState("");
+  const [err, setErr]           = useState("");
+  const [busy, setBusy]         = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const list = await ether.stations.list();
+      if (Array.isArray(list)) setStations(list);
+    } catch {}
+  }, []);
+  useEffect(() => {
+    load();
+    const h = () => load();
+    window.addEventListener("station-switched", h);
+    return () => window.removeEventListener("station-switched", h);
+  }, [load]);
+
+  const closeModal = () => { setTarget(null); setPin(""); setErr(""); setBusy(false); };
+
+  const confirmDelete = async () => {
+    if (!target || busy) return;
+    setBusy(true); setErr("");
+    try {
+      // Gate on the operator's admin PIN — verified against this station's admin
+      // profiles. If no admin has a PIN set, there's nothing to verify against.
+      const admins = await query<{ pin_hash: string | null }>(
+        "SELECT pin_hash FROM users WHERE station_id = ? AND role = 'admin'", [activeStationId]
+      );
+      const withPin = (admins || []).filter(a => a.pin_hash);
+      if (withPin.length > 0) {
+        if (pin.length !== 4) { setErr("Enter your 4-digit admin PIN."); setBusy(false); return; }
+        let ok = false;
+        for (const a of withPin) {
+          ok = ether?.users?.verifyPin ? await ether.users.verifyPin(pin, a.pin_hash) : pin === a.pin_hash;
+          if (ok) break;
+        }
+        if (!ok) { setErr("Incorrect admin PIN."); setBusy(false); return; }
+      }
+      const r = await ether.stations.delete(target.id);
+      if (!r?.ok) { setErr(r?.error || "Delete failed."); setBusy(false); return; }
+      closeModal();
+      await load();
+      window.dispatchEvent(new Event("station-switched")); // refresh the header switcher
+    } catch (e: any) {
+      setErr(e?.message || "Delete failed."); setBusy(false);
+    }
+  };
+
+  const inputStyle: React.CSSProperties = { padding: "8px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 14, outline: "none", width: "100%", letterSpacing: "0.3em", textAlign: "center" as const };
+  const btnStyle: React.CSSProperties = { padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none", letterSpacing: "0.04em" };
+
+  return (
+    <Section
+      category="station"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>}
+      title="Manage Stations"
+      description="Delete stations you no longer need (for example test stations). Confirmed with your admin PIN. The active station can't be deleted — switch to another first."
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {stations.length === 0 ? (
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", padding: "8px 2px" }}>No stations.</div>
+        ) : stations.map(s => {
+          const isActive = !!s.is_active;
+          return (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+              {isActive && <span style={{ fontSize: 9, color: "#22c55e" }}>●</span>}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{s.name}</div>
+                {s.callsign && <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "monospace" }}>{s.callsign}{isActive ? " · on air" : ""}</div>}
+              </div>
+              <button
+                onClick={() => { setTarget(s); setPin(""); setErr(""); }}
+                disabled={isActive}
+                title={isActive ? "Switch to another station first" : `Delete ${s.name}`}
+                style={{ ...btnStyle, background: isActive ? "var(--bg-secondary)" : "rgba(239,68,68,0.1)", color: isActive ? "var(--text-tertiary)" : "var(--accent-red)", border: `1px solid ${isActive ? "var(--border-primary)" : "rgba(239,68,68,0.2)"}`, cursor: isActive ? "not-allowed" : "pointer", opacity: isActive ? 0.5 : 1 }}
+              >
+                Delete
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Confirm + admin PIN modal */}
+      {target && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={() => !busy && closeModal()}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 20, minWidth: 360, maxWidth: 420 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--accent-red)", marginBottom: 6 }}>Delete “{target.name}”?</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5, marginBottom: 14 }}>
+              This removes the station and its scoped data (schedules, logs, library associations). This cannot be undone.
+            </div>
+            <input
+              value={pin}
+              onChange={e => { setPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setErr(""); }}
+              onKeyDown={e => { if (e.key === "Enter") confirmDelete(); if (e.key === "Escape" && !busy) closeModal(); }}
+              placeholder="Admin PIN"
+              type="password"
+              maxLength={4}
+              autoFocus
+              style={inputStyle}
+            />
+            {err && <div style={{ fontSize: 13, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <button onClick={confirmDelete} disabled={busy} style={{ ...btnStyle, flex: 1, background: "#e5484d", color: "#fff", opacity: busy ? 0.6 : 1 }}>
+                {busy ? "Deleting…" : "Delete Station"}
+              </button>
+              <button onClick={closeModal} disabled={busy} style={{ ...btnStyle, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>Cancel</button>
             </div>
           </div>
         </div>
