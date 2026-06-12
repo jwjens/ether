@@ -477,6 +477,10 @@ export default function App() {
   useMacroClock(stationId);
   const [splashDone, setSplashDone] = useState(false);
   const [wizardDone, setWizardDone] = useState(false);
+  // Sign in / sign up is required for everyone before the profile screen. Tracked separately from
+  // wizardDone (first_run_complete) because a carried-over / invite / restored install can have
+  // first_run_complete=1 without anyone ever signing into an account — those must still see auth.
+  const [accountJoined, setAccountJoined] = useState(false);
   const [firstRunChecked, setFirstRunChecked] = useState(false);
   const [stationName, setStationName] = useState("Ether");
   const [switchToast, setSwitchToast] = useState("");
@@ -715,6 +719,7 @@ export default function App() {
         const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
         const get = (k: string) => rows.find((r: { key: string }) => r.key === k)?.value;
         if (get('first_run_complete') === "1") setWizardDone(true);
+        if (get('onboarding_account_joined') === "1") setAccountJoined(true);
         const name = get('station_name');
         if (name) setStationName(name);
         // plan_tier is install-level — only propagate from station 1. Resolve through
@@ -1025,6 +1030,7 @@ export default function App() {
   const handleWizardComplete = (profile: VenueProfile) => {
     setStationName(profile.name);
     setWizardDone(true);
+    setAccountJoined(true); // completing onboarding means an account was signed in
   };
 
   useEffect(() => {
@@ -1681,7 +1687,7 @@ export default function App() {
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
-  if (firstRunChecked && !wizardDone) return <EtherErrorBoundary><OnboardingFlow onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  if (firstRunChecked && (!wizardDone || !accountJoined)) return <EtherErrorBoundary><OnboardingFlow onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 

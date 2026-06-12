@@ -194,8 +194,17 @@ export default function OnboardingFlow({ onComplete }: Props) {
         if (venSaved) setChosenVenue(venSaved);
 
         // ── 1. Library pulled OR first-run already done → done ──
-        if (get('first_run_complete') === '1' || get('onboarding_library_pulled') === '1') {
+        // BUT only if an account was actually signed in. A carried-over / invite / cloud-restored
+        // install can have first_run_complete=1 with nobody ever signed in — that must still show
+        // the (required-for-all) sign-in screen, not jump past it to the profile login.
+        const accountJoined = get('onboarding_account_joined') === '1';
+        if (accountJoined && (get('first_run_complete') === '1' || get('onboarding_library_pulled') === '1')) {
           setState('done');
+          setResumeChecking(false);
+          return;
+        }
+        if (!accountJoined) {
+          setState('auth');
           setResumeChecking(false);
           return;
         }
