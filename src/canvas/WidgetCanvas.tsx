@@ -353,7 +353,7 @@ function WidgetPicker({ engine, onClose }: { engine: CanvasEngineState; onClose:
     }}>
       <div style={{ padding: "16px 16px 8px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Add Widget</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Add Widget</div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>Click to add to canvas</div>
         </div>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>✕</button>

@@ -246,7 +246,7 @@ export default function MacrosPanel() {
     <div style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Macros</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Macros</h1>
           <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Compound automation actions — chain commands with delays, trigger by hotkey or clock</p>
         </div>
         <button onClick={() => setEditing(newMacro())} style={{ ...btnStyle, background: "var(--accent-blue)", color: "#fff", padding: "8px 16px", fontSize: 12 }}>+ New Macro</button>

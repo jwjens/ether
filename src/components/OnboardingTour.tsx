@@ -342,7 +342,7 @@ export default function OnboardingTour({ onDone }: Props) {
         </div>
 
         {/* Content */}
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em", marginBottom: 7, lineHeight: 1.25 }}>
+        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 15, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.02em", marginBottom: 7, lineHeight: 1.25 }}>
           {step.title}
         </div>
         <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: 18 }}>

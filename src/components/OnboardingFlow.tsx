@@ -95,7 +95,7 @@ const LABEL_STYLE: React.CSSProperties = {
 };
 
 const HEADING_STYLE: React.CSSProperties = {
-  fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800,
+  fontFamily: "'Newsreader', Georgia, serif", fontSize: 34, fontWeight: 800,
   letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12,
 };
 
@@ -916,7 +916,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
               <input type="email" autoFocus value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthErr(''); }} placeholder="Email address" style={authInput} />
               <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthErr(''); }} onKeyDown={e => { if (e.key === 'Enter') submit(); }} placeholder={authMode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} style={authInput} />
               {authErr && <div style={{ fontSize: 12, color: "#f87171" }}>{authErr}</div>}
-              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
+              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
                 {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}
               </button>
               {authMode === 'signin' && (
@@ -1062,7 +1062,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                   }}
                 >
@@ -1103,7 +1103,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                   <button onClick={chooseMusicFolder} style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 0, background: "transparent", color: "var(--accent-cyan)", border: "1px solid var(--accent-cyan)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Choose folder…</button>
                 </div>
                 <PrimaryButton label="Install here" onClick={() => runCloudInstall(pendingKeep)} />
-                <button onClick={() => setSyncPhase('choose')} style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}>← Back</button>
+                <button onClick={() => setSyncPhase('choose')} style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}>← Back</button>
               </div>
             </div>
           </div>
@@ -1138,7 +1138,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                 <div style={{ marginTop: 24, display: "flex", justifyContent: "center", gap: 12 }}>
                   <button
                     onClick={() => { setSyncPhase('choose'); setSyncMsg(''); }}
-                    style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
+                    style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
                   >
                     ← Back
                   </button>
@@ -1197,7 +1197,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <button
                   onClick={() => { resetForWelcomePath(); setState('addStation'); }}
-                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.12)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", flex: 1 }}
+                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.12)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", flex: 1 }}
                 >
                   + Create new station
                 </button>
@@ -1207,7 +1207,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                     await kv.upsertByKey(stationId, 'first_run_complete', '1');
                     setState('done');
                   }}
-                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
+                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
                 >
                   Skip
                 </button>
@@ -1284,7 +1284,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                   padding: "12px 24px", borderRadius: 0,
                   background: "transparent", color: "rgba(255,255,255,0.4)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                  fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                   letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                 }}
               >
@@ -1364,7 +1364,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                   }}
                 >
@@ -1459,7 +1459,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                   padding: "12px 24px", borderRadius: 0,
                   background: "transparent", color: "rgba(255,255,255,0.4)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                  fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                   letterSpacing: "0.04em", cursor: "pointer",
                 }}
               >
@@ -1530,7 +1530,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: "pointer",
                   }}
                 >
@@ -1622,7 +1622,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                   }}
                 >
@@ -1660,7 +1660,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
               marginTop: 32, padding: "12px 28px", borderRadius: 0,
               background: "transparent", color: "rgba(255,255,255,0.4)",
               border: "1px solid rgba(255,255,255,0.1)",
-              fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+              fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
               letterSpacing: "0.04em", cursor: "pointer",
             }}
           >
@@ -1706,7 +1706,7 @@ function PathButton({ title, subtitle, onClick }: { title: string; subtitle: str
       }}
     >
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
+        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
           {title}
         </div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
@@ -1800,7 +1800,7 @@ function StationRadioCard({ title, subtitle, description, selected, onClick, isA
       </div>
       <div style={{ flex: 1 }}>
         <div style={{
-          fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700,
+          fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 700,
           color: selected ? "var(--accent-cyan)" : "#f0f0f8",
           letterSpacing: "-0.02em",
           marginBottom: (subtitle || description) ? 4 : 0,
@@ -2189,7 +2189,7 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: "pointer",
                   }}
                 >
@@ -2251,7 +2251,7 @@ function SourceCard({ title, subtitle, onClick, disabled }: { title: string; sub
       }}
     >
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
+        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
           {title}
         </div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
@@ -2271,7 +2271,7 @@ function PrimaryButton({ label, onClick, disabled }: { label: string; onClick: (
         padding: "13px 32px", borderRadius: 0,
         background: disabled ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, var(--accent-cyan), #a78bfa)",
         color: disabled ? "rgba(255,255,255,0.2)" : "#000",
-        fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+        fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
         border: "none", cursor: disabled ? "default" : "pointer",
         letterSpacing: "0.04em",
         boxShadow: disabled ? "none" : "0 0 32px rgb(from var(--accent-cyan) r g b / 0.3)",

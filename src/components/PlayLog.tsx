@@ -119,7 +119,7 @@ export default function PlayLog({ onClose }: Props) {
         background: "var(--bg-secondary)", flexShrink: 0,
       }}>
         <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.03em" }}>
+          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.03em" }}>
             Program Log
           </h1>
           <p style={{ margin: 0, fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>

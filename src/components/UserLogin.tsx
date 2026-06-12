@@ -155,7 +155,7 @@ export default function UserLogin({ onLogin }: Props) {
       {/* Logo */}
       <div style={{ marginBottom: 40, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
         <img src={etherLogoMark} width={72} height={72} alt="" style={{ borderRadius: 0 }} />
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
+        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
         <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "var(--accent-cyan)", textTransform: "uppercase" as const }}>Technologies</div>
       </div>
 
@@ -182,7 +182,7 @@ export default function UserLogin({ onLogin }: Props) {
 
           {setupErr && <div style={{ fontSize: 12, color: "#f87171", marginBottom: 12 }}>{setupErr}</div>}
 
-          <button onClick={createFirstUser} disabled={creating} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: creating ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: creating ? 0.7 : 1 }}>
+          <button onClick={createFirstUser} disabled={creating} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: creating ? "default" : "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em", opacity: creating ? 0.7 : 1 }}>
             {creating ? "Creating…" : "Create profile & continue"}
           </button>
         </div>
@@ -243,7 +243,7 @@ export default function UserLogin({ onLogin }: Props) {
           animation: shake ? "shake 0.4s ease" : "none",
         }}>
           <div style={{ textAlign: "center" as const, marginBottom: 28 }}>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#f0f0f8" }}>{selected.name}</div>
+            <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 26, fontWeight: 800, letterSpacing: "-0.03em", color: "#f0f0f8" }}>{selected.name}</div>
             <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 6 }}>Enter your PIN to continue</div>
           </div>
 

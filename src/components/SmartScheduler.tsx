@@ -221,7 +221,7 @@ export default function SmartScheduler({ onClose }: Props) {
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 5 }}>Smart Scheduler</div>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif", marginBottom: 4 }}>Your Programming</div>
+            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif", marginBottom: 4 }}>Your Programming</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Tell it what you want — it handles the rest</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

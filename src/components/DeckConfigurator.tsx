@@ -139,7 +139,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
         {/* Header */}
         <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
           <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>Live Assist</div>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif", marginBottom: 4 }}>Configure Decks</div>
+          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif", marginBottom: 4 }}>Configure Decks</div>
           <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Choose up to 6 decks. Mix music, mic, guest, and cart channels however you need.</div>
         </div>
 
@@ -180,7 +180,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                     background: c.color,
                     border: `1px solid ${c.color}`,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 800,
+                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 800,
                     color: "#000",
                     transition: "all 0.2s",
                   }}>{c.slot}</div>

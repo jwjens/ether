@@ -1189,7 +1189,7 @@ export function SkinPickerOverlay({
         }}>
           <div style={{ fontSize: 18 }}>🎨</div>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Theme Studio</div>
+            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Theme Studio</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>Pick a preset · Tune every color · Set station identity</div>
           </div>
           <div style={{ flex: 1 }} />

@@ -1,5 +1,5 @@
 /* ── Fonts ─────────────────────────────────────────────────── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&family=Rajdhani:wght@400;500;600;700&family=Barlow+Condensed:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Newsreader:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Syne:wght@600;700;800&family=DM+Mono:wght@300;400;500&family=Rajdhani:wght@400;500;600;700&family=Barlow+Condensed:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -523,7 +523,7 @@ body {
 }
 
 /* ── Typography ──────────────────────────────────────────────── */
-.font-display { font-family: 'Syne', sans-serif; }
+.font-display { font-family: 'Newsreader', Georgia, serif; }
 .font-mono    { font-family: 'DM Mono', 'SF Mono', monospace; }
 
 .timer-display {
@@ -549,7 +549,7 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
 
 /* ── Text hierarchy ──────────────────────────────────────────── */
 .text-display {
-  font-family: 'Syne', system-ui, sans-serif;
+  font-family: 'Newsreader', Georgia, serif;
   font-weight: 800;
   letter-spacing: -0.03em;
   line-height: 1.05;
@@ -574,7 +574,7 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  font-family: 'Syne', sans-serif;
+  font-family: 'Newsreader', Georgia, serif;
 }
 
 .text-timer {
@@ -596,7 +596,7 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  font-family: 'Syne', sans-serif;
+  font-family: 'Newsreader', Georgia, serif;
 }
 
 /* ── Icon buttons ────────────────────────────────────────────── */
@@ -620,7 +620,7 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-family: 'Syne', sans-serif;
+  font-family: 'Newsreader', Georgia, serif;
   font-weight: 800;
   font-size: 12px;
   letter-spacing: 0.06em;
@@ -725,7 +725,7 @@ button:not(.menu-btn):not(.menu-item), a { transition: all 0.1s ease !important;
   padding: 4px 11px; border-radius: var(--radius-sm);
   font-size: 11px; font-weight: 800; letter-spacing: 0.06em;
   cursor: pointer; transition: all 0.1s; border: none;
-  font-family: 'Syne', sans-serif;
+  font-family: 'Newsreader', Georgia, serif;
   user-select: none;
 }
 .toolbar-pill.inactive {

@@ -187,7 +187,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "var(--accent-cyan)", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
-              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>How do you want<br />to broadcast?</h1>
+              <h1 style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>How do you want<br />to broadcast?</h1>
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>This sets your default deck layout. You can change it anytime in Settings.</p>
             </div>
 
@@ -205,7 +205,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                   }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                        <span style={{ fontFamily: "'Syne', sans-serif", fontSize: 18, fontWeight: 800, color: selected ? "var(--accent-cyan)" : "#f0f0f8", letterSpacing: "-0.02em" }}>{mode.label}</span>
+                        <span style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 18, fontWeight: 800, color: selected ? "var(--accent-cyan)" : "#f0f0f8", letterSpacing: "-0.02em" }}>{mode.label}</span>
                         <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.12em", color: selected ? "var(--accent-cyan)" : "rgba(255,255,255,0.25)", background: selected ? "rgb(from var(--accent-cyan) r g b / 0.15)" : "rgba(255,255,255,0.06)", padding: "2px 7px", borderRadius: 0 }}>{mode.badge}</span>
                       </div>
                       <div style={{ fontSize: 11, fontWeight: 600, color: selected ? "rgb(from var(--accent-cyan) r g b / 0.7)" : "rgba(255,255,255,0.35)", marginBottom: 4, letterSpacing: "0.02em" }}>{mode.tagline}</div>
@@ -224,7 +224,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 padding: "13px 48px", borderRadius: 0,
                 background: experienceMode ? "linear-gradient(135deg, var(--accent-cyan), #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: experienceMode ? "#000" : "rgba(255,255,255,0.2)",
-                fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                 border: "none", cursor: experienceMode ? "pointer" : "default",
                 letterSpacing: "0.04em",
                 boxShadow: experienceMode ? "0 0 32px rgb(from var(--accent-cyan) r g b / 0.3)" : "none",
@@ -241,7 +241,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
               <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.2em", color: "var(--accent-cyan)", textTransform: "uppercase" as any, marginBottom: 12 }}>Welcome to Ether</div>
-              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>What are you using<br />Ether for?</h1>
+              <h1 style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>What are you using<br />Ether for?</h1>
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6 }}>We'll customize the interface and language to match your setup.</p>
             </div>
 
@@ -258,7 +258,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                     boxShadow: selected ? "0 0 24px rgb(from var(--accent-cyan) r g b / 0.15)" : "none",
                   }}>
                     <div style={{ marginBottom: 10, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: label.icon }} />
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "var(--accent-cyan)" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
+                    <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 15, fontWeight: 700, color: selected ? "var(--accent-cyan)" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{label.tagline}</div>
                     {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "var(--accent-cyan)", letterSpacing: "0.1em" }}>SELECTED</span></div>}
                   </button>
@@ -278,7 +278,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                     boxShadow: selected ? "0 0 24px rgb(from var(--accent-cyan) r g b / 0.15)" : "none",
                   }}>
                     <div style={{ marginBottom: 10, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: label.icon }} />
-                    <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 700, color: selected ? "var(--accent-cyan)" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
+                    <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 15, fontWeight: 700, color: selected ? "var(--accent-cyan)" : "#f0f0f8", marginBottom: 5, letterSpacing: "-0.02em" }}>{label.type}</div>
                     <div style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>{label.tagline}</div>
                     {selected && <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}><div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)" }} /><span style={{ fontSize: 10, fontWeight: 700, color: "var(--accent-cyan)", letterSpacing: "0.1em" }}>SELECTED</span></div>}
                   </button>
@@ -291,7 +291,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 padding: "13px 48px", borderRadius: 0,
                 background: venueType ? "linear-gradient(135deg, var(--accent-cyan), #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: venueType ? "#000" : "rgba(255,255,255,0.2)",
-                fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                 border: "none", cursor: venueType ? "pointer" : "default",
                 letterSpacing: "0.04em",
                 boxShadow: venueType ? "0 0 32px rgb(from var(--accent-cyan) r g b / 0.3)" : "none",
@@ -308,7 +308,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
           <div style={{ animation: "wiz-in 0.4s ease both" }}>
             <div style={{ textAlign: "center" as any, marginBottom: 40 }}>
               <div style={{ marginBottom: 12, color: "rgba(255,255,255,0.7)" }} dangerouslySetInnerHTML={{ __html: selectedLabel.icon }} />
-              <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>
+              <h1 style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 34, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12 }}>
                 Name your<br />{selectedLabel.type.toLowerCase()}
               </h1>
               <p style={{ fontSize: 14, color: "rgba(255,255,255,0.4)" }}>This shows in the header and on your Now Playing screen.</p>
@@ -326,7 +326,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                   style={{
                     width: "100%", padding: "14px 18px",
                     borderRadius: 0, fontSize: 20, fontWeight: 600,
-                    fontFamily: "'Syne', sans-serif",
+                    fontFamily: "'Newsreader', Georgia, serif",
                     background: "rgba(255,255,255,0.05)",
                     border: "1.5px solid rgba(255,255,255,0.12)",
                     color: "#f0f0f8", outline: "none",
@@ -368,7 +368,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
                 padding: "13px 48px", borderRadius: 0,
                 background: name.trim() ? "linear-gradient(135deg, var(--accent-cyan), #a78bfa)" : "rgba(255,255,255,0.06)",
                 color: name.trim() ? "#000" : "rgba(255,255,255,0.2)",
-                fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700,
+                fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
                 border: "none", cursor: name.trim() ? "pointer" : "default",
                 letterSpacing: "0.04em",
                 boxShadow: name.trim() ? "0 0 32px rgb(from var(--accent-cyan) r g b / 0.3)" : "none",
@@ -397,13 +397,13 @@ export default function FirstRunWizard({ onComplete }: Props) {
               </div>
             </div>
 
-            <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", marginBottom: 10 }}>
+            <h1 style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8", marginBottom: 10 }}>
               {venueType === "radio" ? "Your station is ready." : venueType === "worship" ? "Welcome." : venueType === "podcast" ? "Your studio is ready." : "You're all set."}
             </h1>
 
             {/* Station name preview */}
             <div style={{ margin: "20px auto", padding: "16px 28px", borderRadius: 0, background: "rgb(from var(--accent-cyan) r g b / 0.08)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.2)", display: "inline-block" }}>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 22, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.03em" }}>{name}</div>
+              <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 22, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.03em" }}>{name}</div>
               {tagline && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginTop: 4 }}>{tagline}</div>}
             </div>
 
@@ -425,7 +425,7 @@ export default function FirstRunWizard({ onComplete }: Props) {
               padding: "16px 56px", borderRadius: 0,
               background: "linear-gradient(135deg, var(--accent-cyan), #a78bfa)",
               color: "#000",
-              fontFamily: "'Syne', sans-serif", fontSize: 15, fontWeight: 800,
+              fontFamily: "'Newsreader', Georgia, serif", fontSize: 15, fontWeight: 800,
               border: "none", cursor: saving ? "default" : "pointer",
               letterSpacing: "0.04em",
               boxShadow: "0 0 40px rgb(from var(--accent-cyan) r g b / 0.4), 0 0 80px rgba(167,139,250,0.2)",

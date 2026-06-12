@@ -42,7 +42,7 @@ export default function EtherLogo({
   const wordmark = (
     <span
       style={{
-        fontFamily: "'Syne', 'Inter', system-ui, sans-serif",
+        fontFamily: "'Newsreader', 'Inter', system-ui, sans-serif",
         fontSize: size * 0.56,
         fontWeight: 800,
         letterSpacing: "-0.02em",

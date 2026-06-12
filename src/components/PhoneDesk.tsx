@@ -945,7 +945,7 @@ export default function PhoneDesk({ onClose }: Props) {
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.18em", color: isRecording ? "#ef4444" : "var(--text-tertiary)", textTransform: "uppercase" }}>
             {isRecording ? "● RECORDING" : isArmed ? "ARMED" : hasClip ? "CLIP READY" : "Phone Desk"}
           </div>
-          <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text-primary)", marginTop: 1, fontFamily: "'Syne', sans-serif" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--text-primary)", marginTop: 1, fontFamily: "'Newsreader', Georgia, serif" }}>
             Call Intake &amp; Chop
           </div>
         </div>

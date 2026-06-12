@@ -325,7 +325,7 @@ export default function AutoCue({ onClose }: { onClose: () => void }) {
       {/* Header */}
       <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, fontFamily: "'Syne', sans-serif", letterSpacing: "-0.03em", color: "var(--text-primary)" }}>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "-0.03em", color: "var(--text-primary)" }}>
             Auto-Cue
           </h2>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>✕</button>

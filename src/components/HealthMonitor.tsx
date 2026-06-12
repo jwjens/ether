@@ -53,7 +53,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
           </div>
 
           <div style={{ textAlign: "center" as const }}>
-            <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>
+            <h2 style={{ margin: "0 0 8px", fontSize: 20, fontWeight: 800, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>
               Ether encountered an issue
             </h2>
             <p style={{ margin: 0, fontSize: 13, color: "rgba(255,255,255,0.5)", maxWidth: 400, lineHeight: 1.6 }}>
@@ -220,7 +220,7 @@ function HaRollupBanner({ dash }: { dash: HaDashboard | null }) {
     }}>
       <div style={{ width: 14, height: 14, borderRadius: "50%", background: color, flexShrink: 0, boxShadow: `0 0 10px ${color}`, animation: pulse }} />
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "0.04em", color, fontFamily: "'Syne', sans-serif" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "0.04em", color, fontFamily: "'Newsreader', Georgia, serif" }}>
           {rollup.label}
         </div>
         <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.5 }}>
@@ -377,7 +377,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-green)", boxShadow: "0 0 8px var(--accent-green)" }} />
-            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, fontFamily: "'Syne', sans-serif", letterSpacing: "-0.03em", color: "var(--text-primary)" }}>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "-0.03em", color: "var(--text-primary)" }}>
               System Health
             </h2>
           </div>

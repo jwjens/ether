@@ -211,7 +211,7 @@ export default function Spots() {
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Spots & Promos</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Spots & Promos</h1>
         <div style={{ display: "flex", gap: 8 }}>
           {iBtn("Import Folder", "var(--accent-blue)", handleImportFolder)}
           {iBtn("Import Files", "", handleImport, true)}
@@ -261,7 +261,7 @@ export default function Spots() {
       {/* Edit panel */}
       {editing && (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14, fontFamily: "'Syne', sans-serif" }}>Edit Spot</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14, fontFamily: "'Newsreader', Georgia, serif" }}>Edit Spot</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 160px", gap: 8, marginBottom: 8 }}>
             <input placeholder="Title" value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
               style={{ gridColumn: "1 / 3", padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />

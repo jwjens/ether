@@ -125,7 +125,7 @@ export default function GuestVideoPanel({ guests: guestProps, onClose }: Props) 
 
         <div style={{ flex: 1, paddingLeft: 4 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.8)", letterSpacing: "0.04em", textTransform: "uppercase" as const, fontFamily: "'Syne', sans-serif" }}>Guests</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.8)", letterSpacing: "0.04em", textTransform: "uppercase" as const, fontFamily: "'Newsreader', Georgia, serif" }}>Guests</span>
             {connected.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "1px 7px", borderRadius: 0, background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.2)" }}>
                 <div style={{ width: 5, height: 5, borderRadius: "50%", background: "#34d399", animation: "guestBlink 2s ease-in-out infinite" }} />

@@ -518,7 +518,7 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
                 position: "absolute", bottom: 8, right: 10,
                 fontSize: 48, fontWeight: 800, letterSpacing: "-0.04em",
                 color: deckHue, opacity: 0.06,
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'Newsreader', Georgia, serif",
                 lineHeight: 1,
               }}>{deckId}</span>
 

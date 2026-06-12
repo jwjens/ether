@@ -103,7 +103,7 @@ function MockAdRotator() {
       </div>
       <div style={{ fontSize: 56, marginBottom: 16 }}>{ad.logo}</div>
       <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.2em", color: ad.accent, marginBottom: 12, textTransform: "uppercase" as const }}>{ad.tag}</div>
-      <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.02em", color: "#f0f0f8", marginBottom: 12, lineHeight: 1.1 }}>{ad.headline}</div>
+      <div style={{ fontFamily: "'Newsreader',sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.02em", color: "#f0f0f8", marginBottom: 12, lineHeight: 1.1 }}>{ad.headline}</div>
       <div style={{ fontSize: 16, color: "rgba(255,255,255,0.5)", marginBottom: 24, lineHeight: 1.6 }}>{ad.sub}</div>
       <div style={{ padding: "8px 20px", borderRadius: 0, border: `1px solid ${ad.accent}50`, fontSize: 11, color: ad.accent, fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>{ad.url}</div>
     </div>
@@ -260,7 +260,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
               </svg>
             )}
             <div>
-              <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{stationName}</div>
+              <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{stationName}</div>
               <div style={{ fontSize: 8, letterSpacing: "0.24em", color: "var(--accent-cyan)", textTransform: "uppercase" as const, marginTop: 2 }}>Powered by Ether</div>
             </div>
             {isPlaying && <span style={{ padding: "4px 12px", background: "#dc2626", borderRadius: 0, fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", boxShadow: "0 0 16px rgba(220,38,38,0.5)", marginLeft: 4 }}>ON AIR</span>}

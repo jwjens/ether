@@ -1379,7 +1379,7 @@ export default function BroadcastEditor({
         background: "var(--bg-secondary)",
       }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
             Production Editor
           </div>
           <div style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.04em" }}>

@@ -189,7 +189,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
       {/* Header */}
       <div style={{ padding: "24px 32px 20px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 6 }}>Cue Editor</div>
-        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif", marginBottom: 6 }}>Import Tracks</div>
+        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif", marginBottom: 6 }}>Import Tracks</div>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Add audio files to your library, then set cue points, intro, and outro markers</div>
       </div>
 
@@ -887,7 +887,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         flexShrink: 0,
       }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+          <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
             {song.title}
           </div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>

@@ -300,7 +300,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
       }}>
         <div>
           <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 2 }}>Pro Feature</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Listener Analytics</div>
+          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Listener Analytics</div>
         </div>
 
         {/* Range selector */}

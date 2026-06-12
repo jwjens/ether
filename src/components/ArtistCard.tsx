@@ -84,7 +84,7 @@ export default function ArtistCard({
         bottom: "-12%", right: "-5%",
         fontSize: "95%",
         fontWeight: 900,
-        fontFamily: "'Syne', system-ui, sans-serif",
+        fontFamily: "'Newsreader', Georgia, serif",
         color: "rgba(0,0,0,0.18)",
         letterSpacing: "-0.08em",
         lineHeight: 1,

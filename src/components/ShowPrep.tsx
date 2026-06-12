@@ -181,7 +181,7 @@ function MiniMonitor({ onGoLive }: { onGoLive?: () => void }) {
                     background: isOn ? color : color + "20",
                     display: "flex", alignItems: "center", justifyContent: "center",
                   }}>
-                    <span style={{ fontSize: 10, fontWeight: 800, color: isOn ? "#000" : color, fontFamily: "'Syne', sans-serif" }}>{id}</span>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: isOn ? "#000" : color, fontFamily: "'Newsreader', Georgia, serif" }}>{id}</span>
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{
@@ -501,7 +501,7 @@ export default function ShowPrep({ onGoLive }: { onGoLive?: () => void }) {
 
       {/* Header */}
       <div>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Show Prep</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Show Prep</h1>
         <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Write scripts, manage liner cards, and monitor the board — all without leaving this screen</p>
       </div>
 

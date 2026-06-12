@@ -531,7 +531,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
         flexShrink: 0,
       }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.03em" }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.03em" }}>
             Studio Editor
           </h2>
           <p style={{ margin: "2px 0 0", fontSize: 11, color: "var(--text-tertiary)" }}>

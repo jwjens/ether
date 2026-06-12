@@ -2354,7 +2354,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       {frOpen && (
         <div onClick={() => { if (!frBusy) setFrOpen(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.65)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, zIndex: 1000 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, background: "var(--bg-secondary)", border: "1px solid rgba(239,68,68,0.45)", borderRadius: 0, padding: 28, fontFamily: "'Inter', system-ui, sans-serif" }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "#ef4444", marginBottom: 8, fontFamily: "'Syne', sans-serif" }}>Factory reset this computer</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#ef4444", marginBottom: 8, fontFamily: "'Newsreader', Georgia, serif" }}>Factory reset this computer</div>
             <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 18 }}>
               This permanently erases this computer's Ether data — stations, library, schedule, users, and settings — and restarts setup from scratch. It cannot be undone.
             </div>

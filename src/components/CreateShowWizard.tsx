@@ -212,7 +212,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
               Create Show
             </div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{stepLabels[step]}</div>
@@ -421,7 +421,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
                     <div style={{ width: 16, height: 16, borderRadius: "50%", background: showColor }} />
                   </div>
                   <div>
-                    <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>{showName || "(no name)"}</div>
+                    <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>{showName || "(no name)"}</div>
                     <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
                       {fmtHour(startHour)} – {fmtHour(endHour)}
                       {endHour !== 0 && endHour <= startHour ? " (overnight)" : ""}

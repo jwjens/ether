@@ -317,7 +317,7 @@ export default function ProducerDeskWindow() {
         <div style={{ width:22, height:22, borderRadius:6, background:"linear-gradient(135deg, var(--accent-blue), #a78bfa)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, flexShrink:0 }}>✦</div>
 
         <div style={{ flex:1, display:"flex", alignItems:"center", gap:6 }} data-tauri-drag-region>
-          <span style={{ fontSize:11, fontWeight:800, color:"rgba(255,255,255,0.7)", letterSpacing:"0.08em", textTransform:"uppercase" as const, fontFamily:"'Syne', sans-serif" }}>
+          <span style={{ fontSize:11, fontWeight:800, color:"rgba(255,255,255,0.7)", letterSpacing:"0.08em", textTransform:"uppercase" as const, fontFamily:"'Newsreader', Georgia, serif" }}>
             Producer Desk
           </span>
           <span style={{ fontSize:9, color:"rgba(255,255,255,0.2)", letterSpacing:"0.04em" }}>— Ether</span>

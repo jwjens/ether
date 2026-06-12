@@ -361,7 +361,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
             border: micLive ? "none" : "1px solid rgba(239,68,68,0.25)",
             color: micLive ? "#fff" : "#ef4444",
             cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-            fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
+            fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 800, letterSpacing: "0.12em",
             boxShadow: micLive ? "0 2px 16px rgba(239,68,68,0.4)" : "none",
             transition: "all 0.2s ease",
             animation: micLive ? "mic-glow 1.8s ease-in-out infinite" : "none",

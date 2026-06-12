@@ -250,7 +250,7 @@ export default function ClockEditor({ clockId, onSave, onClose }: Props) {
         background: "var(--bg-secondary)",
       }}>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+          <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
             Clock Editor
           </div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>

@@ -525,7 +525,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
             <span style={{
               fontSize: 12, fontWeight: 800, color: "rgba(255,255,255,0.85)",
               letterSpacing: "0.04em", textTransform: "uppercase" as const,
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'Newsreader', Georgia, serif",
             }}>Desk</span>
             {!minimized && episodeTitle && (
               <span style={{ fontSize: 10, color: "rgba(255,255,255,0.22)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, maxWidth: 160 }}>
@@ -1280,7 +1280,7 @@ export function InlineProducerDesk({ episodeTitle, nowPlaying }: { episodeTitle?
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid rgba(255,255,255,0.05)", flexShrink: 0 }}>
-        <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.85)", letterSpacing: "0.04em", textTransform: "uppercase", fontFamily: "'Syne', sans-serif" }}>DESK</span>
+        <span style={{ fontSize: 11, fontWeight: 800, color: "rgba(255,255,255,0.85)", letterSpacing: "0.04em", textTransform: "uppercase", fontFamily: "'Newsreader', Georgia, serif" }}>DESK</span>
         {episodeTitle && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{episodeTitle}</span>}
         <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
           {(["yellow","pink","cyan","green","purple"] as NoteColor[]).map(c => (

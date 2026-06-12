@@ -136,7 +136,7 @@ export default function AboutPanel({ onClose }: Props) {
             {/* Title block */}
             <div>
               <div style={{
-                fontFamily: "'Syne', sans-serif",
+                fontFamily: "'Newsreader', Georgia, serif",
                 fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em",
                 background: "linear-gradient(135deg, #f0f0f8 0%, rgba(240,240,248,0.7) 100%)",
                 WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
@@ -227,7 +227,7 @@ export default function AboutPanel({ onClose }: Props) {
                       background: "linear-gradient(135deg, rgb(from var(--accent-cyan) r g b / 0.2), rgba(167,139,250,0.2))",
                       border: "1px solid rgb(from var(--accent-cyan) r g b / 0.2)",
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 800,
+                      fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 800,
                       color: "var(--accent-cyan)",
                     }}>
                       {member.name.charAt(0)}

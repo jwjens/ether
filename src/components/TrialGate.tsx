@@ -51,7 +51,7 @@ export default function TrialGate() {
         <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--accent-cyan)", marginBottom: 14 }}>
           Trial ended
         </div>
-        <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", marginBottom: 12 }}>
+        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", marginBottom: 12 }}>
           Your free trial has ended
         </div>
         <div style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.65, marginBottom: 28 }}>
@@ -59,7 +59,7 @@ export default function TrialGate() {
           Your stations, library, and settings are all saved either way.
         </div>
         <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
-          <button onClick={seePlans} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em" }}>
+          <button onClick={seePlans} style={{ width: "100%", padding: "12px 0", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em" }}>
             See plans &amp; subscribe →
           </button>
           <button onClick={() => setShow(false)} style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>

@@ -39,7 +39,7 @@ export default function CloudInstallPrompt() {
     <div style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: 470, maxWidth: "90vw", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 20px 60px rgba(0,0,0,0.6)" }}>
         <div style={{ padding: "20px 22px 14px", borderBottom: "1px solid var(--border-primary)" }}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>Install your station from the cloud?</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Install your station from the cloud?</div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 4 }}>We found a cloud backup of your account.</div>
         </div>
         <div style={{ padding: "18px 22px" }}>

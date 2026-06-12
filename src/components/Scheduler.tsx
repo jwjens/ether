@@ -1010,7 +1010,7 @@ function ClocksTab() {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div>
-          <h2 style={{ fontSize: 18, fontWeight: 800, color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif", letterSpacing: "-0.03em" }}>
+          <h2 style={{ fontSize: 18, fontWeight: 800, color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "-0.03em" }}>
             Clocks
           </h2>
           <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "3px 0 0" }}>

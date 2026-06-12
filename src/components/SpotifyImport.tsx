@@ -248,7 +248,7 @@ export default function SpotifyImport({ onClose }: Props) {
             </svg>
           </div>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, color: S.text, letterSpacing: "-0.02em", fontFamily: "'Syne', sans-serif" }}>Import from Spotify</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: S.text, letterSpacing: "-0.02em", fontFamily: "'Newsreader', Georgia, serif" }}>Import from Spotify</div>
             <div style={{ fontSize: 11, color: S.muted, marginTop: 2 }}>
               Two-layer content safety · Acoustic filters + Lyric scan · Explicit always blocked
             </div>
@@ -372,7 +372,7 @@ export default function SpotifyImport({ onClose }: Props) {
                   background: phase === "fetching" ? "#18181f" : "#1db954",
                   color: phase === "fetching" ? S.muted : "#000",
                   fontSize: 13, fontWeight: 800, cursor: phase === "fetching" ? "default" : "pointer",
-                  letterSpacing: "0.04em", fontFamily: "'Syne', sans-serif",
+                  letterSpacing: "0.04em", fontFamily: "'Newsreader', Georgia, serif",
                   transition: "all 0.2s",
                 }}
               >
@@ -439,7 +439,7 @@ export default function SpotifyImport({ onClose }: Props) {
                         padding: "8px 20px", border: "none", borderRadius: 0,
                         background: S.green, color: "#000",
                         fontSize: 12, fontWeight: 800, cursor: "pointer",
-                        letterSpacing: "0.03em", fontFamily: "'Syne', sans-serif",
+                        letterSpacing: "0.03em", fontFamily: "'Newsreader', Georgia, serif",
                       }}
                     >
                       Confirm & Import {approvedCount} Tracks →

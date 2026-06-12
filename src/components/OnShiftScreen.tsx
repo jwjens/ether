@@ -293,7 +293,7 @@ export default function OnShiftScreen({ onStart }: Props) {
                       background: operator?.id === op.id ? S.purple : S.border,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       fontSize: 10, fontWeight: 800, color: "#fff",
-                      fontFamily: "'Syne', sans-serif",
+                      fontFamily: "'Newsreader', Georgia, serif",
                     }}>{op.initials.slice(0, 2).toUpperCase()}</span>
                     {op.name}
                   </button>
@@ -318,7 +318,7 @@ export default function OnShiftScreen({ onStart }: Props) {
             {/* Greeting */}
             {operator && (
               <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 26, fontWeight: 800, color: S.text, letterSpacing: "-0.03em", fontFamily: "'Syne', sans-serif", lineHeight: 1.2, marginBottom: 6 }}>
+                <div style={{ fontSize: 26, fontWeight: 800, color: S.text, letterSpacing: "-0.03em", fontFamily: "'Newsreader', Georgia, serif", lineHeight: 1.2, marginBottom: 6 }}>
                   {greeting()},<br />{operator.name}.
                 </div>
                 <div style={{ fontSize: 12, color: S.muted }}>
@@ -394,7 +394,7 @@ export default function OnShiftScreen({ onStart }: Props) {
                 width: "100%", padding: "16px", borderRadius: 0,
                 background: operator ? S.purple : S.border,
                 border: "none", color: "#fff",
-                fontFamily: "'Syne', sans-serif", fontSize: 14, fontWeight: 800,
+                fontFamily: "'Newsreader', Georgia, serif", fontSize: 14, fontWeight: 800,
                 letterSpacing: "0.06em", textTransform: "uppercase",
                 cursor: operator ? "pointer" : "default",
                 transition: "background 0.2s",

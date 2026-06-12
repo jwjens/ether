@@ -318,7 +318,7 @@ export default function MidiSettingsPanel() {
   return (
     <div style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div style={{ marginBottom: 16 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>MIDI Controller</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>MIDI Controller</h1>
         <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Map your hardware controller to Ether — faders, buttons, transport</p>
       </div>
 

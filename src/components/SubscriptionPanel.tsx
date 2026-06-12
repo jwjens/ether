@@ -258,7 +258,7 @@ export default function SubscriptionPanel() {
 
       {/* Header */}
       <div style={{ padding: "32px 0 20px" }}>
-        <h1 style={{ fontFamily: "'Syne', sans-serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, marginBottom: 8 }}>
+        <h1 style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, marginBottom: 8 }}>
           Subscription
         </h1>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -305,7 +305,7 @@ export default function SubscriptionPanel() {
               cursor: "pointer",
               fontSize: 12,
               fontWeight: 700,
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'Newsreader', Georgia, serif",
               letterSpacing: "0.06em",
               transition: "all 0.18s ease",
               background: billingMode === mode
@@ -378,7 +378,7 @@ export default function SubscriptionPanel() {
           borderRadius: 0, padding: 28, marginBottom: 24,
           boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
         }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+          <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
             Sign in to activate
           </div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
@@ -402,7 +402,7 @@ export default function SubscriptionPanel() {
             />
             {signinError && <div style={{ fontSize: 12, color: "#f87171" }}>{signinError}</div>}
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={signInActivate} disabled={signinLoading} style={{ flex: 1, padding: "10px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif" }}>
+              <button onClick={signInActivate} disabled={signinLoading} style={{ flex: 1, padding: "10px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Newsreader', Georgia, serif" }}>
                 {signinLoading ? "Signing in..." : "Sign In & Activate"}
               </button>
               <button onClick={() => { setShowSignIn(false); setSigninError(""); }} style={{ padding: "10px 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
@@ -426,7 +426,7 @@ export default function SubscriptionPanel() {
           borderRadius: 0, padding: 28, marginBottom: 24,
           boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
         }}>
-          <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
+          <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 700, color: "var(--text-primary)", marginBottom: 6 }}>
             Enter your license key
           </div>
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
@@ -449,7 +449,7 @@ export default function SubscriptionPanel() {
             />
             {licenseError && <div style={{ fontSize: 12, color: "#f87171" }}>{licenseError}</div>}
             <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={validateLicense} disabled={loading} style={{ flex: 1, padding: "10px 0", borderRadius: 0, background: "var(--accent-blue)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Syne', sans-serif" }}>
+              <button onClick={validateLicense} disabled={loading} style={{ flex: 1, padding: "10px 0", borderRadius: 0, background: "var(--accent-blue)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Newsreader', Georgia, serif" }}>
                 {loading ? "Activating..." : "Activate License"}
               </button>
               <button onClick={() => { setShowLicenseEntry(false); setLicenseError(""); }} style={{ padding: "10px 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 13, cursor: "pointer" }}>
@@ -472,7 +472,7 @@ export default function SubscriptionPanel() {
             boxShadow: currentPlan === "free" ? "0 0 24px rgba(52,211,153,0.08)" : "none",
           }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 12 }}>Solo</div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "#34d399", marginBottom: 4 }}>$0</div>
+            <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "#34d399", marginBottom: 4 }}>$0</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>forever · no credit card</div>
             <div style={{ padding: "10px 0", borderRadius: 0, background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.2)", textAlign: "center" as const, fontSize: 12, fontWeight: 700, color: "#34d399", marginBottom: 20 }}>
               {currentPlan === "free" ? "✓ Current Plan" : "Downgrade"}
@@ -498,14 +498,14 @@ export default function SubscriptionPanel() {
           }}>
             <div style={{ position: "absolute" as const, top: -1, left: "50%", transform: "translateX(-50%)", background: "var(--accent-cyan)", color: "#000", fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", padding: "4px 14px", borderRadius: "0 0 8px 8px" }}>MOST POPULAR</div>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "var(--accent-cyan)", textTransform: "uppercase" as const, marginBottom: 12, marginTop: 8 }}>Studio</div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
+            <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$19</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>per month · solo creator / podcaster</div>
             {currentPlan === "pro" ? (
               <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgb(from var(--accent-cyan) r g b / 0.1)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", color: "var(--accent-cyan)", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
                 ✓ Active — Cancel Plan
               </button>
             ) : (
-              <button onClick={() => openCheckout("pro")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, boxShadow: "0 0 24px rgb(from var(--accent-cyan) r g b / 0.3)", fontFamily: "'Syne', sans-serif" }}>
+              <button onClick={() => openCheckout("pro")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "var(--accent-cyan)", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, boxShadow: "0 0 24px rgb(from var(--accent-cyan) r g b / 0.3)", fontFamily: "'Newsreader', Georgia, serif" }}>
                 {currentPlan === "station" ? "Downgrade to Studio" : "Upgrade to Studio →"}
               </button>
             )}
@@ -530,14 +530,14 @@ export default function SubscriptionPanel() {
             boxShadow: currentPlan === "station" ? "0 0 24px rgba(167,139,250,0.08)" : "none",
           }}>
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.18em", color: "#a78bfa", textTransform: "uppercase" as const, marginBottom: 12 }}>Network</div>
-            <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$79</div>
+            <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", marginBottom: 4 }}>$79</div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>per month · commercial station</div>
             {currentPlan === "station" ? (
               <button onClick={cancelPlan} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20 }}>
                 ✓ Active — Cancel Plan
               </button>
             ) : (
-              <button onClick={() => openCheckout("station")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, fontFamily: "'Syne', sans-serif" }}>
+              <button onClick={() => openCheckout("station")} style={{ width: "100%", padding: "10px 0", borderRadius: 0, background: "rgba(167,139,250,0.12)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa", fontSize: 12, fontWeight: 700, cursor: "pointer", marginBottom: 20, fontFamily: "'Newsreader', Georgia, serif" }}>
                 {currentPlan === "pro" ? "Upgrade to Network →" : "Get Network →"}
               </button>
             )}
@@ -594,7 +594,7 @@ export default function SubscriptionPanel() {
               <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 18, fontStyle: "italic" }}>Own it forever.</div>
 
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
-                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 42, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)" }}>$299</div>
+                <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 42, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)" }}>$299</div>
                 <div style={{ fontSize: 12, color: "#f59e0b", fontWeight: 600 }}>one-time</div>
               </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>vs $228/yr on monthly</div>
@@ -606,7 +606,7 @@ export default function SubscriptionPanel() {
               ) : (
                 <button
                   onClick={() => openCheckout("pro_lifetime")}
-                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "#f59e0b", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 8, fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em" }}
+                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "#f59e0b", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 8, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em" }}
                 >
                   Get Studio Lifetime →
                 </button>
@@ -660,7 +660,7 @@ export default function SubscriptionPanel() {
               <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 18, fontStyle: "italic" }}>The professional choice.</div>
 
               <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
-                <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 42, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)" }}>$899</div>
+                <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 42, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)" }}>$899</div>
                 <div style={{ fontSize: 12, color: "#f59e0b", fontWeight: 600 }}>one-time</div>
               </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 20 }}>vs $948/yr on monthly</div>
@@ -672,7 +672,7 @@ export default function SubscriptionPanel() {
               ) : (
                 <button
                   onClick={() => openCheckout("station_lifetime")}
-                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "#f59e0b", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 8, fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", boxShadow: "0 0 28px rgba(245,158,11,0.35)" }}
+                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "#f59e0b", border: "none", color: "#000", fontSize: 13, fontWeight: 800, cursor: "pointer", marginBottom: 8, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em", boxShadow: "0 0 28px rgba(245,158,11,0.35)" }}
                 >
                   Get Network Lifetime →
                 </button>
@@ -708,7 +708,7 @@ export default function SubscriptionPanel() {
       {currentPlan === "free" && billingMode === "monthly" && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "rgba(124,58,237,0.07)", border: "1px solid rgba(124,58,237,0.25)", borderRadius: 0, marginBottom: 16 }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Syne', sans-serif" }}>You're on the Solo plan</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Newsreader', Georgia, serif" }}>You're on the Solo plan</div>
             <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>Upgrade to Studio for Iris AI assistant, cloud backup, remote dashboard, and more</div>
           </div>
           <button onClick={() => openCheckout("pro")} style={{ flexShrink: 0, marginLeft: 20, padding: "10px 20px", borderRadius: 0, background: "#7c3aed", border: "none", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" as const }}>

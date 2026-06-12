@@ -756,7 +756,7 @@ export default function ProgramLog({ onClose }: Props) {
         {/* Header */}
         <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid var(--border-primary)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
               Program Log
             </div>
             {onClose && (
@@ -927,7 +927,7 @@ export default function ProgramLog({ onClose }: Props) {
           background: "var(--bg-secondary)",
         }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
               {new Date(selectedDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
             </div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>
@@ -1268,7 +1268,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
           background: "var(--bg-tertiary)",
         }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)" }}>
               {fmtHour(hour)} — {block.show_name || "Unassigned"}
             </div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>
@@ -1527,7 +1527,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
           background: "var(--bg-tertiary)", flexShrink: 0,
         }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Syne', sans-serif", color: "var(--text-primary)" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)" }}>
               Shows & Dayparts
             </div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>

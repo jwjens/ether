@@ -231,7 +231,7 @@ export default function Logs() {
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as any, gap: 10 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Syne', sans-serif" }}>Play Log</h1>
+        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Play Log</h1>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" as any }}>
           {/* Filter buttons */}
@@ -330,7 +330,7 @@ export default function Logs() {
         return (
           <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden" }}>
             <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" as any }}>
-              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Syne', sans-serif" }}>As-Run Reconciliation</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>As-Run Reconciliation</span>
               <div style={{ display: "flex", gap: 10, fontSize: 11 }}>
                 <span style={{ color: "var(--accent-green)", fontWeight: 700 }}>{matchCount} matched</span>
                 <span style={{ color: "var(--accent-red)", fontWeight: 700 }}>{missedCount} missed</span>
