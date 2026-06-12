@@ -13,7 +13,7 @@ const { withMutation, logMutation, serializePayload } = require('../mutation-wri
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE    = 'songs';
-const PATCHABLE = ["title","file_path","file_key","artist_id","album_id","category_id","genre","duration_ms","bpm","energy","mood","gender","rotation_status","daypart_mask","no_repeat_hours","lufs_measured","peak_db","gain_db","is_processed","cue_in","cue_out","cue_in_ms","cue_out_ms","intro_end","outro_start","intro_end_ms","outro_start_ms","intro_version_path","has_intro","last_played_at","play_count","is_explicit","updated_at","raw_metadata","spotify_uri"];
+const PATCHABLE = ["title","file_path","file_key","artist_id","album_id","category_id","genre","duration_ms","bpm","energy","mood","gender","rotation_status","daypart_mask","no_repeat_hours","lufs_measured","peak_db","gain_db","is_processed","cue_in","cue_out","cue_in_ms","cue_out_ms","intro_end","outro_start","intro_end_ms","outro_start_ms","intro_version_path","has_intro","last_played_at","play_count","is_explicit","updated_at","raw_metadata","spotify_uri","cart_id"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -62,8 +62,8 @@ function songsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (title, file_path, artist_id, album_id, category_id, genre, duration_ms, bpm, energy, mood, gender, rotation_status, daypart_mask, no_repeat_hours, lufs_measured, peak_db, gain_db, is_processed, cue_in, cue_out, cue_in_ms, cue_out_ms, intro_end, outro_start, intro_end_ms, outro_start_ms, intro_version_path, has_intro, last_played_at, play_count, is_explicit, created_at, updated_at, raw_metadata, spotify_uri, uuid, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.title, row.file_path, row.artist_id, row.album_id, row.category_id, row.genre, row.duration_ms, row.bpm, row.energy, row.mood, row.gender, row.rotation_status, row.daypart_mask, row.no_repeat_hours, row.lufs_measured, row.peak_db, row.gain_db, row.is_processed, row.cue_in, row.cue_out, row.cue_in_ms, row.cue_out_ms, row.intro_end, row.outro_start, row.intro_end_ms, row.outro_start_ms, row.intro_version_path, row.has_intro, row.last_played_at, row.play_count, row.is_explicit, row.created_at, row.updated_at, row.raw_metadata, row.spotify_uri, row.uuid, row.deleted_at);
+      `INSERT INTO ${TABLE} (title, file_path, artist_id, album_id, category_id, genre, duration_ms, bpm, energy, mood, gender, rotation_status, daypart_mask, no_repeat_hours, lufs_measured, peak_db, gain_db, is_processed, cue_in, cue_out, cue_in_ms, cue_out_ms, intro_end, outro_start, intro_end_ms, outro_start_ms, intro_version_path, has_intro, last_played_at, play_count, is_explicit, created_at, updated_at, raw_metadata, spotify_uri, cart_id, uuid, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.title, row.file_path, row.artist_id, row.album_id, row.category_id, row.genre, row.duration_ms, row.bpm, row.energy, row.mood, row.gender, row.rotation_status, row.daypart_mask, row.no_repeat_hours, row.lufs_measured, row.peak_db, row.gain_db, row.is_processed, row.cue_in, row.cue_out, row.cue_in_ms, row.cue_out_ms, row.intro_end, row.outro_start, row.intro_end_ms, row.outro_start_ms, row.intro_version_path, row.has_intro, row.last_played_at, row.play_count, row.is_explicit, row.created_at, row.updated_at, row.raw_metadata, row.spotify_uri, row.cart_id, row.uuid, row.deleted_at);
   });
   return songsGet(db, uuid);
 }

@@ -82,6 +82,7 @@ module.exports = function applyBaseline(db) {
       updated_at         INTEGER DEFAULT (unixepoch()),
       raw_metadata       TEXT,
       spotify_uri        TEXT DEFAULT NULL,
+      cart_id            TEXT,
       uuid               TEXT,
       deleted_at         TEXT
     );
