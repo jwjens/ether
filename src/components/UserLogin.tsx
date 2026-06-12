@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import etherLogoMark from "../assets/ether-logo.svg";
+import etherLogoMark from "../assets/ether-atom.png";
 import { query, execute } from "../db/client";
 
 export interface AppUser {
