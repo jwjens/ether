@@ -4542,14 +4542,15 @@ function _buildScheduleCtx(stationId) {
     activeStationId: stationId, artistSepMin, songRepeatMin,
     songLastTs: new Map(), artistLastTs: new Map(), generatedRows: [],
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
-    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
+    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
     stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND ((s.daypart_mask >> ?) & 1) = 1 ORDER BY RANDOM()`),
+    stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
 }
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
-  const { stmtShows, stmtSlots, stmtCandidates, songLastTs, artistLastTs, artistSepMin, songRepeatMin, activeStationId, generatedRows } = ctx;
+  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, songLastTs, artistLastTs, artistSepMin, songRepeatMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
@@ -4570,6 +4571,21 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
     for (const slot of slots) {
       if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
       const slotDurationS = (slot.duration_min || 4) * 60;
+      // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the
+      // scheduler). Place that exact element regardless of slot_type/category.
+      if (slot.song_id) {
+        const pinned = stmtSongById.get(slot.song_id);
+        if (pinned && pinned.file_path) {
+          const durationS = pinned.duration_ms ? Math.round(pinned.duration_ms / 1000) : slotDurationS;
+          generatedRows.push({ scheduled_at: currentTs, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? path.basename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
+          usedSongIds.add(pinned.id);
+          if (pinned.artist_id) usedArtistIds.add(pinned.artist_id);
+          songLastTs.set(pinned.id, currentTs);
+          if (pinned.artist_id) artistLastTs.set(pinned.artist_id, currentTs);
+          currentTs += durationS;
+        } else { currentTs += slotDurationS; }
+        continue;
+      }
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
       const candidates = stmtCandidates.all(slot.category_id, h);
       let picked = null, softFallback = null;

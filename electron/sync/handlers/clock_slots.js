@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'clock_slots';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["clock_id","position","slot_type","category_id","label","duration_min","chain_type","updated_at"];
+const PATCHABLE          = ["clock_id","position","slot_type","category_id","song_id","label","duration_min","chain_type","updated_at"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ function clockSlotsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (clock_id, position, slot_type, category_id, label, duration_min, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.clock_id, row.position, row.slot_type, row.category_id, row.label, row.duration_min, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      `INSERT INTO ${TABLE} (clock_id, position, slot_type, category_id, song_id, label, duration_min, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.clock_id, row.position, row.slot_type, row.category_id, row.song_id ?? null, row.label, row.duration_min, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
   });
   return clockSlotsGet(db, uuid);
 }

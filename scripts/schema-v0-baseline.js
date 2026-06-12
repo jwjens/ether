@@ -137,6 +137,7 @@ module.exports = function applyBaseline(db) {
       position     INTEGER NOT NULL DEFAULT 0,
       slot_type    TEXT NOT NULL DEFAULT 'music',
       category_id  INTEGER REFERENCES categories(id),
+      song_id      INTEGER REFERENCES songs(id),
       label        TEXT,
       duration_min INTEGER DEFAULT 4,
       station_id   INTEGER NOT NULL DEFAULT 1,

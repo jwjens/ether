@@ -22,10 +22,12 @@ interface Clock {
 interface ClockSlot {
   id: number; clock_id: number; position: number;
   slot_type: string; category_id: number | null;
+  song_id?: number | null;
   label: string | null; duration_min: number;
   chain_type?: string;
   category_code?: string; category_color?: string;
   song_title?: string | null; song_artist?: string | null;
+  cart_id?: string | null;
 }
 
 // ── Swipe gesture hook ────────────────────────────────────────────────────────
@@ -800,6 +802,21 @@ function ClocksTab() {
     );
     // Enrich music slots with a representative song
     const enriched = await Promise.all(raw.map(async s => {
+      // Pinned slot — show the exact element it's locked to (by cart #).
+      if (s.song_id) {
+        try {
+          const pin = await queryScoped<{ title: string; artist_name: string | null; duration_ms: number; cart_id: string | null }>(
+            `SELECT s.title, a.name as artist_name, s.duration_ms, s.cart_id
+             FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`,
+            [s.song_id], stationId, { skipScoping: true }
+          );
+          if (pin.length > 0) {
+            const durMin = pin[0].duration_ms > 0 ? Math.round((pin[0].duration_ms / 60000) * 100) / 100 : s.duration_min;
+            return { ...s, song_title: pin[0].title, song_artist: pin[0].artist_name, cart_id: pin[0].cart_id, duration_min: durMin };
+          }
+        } catch {}
+        return s;
+      }
       if (s.slot_type === "music" && s.category_id) {
         try {
           const songs = await queryScoped<{ id: number; title: string; artist_name: string | null; duration_ms: number; file_path: string }>(
@@ -899,6 +916,27 @@ function ClocksTab() {
   const changeSlotCat = async (id: number, catId: number | null) => {
     await (window as any).ether.clockSlots.updateById(id, { category_id: catId });
     setEditCell(null);
+    if (selected) loadSlots(selected);
+  };
+
+  // Pin a slot to ONE specific element by its cart # (or clear the pin). The generator then
+  // places that exact song/jingle/talk break here instead of a random category pick.
+  const pinSlotByCart = async (id: number) => {
+    const cur = slots.find(s => s.id === id);
+    const input = window.prompt("Pin this slot to a Cart # (blank to clear):", cur?.cart_id || "");
+    if (input === null) return;
+    const cart = input.trim();
+    if (!cart) {
+      await (window as any).ether.clockSlots.updateById(id, { song_id: null });
+      if (selected) loadSlots(selected);
+      return;
+    }
+    const rows = await queryScoped<{ id: number; title: string }>(
+      "SELECT id, title FROM songs WHERE cart_id = ? AND deleted_at IS NULL LIMIT 1",
+      [cart], stationId, { skipScoping: true }
+    );
+    if (!rows.length) { alert(`No library element has Cart #${cart}.`); return; }
+    await (window as any).ether.clockSlots.updateById(id, { song_id: rows[0].id, label: rows[0].title });
     if (selected) loadSlots(selected);
   };
 
@@ -1245,6 +1283,11 @@ function ClocksTab() {
 
                     {/* Actions */}
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 2 }}>
+                      <button onClick={() => pinSlotByCart(s.id)} style={{ background: "none", border: "none", color: s.song_id ? "var(--accent-cyan)" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
+                        title={s.song_id ? `Pinned to Cart #${s.cart_id || "?"} — click to change/clear` : "Pin a specific element by Cart #"}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = s.song_id ? "var(--accent-cyan)" : "var(--text-tertiary)"; }}
+                      >📌</button>
                       <button onClick={() => duplicateSlot(s)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
                         title="Duplicate slot"
                         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#34d399"; }}
