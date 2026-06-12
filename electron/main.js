@@ -1174,11 +1174,14 @@ function processInviteFile() {
       operatorNotesUpsertByOperatorId(db, op.id, inviteStationId, invite.personal_note);
     }
 
-    // Set experience mode + mark first run complete + store invite metadata
+    // Pre-seed the experience mode + invite metadata, but DO NOT mark first_run_complete.
+    // Account sign-in / sign-up is required for everyone (commit 70ec7f4); writing
+    // first_run_complete here skipped OnboardingFlow's auth screen and dropped the operator
+    // straight onto the profile/PIN screen. Leaving it unset lets onboarding show sign-in first;
+    // the pre-seeded experience_mode still skips that bolted step afterward.
     const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
     const mode = invite.experience_mode || "standard";
     stationConfigKvUpsertByKey(db, inviteStationId, 'experience_mode', mode);
-    stationConfigKvUpsertByKey(db, inviteStationId, 'first_run_complete', '1');
     stationConfigKvUpsertByKey(db, inviteStationId, 'invite_used', '1');
     stationConfigKvUpsertByKey(db, inviteStationId, 'invited_by', invite.invited_by || "Deniro");
 
