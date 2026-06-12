@@ -74,6 +74,8 @@ class DaemonEngine {
     this._lastRecoverAt = 0;             // last watchdog recovery attempt — bounded retry if a recovery can't find content
     this._started = false;               // automation engaged (start() called, not stopped). The watchdog only
                                          // recovers while on air — it must never auto-start playout on a fresh daemon.
+    this._lastHourCut = new Date().getHours();  // top-of-hour hard cut: hour we last fired for. Seeded to the
+                                         // current hour so a mid-hour daemon start never fires until the next :00.
     this.pollTimer = null;
     this.lastPollTime = Date.now();
   }
@@ -140,7 +142,57 @@ class DaemonEngine {
     this.checkEnd("C", pos.C, dur.C, prev.C, rustEnded.C);
     this.processingEnd = false;
     this._maintain();
+    this._checkTopOfHour();
     this._watchdog();
+  }
+
+  // ── Top-of-hour hard cut ──────────────────────────────────────────────────────────────────────
+  // Radio needs the top of each hour to hit at :00 (legal/station ID, news, the new hour's first
+  // element) — even mid-song. Nothing else here watches the wall clock; rotation only advances at
+  // song-end. So once per hour, when the LOCAL hour rolls over, if the schedule has an element for
+  // the new hour we hard-cut to it. Fail-safe: any miss (no schedule, query error) leaves the current
+  // rotation playing — this never causes dead air. Only runs while automation is engaged.
+  _checkTopOfHour() {
+    if (!this._started) return;
+    const now = new Date();
+    const h = now.getHours();
+    if (h === this._lastHourCut) return;   // same hour — nothing to do
+    this._lastHourCut = h;                  // mark immediately so we fire at most once per boundary
+    const hs = new Date(now.getTime()); hs.setMinutes(0, 0, 0);
+    this._hardCutTopOfHour(h, Math.floor(hs.getTime() / 1000));
+  }
+
+  _hardCutTopOfHour(hour, hourStartTs) {
+    let items;
+    try { items = this._ensureIds(this._playable(loggen.fillFromHour(this.db, this.stationId, hourStartTs, 20))); }
+    catch (e) { this._log("top-of-hour: fill error — " + String(e) + " (rotation continues)"); return; }
+    if (!items.length) { this._log("top-of-hour @" + hour + ":00 — no scheduled element, rotation continues"); return; }
+    this._log("top-of-hour @" + hour + ":00 HARD CUT → " + (items[0].title || "(untitled)") + " (" + items.length + " queued)");
+    this._advance("top-of-hour", async () => {
+      // Hard-stop every deck (no fade) and wipe the outgoing hour's runover + cued state.
+      this._stop("A"); this._stop("B"); this._stop("C");
+      this._setDeck("A", { status: "ended" }); this._setDeck("B", { status: "ended" }); this._setDeck("C", { status: "ended" });
+      this.deckReady.clear(); this.manualCue.clear(); this.endTriggered.clear();
+      this.clearQueue();
+      this.queue.push(...items);
+      this.emit("queue", { stationId: this.stationId, source: "top-of-hour", items: this.queue });
+      await new Promise(r => setTimeout(r, 80)); // let the stops reach the audio backend before we load
+      // Load + play the new hour's first PLAYABLE element on deck A, skipping any dead files.
+      let loaded = false, guard = 0;
+      while (this.queue.length > 0 && guard++ < 100) {
+        const first = this.dequeue();
+        if (this.loadToDeck("A", first)) { this.deckChainType.A = first.chainType || "segue"; loaded = true; break; }
+        this.emit("error", { stationId: this.stationId, where: "top-of-hour", error: "skipped unplayable: " + (first.filePath || "") });
+      }
+      if (!loaded) { this._log("top-of-hour: first element unplayable — rotation will self-heal"); return; }
+      this._play("A");
+      this._setDeck("A", { status: "playing", positionSec: 0 });
+      this.endTriggered.delete("A");
+      this._fireStart("A");
+      this._log("top-of-hour: deck A LIVE — " + (this.stateA.title || "(untitled)"));
+      // Preload B/C so the rotation continues normally through the rest of the hour.
+      setTimeout(async () => { await this.preload("B", 0); setTimeout(() => this.preload("C", 1), 400); }, 800);
+    });
   }
 
   // Stage 3b: stall-recovery watchdog. Runs every poll tick AFTER _maintain. Enforces the invariant

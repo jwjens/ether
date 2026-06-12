@@ -134,6 +134,31 @@ function readGeneratedSchedule(db, count, stationId) {
   return rows.filter(r => r.file_path); // skip cloud-only entries (need app r2:fetch)
 }
 
+// ── Top-of-hour: read the schedule starting EXACTLY at a given hour boundary ──
+// Used by the daemon's hard top-of-hour cut. Unlike readGeneratedSchedule (which has a -300s
+// grace and a cross-refill cursor), this is anchored to hourStartTs with NO grace, so it returns
+// the new hour's first scheduled element and onward — never a tail item from the previous hour.
+// Advances the shared cursor past these rows so the next normal refill continues after them.
+// Returns mapped items (local files only); [] if the hour has no schedule.
+function fillFromHour(db, stationId, hourStartTs, count = 20) {
+  const fmt = getFormatCategoryIds(db, stationId);
+  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const params = fmt.length ? [stationId, hourStartTs, ...fmt, count] : [stationId, hourStartTs, count];
+  let rows;
+  try {
+    rows = db.prepare(
+      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
+       FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+       WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL ${catClause}
+       ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
+  } catch { return []; }
+  const playable = rows.filter(r => r.file_path);
+  if (playable.length) _schedCursor = playable[playable.length - 1].row_id; // next normal refill continues after these
+  return playable.map(toItem);
+}
+
 // ── Main: fill `count` on-format tracks. Priority schedule → clock → on-format random ──
 function fillQueue(db, stationId, count = 12) {
   const hour = new Date().getHours();
@@ -155,4 +180,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format random", formatCats, items: songs.map(toItem) };
 }
 
-module.exports = { fillQueue, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor };
+module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor };
