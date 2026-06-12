@@ -161,6 +161,10 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const [syncSel,   setSyncSel]   = useState<Set<string>>(new Set());
   const [syncPhase, setSyncPhase] = useState<'choose' | 'installing' | 'error'>('choose');
   const [syncMsg,   setSyncMsg]   = useState('');
+  // Real install progress — driven only by actual work (DB restore + music download),
+  // never decorative. pct is the genuine fraction done; syncMsg is what's literally happening.
+  const [syncPct,   setSyncPct]   = useState(0);
+  const [syncSub,   setSyncSub]   = useState('');   // secondary real detail, e.g. "1,240 / 3,500 files"
 
   // ── Resumption ───────────────────────────────────────────────
   // True until the on-mount KV read completes. Renders an empty dark
@@ -397,7 +401,8 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const runCloudInstall = async (keepUuids: string[] | null) => {
     const ether = (window as any).ether;
     setSyncPhase('installing');
-    setSyncMsg('Downloading your station database…');
+    setSyncPct(0); setSyncSub('');
+    setSyncMsg('Restoring your station database…');
     try {
       let r = await ether.invoke('station:install-from-cloud', {});
       if (!r?.ok && r?.hasData) r = await ether.invoke('station:install-from-cloud', { force: true });
@@ -425,13 +430,22 @@ export default function OnboardingFlow({ onComplete }: Props) {
         } catch (e) { console.error('[cloudSync] prune/switch threw:', e); }
       }
 
-      // Shared audio library (account-wide R2 pull), then relaunch into the restored DB.
-      setSyncMsg(`Database installed${r.stationName ? ` — ${r.stationName}` : ''} (${r.songs} songs). Downloading audio…`);
-      const offP = ether.libraryR2.onDownloadProgress?.((v: any) =>
-        setSyncMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
+      // DB is restored (it carries the profiles, shows, calendar and rotations). Now the music.
+      setSyncPct(5);
+      setSyncMsg(`Downloading your music library${r.stationName ? ` for ${r.stationName}` : ''}…`);
+      setSyncSub(r.songs ? `${r.songs.toLocaleString()} tracks` : '');
+      const offP = ether.libraryR2.onDownloadProgress?.((v: any) => {
+        const done = v?.done ?? 0, total = v?.total ?? 0;
+        // Real fraction: the music download is the bulk of the work → 5%..98%.
+        if (total > 0) setSyncPct(5 + Math.round((done / total) * 93));
+        setSyncMsg('Downloading your music library…');
+        setSyncSub(total > 0 ? `${done.toLocaleString()} / ${total.toLocaleString()} files` : `${done.toLocaleString()} files`);
+      });
       await ether.libraryR2.download();
       offP?.();
-      setSyncMsg('Done. Restarting Ether…');
+      setSyncPct(100);
+      setSyncSub('');
+      setSyncMsg('Finished — starting Ether…');
       await ether.invoke('app:relaunch').catch(() => {});
     } catch (e: any) {
       setSyncPhase('error');
@@ -1060,11 +1074,22 @@ export default function OnboardingFlow({ onComplete }: Props) {
           <div style={GLOW_STYLE} />
           <div style={SHELL_STYLE}>
             <div style={{ animation: "onb-in 0.4s ease both", textAlign: "center" }}>
-              <div style={LABEL_STYLE}>Syncing from the cloud</div>
-              <h1 style={HEADING_STYLE}>{syncPhase === 'error' ? 'Sync failed' : 'Bringing your\nstation down…'}</h1>
-              <p style={{ ...SUB_STYLE, maxWidth: 460, margin: "0 auto", color: syncPhase === 'error' ? "#fca5a5" : "rgba(255,255,255,0.55)" }}>
-                {syncMsg}
-              </p>
+              <div style={LABEL_STYLE}>{syncPhase === 'error' ? 'Sync from the cloud' : 'Setting up this computer'}</div>
+              <h1 style={HEADING_STYLE}>{syncPhase === 'error' ? 'Sync failed' : 'Installing your\nstation…'}</h1>
+              {syncPhase === 'error' ? (
+                <p style={{ ...SUB_STYLE, maxWidth: 460, margin: "0 auto", color: "#fca5a5" }}>{syncMsg}</p>
+              ) : (
+                <div style={{ maxWidth: 460, margin: "20px auto 0" }}>
+                  <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: 14 }}>
+                    <div style={{ height: "100%", width: `${syncPct}%`, background: "var(--accent-cyan)", borderRadius: 999, transition: "width 0.3s ease", boxShadow: "0 0 12px rgb(from var(--accent-cyan) r g b / 0.5)" }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                    <span style={{ ...SUB_STYLE, margin: 0, color: "rgba(255,255,255,0.8)" }}>{syncMsg}</span>
+                    <span style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 15, fontWeight: 700, color: "var(--accent-cyan)" }}>{syncPct}%</span>
+                  </div>
+                  {syncSub && <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", textAlign: "left" }}>{syncSub}</div>}
+                </div>
+              )}
               {syncPhase === 'error' && (
                 <div style={{ marginTop: 24, display: "flex", justifyContent: "center", gap: 12 }}>
                   <button
