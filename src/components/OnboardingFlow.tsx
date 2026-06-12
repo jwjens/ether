@@ -159,7 +159,9 @@ export default function OnboardingFlow({ onComplete }: Props) {
   // cloud DB backup before forcing a new profile. syncSel = the uuids the
   // operator chose to keep visible; phase drives the install/progress UI.
   const [syncSel,   setSyncSel]   = useState<Set<string>>(new Set());
-  const [syncPhase, setSyncPhase] = useState<'choose' | 'installing' | 'error'>('choose');
+  const [syncPhase, setSyncPhase] = useState<'choose' | 'storage' | 'installing' | 'error'>('choose');
+  const [pendingKeep, setPendingKeep] = useState<string[] | null>(null); // selection awaiting the storage step
+  const [musicDir, setMusicDir] = useState('');                          // chosen music-library folder
   const [syncMsg,   setSyncMsg]   = useState('');
   // Real install progress — driven only by actual work (DB restore + music download),
   // never decorative. pct is the genuine fraction done; syncMsg is what's literally happening.
@@ -453,8 +455,24 @@ export default function OnboardingFlow({ onComplete }: Props) {
     }
   };
 
-  const syncAllStations = () => runCloudInstall(null);
-  const syncSelectedStations = () => { if (syncSel.size > 0) runCloudInstall([...syncSel]); };
+  // Before installing, ask WHERE to store the music library. The DB is small (stays in app data);
+  // the music can be large, so the operator picks a folder. Then runCloudInstall pulls into it.
+  const goToStorage = async (keep: string[] | null) => {
+    setPendingKeep(keep);
+    try { const r = await (window as any).ether.music?.getDir?.(); if (r?.dir) setMusicDir(r.dir); } catch {}
+    setSyncPhase('storage');
+  };
+  const syncAllStations = () => goToStorage(null);
+  const syncSelectedStations = () => { if (syncSel.size > 0) goToStorage([...syncSel]); };
+  const chooseMusicFolder = async () => {
+    try {
+      const dir = await (window as any).ether.dialog?.openDirectory?.();
+      const picked = Array.isArray(dir) ? dir[0] : (dir?.filePaths?.[0] ?? dir);
+      if (!picked) return;
+      const r = await (window as any).ether.music?.setDir?.(picked);
+      if (r?.ok) setMusicDir(r.dir);
+    } catch (e) { console.error('[cloudSync] choose folder:', e); }
+  };
   const toggleSyncSel = (uuid: string) => setSyncSel(prev => {
     const next = new Set(prev);
     if (next.has(uuid)) next.delete(uuid); else next.add(uuid);
@@ -1067,6 +1085,32 @@ export default function OnboardingFlow({ onComplete }: Props) {
   // ── Screen 3 — Pick or add a station ─────────────────────────────────
   // ── Cloud sync — pull the account's stations onto a fresh machine ────
   if (state === 'cloudSync') {
+    // Storage step: pick where the music library lives before pulling it.
+    if (syncPhase === 'storage') {
+      return (
+        <div style={OVERLAY_STYLE}>
+          <div style={GLOW_STYLE} />
+          <div style={SHELL_STYLE}>
+            <div style={{ animation: "onb-in 0.4s ease both", textAlign: "center" }}>
+              <div style={LABEL_STYLE}>Before we install</div>
+              <h1 style={HEADING_STYLE}>{'Where should we keep\nyour music?'}</h1>
+              <p style={{ ...SUB_STYLE, maxWidth: 460, margin: "0 auto 24px" }}>
+                Your station settings stay in the app. Your music library can be large — pick a folder on a drive with room. You can change it later.
+              </p>
+              <div style={{ maxWidth: 520, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                  <span style={{ flex: 1, textAlign: "left", fontSize: 13, color: "rgba(255,255,255,0.8)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", wordBreak: "break-all", overflowWrap: "anywhere" as const }}>{musicDir || 'Default app folder'}</span>
+                  <button onClick={chooseMusicFolder} style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 0, background: "transparent", color: "var(--accent-cyan)", border: "1px solid var(--accent-cyan)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Choose folder…</button>
+                </div>
+                <PrimaryButton label="Install here" onClick={() => runCloudInstall(pendingKeep)} />
+                <button onClick={() => setSyncPhase('choose')} style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Syne', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}>← Back</button>
+              </div>
+            </div>
+          </div>
+          <style>{ANIMATION_CSS}</style>
+        </div>
+      );
+    }
     // Installing / error: progress card (DB → audio → relaunch).
     if (syncPhase !== 'choose') {
       return (

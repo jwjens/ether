@@ -104,6 +104,11 @@ contextBridge.exposeInMainWorld("ether", {
     onDownloadProgress: (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:download:progress", h); return () => ipcRenderer.removeListener("library:sync-r2:download:progress", h); },
     onDownloadDone:     (cb)  => { const h = (_, v) => cb(v); ipcRenderer.on("library:sync-r2:download:done", h);     return () => ipcRenderer.removeListener("library:sync-r2:download:done", h); },
   },
+  // Where the music library is stored (configurable folder; survives the cloud-restore DB swap).
+  music: {
+    getDir: ()    => ipcRenderer.invoke("music:get-dir"),
+    setDir: (dir) => ipcRenderer.invoke("music:set-dir", dir),
+  },
   db: {
     query: (sql, p) => ipcRenderer.invoke("db:query", sql, p),
     execute: (sql, p) => ipcRenderer.invoke("db:execute", sql, p),

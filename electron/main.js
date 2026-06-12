@@ -4249,8 +4249,26 @@ ipcMain.handle('captions:get-loopback-source', async () => {
 // Used by the deck queue so local playback and cloud playback share the same
 // R2 source. Once cached the file is reused without re-downloading.
 
-const R2_CACHE_DIR = path.join(app.getPath('userData'), 'r2-cache');
+// Where the music library is stored. Default = <userData>/r2-cache, but the operator can pick a
+// folder during cloud sync (e.g. a big drive). Persisted in a FILE (not the DB) so it survives the
+// install-from-cloud DB swap. getMusicDir() always returns an existing dir.
+const R2_CACHE_DIR    = path.join(app.getPath('userData'), 'r2-cache'); // default / fallback
+const MUSIC_DIR_FILE  = path.join(app.getPath('userData'), 'music-dir.txt');
+function getMusicDir() {
+  let dir = R2_CACHE_DIR;
+  try { const p = fs.readFileSync(MUSIC_DIR_FILE, 'utf8').trim(); if (p) dir = p; } catch {}
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = R2_CACHE_DIR; try { fs.mkdirSync(dir, { recursive: true }); } catch {} }
+  return dir;
+}
+function setMusicDir(dir) {
+  const d = String(dir || '').trim();
+  if (!d) return { ok: false, error: 'empty path' };
+  try { fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(MUSIC_DIR_FILE, d); return { ok: true, dir: d }; }
+  catch (e) { return { ok: false, error: e.message }; }
+}
 fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
+ipcMain.handle('music:get-dir', () => ({ ok: true, dir: getMusicDir(), default: R2_CACHE_DIR }));
+ipcMain.handle('music:set-dir', (_, dir) => setMusicDir(dir));
 
 // Fetch a track from R2 via the backend-signed flow. Returns the same shape
 // as the ipcMain.handle('r2:fetch-track') IPC contract — extracted as a
@@ -4278,7 +4296,7 @@ async function fetchR2Track(fileKey) {
   if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const cachePath = path.join(R2_CACHE_DIR, safeName);
+  const cachePath = path.join(getMusicDir(), safeName);
 
   // Cache hit path — short-circuit
   if (fs.existsSync(cachePath)) return { ok: true, filePath: cachePath };
