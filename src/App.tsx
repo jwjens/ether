@@ -123,6 +123,7 @@ interface SongRow {
   category_code: string | null; category_color: string | null;
   intro_end?: number | null; outro_start?: number | null; bpm?: number | null;
   gain_db?: number | null; play_count?: number | null;
+  cart_id?: string | null;
 }
 
 const EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
@@ -2407,7 +2408,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
 
   // Full persona-aware labels for all 5 venue types
   const personaLabels: Record<string, Record<string, string>> = {
-    radio:   { library: "Song Library",    spots: "Spots & Promos",   clocks: "Clocks",            logs: "Play Log",      voicetrack: "Voice Tracker", live: "Live Assist",  tools: "Tools" },
+    radio:   { library: "Library",         spots: "Spots & Promos",   clocks: "Clocks",            logs: "Play Log",      voicetrack: "Voice Tracker", live: "Live Assist",  tools: "Tools" },
     venue:   { library: "Music Library",   spots: "Announcements",    clocks: "Event Schedule",    logs: "Activity Log",  voicetrack: "Voice Track",   live: "Live Assist",  tools: "Tools" },
     retail:  { library: "Music Library",   spots: "Store Messages",   clocks: "Playlist Schedule", logs: "Playback Log",  voicetrack: "Voice Track",   live: "Live Assist",  tools: "Tools" },
     worship: { library: "Worship Library", spots: "Ministry Audio",   clocks: "Service Schedule",  logs: "Service Log",   voicetrack: "Voice Track",   live: "Worship Mode", tools: "Tools" },
@@ -3874,6 +3875,26 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
     setCtxMenu(null);
   };
 
+  // ── Cart # (library cart number) ───────────────────────────
+  const [cartEdit, setCartEdit] = useState<{ id: number; title: string; value: string } | null>(null);
+  const [cartSaving, setCartSaving] = useState(false);
+  const openCartId = (s: SongRow) => { setCartEdit({ id: s.id, title: s.title || "", value: s.cart_id || "" }); setCtxMenu(null); };
+  const saveCartId = async () => {
+    if (!cartEdit) return;
+    setCartSaving(true);
+    const v = cartEdit.value.trim();
+    // Warn (don't block) if this cart # is already on another element.
+    const clash = songs.find(x => x.id !== cartEdit.id && (x.cart_id || "") === v && v !== "");
+    if (clash && !confirm(`Cart #${v} is already on "${clash.title}". Use it here too?`)) { setCartSaving(false); return; }
+    try {
+      const r = await (window as any).ether.songsExtra.setCartId(cartEdit.id, v);
+      if (!r?.ok) throw new Error(r?.error || "Save failed");
+      setSongs(prev => prev.map(x => x.id === cartEdit.id ? { ...x, cart_id: v || null } : x));
+      setCartEdit(null);
+    } catch { /* leave the modal open on failure */ }
+    setCartSaving(false);
+  };
+
   const saveEditMeta = async () => {
     if (!editMeta) return;
     setEditSaving(true);
@@ -4216,7 +4237,8 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
   const filtered = songs.filter(s => {
     const matchSearch = !search ||
       (s.title||"").toLowerCase().includes(search.toLowerCase()) ||
-      (s.artist_name||"").toLowerCase().includes(search.toLowerCase());
+      (s.artist_name||"").toLowerCase().includes(search.toLowerCase()) ||
+      (s.cart_id||"").toLowerCase().includes(search.toLowerCase());
     const matchCat = !categoryFilter || (s.category_code || "") === categoryFilter;
     return matchSearch && matchCat;
   });
@@ -4386,6 +4408,7 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
         <div ref={ctxRef} style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", minWidth: 180, borderRadius: 0 }}>
           {[
             { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
+            { label: ctxMenu.song.cart_id ? `Cart # — ${ctxMenu.song.cart_id}` : "Enter Cart #", action: () => openCartId(ctxMenu.song) },
             { label: "Load to Deck A", action: () => { onLoadA(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck C", action: () => { onLoadC(ctxMenu.song); setCtxMenu(null); } },
@@ -4402,6 +4425,28 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                 {item.label}
               </div>
           )}
+        </div>
+      )}
+
+      {/* Cart # modal */}
+      {cartEdit && (
+        <div onClick={e => { if (e.target === e.currentTarget && !cartSaving) setCartEdit(null); }} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 340, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>Cart # — {cartEdit.title}</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>A short ID to place this element by number (e.g. 1001, J14, TALK7). Leave blank to clear.</div>
+            <input
+              value={cartEdit.value}
+              onChange={e => setCartEdit({ ...cartEdit, value: e.target.value })}
+              onKeyDown={e => { if (e.key === "Enter") saveCartId(); if (e.key === "Escape" && !cartSaving) setCartEdit(null); }}
+              placeholder="Cart #"
+              autoFocus
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 16, fontFamily: "'JetBrains Mono', ui-monospace, monospace", letterSpacing: "0.08em", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const }}
+            />
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button onClick={saveCartId} disabled={cartSaving} style={{ flex: 1, padding: "8px 0", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: cartSaving ? 0.6 : 1 }}>{cartSaving ? "Saving…" : "Save"}</button>
+              <button onClick={() => setCartEdit(null)} disabled={cartSaving} style={{ padding: "8px 16px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -4570,6 +4615,9 @@ function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStud
                   >
                     {s.file_path && watermarkedPaths.has(s.file_path) && (
                       <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8", flexShrink: 0 }}>🛡</span>
+                    )}
+                    {s.cart_id && (
+                      <span title={`Cart #${s.cart_id}`} style={{ marginRight: 6, padding: "1px 6px", fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "var(--accent-cyan)", background: "rgb(from var(--accent-cyan) r g b / 0.12)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.04em" }}>{s.cart_id}</span>
                     )}
                     {isInlineTitle
                       ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />

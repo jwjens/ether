@@ -69,6 +69,10 @@ contextBridge.exposeInMainWorld("ether", {
     search:              (title, artist)               => ipcRenderer.invoke("discogs:search", { title, artist }),
     updateTrack:         (fields)                      => ipcRenderer.invoke("discogs:updateTrack", fields),
   },
+  // Library cart numbers (operator-assigned ID for any element — song/jingle/talk).
+  songsExtra: {
+    setCartId:           (id, cartId)                  => ipcRenderer.invoke("songs:set-cart-id", { id, cartId }),
+  },
   captions: {
     start:             ()        => ipcRenderer.invoke("captions:start"),
     stop:              ()        => ipcRenderer.invoke("captions:stop"),

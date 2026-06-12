@@ -4091,6 +4091,18 @@ ipcMain.handle("discogs:updateTrack", (_, { id, title, artist, album, year, genr
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// Assign (or clear) a library element's cart number. Goes through songsUpdateById so the
+// change is logged as a mutation and syncs like any other song edit. cart_id is a free-form
+// operator handle (e.g. "1001", "J14", "TALK7"); empty string clears it.
+ipcMain.handle("songs:set-cart-id", (_, { id, cartId }) => {
+  try {
+    const { songsUpdateById } = require('./sync/handlers/songs');
+    const v = (cartId == null || String(cartId).trim() === "") ? null : String(cartId).trim();
+    songsUpdateById(db, id, { cart_id: v });
+    return { ok: true, cart_id: v };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 // Write a Spotify-imported track to the songs table
 ipcMain.handle("library:writeTrack", (_, { title, artist, album, durationMs, spotifyUri }) => {
   try {
