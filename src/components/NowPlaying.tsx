@@ -116,6 +116,7 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   const [lastTrack, setLastTrack] = useState("");
   const [upcoming, setUpcoming] = useState<UpcomingSong[]>([]);
   const [stationName, setStationName] = useState("Ether");
+  const [stationLogo, setStationLogo] = useState<string | null>(null);
   const [widgetType, setWidgetType] = useState<"sponsor"|"instagram"|"weather"|"twitter">("sponsor");
   const [adImages, setAdImages] = useState<string[]>([]);
   const [adIndex, setAdIndex] = useState(0);
@@ -134,9 +135,10 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   useEffect(() => {
     (async () => {
       try {
-        const rows = await query<{key:string;value:string}>("SELECT key, value FROM station_config_kv WHERE key IN ('station_name','ad_images','ig_handle','now_playing_widget','weather_city','weather_lat','weather_lon')");
+        const rows = await query<{key:string;value:string}>("SELECT key, value FROM station_config_kv WHERE key IN ('station_name','station_logo','ad_images','ig_handle','now_playing_widget','weather_city','weather_lat','weather_lon')");
         for (const r of rows) {
           if (r.key === "station_name") setStationName(r.value || "Ether");
+          if (r.key === "station_logo") setStationLogo(r.value || null);
           if (r.key === "ad_images") { try { setAdImages(JSON.parse(r.value)); } catch {} }
           if (r.key === "ig_handle") setIgHandle(r.value);
           if (r.key === "now_playing_widget") setWidgetType((r.value as any) || "sponsor");
@@ -245,14 +247,18 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
         {/* Top bar */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 32px 14px", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <svg width="42" height="42" viewBox="0 0 512 512" style={{ borderRadius: 0, flexShrink: 0 }}>
-              <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#06b6d4"/><stop offset="100%" stopColor="#8b5cf6"/></linearGradient></defs>
-              <rect width="512" height="512" rx="112" fill="url(#lg)"/>
-              <rect x="128" y="136" width="256" height="56" rx="16" fill="#0a0a18"/>
-              <rect x="128" y="228" width="192" height="52" rx="16" fill="#0a0a18"/>
-              <rect x="128" y="320" width="256" height="56" rx="16" fill="#0a0a18"/>
-              <rect x="128" y="136" width="56" height="240" rx="16" fill="#0a0a18"/>
-            </svg>
+            {stationLogo ? (
+              <img src={stationLogo} alt={stationName} style={{ width: 42, height: 42, objectFit: "contain", flexShrink: 0 }} />
+            ) : (
+              <svg width="42" height="42" viewBox="0 0 512 512" style={{ borderRadius: 0, flexShrink: 0 }}>
+                <defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stopColor="#06b6d4"/><stop offset="100%" stopColor="#8b5cf6"/></linearGradient></defs>
+                <rect width="512" height="512" rx="112" fill="url(#lg)"/>
+                <rect x="128" y="136" width="256" height="56" rx="16" fill="#0a0a18"/>
+                <rect x="128" y="228" width="192" height="52" rx="16" fill="#0a0a18"/>
+                <rect x="128" y="320" width="256" height="56" rx="16" fill="#0a0a18"/>
+                <rect x="128" y="136" width="56" height="240" rx="16" fill="#0a0a18"/>
+              </svg>
+            )}
             <div>
               <div style={{ fontFamily: "'Syne', sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1 }}>{stationName}</div>
               <div style={{ fontSize: 8, letterSpacing: "0.24em", color: "var(--accent-cyan)", textTransform: "uppercase" as const, marginTop: 2 }}>Powered by Ether</div>

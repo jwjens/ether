@@ -68,6 +68,7 @@ import GSelectorImport from "./components/GSelectorImport";
 import HelpPanel from "./components/HelpPanel";
 import NowPlaying from "./components/NowPlaying";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
+import NowPlayingStationPicker from "./components/NowPlayingStationPicker";
 import Spots from "./components/Spots";
 import MacrosPanel, { useMacroHotkeys, useMacroClock } from "./components/MacroEngine";
 import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
@@ -676,6 +677,18 @@ export default function App() {
     });
     fn();
     setDrawerOpen(false);
+  };
+  // Now Playing window: pick which station the screen shows (multi-station installs).
+  const [npPickerOpen, setNpPickerOpen] = useState(false);
+  const openNowPlayingFor = async (id: number) => {
+    setNpPickerOpen(false);
+    try {
+      if (id !== stationId) {
+        await (window as any).ether.stations.switch(id);
+        window.dispatchEvent(new Event("station-switched"));
+      }
+    } catch { /* non-fatal — open the window regardless */ }
+    openNowPlayingWindow();
   };
   const { configs: deckConfigs, save: saveDeckConfigs, enabled: enabledDecks } = useDeckConfig();
   useEffect(() => { deckConfigsRef.current = deckConfigs; }, [deckConfigs]);
@@ -1920,7 +1933,7 @@ export default function App() {
                   {(drawerUsage["desk"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                 </button>
                 <button
-                  onClick={() => drawerClick("nowplaying", () => openNowPlayingWindow())}
+                  onClick={() => drawerClick("nowplaying", () => setNpPickerOpen(true))}
                   style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["nowplaying"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
                   onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
@@ -2218,6 +2231,7 @@ export default function App() {
         onDismiss={updater.dismiss}
       />}
       {restoreInfo && <SessionRestoreToast info={restoreInfo} onDismiss={() => setRestoreInfo(null)} />}
+      {npPickerOpen && <NowPlayingStationPicker onPick={openNowPlayingFor} onClose={() => setNpPickerOpen(false)} />}
       {switchToast && (
         <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.4)", color: "var(--accent-blue)", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
           {switchToast}
