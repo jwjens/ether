@@ -1687,7 +1687,7 @@ export default function App() {
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
-  if (firstRunChecked && (!wizardDone || !accountJoined)) return <EtherErrorBoundary><OnboardingFlow onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  if (firstRunChecked && !wizardDone) return <EtherErrorBoundary><OnboardingFlow onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
