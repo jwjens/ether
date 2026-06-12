@@ -896,6 +896,14 @@ export default function OnboardingFlow({ onComplete }: Props) {
               <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Syne', sans-serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
                 {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}
               </button>
+              {authMode === 'signin' && (
+                <button
+                  onClick={() => (window as any).ether?.system?.openUrl?.('https://signup.ether-technologies.com/forgot')}
+                  style={{ background: "none", border: "none", color: "var(--accent-cyan)", fontSize: 12, cursor: "pointer", padding: "4px 0", textAlign: "center" }}
+                >
+                  Forgot password?
+                </button>
+              )}
             </div>
           </div>
         </div>
