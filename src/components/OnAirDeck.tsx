@@ -3,6 +3,7 @@ import ArtistCard from "./ArtistCard";
 import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { DeckState } from "../audio/engine-rodio";
+import type { DeckRole } from "../lib/deckRole";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -13,6 +14,7 @@ interface Props {
   deck: DeckState | null;
   label: string;
   deckId: "A" | "B" | "C";
+  role?: DeckRole;     // playing | next | third — drives the color-coded queue indicator
   onPlay: () => void;
   onPause: () => void;
   onResume: () => void;
@@ -30,7 +32,7 @@ function fmt(sec: number): string {
 
 
 
-export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResume, onStop, onVolume, onDragStart, bpm, introEndSec }: Props) {
+export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay, onPause, onResume, onStop, onVolume, onDragStart, bpm, introEndSec }: Props) {
   const { stationId } = useActiveStation();
   const [blink, setBlink] = useState(false);
   const [categoryColor, setCategoryColor] = useState<string | null>(null);
@@ -238,6 +240,13 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
     setBlink(false);
   }, [isCritical]);
 
+  // Fixed deck identity colors for the color-coded queue: A = red, B = blue, C = green.
+  // Hardcoded (skin-independent) so the rotation is always read the same way.
+  const deckColor    = deckId === "A" ? "#f87171" : deckId === "B" ? "#3b82f6" : "#22c55e";
+  const deckColorRgb = deckId === "A" ? "248,113,113" : deckId === "B" ? "59,130,246" : "34,197,94";
+  // Progress fraction for the playing deck's duration-synced bar (0..1).
+  const progress = dur > 0 ? Math.min(1, Math.max(0, pos / dur)) : 0;
+
   // Deck identity colors (top-bar accent when not playing)
   const identityColor = deckId === "A" ? "#008878" : deckId === "C" ? "#203878" : "#1a6040";
 
@@ -302,16 +311,16 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
 
   return (
     <div
-      className={isPlaying ? "pulse-border" : ""}
+      className={role === "next" ? "pulse-border" : ""}
       style={{
-        "--pulse-rgb": deckHueRaw,
+        "--pulse-rgb": deckColorRgb,
         background: cardBg,
         backdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
         WebkitBackdropFilter: isPlaying ? "blur(16px) saturate(1.4)" : "blur(8px)",
         borderRadius: 0,
         border: "none",
-        // When playing, CSS animation owns box-shadow; otherwise use static state shadow
-        boxShadow: isPlaying ? undefined : cardShadow,
+        // The "next" deck's border pulses (CSS owns box-shadow); others use the static state shadow.
+        boxShadow: role === "next" ? undefined : cardShadow,
         display: "flex",
         flexDirection: "column",
         height: "100%",
@@ -321,14 +330,34 @@ export default function OnAirDeck({ deck, label, deckId, onPlay, onPause, onResu
       } as React.CSSProperties}
     >
 
-      {/* ── Top accent bar ── */}
+      {/* ── Top accent bar — color-coded by deck (A red / B blue / C green) and role:
+            playing = duration progress fill · next = solid + pulse · third = solid. ── */}
       <div style={{
-        height: 3,
-        background: topBarColor,
-        transition: "background 0.3s ease",
-        boxShadow: isPlaying ? `0 0 16px ${topBarColor}60` : "none",
+        position: "relative",
+        height: 4,
+        background: `rgba(${deckColorRgb},0.18)`,
+        overflow: "hidden",
         flexShrink: 0,
-      }} />
+      }}>
+        {role === "playing" ? (
+          <div style={{
+            position: "absolute", left: 0, top: 0, bottom: 0,
+            width: `${progress * 100}%`,
+            background: deckColor,
+            boxShadow: `0 0 16px ${deckColor}`,
+            transition: "width 0.2s linear",
+          }} />
+        ) : (
+          <div
+            className={role === "next" ? "deck-bar-pulse" : ""}
+            style={{
+              position: "absolute", inset: 0,
+              background: deckColor,
+              opacity: role === "next" ? undefined : 0.5,
+            }}
+          />
+        )}
+      </div>
 
       {/* ── Header: art + track info + countdown ── */}
       <div style={{ padding: "10px 12px 8px", flexShrink: 0, display: "flex", alignItems: "center", gap: 10 }}>

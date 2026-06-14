@@ -299,10 +299,21 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
       {/* ── Stacked A / B / C deck rows — color-coded, animated, flash in last 10s ── */}
       <div style={{ flexShrink: 0, borderBottom: "2px solid rgba(255,255,255,0.07)" }}>
-        {(["A", "B", "C"] as const).map(id => {
+        {(() => {
+        // Role of each deck for the color-coding: playing → duration progress (below);
+        // next → pulse; third → solid. "next" = the cued deck after the playing one (cyclic A→B→C).
+        const _order = ["A", "B", "C"] as const;
+        const _playingId = _order.find(d => deckStates[d].status === "playing") || null;
+        let _nextId: "A" | "B" | "C" | null = null;
+        if (_playingId) {
+          const _si = _order.indexOf(_playingId);
+          for (let _i = 1; _i <= 2; _i++) { const _c = _order[(_si + _i) % 3]; if (deckStates[_c].title) { _nextId = _c; break; } }
+        }
+        return _order.map(id => {
           const s = deckStates[id];
           const color = DECK_COLORS[id];
           const isPlaying = s.status === "playing";
+          const role: "playing" | "next" | "third" = isPlaying ? "playing" : id === _nextId ? "next" : "third";
           const dur = s.durationSec || 0;
           const pos = s.positionSec || 0;
           const remaining = Math.max(0, dur - pos);
@@ -316,11 +327,21 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               position: "relative", overflow: "hidden", display: "flex", alignItems: "stretch",
               height: 94, flexShrink: 0,
               borderBottom: "1px solid rgba(255,255,255,0.05)",
-              background: isPlaying ? `${color}14` : "transparent",
+              background: "transparent",
             }}>
-              {/* progress fill (playing deck) */}
+              {/* full-row color wash — playing = dim base (progress fills it), next = pulsing, third = solid */}
+              {hasTrack && (
+                <div
+                  className={role === "next" ? "deck-bar-pulse" : ""}
+                  style={{
+                    position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none",
+                    opacity: role === "playing" ? 0.3 : role === "next" ? undefined : 0.9,
+                  }}
+                />
+              )}
+              {/* progress fill (playing deck) — duration-synced animation over the dim base */}
               {isPlaying && (
-                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.9, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
+                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.92, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
               )}
               {/* last-10s flash overlay */}
               {isEndingSoon && (
@@ -351,7 +372,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
               </div>
             </div>
           );
-        })}
+        });
+        })()}
       </div>
 
       {/* Queue list */}

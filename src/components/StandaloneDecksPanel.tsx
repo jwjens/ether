@@ -11,11 +11,24 @@ import OnAirDeck from "./OnAirDeck";
 import MicDeck from "./MicDeck";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { computeDeckRole, type DeckRole } from "../lib/deckRole";
 
 // ── Per-deck audio state poller ───────────────────────────────
 
+const toDeckState = (d: any): DeckState | null => d ? ({
+  status:      d.status      ?? "idle",
+  title:       d.title       ?? "",
+  artist:      d.artist      ?? "",
+  filePath:    d.filePath    ?? "",
+  positionSec: d.positionSec ?? 0,
+  durationSec: d.durationSec ?? 0,
+  volume:      d.volume      ?? 1,
+} as DeckState) : null;
+
 function MusicDeckPanel({ slot }: { slot: string }) {
   const [deck, setDeck] = useState<DeckState | null>(null);
+  const [role, setRole] = useState<DeckRole>("third");
+  const id = slot as "A" | "B" | "C";
 
   useEffect(() => {
     let handle: ReturnType<typeof setTimeout>;
@@ -23,17 +36,9 @@ function MusicDeckPanel({ slot }: { slot: string }) {
       try {
         const raw = await (window as any).ether.audio.getState();
         const s: any = typeof raw === "string" ? JSON.parse(raw) : raw;
-        const key = `deck${slot}` as "deckA" | "deckB" | "deckC";
-        const d = s[key];
-        if (d) setDeck({
-          status:      d.status      ?? "idle",
-          title:       d.title       ?? "",
-          artist:      d.artist      ?? "",
-          filePath:    d.filePath    ?? "",
-          positionSec: d.positionSec ?? 0,
-          durationSec: d.durationSec ?? 0,
-          volume:      d.volume      ?? 1,
-        } as DeckState);
+        const all = { A: toDeckState(s.deckA), B: toDeckState(s.deckB), C: toDeckState(s.deckC) };
+        if (all[id]) setDeck(all[id]);
+        setRole(computeDeckRole(id, all));
       } catch {}
       handle = setTimeout(poll, 100);
     }
@@ -41,12 +46,12 @@ function MusicDeckPanel({ slot }: { slot: string }) {
     return () => clearTimeout(handle);
   }, [slot]);
 
-  const id = slot as "A" | "B" | "C";
   return (
     <OnAirDeck
       deck={deck}
       label={`Deck ${slot}`}
       deckId={id}
+      role={role}
       onPlay={()  => (window as any).ether.audio.play(slot)}
       onPause={()  => (window as any).ether.audio.pause(slot)}
       onResume={()  => (window as any).ether.audio.play(slot)}

@@ -397,9 +397,9 @@
   --wave-playhead: #c87815;
 
   /* Deck colors */
-  --deck-a: #0e8aaa;
-  --deck-b: #8060d8;
-  --deck-c: #c87815;
+  --deck-a: #f87171;  /* A = red */
+  --deck-b: #3b82f6;  /* B = blue */
+  --deck-c: #22c55e;  /* C = green */
 
   /* Strip support vars */
   --strip-label-bg:   rgba(0,0,0,0.04);
@@ -963,6 +963,15 @@ button:active:not(:disabled):not(.menu-btn):not(.menu-item) { filter: brightness
 }
 .pulse-border {
   animation: pulse-border 2s ease-in-out infinite;
+}
+
+/* Deck top-accent bar pulse — the "next up" deck in the A/B/C rotation */
+@keyframes deck-bar-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+.deck-bar-pulse {
+  animation: deck-bar-pulse 1.4s ease-in-out infinite;
 }
 
 
