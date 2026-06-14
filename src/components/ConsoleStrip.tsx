@@ -27,6 +27,8 @@ interface Props {
   deckId?: string;
   /** Hide the channel label row — used when an external bar (ThreeSlotBar) shows it instead. */
   hideLabel?: boolean;
+  /** Rotation role for the color strip: playing rides a progress fill, next pulses, third is solid. */
+  role?: "playing" | "next" | "third";
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -47,7 +49,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third",
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
@@ -249,14 +251,27 @@ export default function ConsoleStrip({
         // color-coded accent so operators still know which fader is A/B/C, with the play
         // progress riding across it.
         <div style={{
-          width: "100%", height: 7, position: "relative", overflow: "hidden",
+          width: "100%", height: 16, position: "relative", overflow: "hidden",
           background: isOn && isPlaying ? `${color}33` : `${color}1a`,
           borderBottom: `2px solid ${color}`,
           transition: "background 0.3s",
         }}>
+          {/* Role-driven full-strip fill: next pulses, third is solid. The playing deck gets
+              no overlay (role === "playing") so its progress fill below shows through. */}
+          {role === "next" && (
+            <div className="deck-bar-pulse" style={{
+              position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none",
+            }} />
+          )}
+          {role === "third" && (
+            <div style={{
+              position: "absolute", inset: 0, background: color, opacity: 0.9, zIndex: 0, pointerEvents: "none",
+            }} />
+          )}
+          {/* Playing deck: progress fill rides left→right (imperative, see effect above) */}
           <div ref={fillRef} style={{
             position: "absolute", top: 0, left: 0, bottom: 0,
-            background: color, opacity: 0.85, zIndex: 0, pointerEvents: "none",
+            background: color, opacity: 0.85, zIndex: 1, pointerEvents: "none",
           }} />
         </div>
       ) : null}
