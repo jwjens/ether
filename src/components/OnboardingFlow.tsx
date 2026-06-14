@@ -4,6 +4,7 @@ import { setPlanGlobally, usePlan } from "../hooks/usePlan";
 import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
+import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 
 // Replaces FirstRunWizard at the first_run_complete gate in App.tsx.
 // Implements the four screens of docs/onboarding-spec-v1.md with the
@@ -897,6 +898,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
         <div style={SHELL_STYLE}>
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <img src={ethercastWordmark} alt="Ethercast" style={{ height: 40, display: "block", margin: "0 auto 18px" }} />
               <div style={LABEL_STYLE}>Welcome to Ether</div>
               <h1 style={HEADING_STYLE}>{authMode === 'signin' ? 'Sign in' : 'Create your account'}</h1>
               <p style={SUB_STYLE}>

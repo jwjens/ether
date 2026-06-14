@@ -6,6 +6,7 @@
 
 import { useState, useEffect } from "react";
 import atomLogo from "../assets/ether-atom.png";
+import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 
 interface Props {
   onClose: () => void;
@@ -135,15 +136,7 @@ export default function AboutPanel({ onClose }: Props) {
 
             {/* Title block */}
             <div>
-              <div style={{
-                fontFamily: "'Newsreader', Georgia, serif",
-                fontSize: 28, fontWeight: 800, letterSpacing: "-0.02em",
-                background: "linear-gradient(135deg, #f0f0f8 0%, rgba(240,240,248,0.7) 100%)",
-                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-                marginBottom: 4,
-              }}>
-                Ether Technologies
-              </div>
+              <img src={ethercastWordmark} alt="Ethercast" style={{ height: 32, display: "block", marginBottom: 4 }} />
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{
                   fontFamily: "'DM Mono', monospace",

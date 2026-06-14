@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import etherLogoMark from "../assets/ether-atom.png";
+import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import { query, execute } from "../db/client";
 
 export interface AppUser {
@@ -154,9 +155,8 @@ export default function UserLogin({ onLogin }: Props) {
 
       {/* Logo */}
       <div style={{ marginBottom: 40, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
-        <img src={etherLogoMark} width={72} height={72} alt="" style={{ borderRadius: 0 }} />
-        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#f0f0f8" }}>ETHER</div>
-        <div style={{ fontSize: 9, letterSpacing: "0.24em", color: "var(--accent-cyan)", textTransform: "uppercase" as const }}>Technologies</div>
+        <img src={etherLogoMark} width={168} height={168} alt="" style={{ borderRadius: 0 }} />
+        <img src={ethercastWordmark} alt="Ethercast" style={{ height: 76, display: "block" }} />
       </div>
 
       {loading ? (
