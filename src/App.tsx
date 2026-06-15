@@ -374,13 +374,12 @@ function useViewport() {
   if (w < 1500) searchW = 440;
   if (w < 1350) searchW = 340;
   if (w < 1200) searchW = 260;
-  if (w < 1050) searchW = 180;
-  if (w < 900)  searchW = 0; // icon-only mode
+  if (w < 1100) searchW = 0; // icon-only — frees the left zone so the clock can stay big on tablets
   let clockSize: "full" | "lg" | "md" | "sm" | "xs" | "hidden" = "full";
   if (w < 1500) clockSize = "lg";
   if (w < 1350) clockSize = "md";
-  if (w < 1200) clockSize = "sm";
-  if (w < 1000) clockSize = "xs";
+  if (w < 1100) clockSize = "lg"; // search is icon-only now → clock reclaims the space and grows back
+  if (w < 800)  clockSize = "md";
   // never "hidden" — always show at least a tiny clock so the header
   // doesn't look empty/unfinished at the narrowest window sizes.
   return {
@@ -390,6 +389,7 @@ function useViewport() {
     narrow:     w < 1050,  // collapse Admin to icon-only
     medium:     w < 1200,  // collapse Pro to icon-only
     panelTight: w < 1350,  // master panel auto-collapses
+    bottomCollapsed: w < 1100, // bottom toolbar view-tabs collapse into a hamburger menu
     searchW,               // dynamic search bar width (0 = icon-only)
     clockSize,             // "full" | "lg" | "md" | "sm" | "hidden"
   };
@@ -473,6 +473,7 @@ export default function App() {
   // Do not remove the module-level `engine` import until Commit 6 clears them.
   const engine = getEngine(stationId);
   const viewport = useViewport();
+  const [bottomMenuOpen, setBottomMenuOpen] = useState(false);
   // Macro automation: listen for hotkey-triggered macros + clock-based triggers
   useMacroHotkeys();
   useMacroClock(stationId);
@@ -1692,6 +1693,19 @@ export default function App() {
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
+  // Bottom-toolbar view tabs — rendered inline on wide screens, collapsed into a
+  // bottom-right hamburger menu on tablet/narrow widths (viewport.bottomCollapsed).
+  const viewTabs = [
+    { label: "DECKS",      active: showDeckConfig,             fn: () => { setPanel("live"); setShowDeckConfig(true); } },
+    { label: "CARTS",      active: showCarts,                  fn: () => { setShowCarts(s => !s); setProgPanel(null); } },
+    { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
+    { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
+    { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
+    { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
+    { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
+    { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
+  ] as const;
+
   return (
     <StreamStatusProvider>
     <MidiProvider>
@@ -2266,18 +2280,8 @@ export default function App() {
             onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
           >CLEAR</button>
         )}
-        {/* View tabs */}
-        {([
-          { label: "DECKS",  active: showDeckConfig,        fn: () => { setPanel("live"); setShowDeckConfig(true); } },
-          { label: "CARTS",  active: showCarts,             fn: () => { setShowCarts(s => !s); setProgPanel(null); } },
-          // On-air programming docks — push up over the decks (queue untouched), like carts.
-          { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
-          { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
-          { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
-          { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
-          { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
-          { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
-        ] as const).map(({ label, active, fn }) => (
+        {/* View tabs — inline when there's room; collapsed into a hamburger (bottom-right) on tablet */}
+        {!viewport.bottomCollapsed && viewTabs.map(({ label, active, fn }) => (
           <button key={label} onClick={fn} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
             border: `1px solid ${active ? "var(--accent-cyan)" : "var(--border-secondary)"}`,
@@ -2328,6 +2332,52 @@ export default function App() {
           fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
           cursor: "pointer", transition: "all 0.12s",
         }}>XFADE</button>
+
+        {/* Collapsed view-tabs → bottom-right hamburger menu (tablet/narrow) */}
+        {viewport.bottomCollapsed && (
+          <div style={{ position: "relative", marginLeft: 6 }}>
+            <button
+              onClick={() => setBottomMenuOpen(o => !o)}
+              title="Menu"
+              style={{
+                height: 36, width: 44, borderRadius: 0,
+                border: `1px solid ${bottomMenuOpen ? "var(--accent-cyan)" : "var(--border-primary)"}`,
+                background: bottomMenuOpen ? "color-mix(in srgb, var(--accent-cyan) 16%, transparent)" : "transparent",
+                color: bottomMenuOpen ? "var(--accent-cyan)" : "var(--text-secondary)",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <path d="M3 5h12M3 9h12M3 13h12" />
+              </svg>
+            </button>
+            {bottomMenuOpen && (
+              <>
+                <div onClick={() => setBottomMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 300 }} />
+                <div style={{
+                  position: "absolute", bottom: "calc(100% + 6px)", right: 0, zIndex: 301,
+                  background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+                  minWidth: 190, padding: "4px 0", boxShadow: "0 -6px 24px rgba(0,0,0,0.45)",
+                }}>
+                  {viewTabs.map(({ label, active, fn }) => (
+                    <button
+                      key={label}
+                      onClick={() => { fn(); setBottomMenuOpen(false); }}
+                      style={{
+                        display: "block", width: "100%", textAlign: "left" as const, padding: "9px 16px",
+                        background: active ? "color-mix(in srgb, var(--accent-cyan) 16%, transparent)" : "transparent",
+                        color: active ? "var(--accent-cyan)" : "var(--text-primary)",
+                        border: "none", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", cursor: "pointer",
+                      }}
+                      onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
+                      onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                    >{label}</button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </footer>
     </div>
       {showProducerDesk && (
