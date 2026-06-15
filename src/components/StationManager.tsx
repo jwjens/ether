@@ -176,6 +176,17 @@ function fmtDate(epoch: number) {
   return new Date(epoch * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Human text for /account/add-station failures.
+function addStationErrText(d: any): string {
+  switch (d?.error) {
+    case "invalid_license_key":   return "Your account license wasn't accepted — reconnect your account in Subscription.";
+    case "station_limit_reached": return `Your plan allows ${d.stations_max} station(s) (using ${d.stations_used}). Upgrade to add more.`;
+    case "seat_limit_reached":    return "This account is using all its device seats — deauthorize one in Manage Devices.";
+    case "missing_fields":        return "Station name is required.";
+    default:                      return d?.error || d?.detail || "Could not register the station with your account. Try again.";
+  }
+}
+
 // ─── Station row ──────────────────────────────────────────────
 
 function StationRow({
@@ -411,8 +422,42 @@ export default function StationManager({ onStationSwitch }: Props) {
       if (!r?.ok) throw new Error(r?.error || "Update failed");
       if (data.is_active) onStationSwitch?.(data.id, data.name!);
     } else {
-      const r = await ether.stations.create(data);
+      // Register the new station with your account on the backend FIRST, so it's
+      // owned by your license and can be published — then mirror it locally with
+      // the backend's UUID (the same pattern onboarding uses for add-station).
+      // Without this, "+ Add Station" made a local-only station the backend never
+      // knew about, so publishing failed with "station isn't linked to your account".
+      let lk: string | null = null;
+      try {
+        const rows = await ether.stationConfigKv.list(activeStationId);
+        lk = (Array.isArray(rows) ? rows : []).find((r: { key: string }) => r.key === "license_key")?.value || null;
+      } catch { /* ignore */ }
+      if (!lk) throw new Error("No account license found on this install — connect your account in Subscription first.");
+
+      const idResp = await ether.identity?.get?.().catch(() => null);
+      if (!idResp?.ok) throw new Error(idResp?.error || "Could not read this device's identity.");
+
+      const res = await fetch(`${ETHER_BACKEND_URL}/account/add-station`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          license_key: lk, machine_id: idResp.machine_id, machine_name: idResp.machine_name,
+          station: {
+            name:         (data.name || "New Station").trim(),
+            call_letters: data.callsign?.trim() || null,
+            frequency:    data.frequency?.trim() || null,
+          },
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.station_uuid) throw new Error(addStationErrText(d));
+
+      // Mirror locally using the backend's UUID so peer sync + publish treat the
+      // two rows as one station.
+      const r = await ether.stations.create({ ...data, uuid: d.station_uuid });
       if (!r?.ok) throw new Error(r?.error || "Create failed");
+      // Seed the new station's own KV with the account license so its scope is
+      // self-sufficient for publish/backup. Non-fatal.
+      if (r.id) { try { await ether.stationConfigKv.upsertByKey(r.id, "license_key", lk); } catch { /* ignore */ } }
     }
     setEditing(false);
     load();
