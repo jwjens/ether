@@ -4,7 +4,7 @@
  * Uses ether.stations.* IPC (never raw SQL) so the safety gate is respected.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { query } from "../db/client";
 import { PublicPageEditor } from "./SettingsPanel";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -28,14 +28,36 @@ function HubEditor({ stationId }: { stationId: number }) {
   const [avail, setAvail]   = useState<"idle" | "checking" | "ok" | "taken" | "invalid">("idle");
   const [msg, setMsg]       = useState("");
   const [busy, setBusy]     = useState(false);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
   const loadCurrent = async () => {
     if (!hubToken) return;
     try {
       const r = await fetch(`${ETHER_BACKEND_URL}/api/user/account-slug`, { headers: { Authorization: `Bearer ${hubToken}` } });
       const d = await r.json().catch(() => ({}));
-      if (r.ok) { setSavedSlug(d.slug || null); setSavedName(d.name || null); if (d.slug) { setSlug(d.slug); setSlugTouched(true); } if (d.name) setName(d.name); }
+      if (r.ok) { setSavedSlug(d.slug || null); setSavedName(d.name || null); setLogoUrl(d.logo_url || null); if (d.slug) { setSlug(d.slug); setSlugTouched(true); } if (d.name) setName(d.name); }
     } catch { /* ignore */ }
+  };
+
+  const onLogoFile = async (file?: File) => {
+    if (!file) return;
+    if (!slug.trim()) { setMsg("Set the handle first, then add a logo."); return; }
+    setLogoBusy(true); setMsg("");
+    const tok = await ensureToken();
+    if (!tok) { setLogoBusy(false); return; }
+    try {
+      const ext = (file.name.split(".").pop() || "").toLowerCase();
+      const sr = await fetch(`${ETHER_BACKEND_URL}/api/user/account-logo-upload-url`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` }, body: JSON.stringify({ ext }) });
+      const sd = await sr.json().catch(() => ({}));
+      if (!sr.ok || !sd.signed_url) { setMsg("Logo upload unavailable."); setLogoBusy(false); return; }
+      const put = await fetch(sd.signed_url, { method: "PUT", body: file, headers: { "Content-Type": file.type || "application/octet-stream" } });
+      if (!put.ok) { setMsg("Upload failed."); setLogoBusy(false); return; }
+      await fetch(`${ETHER_BACKEND_URL}/api/user/account-slug`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` }, body: JSON.stringify({ slug: slug.trim(), name: name.trim(), logo_url: sd.public_url }) });
+      setLogoUrl(`${sd.public_url}?t=${Date.now()}`); setMsg("✓ Logo saved");
+    } catch { setMsg("Upload failed."); }
+    finally { setLogoBusy(false); }
   };
 
   useEffect(() => {
@@ -102,7 +124,12 @@ function HubEditor({ stationId }: { stationId: number }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
       <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>Hub</span>
-      <input value={name} onChange={e => setName(e.target.value)} placeholder="Hub name (e.g. Dj Deniro)" style={{ ...inp, width: 200 }} />
+      {logoUrl
+        ? <img src={logoUrl} alt="" style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border-primary)" }} />
+        : <div style={{ width: 32, height: 32, border: "1px dashed var(--border-primary)", borderRadius: 6 }} />}
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => onLogoFile(e.target.files?.[0])} />
+      <button onClick={() => fileRef.current?.click()} disabled={logoBusy} title="Hub logo" style={{ ...inp, cursor: "pointer", whiteSpace: "nowrap" }}>{logoBusy ? "…" : logoUrl ? "Logo" : "+ Logo"}</button>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Hub name (e.g. Dj Deniro)" style={{ ...inp, width: 180 }} />
       <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "monospace" }}>listen.ether-technologies.com/@</span>
       <input value={slug} onChange={e => { setSlugTouched(true); setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")); }} placeholder="handle" spellCheck={false} style={{ ...inp, width: 140, fontFamily: "monospace" }} />
       {!hubToken && <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="account password" style={{ ...inp, width: 150 }} />}
