@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'generated_schedule';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["scheduled_at","song_id","title","artist","file_key","duration_s","category_id","clock_id","generated_at","updated_at"];
+const PATCHABLE          = ["scheduled_at","song_id","title","artist","file_key","file_path","duration_s","category_id","clock_id","generated_at","updated_at"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ function generatedScheduleCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.scheduled_at, row.song_id, row.title, row.artist, row.file_key, row.duration_s, row.category_id, row.clock_id, row.generated_at, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.scheduled_at, row.song_id, row.title, row.artist, row.file_key, row.file_path ?? null, row.duration_s, row.category_id, row.clock_id, row.generated_at, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
   });
   return generatedScheduleGet(db, uuid);
 }
@@ -171,14 +171,14 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
   if (!rows.length) return { ok: true, inserted: 0 };
   const now = new Date().toISOString();
   const stmtInsert = db.prepare(
-    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   db.transaction(() => {
     for (const r of rows) {
       const uuid = crypto.randomUUID();
       const row  = { ...r, station_id: stationId, uuid, created_at: now, updated_at: now, deleted_at: null };
       stmtInsert.run(
-        row.scheduled_at, row.song_id, row.title, row.artist, row.file_key,
+        row.scheduled_at, row.song_id, row.title, row.artist, row.file_key, row.file_path ?? null,
         row.duration_s, row.category_id, row.clock_id, row.generated_at ?? null,
         row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at
       );

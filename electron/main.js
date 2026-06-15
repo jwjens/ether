@@ -528,6 +528,7 @@ function runMigrations() {
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE clock_slots ADD COLUMN chain_type TEXT DEFAULT 'segue'");
+  alterSafe("ALTER TABLE clock_slots ADD COLUMN spot_type TEXT");   // spot_break slots pull from spots WHERE spot_type = this (NULL = any active spot)
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_out_at_ms INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_duration_ms INTEGER DEFAULT 8000");
@@ -4442,10 +4443,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
        END ASC`
     );
     const stmtSlots = db.prepare(
-      `SELECT cs.position, cs.slot_type, cs.category_id, cs.duration_min
+      `SELECT cs.position, cs.slot_type, cs.category_id, cs.spot_type, cs.duration_min
        FROM clock_slots cs
        WHERE cs.clock_id = ? ORDER BY cs.position`
     );
+    const stmtSpots = db.prepare(SPOT_SELECT);
     const stmtCandidates = db.prepare(
       `SELECT s.id, s.title, a.name AS artist_name, s.artist_id,
               s.duration_ms, s.last_played_at, s.file_path
@@ -4461,6 +4463,8 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
     const songLastTs   = new Map(); // songId        → unix ts last queued this run
     const artistLastTs = new Map(); // artistId      → unix ts last queued this run
     const titleLastTs  = new Map(); // norm. title   → unix ts last queued this run (covers covers/re-recordings)
+    const spotLastTs   = new Map(); // spotId        → unix ts last queued this run (spot rotation)
+    const spotPlaysToday = new Map(); // `${dayStr}|${spotId}` → plays this calendar day (max_plays_day cap)
 
     const now = new Date();
     now.setMinutes(0, 0, 0);
@@ -4500,6 +4504,21 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
           const slot = slots[slotIdx % slots.length];
           slotIdx++;
           const slotDurationS = (slot.duration_min || 4) * 60;
+
+          // Spot break: pull the least-recently-aired eligible spot from the spots library.
+          if (slot.slot_type === 'spot_break') {
+            const dayStr = _localDayStr(slotDate);
+            const sp = _pickSpot(stmtSpots, slot, activeStationId, dayStr, spotLastTs, spotPlaysToday);
+            if (sp) {
+              spotLastTs.set(sp.id, currentTs);
+              spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
+              const durationS = sp.length_sec || slotDurationS;
+              generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
+              currentTs += durationS;
+              continue;
+            }
+            // no eligible spot → fall through and advance time (silent gap)
+          }
 
           if (slot.slot_type !== 'music' || !slot.category_id) {
             currentTs += slotDurationS;
@@ -4577,6 +4596,35 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
   }
 });
 
+// ── Spot rotation (clock spot_break slots → spots library) ────────────────────
+// A spot_break clock slot pulls from the spots table: active, inside its date window, and —
+// if the slot names a spot_type — matching that type (NULL slot.spot_type = any active spot).
+// Picks the least-recently-aired eligible spot, honoring max_plays_day within the generation run.
+const SPOT_SELECT = `SELECT id, title, advertiser, file_path, length_sec, last_played_at, max_plays_day
+   FROM spots
+   WHERE station_id = ? AND deleted_at IS NULL AND is_active = 1 AND file_path IS NOT NULL
+     AND (? IS NULL OR spot_type = ?)
+     AND (start_date IS NULL OR start_date = '' OR start_date <= ?)
+     AND (end_date   IS NULL OR end_date   = '' OR end_date   >= ?)`;
+
+function _localDayStr(d) {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Least-recently-aired eligible spot for this slot+day, or null if none. Caller records the play.
+function _pickSpot(stmtSpots, slot, stationId, dayStr, spotLastTs, spotPlaysToday) {
+  const st = slot.spot_type || null;
+  const rows = stmtSpots.all(stationId, st, st, dayStr, dayStr);
+  let best = null, bestTs = Infinity;
+  for (const sp of rows) {
+    if (sp.max_plays_day && (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) >= sp.max_plays_day) continue;
+    const lastTs = spotLastTs.get(sp.id) ?? (sp.last_played_at || 0);
+    if (lastTs < bestTs) { best = sp; bestTs = lastTs; }
+  }
+  return best;
+}
+
 // Shared generation context (prepared statements + separation rules + tracking maps).
 function _buildScheduleCtx(stationId) {
   let artistSepMin = 60, songRepeatMin = 180, titleSepMin = 120;
@@ -4590,9 +4638,11 @@ function _buildScheduleCtx(stationId) {
   } catch {}
   return {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin,
-    songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(), generatedRows: [],
+    songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
+    spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
-    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
+    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
+    stmtSpots: db.prepare(SPOT_SELECT),
     stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND ((s.daypart_mask >> ?) & 1) = 1 ORDER BY RANDOM()`),
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
@@ -4600,7 +4650,7 @@ function _buildScheduleCtx(stationId) {
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
-  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, songLastTs, artistLastTs, titleLastTs, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
+  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpots, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
@@ -4635,6 +4685,20 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           currentTs += durationS;
         } else { currentTs += slotDurationS; }
         continue;
+      }
+      // Spot break: pull the least-recently-aired eligible spot from the spots library.
+      if (slot.slot_type === 'spot_break') {
+        const dayStr = _localDayStr(slotDate);
+        const sp = _pickSpot(stmtSpots, slot, activeStationId, dayStr, spotLastTs, spotPlaysToday);
+        if (sp) {
+          spotLastTs.set(sp.id, currentTs);
+          spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
+          const durationS = sp.length_sec || slotDurationS;
+          generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
+          currentTs += durationS;
+          continue;
+        }
+        // no eligible spot → fall through and advance time (silent gap)
       }
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
       const candidates = stmtCandidates.all(slot.category_id, h);

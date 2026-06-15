@@ -158,6 +158,7 @@ const REGISTRY = {
       category_id:  'scalar',
       label:        'scalar',
       duration_min: 'scalar',
+      spot_type:    'scalar',
       station_id:   'scalar',
       uuid:         'scalar',
       created_at:   'scalar',

@@ -529,6 +529,7 @@ alterSafe("ALTER TABLE songs ADD COLUMN last_played_at INTEGER");
 alterSafe("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0");
 alterSafe("ALTER TABLE songs ADD COLUMN cart_id TEXT");
 alterSafe("ALTER TABLE clock_slots ADD COLUMN song_id INTEGER");
+alterSafe("ALTER TABLE clock_slots ADD COLUMN spot_type TEXT");
 alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
 alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
 alterSafe("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0");

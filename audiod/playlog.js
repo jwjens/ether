@@ -43,6 +43,10 @@ function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, fi
         `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path);
+      // Spot accounting: count the spin if the aired file is a spot (no-op for songs).
+      if (row.file_path) {
+        db.prepare(`UPDATE spots SET play_count = play_count + 1, last_played_at = unixepoch(), updated_at = ? WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL`).run(now, row.file_path, stationId);
+      }
       logMutation(db, { table_name: "play_log", row_id: uuid, op: "insert", payload_before: null, payload_after: payloadAfter, station_id: stationId, actor_id: null });
       db.exec("COMMIT");
     } catch (e) { try { db.exec("ROLLBACK"); } catch {} throw e; }
