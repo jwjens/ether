@@ -10,6 +10,12 @@ import PhoneDesk from "./PhoneDesk";
 import VoiceTracker from "./VoiceTracker";
 import UpNext from "./UpNext";
 import { HealthMonitor } from "./HealthMonitor";
+import { BoutiqueCartWall } from "./DeckConfigurator";
+import Scheduler from "./Scheduler";
+import BroadcastCalendar from "./BroadcastCalendar";
+import { LibraryPanel } from "../App";
+import { getEngine } from "../audio/engine-registry";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── StandaloneUpNext — wraps UpNext; syncs queue via broadcast relay ──
 // The main window emits "ether:broadcast" { channel: "queue:sync", data: queueLen }
@@ -42,7 +48,30 @@ const TITLES: Record<string, string> = {
   "phone":     "Phone Desk",
   "voicetrack":"Voice Tracker",
   "health":    "Station Health",
+  "carts":     "Carts",
+  "shows":     "Shows",
+  "clocks":    "Clocks",
+  "categories":"Categories",
+  "library":   "Library",
+  "calendar":  "Calendar",
 };
+
+// Library pop-out handlers — cue a track onto a deck via the shared engine (daemon-backed,
+// so it affects the live air chain). Edit/send-to-studio aren't meaningful in a pop-out.
+function PopoutLibrary() {
+  const { stationId } = useActiveStation();
+  const eng = getEngine(stationId ?? 1);
+  const cue = (deck: "A" | "B" | "C", s: any) => {
+    try { eng.deckCue?.(deck, { filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch { /* engine not ready */ }
+  };
+  return (
+    <LibraryPanel
+      onLoadA={s => cue("A", s)} onLoadB={s => cue("B", s)} onLoadC={s => cue("C", s)}
+      onQueue={s => { try { (eng as any).enqueue?.({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch {} }}
+      onEdit={() => {}} onSendToStudio={() => {}}
+    />
+  );
+}
 
 export default function PopoutRenderer({ panel }: { panel: string }) {
   const title = TITLES[panel] ?? panel;
@@ -69,6 +98,24 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       break;
     case "health":
       content = <HealthMonitor onClose={() => window.close()} />;
+      break;
+    case "carts":
+      content = <BoutiqueCartWall deckSlot="C" />;
+      break;
+    case "shows":
+      content = <Scheduler defaultTab="shows" embedded />;
+      break;
+    case "clocks":
+      content = <Scheduler defaultTab="clocks" embedded />;
+      break;
+    case "categories":
+      content = <Scheduler defaultTab="categories" embedded />;
+      break;
+    case "calendar":
+      content = <BroadcastCalendar />;
+      break;
+    case "library":
+      content = <PopoutLibrary />;
       break;
     default:
       content = (

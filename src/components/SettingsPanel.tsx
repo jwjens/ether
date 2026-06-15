@@ -9,6 +9,7 @@ import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../uti
 import { processLibrary as processAllSongs, getProcessingStats } from "../audio/songAnalysis";
 import StreamMetadataPanel from "./StreamMetadataPanel";
 import StreamStatusPill from "./StreamStatusPill";
+import { useStreamStatus } from "../contexts/StreamStatusContext";
 import PairMobileApp from "./PairMobileApp";
 import AIVoiceSettings from "./AIVoiceSettings";
 import BetaProgram from "./BetaProgram";
@@ -456,6 +457,9 @@ function CloudPlayoutSection() {
   const [serverDraft,    setServerDraft]    = useState('');
   const [stations,       setStations]       = useState<Array<{ id: number; name: string; icecast_mount: string; icecast_server_url?: string; }>>([]);
   const [stationStreams,  setStationStreams]  = useState<Record<number, { live: boolean; error?: string | null }>>({});
+  // Real-time per-destination stream status (same source as the Icecast pill) — so a stream
+  // started anywhere (e.g. the dashboard ON AIR button) reflects here, not just panel-started ones.
+  const streamCtx = useStreamStatus();
 
   useEffect(() => {
     const ether = (window as any).ether;
@@ -564,7 +568,10 @@ function CloudPlayoutSection() {
 
       {/* Per-station rows */}
       {stations.map(station => {
-        const isLive = !!stationStreams[station.id]?.live;
+        // Live if EITHER the panel started it OR the real stream status (any source) reports it
+        // live/connecting — fixes a stream started via the dashboard showing OFFLINE here.
+        const destState = streamCtx.dests[`icecast:${station.id}`]?.state;
+        const isLive = !!stationStreams[station.id]?.live || destState === "live" || destState === "connecting";
         const serverUrl = station.icecast_server_url?.trim() || playoutServer;
         const listenerUrl = `http://${serverUrl}:8000${station.icecast_mount}`;
         return (

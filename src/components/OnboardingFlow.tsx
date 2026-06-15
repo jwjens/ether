@@ -77,6 +77,7 @@ const OVERLAY_STYLE: React.CSSProperties = {
   display: "flex", alignItems: "center", justifyContent: "center",
   fontFamily: "'Inter', system-ui, sans-serif",
   padding: 24,
+  overflow: "hidden", // clip the decorative glow so it can't cause horizontal scroll on small screens
 };
 
 const SHELL_STYLE: React.CSSProperties = {
@@ -1030,7 +1031,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                 onChange={setNickname}
                 placeholder="The Wave"
               />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
                 <InputField
                   label="Frequency"
                   value={frequency}
@@ -1332,7 +1333,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
                 onChange={setNickname}
                 placeholder="The Wave"
               />
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>
                 <InputField
                   label="Frequency"
                   value={frequency}

@@ -845,6 +845,15 @@ const ICON_ICO   = path.join(__dirname, "assets/icon.ico");
 const WINDOW_ICON = process.platform === "win32" ? ICON_ICO : ICON_PNG;
 const TRAY_PNG   = path.join(__dirname, "assets/tray-icon.png");
 
+// Push a REAL load-status line to the splash window (no-op once it's gone).
+function splashStatus(msg) {
+  try {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.webContents.send("splash:status", msg);
+    }
+  } catch { /* splash already closed */ }
+}
+
 function createSplash() {
   splashWindow = new BrowserWindow({
     width:         820,
@@ -858,6 +867,7 @@ function createSplash() {
     roundedCorners: true,
     show:           false,       // hidden until centered
     webPreferences: {
+      preload:          path.join(__dirname, "splash-preload.js"),
       nodeIntegration:  false,
       contextIsolation: true,
       webSecurity:      false,   // allow file:// assets (svg, png) in local HTML
@@ -877,7 +887,7 @@ function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 600,
-    title: "ether",
+    title: "EtherCast",
     icon: WINDOW_ICON,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1084,8 +1094,8 @@ function buildMenu() {
     ]},
     { label: "Tools", submenu: [
       { label: "Voice Tracker", click: () => send("nav:voicetrack") },
-      { label: "Studio Editor", click: () => send("nav:studio") },
-      { label: "Video Studio",  click: () => send("nav:videostudio") },
+      { label: "Show+ DAW", click: () => send("nav:studio") },
+      { label: "Show+",  click: () => send("nav:videostudio") },
       { label: "Cue Editor", click: () => send("nav:trackedit") },
       { label: "Clip Editor", click: () => send("nav:clipeditor") },
       { type: "separator" },
@@ -1102,7 +1112,7 @@ function buildMenu() {
       { type: "separator" },
       { label: "Monitors", submenu: [
         { label: "Decks",          click: () => popout("decks") },
-        { label: "Video Studio",   click: () => popout("videostudio") },
+        { label: "Show+",   click: () => popout("videostudio") },
         { label: "Camera",         click: () => popout("camera") },
         { label: "Queue / Up Next",click: () => popout("upnext") },
         { label: "Station Health", click: () => popout("health") },
@@ -1355,7 +1365,11 @@ app.whenReady().then(() => {
 
   // Show native splash first; main window stays hidden behind it
   createSplash();
+  splashStatus("Starting EtherCast…");
+  // Let the renderer report its own real load steps (DB migrations, station, audio).
+  ipcMain.handle("splash:status", (_e, msg) => { splashStatus(String(msg || "")); return true; });
   logStartup('createSplash() done');
+  splashStatus("Loading interface…");
   createWindow();
   logStartup('createWindow() done — mainWindow hidden, waiting for ready-to-show');
   createTray();
@@ -1368,14 +1382,14 @@ app.whenReady().then(() => {
   //   3. Main window fades in over 500ms
   //   4. Main window focuses (login screen appears naturally inside it)
   //
-  // Both conditions must be met before the sequence starts:
-  //   • mainWindow has fired ready-to-show (renderer fully painted)
-  //   • 10-second splash timer has elapsed
+  // The splash closes once the app is genuinely ready, but stays up for a brief
+  // minimum (~2.5s) so the real status is actually readable on fast loads. This is
+  // NOT theater — the lines are real milestones; we just don't blink past them.
   let mainReady   = false;
-  let splashTimer = false;
+  let minElapsed  = false;
 
   function tryShowMain() {
-    if (!mainReady || !splashTimer) return;
+    if (!mainReady || !minElapsed) return;
 
     // Step 1 — fade out splash over 500ms
     const doFadeIn = () => {
@@ -1424,15 +1438,13 @@ app.whenReady().then(() => {
   // navigation completes. Both set mainReady; whichever fires first wins.
   mainWindow.webContents.once("did-finish-load", () => {
     logStartup('did-finish-load fired');
+    splashStatus("Ready.");
     mainReady = true;
     tryShowMain();
   });
 
-  setTimeout(() => {
-    logStartup(`splashTimer elapsed — mainReady=${mainReady}`);
-    splashTimer = true;
-    tryShowMain();
-  }, 10000);
+  // Minimum visible time so the real status lines are readable on fast loads.
+  setTimeout(() => { minElapsed = true; tryShowMain(); }, 10000);
 
   // Hard fallback — if ready-to-show never fires in a packaged build (renderer crash,
   // preload error, or other packaged-only issue), force-show after 15s so the user

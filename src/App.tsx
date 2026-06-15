@@ -675,6 +675,12 @@ export default function App() {
     }
   };
 
+  // Open any bottom-toolbar feature as a draggable pop-out window (multi-monitor),
+  // the same way Desk pops out. Routes to #popout/<panel> via the main process.
+  const openPopout = (panel: string) => {
+    try { (window as any).ether.invoke("window:popout", panel); } catch { /* not in electron */ }
+  };
+
   // Track which drawer items are used most (persisted to localStorage)
   const drawerClick = (key: string, fn: () => void) => {
     setDrawerUsage(prev => {
@@ -1721,16 +1727,18 @@ export default function App() {
         {/* LEFT zone: show name + search (search shrinks/clips; never reaches the centered clock) */}
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, alignSelf: "stretch" }}>
 
-        {/* Show name — top-left (replaces the old logo). Click returns to Mixer. */}
-        <div
-          onClick={() => setPanel("live")}
-          title={headerShow ? `On air: ${headerShow}` : "Live"}
-          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: "0 18px 0 6px" }}
-        >
-          <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "0.14em", color: headerShowColor || "var(--accent-cyan)", textTransform: "uppercase", whiteSpace: "nowrap" }}>
-            {headerShow || "ETHER"}
-          </span>
-        </div>
+        {/* On-air show name — top-left (only when a show is on air; no "ETHER" fallback). Click returns to Mixer. */}
+        {headerShow && (
+          <div
+            onClick={() => setPanel("live")}
+            title={`On air: ${headerShow}`}
+            style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", padding: "0 18px 0 6px" }}
+          >
+            <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "0.14em", color: headerShowColor || "var(--accent-cyan)", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+              {headerShow}
+            </span>
+          </div>
+        )}
 
         {/* LEFT: Search — shrinks to yield space to the clock; becomes icon-only at <800px */}
         <div style={{ display: "flex", alignSelf: "stretch", flexShrink: 1, minWidth: 0, zIndex: 1 }}>
@@ -1965,15 +1973,40 @@ export default function App() {
                   {(drawerUsage["nowplaying"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                 </button>
                 <button
-                  onClick={() => drawerClick("phone", () => setPanel("phonedesk"))}
-                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent", border: "none", borderLeft: `3px solid ${panel === "phonedesk" ? "#00c8a8" : "transparent"}`, color: panel === "phonedesk" ? "#00c8a8" : "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["phone"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onClick={() => drawerClick("phone", () => openPopout("phone"))}
+                  title="Open Phone in a separate window"
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["phone"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = panel === "phonedesk" ? "rgba(0,200,168,0.08)" : "transparent"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                 >
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12 19.79 19.79 0 0 1 1.61 3.35 2 2 0 0 1 3.6 1h3a2 2 0 0 1 2 1.72c.127.96.36 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.34 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
                   <span style={{ flex: 1 }}>Phone</span>
                   {(drawerUsage["phone"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                 </button>
+
+                {/* Pop-out windows for every bottom-toolbar feature — drag to another monitor */}
+                {([
+                  { key: "po-decks",      label: "Decks",      panel: "decks" },
+                  { key: "po-carts",      label: "Carts",      panel: "carts" },
+                  { key: "po-shows",      label: "Shows",      panel: "shows" },
+                  { key: "po-clocks",     label: "Clocks",     panel: "clocks" },
+                  { key: "po-categories", label: "Categories", panel: "categories" },
+                  { key: "po-library",    label: "Library",    panel: "library" },
+                  { key: "po-calendar",   label: "Calendar",   panel: "calendar" },
+                ] as const).map(item => (
+                  <button
+                    key={item.key}
+                    onClick={() => drawerClick(item.key, () => openPopout(item.panel))}
+                    title={`Open ${item.label} in a separate window`}
+                    style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage[item.key] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+                    <span style={{ flex: 1 }}>{item.label}</span>
+                    {(drawerUsage[item.key] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                  </button>
+                ))}
 
                 <button
                   onClick={() => { drawerClick("captions", () => setPanel("captions")); }}
@@ -3817,7 +3850,7 @@ function SingleChoicePopover({
 
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
-function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
+export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
   const engine = useAudioEngine();
   const { stationId } = useActiveStation();
   const watermarkedPaths = React.useMemo<Set<string>>(() => {

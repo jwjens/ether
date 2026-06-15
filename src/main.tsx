@@ -63,9 +63,14 @@ async function boot() {
   const isPopout      = hash.startsWith("#popout/");
   const popoutPanel   = isPopout ? hash.slice("#popout/".length) : "";
 
+  // Report real startup steps to the native splash (main window only).
+  const reportSplash = (msg: string) => { try { (window as any).ether?.invoke?.("splash:status", msg); } catch { /* not in electron */ } };
+
   // Pop-outs need migrations for DB-backed features (EQ, etc.)
   if (!isNowPlaying && !isDesk && !isCueEditor) {
+    if (!isPopout) reportSplash("Preparing database…");
     await runMigrations();
+    if (!isPopout) reportSplash("Database ready");
   }
 
   // Dev console helpers + debug panel/banner mount. Available in the dev server, or
