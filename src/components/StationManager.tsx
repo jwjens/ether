@@ -8,6 +8,115 @@ import { useState, useEffect, useCallback } from "react";
 import { query } from "../db/client";
 import { PublicPageEditor } from "./SettingsPanel";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { ETHER_BACKEND_URL } from "../lib/etherBackend";
+
+// Session-cached user token (from email/password login) so the operator only authenticates
+// once per session to manage the account hub.
+let hubToken: string | null = null;
+
+// Account hub editor (top of the Station Manager): the cluster's display name + handle.
+// Account-level, so it authenticates as the signed-in user (email from KV + password).
+function HubEditor({ stationId }: { stationId: number }) {
+  const ether = (window as any).ether;
+  const [email, setEmail]   = useState("");
+  const [name, setName]     = useState("");
+  const [slug, setSlug]     = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [savedSlug, setSavedSlug] = useState<string | null>(null);
+  const [savedName, setSavedName] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [avail, setAvail]   = useState<"idle" | "checking" | "ok" | "taken" | "invalid">("idle");
+  const [msg, setMsg]       = useState("");
+  const [busy, setBusy]     = useState(false);
+
+  const loadCurrent = async () => {
+    if (!hubToken) return;
+    try {
+      const r = await fetch(`${ETHER_BACKEND_URL}/api/user/account-slug`, { headers: { Authorization: `Bearer ${hubToken}` } });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { setSavedSlug(d.slug || null); setSavedName(d.name || null); if (d.slug) { setSlug(d.slug); setSlugTouched(true); } if (d.name) setName(d.name); }
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const rows = await ether.stationConfigKv.list(stationId);
+        const em = (Array.isArray(rows) ? rows : []).find((r: { key: string }) => r.key === "license_email")?.value;
+        if (em) setEmail(em);
+      } catch { /* ignore */ }
+      if (hubToken) loadCurrent();
+    })();
+  }, [stationId]);
+
+  // Auto-suggest the handle from the name until the operator edits the handle directly.
+  useEffect(() => {
+    if (slugTouched) return;
+    setSlug(name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""));
+  }, [name, slugTouched]);
+
+  // Live availability (public endpoint, no auth).
+  useEffect(() => {
+    const s = slug.trim();
+    if (!s || s === savedSlug) { setAvail("idle"); return; }
+    setAvail("checking");
+    const t = setTimeout(async () => {
+      try { const r = await fetch(`${ETHER_BACKEND_URL}/public/account/check-slug?slug=${encodeURIComponent(s)}`); const d = await r.json(); setAvail(!d.valid ? "invalid" : d.available ? "ok" : "taken"); }
+      catch { setAvail("idle"); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [slug, savedSlug]);
+
+  const ensureToken = async (): Promise<string | null> => {
+    if (hubToken) return hubToken;
+    if (!email) { setMsg("No account email found — sign in again."); return null; }
+    if (!password) { setMsg("Enter your account password to save."); return null; }
+    try {
+      const r = await fetch(`${ETHER_BACKEND_URL}/api/user/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.token) { setMsg(d.error === "invalid_credentials" ? "Wrong password." : "Could not sign in."); return null; }
+      hubToken = d.token; setPassword(""); await loadCurrent(); return hubToken;
+    } catch { setMsg("Could not reach the server."); return null; }
+  };
+
+  const save = async () => {
+    setBusy(true); setMsg("");
+    const tok = await ensureToken();
+    if (!tok) { setBusy(false); return; }
+    try {
+      const r = await fetch(`${ETHER_BACKEND_URL}/api/user/account-slug`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}` }, body: JSON.stringify({ slug: slug.trim(), name: name.trim() }) });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { setSavedSlug(d.slug || null); setSavedName(name.trim() || null); setMsg("✓ Saved"); }
+      else if (r.status === 429) setMsg(`You can change the handle again in ${d.days_remaining ?? 30} day(s).`);
+      else if (d.error === "taken") setMsg("That handle is taken.");
+      else if (d.error === "invalid_format" || d.error === "reserved") setMsg("Use 3–32 lowercase letters, numbers, or hyphens.");
+      else if (r.status === 401) { hubToken = null; setMsg("Session expired — enter your password again."); }
+      else setMsg("Could not save.");
+    } catch { setMsg("Could not save."); }
+    setBusy(false);
+  };
+
+  const dirty = slug.trim() !== (savedSlug ?? "") || name.trim() !== (savedName ?? "");
+  const inp: React.CSSProperties = { padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
+      <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>Hub</span>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="Hub name (e.g. Dj Deniro)" style={{ ...inp, width: 200 }} />
+      <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "monospace" }}>listen.ether-technologies.com/@</span>
+      <input value={slug} onChange={e => { setSlugTouched(true); setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")); }} placeholder="handle" spellCheck={false} style={{ ...inp, width: 140, fontFamily: "monospace" }} />
+      {!hubToken && <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="account password" style={{ ...inp, width: 150 }} />}
+      <button onClick={save} disabled={busy || !slug.trim() || !dirty || avail === "taken" || avail === "invalid"}
+        style={{ padding: "6px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: (!busy && dirty && slug.trim() && avail !== "taken" && avail !== "invalid") ? "var(--accent-blue)" : "var(--bg-tertiary)", color: "#fff", border: "none", cursor: "pointer" }}>
+        {busy ? "Saving…" : "Save"}
+      </button>
+      <span style={{ fontSize: 11, color: avail === "ok" ? "#22c55e" : avail === "taken" || avail === "invalid" ? "#f87171" : "var(--text-tertiary)" }}>
+        {avail === "checking" ? "Checking…" : avail === "ok" ? "✓ available" : avail === "taken" ? "taken" : avail === "invalid" ? "invalid" : ""}
+        {msg && <span style={{ marginLeft: 8, color: msg.startsWith("✓") ? "#22c55e" : "#f87171" }}>{msg}</span>}
+      </span>
+    </div>
+  );
+}
 
 interface Station {
   id:                 number;
@@ -308,20 +417,23 @@ export default function StationManager({ onStationSwitch }: Props) {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", fontFamily: "'Inter', system-ui, sans-serif", background: "var(--bg-primary)" }}>
 
       {/* Header */}
-      <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Enterprise</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Station Manager</div>
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {stations.length} station{stations.length !== 1 ? "s" : ""} · {stations.find(s => s.id === activeStationId)?.name ?? "none"} active
+      <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Enterprise</div>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Station Manager</div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
+              {stations.length} station{stations.length !== 1 ? "s" : ""} · {stations.find(s => s.id === activeStationId)?.name ?? "none"} active
+            </div>
           </div>
+          <button
+            onClick={() => setEditing({})}
+            style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#a78bfa", color: "#000", border: "none", cursor: "pointer" }}
+          >
+            + Add Station
+          </button>
         </div>
-        <button
-          onClick={() => setEditing({})}
-          style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#a78bfa", color: "#000", border: "none", cursor: "pointer" }}
-        >
-          + Add Station
-        </button>
+        {activeStationId != null && <HubEditor stationId={activeStationId} />}
       </div>
 
       {/* Table */}
