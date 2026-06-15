@@ -6,9 +6,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { query } from "../db/client";
+import { PublicPageEditor } from "./SettingsPanel";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface Station {
   id:                 number;
+  uuid?:              string;
   name:               string;
   callsign?:          string;
   frequency?:         string;
@@ -40,17 +43,33 @@ function fmtDate(epoch: number) {
 // ─── Station row ──────────────────────────────────────────────
 
 function StationRow({
-  station, stats, onEdit, onDelete,
+  station, active, stats, onEdit, onDelete,
 }: {
   station:  Station;
+  active:   boolean;
   stats:    StationStats;
   onEdit:   (s: Station) => void;
   onDelete: (id: number) => void;
 }) {
-  const isActive = !!station.is_active;
+  const isActive = active;
+  const [expanded, setExpanded] = useState(false);
+  const [pub, setPub] = useState<{ enabled: boolean; slug: string } | null>(null);
+
+  // Per-row published status (so each station shows its own state — not just the active one).
+  useEffect(() => {
+    if (!station.uuid) return;
+    let cancelled = false;
+    (async () => {
+      const r = await (window as any).ether?.station?.metadata?.get(station.uuid);
+      if (!cancelled && r?.ok) setPub({ enabled: !!r.metadata?.public_enabled, slug: r.metadata?.slug || "" });
+    })();
+    return () => { cancelled = true; };
+  }, [station.uuid, expanded]); // re-read after the panel closes (post-edit)
+  const published = !!pub?.enabled && !!pub?.slug;
 
   return (
-    <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
+    <>
+    <tr style={{ borderBottom: expanded ? "none" : "1px solid var(--border-primary)" }}>
       <td style={{ padding: "10px 14px", verticalAlign: "middle" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {isActive && (
@@ -62,7 +81,12 @@ function StationRow({
             }}>●</span>
           )}
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{station.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{station.name}</div>
+              {published && (
+                <span style={{ fontSize: 8, fontWeight: 900, letterSpacing: "0.08em", color: "#22c55e", padding: "1px 6px", border: "1px solid rgba(34,197,94,0.35)", background: "rgba(34,197,94,0.12)", whiteSpace: "nowrap" }}>● PUBLISHED</span>
+              )}
+            </div>
             {(station.callsign || station.frequency) && (
               <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "monospace", marginTop: 1 }}>
                 {[station.callsign, station.frequency, station.city].filter(Boolean).join(" · ")}
@@ -79,6 +103,12 @@ function StationRow({
       </td>
       <td style={{ padding: "10px 14px", verticalAlign: "middle" }}>
         <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+          <button
+            onClick={() => setExpanded(e => !e)}
+            disabled={!station.uuid}
+            title={station.uuid ? "Publish / edit this station's public listener page" : "Station not synced yet"}
+            style={{ ...actionBtn, ...(expanded ? { borderColor: "var(--accent-cyan)", color: "var(--accent-cyan)" } : {}), opacity: station.uuid ? 1 : 0.35, cursor: station.uuid ? "pointer" : "not-allowed" }}
+          >{expanded ? "Close" : "Publish"}</button>
           <button onClick={() => onEdit(station)} style={actionBtn}>Rename</button>
           <button
             title="Duplicate station — coming soon"
@@ -99,6 +129,14 @@ function StationRow({
         </div>
       </td>
     </tr>
+    {expanded && station.uuid && (
+      <tr style={{ borderBottom: "1px solid var(--border-primary)" }}>
+        <td colSpan={4} style={{ padding: "4px 16px 18px", background: "var(--bg-tertiary)" }}>
+          <PublicPageEditor stationUuid={station.uuid} stationName={station.name} />
+        </td>
+      </tr>
+    )}
+    </>
   );
 }
 
@@ -201,6 +239,9 @@ function StationEditor({
 
 export default function StationManager({ onStationSwitch }: Props) {
   const ether = (window as any).ether;
+  // Live active station (same source as the bottom switcher) — the stations.is_active column
+  // can be stale after a switch, so trust the hook for the "active" indicator.
+  const { stationId: activeStationId } = useActiveStation();
   const [stations,  setStations]  = useState<Station[]>([]);
   const [stats,     setStats]     = useState<Record<number, StationStats>>({});
   const [loading,   setLoading]   = useState(true);
@@ -272,7 +313,7 @@ export default function StationManager({ onStationSwitch }: Props) {
           <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "#a78bfa", textTransform: "uppercase", marginBottom: 2 }}>Enterprise</div>
           <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Station Manager</div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {stations.length} station{stations.length !== 1 ? "s" : ""} · {stations.find(s => s.is_active)?.name ?? "none"} active
+            {stations.length} station{stations.length !== 1 ? "s" : ""} · {stations.find(s => s.id === activeStationId)?.name ?? "none"} active
           </div>
         </div>
         <button
@@ -304,6 +345,7 @@ export default function StationManager({ onStationSwitch }: Props) {
                 <StationRow
                   key={s.id}
                   station={s}
+                  active={s.id === activeStationId}
                   stats={stats[s.id] ?? { song_count: 0, clock_count: 0 }}
                   onEdit={st => setEditing(st)}
                   onDelete={deleteStation}

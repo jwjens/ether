@@ -1201,6 +1201,8 @@ const SOCIAL_FIELDS: { key: string; label: string; placeholder: string }[] = [
 
 // Where the listener PWA is served (Cloudflare Pages → listen.ether-technologies.com).
 const LISTENER_BASE_URL = "https://listen.ether-technologies.com";
+// Managed Ether streaming edge — the public listener page only needs the mount name appended.
+const STREAM_PREFIX = "https://stream.ether-technologies.com:8443/";
 
 const EMPTY_PUBLIC_PAGE = {
   slug: "", display_name: "", logo_url: "", stream_url: "",
@@ -1209,8 +1211,7 @@ const EMPTY_PUBLIC_PAGE = {
   public_enabled: false,
 };
 
-function PublicPageSettings() {
-  const { stationUuid, stationName, isReady } = useActiveStation();
+export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: string; stationName: string }) {
   const ether = (window as any).ether;
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -1225,7 +1226,7 @@ function PublicPageSettings() {
 
   // Initial load of the saved metadata.
   useEffect(() => {
-    if (!isReady || !stationUuid) { setLoading(false); return; }
+    if (!stationUuid) { setLoading(false); return; }
     let cancelled = false;
     (async () => {
       setLoading(true); setMsg(null);
@@ -1255,7 +1256,7 @@ function PublicPageSettings() {
       setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [isReady, stationUuid]);
+  }, [stationUuid]);
 
   // Debounced slug check (client validate first, then server).
   useEffect(() => {
@@ -1323,6 +1324,14 @@ function PublicPageSettings() {
   // unsaved form edits — so we never advertise a URL that would 404.
   const published = !!loaded?.public_enabled && !!loaded?.slug;
   const liveUrl = published ? `${LISTENER_BASE_URL}/${loaded.slug}` : null;
+  // Stream URL is entered like the address: a fixed prefix + just the mount name. Strip the
+  // managed prefix (or any scheme://host/) so the input shows only the editable mount.
+  const streamMount = (() => {
+    const s = form.stream_url || "";
+    if (s.startsWith(STREAM_PREFIX)) return s.slice(STREAM_PREFIX.length);
+    const m = s.match(/^https?:\/\/[^/]+\/(.*)$/i);
+    return m ? m[1] : s;
+  })();
   const copyUrl = async () => {
     if (!liveUrl) return;
     try { await navigator.clipboard.writeText(liveUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
@@ -1333,7 +1342,7 @@ function PublicPageSettings() {
     if (sys?.openUrl) sys.openUrl(liveUrl); else window.open(liveUrl, "_blank");
   };
 
-  if (!isReady) return null;
+  if (!stationUuid) return null;
 
   const inputStyle = { padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: "100%", boxSizing: "border-box" as const };
   const linkBtn = { padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" } as const;
@@ -1344,12 +1353,7 @@ function PublicPageSettings() {
     : "";
 
   return (
-    <Section
-      category="station"
-      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
-      title="Public Listener Page"
-      description="A branded page your listeners can open and install — logo, colors, now-playing, links."
-    >
+    <div>
       {loading ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", padding: "8px 0" }}>Loading…</div>
       ) : (
@@ -1387,14 +1391,20 @@ function PublicPageSettings() {
             <input value={form.display_name} onChange={e => setField("display_name", e.target.value)} placeholder={stationName || "My Radio Station"} style={{ ...inputStyle, width: 280 }} />
           </SettingRow>
 
-          <SettingRow label="Stream URL" hint="Icecast stream URL — e.g. http://stream.yourstation.com:8000/live">
+          <SettingRow label="Stream URL" hint="Your stream's mount — the name at the end of your Broadcast (Icecast) URL">
             <div style={{ width: 360 }}>
-              <input value={form.stream_url} onChange={e => setField("stream_url", e.target.value)} placeholder="https://stream.yourstation.com/live" style={inputStyle} />
-              {/^http:\/\//i.test(form.stream_url || "") && (
-                <div style={{ fontSize: 10, color: "var(--accent-amber)", marginTop: 4, lineHeight: 1.4 }}>
-                  Use an https URL — http streams won't play on the public page (browsers block insecure audio on a secure page).
-                </div>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>stream.ether-technologies.com:8443/</span>
+                <input
+                  value={streamMount}
+                  onChange={e => {
+                    const mount = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                    setField("stream_url", mount ? `${STREAM_PREFIX}${mount}` : "");
+                  }}
+                  placeholder="usph"
+                  style={{ ...inputStyle, flex: 1, minWidth: 0 }}
+                />
+              </div>
             </div>
           </SettingRow>
 
@@ -1432,15 +1442,40 @@ function PublicPageSettings() {
             </SettingRow>
           ))}
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16, flexWrap: "wrap" as const }}>
             <button onClick={save} disabled={!canSave} style={{ padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: canSave ? "var(--accent-blue)" : "var(--bg-tertiary)", color: canSave ? "#fff" : "var(--text-tertiary)", border: "none", cursor: canSave ? "pointer" : "default" }}>
-              {saving ? "Saving…" : "Save"}
+              {saving ? (form.public_enabled ? "Publishing…" : "Saving…") : (form.public_enabled ? "Save & Publish" : "Save")}
             </button>
-            {dirty && !saving && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Unsaved changes</span>}
-            {msg && <span style={{ fontSize: 12, color: msg.kind === "ok" ? "var(--accent-green)" : "var(--accent-red)" }}>{msg.text}</span>}
+            {/* Clear state so "Save" never just looks dead: dirty = needs saving; clean = up to date. */}
+            {dirty && !saving && (
+              <span style={{ fontSize: 11, color: "var(--accent-amber)" }}>Unsaved changes — click {form.public_enabled ? "Save & Publish" : "Save"}</span>
+            )}
+            {!dirty && !saving && published && (
+              <span style={{ fontSize: 11, color: "var(--accent-green)" }}>✓ Published — <span onClick={openUrl} style={{ color: "var(--accent-blue)", cursor: "pointer", textDecoration: "underline" }}>{(liveUrl || "").replace(/^https?:\/\//, "")}</span></span>
+            )}
+            {!dirty && !saving && !published && (
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Saved — not public yet (turn on the toggle above to go live)</span>
+            )}
+            {msg && msg.kind === "err" && <span style={{ fontSize: 12, color: "var(--accent-red)" }}>{msg.text}</span>}
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// Settings-tab wrapper — the active station's public page, in a Section card.
+function PublicPageSettings() {
+  const { stationUuid, stationName, isReady } = useActiveStation();
+  if (!isReady || !stationUuid) return null;
+  return (
+    <Section
+      category="station"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>}
+      title="Public Listener Page"
+      description="A branded page your listeners can open and install — logo, colors, now-playing, links."
+    >
+      <PublicPageEditor stationUuid={stationUuid} stationName={stationName} />
     </Section>
   );
 }
