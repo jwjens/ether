@@ -23,6 +23,7 @@ interface ClockSlot {
   id: number; clock_id: number; position: number;
   slot_type: string; category_id: number | null;
   song_id?: number | null;
+  spot_type?: string | null;
   label: string | null; duration_min: number;
   chain_type?: string;
   category_code?: string; category_color?: string;
@@ -52,6 +53,8 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
 const HOURS = Array.from({length: 24}, (_, i) => i);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SLOT_TYPES = ["music", "spot_break", "liner", "sweeper", "news", "talkset", "jingle"];
+// Spot-type filter for spot_break slots — which kind of spot the generator pulls (NULL = any active spot).
+const SPOT_FILTER_TYPES = ["promo", "psa", "jingle", "liner", "sweeper", "commercial", "imaging"];
 const CLOCK_SLOT_TYPE_OPTIONS = [
   { value: "music",      label: "Song",    color: "var(--accent-blue)" },
   { value: "spot_break", label: "Spot",    color: "#ef4444" },
@@ -780,7 +783,7 @@ function ClocksTab() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [copiedSlot, setCopiedSlot] = useState<ClockSlot | null>(null);
-  const [editCell, setEditCell] = useState<{ slotId: number; field: "type" | "cat" } | null>(null);
+  const [editCell, setEditCell] = useState<{ slotId: number; field: "type" | "cat" | "spot" } | null>(null);
 
   // ── Fix: reload cats every time the tab is active ────────────
   const loadAll = async () => {
@@ -909,6 +912,12 @@ function ClocksTab() {
 
   const changeSlotType = async (id: number, type: string) => {
     await (window as any).ether.clockSlots.updateById(id, { slot_type: type });
+    setEditCell(null);
+    if (selected) loadSlots(selected);
+  };
+
+  const changeSpotType = async (id: number, spotType: string | null) => {
+    await (window as any).ether.clockSlots.updateById(id, { spot_type: spotType });
     setEditCell(null);
     if (selected) loadSlots(selected);
   };
@@ -1116,6 +1125,7 @@ function ClocksTab() {
                   const isSelected  = selectedSlotId === s.id;
                   const isEditType  = editCell?.slotId === s.id && editCell.field === "type";
                   const isEditCat   = editCell?.slotId === s.id && editCell.field === "cat";
+                  const isEditSpot  = editCell?.slotId === s.id && editCell.field === "spot";
                   const chainType   = s.chain_type || "segue";
                   return (
                   <div
@@ -1213,6 +1223,30 @@ function ClocksTab() {
                               display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                             }}
                           >{s.category_code || "—"}</span>
+                        )
+                      ) : s.slot_type === "spot_break" ? (
+                        isEditSpot ? (
+                          <select
+                            autoFocus
+                            value={s.spot_type ?? ""}
+                            onChange={e => changeSpotType(s.id, e.target.value || null)}
+                            onBlur={() => setEditCell(null)}
+                            onClick={e => e.stopPropagation()}
+                            style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid #ef4444", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
+                          >
+                            <option value="">Any spot</option>
+                            {SPOT_FILTER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        ) : (
+                          <span
+                            onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "spot" }); }}
+                            title="Double-click to choose which spots air here"
+                            style={{
+                              fontSize: 11, fontWeight: 700, cursor: "text", userSelect: "none" as const,
+                              color: s.spot_type ? "#ef4444" : "var(--text-tertiary)",
+                              display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
+                            }}
+                          >{s.spot_type || "Any spot"}</span>
                         )
                       ) : (
                         <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>—</span>

@@ -9,8 +9,8 @@ interface Spot {
   id: number; title: string; file_path: string | null;
   spot_type: string; advertiser: string | null;
   start_date: string | null; end_date: string | null;
-  max_plays_day: number; plays_today: number;
-  plays_total: number; is_active: number;
+  max_plays_day: number; play_count: number;
+  is_active: number;
   notes: string | null;
 }
 
@@ -194,7 +194,7 @@ export default function Spots() {
   };
 
   const activeCount = spots.filter(s => s.is_active).length;
-  const totalPlays = spots.reduce((s, sp) => s + sp.plays_total, 0);
+  const totalPlays = spots.reduce((s, sp) => s + (sp.play_count || 0), 0);
 
   const iBtn = (label: string, color: string, onClick: () => void, outline = false) => (
     <button onClick={onClick} style={{
@@ -337,7 +337,7 @@ export default function Spots() {
                       <span style={{ fontSize: 9, fontWeight: 700, color: typeColor, background: typeColor + "20", padding: "2px 8px", borderRadius: 0, textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>{s.spot_type}</span>
                     </td>
                     <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{s.advertiser || "—"}</td>
-                    <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-tertiary)" }}>{s.plays_total}</td>
+                    <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-tertiary)" }}>{s.play_count}</td>
                     <td style={{ padding: "10px 14px" }}>
                       <span style={{ fontSize: 11, fontWeight: 600, color: s.is_active ? "var(--accent-green)" : "var(--text-tertiary)" }}>{s.is_active ? "Yes" : "No"}</span>
                     </td>
