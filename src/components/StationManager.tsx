@@ -264,14 +264,8 @@ function StationRow({
           >Duplicate</button>
           <button
             onClick={() => onDelete(station.id)}
-            disabled={isActive}
-            title={isActive ? "Cannot delete the active station" : `Delete ${station.name}`}
-            style={{
-              ...actionBtn,
-              color: isActive ? "var(--text-tertiary)" : "#f87171",
-              opacity: isActive ? 0.35 : 1,
-              cursor: isActive ? "not-allowed" : "pointer",
-            }}
+            title={`Delete ${station.name}`}
+            style={{ ...actionBtn, color: "#f87171", opacity: 1, cursor: "pointer" }}
           >Delete</button>
         </div>
       </td>
@@ -465,12 +459,29 @@ export default function StationManager({ onStationSwitch }: Props) {
 
   const deleteStation = async (id: number) => {
     const s = stations.find(x => x.id === id);
+    const others = stations.filter(x => x.id !== id);
+    // An Ether install needs at least one station (the whole UI is station-scoped),
+    // so the last one can't be deleted into an empty state — make the new station
+    // first, then delete this one. Active stations ARE deletable (we switch away below).
+    if (others.length === 0) {
+      alert(`"${s?.name}" is your only station. Create the replacement station first (+ Add Station), then delete this one.`);
+      return;
+    }
     if (!confirm(
       `Delete station "${s?.name}"?\n\nAll station-scoped data (schedules, logs, library associations) will be permanently removed. This cannot be undone.`
     )) return;
+    // Never leave the app pointing at a deleted station: if this is the active one,
+    // switch to another before deleting.
+    if (id === activeStationId) {
+      const target = others[0];
+      const sw = await ether.stations.switch(target.id);
+      if (sw?.ok !== false) onStationSwitch?.(target.id, target.name);
+    }
     const r = await ether.stations.delete(id);
     if (!r?.ok) {
       console.error("[StationManager] delete failed:", r?.error);
+      alert("Couldn't delete the station — " + (r?.error || "please try again."));
+      return;
     }
     await load();
   };
