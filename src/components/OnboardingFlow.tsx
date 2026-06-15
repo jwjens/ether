@@ -30,6 +30,10 @@ type OnboardingState =
 
 interface Props {
   onComplete: (profile: VenueProfile) => void;
+  /** When true, the install has no account AND no operating station — force the account
+   *  sign-in/sign-up screen and ignore any stale resume flags (e.g. a leftover
+   *  first_run_complete=1 from a prior/uninstalled install). See App.tsx launch gate. */
+  forceAuth?: boolean;
 }
 
 // Shape of each station returned by /account/connect. Used by Screen 3
@@ -121,7 +125,7 @@ const ANIMATION_CSS = `
   }
 `;
 
-export default function OnboardingFlow({ onComplete }: Props) {
+export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const [state, setState] = useState<OnboardingState>('auth');
   const { stationId } = useActiveStation();
 
@@ -182,6 +186,8 @@ export default function OnboardingFlow({ onComplete }: Props) {
 
     (async () => {
       try {
+        // No account + nothing operating → ignore any stale resume flags and force sign-in.
+        if (forceAuth) { setState('auth'); setResumeChecking(false); return; }
         const result = await (window as any).ether.stationConfigKv.list(stationId);
         if (cancelled) return;
         const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
@@ -280,7 +286,7 @@ export default function OnboardingFlow({ onComplete }: Props) {
     })();
 
     return () => { cancelled = true; };
-  }, [stationId]);
+  }, [stationId, forceAuth]);
 
   // Wipe per-flow form state when the user picks a path on welcome. Keeps
   // licenseKey (same value either path) but clears station fields and

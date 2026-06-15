@@ -5158,6 +5158,29 @@ ipcMain.handle('sync:devices', async () => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
+// sync:removeDevice — deauthorize (soft-delete) another machine's seat on this account so it
+// stops syncing and frees the seat. Mirrors Manage Devices' deauthorize. The UI blocks removing
+// THIS machine (you can't deauthorize the device you're on from here).
+ipcMain.handle('sync:removeDevice', async (_evt, machineId) => {
+  try {
+    const mid = (machineId || '').trim();
+    if (!mid) return { ok: false, error: 'No device specified.' };
+    const me = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get()?.client_id || null;
+    if (mid === me) return { ok: false, error: "Can't remove the device you're currently on." };
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const licenseKey = lic?.value?.trim();
+    if (!licenseKey) return { ok: false, error: 'No license key — sign in first.' };
+    const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
+    const res = await fetchFn(`${ETHER_BACKEND_URL}/account/deauthorize-seat`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ license_key: licenseKey, machine_id: mid }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: data.detail || data.error || `remove ${res.status}` };
+    return { ok: true, removed: data.removed ?? 0 };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
 let _libSyncAbort = false;
 let _libDownloadAbort = false;   // mirror flag for the B.2 download handler
 

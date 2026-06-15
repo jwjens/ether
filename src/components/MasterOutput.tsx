@@ -714,7 +714,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
 
   return (
     <div style={{
-      width: expanded ? undefined : 220,
+      width: expanded ? undefined : 280,
       flex: expanded ? 1 : undefined,
       minWidth: expanded ? 280 : undefined,
       flexShrink: 0, display: "flex", flexDirection: "column",

@@ -483,6 +483,11 @@ export default function App() {
   // wizardDone (first_run_complete) because a carried-over / invite / restored install can have
   // first_run_complete=1 without anyone ever signing into an account — those must still see auth.
   const [accountJoined, setAccountJoined] = useState(false);
+  // True when the install is actually operating — at least one station WITH programming
+  // (a music library or scheduled shows). Drives the sign-in gate: an empty/leftover
+  // install (e.g. a stale first_run_complete=1 that survived an uninstall, or a restored
+  // DB with no account) must still be forced to sign in. A real working station never is.
+  const [installOperating, setInstallOperating] = useState(true);
   const [firstRunChecked, setFirstRunChecked] = useState(false);
   const [stationName, setStationName] = useState("Ether");
   const [switchToast, setSwitchToast] = useState("");
@@ -746,6 +751,17 @@ export default function App() {
         if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
+
+        // Is this install actually operating? Programming = a music library OR scheduled
+        // shows. An empty install (fresh, restored-but-empty, or one whose DB survived an
+        // uninstall with a stale first_run_complete=1) has neither → it must sign in.
+        try {
+          const songRow = await query<{ n: number }>("SELECT COUNT(*) as n FROM songs WHERE deleted_at IS NULL");
+          const showRow = await query<{ n: number }>("SELECT COUNT(*) as n FROM shows WHERE deleted_at IS NULL");
+          const songs = songRow?.[0]?.n ?? 0;
+          const shows = showRow?.[0]?.n ?? 0;
+          setInstallOperating(songs > 0 || shows > 0);
+        } catch { setInstallOperating(false); }
       } catch {}
       setFirstRunChecked(true);
       consoleLog("system", "ether started — engine ready");
@@ -1695,7 +1711,13 @@ export default function App() {
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
-  if (firstRunChecked && !wizardDone) return <EtherErrorBoundary><OnboardingFlow onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  // Sign-in gate. Force the account sign-in/sign-up screen when onboarding isn't done OR
+  // when there's no account signed in AND the install isn't operating (no library/shows).
+  // The operating exception is what lets a real working station through without a forced
+  // sign-in (the regression that reverted the old account-gate) while still catching empty
+  // or leftover installs whose stale first_run_complete=1 survived an uninstall.
+  const forceAuth = firstRunChecked && !accountJoined && !installOperating;
+  if (firstRunChecked && (!wizardDone || forceAuth)) return <EtherErrorBoundary><OnboardingFlow forceAuth={forceAuth} onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
@@ -5075,7 +5097,7 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
             ? { width: 36, flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.06)" }
             : !showCarts
               ? { flex: 1, minWidth: 280, borderLeft: "1px solid rgba(255,255,255,0.06)" }
-              : { width: 220, flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.06)" }
+              : { width: 280, flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.06)" }
         } />
       </div>
     </>

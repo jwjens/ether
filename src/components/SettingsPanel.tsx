@@ -859,6 +859,25 @@ function SyncSection() {
   const [thisId, setThisId]   = useState<string | null>(null);
   const [devLimit, setDevLimit] = useState<number | null>(null);
   const [devErr, setDevErr]   = useState<string | null>(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  const loadDevices = () => {
+    (window as any).ether.invoke('sync:devices').then((r: any) => {
+      if (r?.ok) { setDevices(r.devices || []); setThisId(r.thisMachineId || null); setDevLimit(r.limit ?? null); setDevErr(null); }
+      else setDevErr(r?.error || 'Could not load devices');
+    }).catch((e: any) => setDevErr(String(e?.message || e)));
+  };
+
+  const removeDevice = async (machineId: string) => {
+    setRemovingId(machineId);
+    try {
+      const r = await (window as any).ether.invoke('sync:removeDevice', machineId);
+      if (!r?.ok) setDevErr(r?.error || 'Could not remove device');
+      else { setConfirmRemoveId(null); loadDevices(); }
+    } catch (e: any) { setDevErr(String(e?.message || e)); }
+    finally { setRemovingId(null); }
+  };
 
   useEffect(() => {
     (window as any).ether.invoke('sync:getStats').then((s: any) => {
@@ -979,6 +998,23 @@ function SyncSection() {
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                       <span style={{ width: 8, height: 8, borderRadius: "50%", background: online ? "var(--accent-green)" : "var(--text-tertiary)" }} />
                       <span style={{ fontSize: 11, color: online ? "var(--accent-green)" : "var(--text-tertiary)" }}>{seenLabel}</span>
+                      {!isMe && (confirmRemoveId === d.machine_id ? (
+                        <span style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}>
+                          <button onClick={() => removeDevice(d.machine_id)} disabled={removingId === d.machine_id}
+                            style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", background: "var(--accent-red, #e0484a)", color: "#fff", border: "none", borderRadius: 4, cursor: removingId === d.machine_id ? "wait" : "pointer" }}>
+                            {removingId === d.machine_id ? "Removing…" : "Remove"}
+                          </button>
+                          <button onClick={() => setConfirmRemoveId(null)} disabled={removingId === d.machine_id}
+                            style={{ fontSize: 11, padding: "3px 8px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", borderRadius: 4, cursor: "pointer" }}>
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button onClick={() => setConfirmRemoveId(d.machine_id)} title="Remove this device from the account"
+                          style={{ marginLeft: 4, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 4, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>
+                          ✕
+                        </button>
+                      ))}
                     </div>
                   </div>
                 );
