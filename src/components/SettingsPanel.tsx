@@ -1619,6 +1619,13 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [r2Testing,      setR2Testing]      = useState(false);
   const [r2Saving,       setR2Saving]       = useState(false);
 
+  // Music Library → Cloud (manual audio upload). The cloud backup above covers
+  // the database only; this pushes the actual audio files via the existing
+  // library:sync-r2:upload handler so a fresh install can pull them down.
+  const [libUploading, setLibUploading] = useState(false);
+  const [libProgress,  setLibProgress]  = useState<{ done: number; total: number; errors: number } | null>(null);
+  const [libUploadMsg, setLibUploadMsg] = useState("");
+
   // AI / Voice Assistant (legacy)
   const [anthropicKey, setAnthropicKey] = useState("");
   const [anthropicKeySaved, setAnthropicKeySaved] = useState(false);
@@ -1812,6 +1819,44 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     } catch (e) { setR2TestStatus("✗ " + String(e)); }
     setR2Testing(false);
   };
+
+  // Manual library (audio) upload. upload() validates synchronously (tier /
+  // license / "nothing to upload") and returns {ok:false,error} without throwing;
+  // on ok it runs fire-and-forget and drives the progress/done events below.
+  const uploadLibrary = async () => {
+    const ether = (window as any).ether;
+    setLibUploadMsg(""); setLibProgress(null); setLibUploading(true);
+    try {
+      const r: any = await ether.libraryR2.upload();
+      if (!r?.ok) {
+        setLibUploading(false);
+        setLibUploadMsg(r?.error || "Couldn't start the upload.");
+      }
+    } catch (e: any) {
+      setLibUploading(false);
+      setLibUploadMsg(String(e?.message || e));
+    }
+  };
+  const cancelLibraryUpload = () => { (window as any).ether.libraryR2.uploadCancel?.(); };
+
+  // Subscribe to library-upload progress/done so the button reflects real work.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    const offP = ether.libraryR2.onUploadProgress?.((v: any) => {
+      setLibProgress({ done: v?.done ?? 0, total: v?.total ?? 0, errors: v?.errors ?? 0 });
+    });
+    const offD = ether.libraryR2.onUploadDone?.((v: any) => {
+      const done = v?.done ?? 0, total = v?.total ?? 0, errors = v?.errors ?? 0;
+      setLibUploading(false);
+      setLibProgress({ done, total, errors });
+      setLibUploadMsg(
+        v?.aborted   ? `Cancelled — ${done.toLocaleString()} of ${total.toLocaleString()} uploaded`
+        : errors > 0 ? `Uploaded ${(done - errors).toLocaleString()} of ${total.toLocaleString()} — ${errors} failed`
+        :              `✓ All ${done.toLocaleString()} files uploaded to the cloud`
+      );
+    });
+    return () => { offP?.(); offD?.(); };
+  }, []);
 
   const formatBackupName = (name: string) => {
     const ts = name.replace("openair-backup-", "").replace(".db", "");
@@ -2393,7 +2438,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       <KeepOnAirSection />
 
       {/* ── Backup ── */}
-      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Backup & Restore" description="Save a copy of your entire library, schedule, and settings — takes about 2 seconds">
+      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Local Backup (this PC)" description="Save a snapshot of your database — library list, schedule, and settings — to this computer. Audio files are not included.">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
           <button onClick={backup} disabled={backupLoading} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
             {backupLoading ? "Saving..." : "Back up now"}
@@ -2451,7 +2496,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       )}
 
       {/* ── Cloud Backup ── */}
-      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="Automatic encrypted off-site backup of your station database — included with your Ether subscription">
+      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="Automatic encrypted off-site backup of your station database (your library list, schedule, and settings) — included with your Ether subscription">
 
         {/* Enable toggle */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
@@ -2531,6 +2576,41 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           ) : (
             <span>No R2 backup has run yet</span>
           )}
+        </div>
+
+        {/* ── Music Library (manual audio upload) ──
+            The automatic backup above is database-only. Audio files are large,
+            so they're pushed on demand here via library:sync-r2:upload. */}
+        <div style={{ marginTop: 16, borderTop: "1px solid var(--border-primary)", paddingTop: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>Music Library</div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
+            The automatic backup above saves your database only. Upload your actual
+            audio files to the cloud so a new install can pull your whole library down.
+            Only files not already in the cloud are sent. Requires Network plan.
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any }}>
+            <button
+              onClick={uploadLibrary}
+              disabled={libUploading}
+              style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: libUploading ? "default" : "pointer", borderRadius: 0, opacity: libUploading ? 0.6 : 1 }}>
+              {libUploading ? "Uploading…" : "Upload library to cloud"}
+            </button>
+            {libUploading && (
+              <button
+                onClick={cancelLibraryUpload}
+                style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", borderRadius: 0 }}>
+                Cancel
+              </button>
+            )}
+            {libUploading && libProgress && (
+              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                {libProgress.done.toLocaleString()} / {libProgress.total.toLocaleString()} files{libProgress.errors > 0 ? `, ${libProgress.errors} error${libProgress.errors === 1 ? "" : "s"}` : ""}
+              </span>
+            )}
+            {!libUploading && libUploadMsg && (
+              <span style={{ fontSize: 12, color: libUploadMsg.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{libUploadMsg}</span>
+            )}
+          </div>
         </div>
 
       </Section>

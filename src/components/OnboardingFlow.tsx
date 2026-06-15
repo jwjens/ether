@@ -468,10 +468,47 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
         setSyncMsg('Downloading your music library…');
         setSyncSub(total > 0 ? `${done.toLocaleString()} / ${total.toLocaleString()} files` : `${done.toLocaleString()} files`);
       });
-      await ether.libraryR2.download();
-      offP?.();
+
+      // Subscribe to the terminal event BEFORE starting so it can't be missed if
+      // the download finishes between download() resolving and us subscribing.
+      let offD: (() => void) | undefined;
+      const downloadDone = new Promise<any>((resolve) => {
+        offD = ether.libraryR2.onDownloadDone?.((v: any) => resolve(v));
+      });
+
+      // download() validates synchronously (tier / license / "nothing in R2") and
+      // returns {ok:false,error} — it does NOT throw — then runs fire-and-forget.
+      // A not-ok result means the music will never arrive: surface it instead of
+      // falsely reporting success. No done event fires in this case.
+      const dl = await ether.libraryR2.download();
+      if (!dl?.ok) {
+        offP?.(); offD?.();
+        setSyncPhase('error');
+        setSyncMsg(dl?.error || 'Your station database was restored, but the music library could not be downloaded.');
+        return;
+      }
+
+      // download() resolves as soon as the background job STARTS. Wait for it to
+      // actually finish — relaunching mid-download kills the transfer (the bug
+      // that left fresh machines with a database but no music).
+      const result = await downloadDone;
+      offP?.(); offD?.();
+
+      const got = result?.done ?? 0;
+      const errs = result?.errors ?? 0;
+      if (result?.aborted) {
+        setSyncPhase('error');
+        setSyncMsg('Music download was cancelled before it finished.');
+        return;
+      }
+      if (got === 0) {
+        setSyncPhase('error');
+        setSyncMsg(`Your station database was restored, but no music could be downloaded from the cloud${errs ? ` (${errs} file error${errs === 1 ? '' : 's'})` : ''}. Check that your plan includes cloud sync and that the library was uploaded from the source machine.`);
+        return;
+      }
+
       setSyncPct(100);
-      setSyncSub('');
+      setSyncSub(errs > 0 ? `${errs.toLocaleString()} file${errs === 1 ? '' : 's'} skipped` : '');
       setSyncMsg('Finished — starting Ether…');
       await ether.invoke('app:relaunch').catch(() => {});
     } catch (e: any) {
