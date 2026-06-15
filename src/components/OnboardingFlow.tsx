@@ -300,6 +300,23 @@ export default function OnboardingFlow({ onComplete }: Props) {
   const [authPassword, setAuthPassword] = useState('');
   const [authErr, setAuthErr] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  // Account hub handle (listen.ether-technologies.com/@<handle>) — chosen at sign-up.
+  const [authHandle, setAuthHandle] = useState('');
+  const [handleState, setHandleState] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle');
+  useEffect(() => {
+    if (authMode !== 'signup') return;
+    const s = authHandle.trim().toLowerCase();
+    if (!s) { setHandleState('idle'); return; }
+    setHandleState('checking');
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`${ETHER_BACKEND_URL}/public/account/check-slug?slug=${encodeURIComponent(s)}`);
+        const d = await r.json().catch(() => ({}));
+        setHandleState(!d.valid ? 'invalid' : d.available ? 'ok' : 'taken');
+      } catch { setHandleState('idle'); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [authHandle, authMode]);
 
   // After auth, ask the backend which stations this account already has, then route into the
   // existing pick-station (has stations) or add-station (none yet) screens. License/plan are
@@ -498,6 +515,17 @@ export default function OnboardingFlow({ onComplete }: Props) {
           : data.error === 'invalid_email' ? 'Enter a valid email address.'
           : 'Could not create your account. Please try again.'
         );
+      }
+      // Claim the chosen hub handle (uses the fresh signup token; non-fatal if it fails).
+      const handle = authHandle.trim().toLowerCase();
+      if (handle && handleState !== 'taken' && handleState !== 'invalid') {
+        try {
+          await fetch(`${ETHER_BACKEND_URL}/api/user/account-slug`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${data.token}` },
+            body: JSON.stringify({ slug: handle }),
+          });
+        } catch { /* can be set later in the dashboard */ }
       }
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
       // Sign up = brand-new account: run the full onboarding (pick/create station →
@@ -918,6 +946,21 @@ export default function OnboardingFlow({ onComplete }: Props) {
               )}
               <input type="email" autoFocus value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthErr(''); }} placeholder="Email address" style={authInput} />
               <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthErr(''); }} onKeyDown={e => { if (e.key === 'Enter') submit(); }} placeholder={authMode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} style={authInput} />
+              {authMode === 'signup' && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+                    <span style={{ ...authInput, width: "auto", flexShrink: 0, color: "rgba(255,255,255,0.4)", borderRight: "none", paddingRight: 2 }}>listen.ether-technologies.com/@</span>
+                    <input value={authHandle} onChange={e => setAuthHandle(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="your-handle" style={{ ...authInput, borderLeft: "none", paddingLeft: 2, flex: 1, minWidth: 0 }} />
+                  </div>
+                  <div style={{ fontSize: 11, marginTop: 4, minHeight: 14 }}>
+                    {handleState === 'checking' && <span style={{ color: "rgba(255,255,255,0.4)" }}>Checking…</span>}
+                    {handleState === 'ok' && <span style={{ color: "#34d399" }}>✓ Available — your station hub address</span>}
+                    {handleState === 'taken' && <span style={{ color: "#f87171" }}>Already taken</span>}
+                    {handleState === 'invalid' && <span style={{ color: "#f87171" }}>3–32 lowercase letters, numbers, or hyphens</span>}
+                    {handleState === 'idle' && <span style={{ color: "rgba(255,255,255,0.3)" }}>Your public hub — all your stations in one place (optional, set later in the dashboard).</span>}
+                  </div>
+                </div>
+              )}
               {authErr && <div style={{ fontSize: 12, color: "#f87171" }}>{authErr}</div>}
               <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
                 {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}

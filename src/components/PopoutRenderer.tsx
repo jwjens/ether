@@ -4,7 +4,7 @@
 import React, { useState, useEffect } from "react";
 import PopoutShell from "./PopoutShell";
 import StandaloneDecksPanel from "./StandaloneDecksPanel";
-import BroadcastMonitor from "./BroadcastMonitor";
+import MasterOutput from "./MasterOutput";
 import MicDeck from "./MicDeck";
 import PhoneDesk from "./PhoneDesk";
 import VoiceTracker from "./VoiceTracker";
@@ -82,7 +82,8 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       content = <StandaloneDecksPanel />;
       break;
     case "master":
-      content = <BroadcastMonitor />;
+      // The full master section (fader + EQ + meters) — the EQ pop-out the panel button opens.
+      content = <MasterOutput expanded collapsed={false} onToggleCollapsed={() => {}} />;
       break;
     case "mic":
       content = <MicDeck />;
