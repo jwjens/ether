@@ -849,7 +849,7 @@ function ClocksTab() {
     setSlots(enriched);
   };
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => { loadAll(); }, [isReady, stationId]);
   useEffect(() => { if (selected) loadSlots(selected); else setSlots([]); }, [selected]);
 
   const createClock = async () => {

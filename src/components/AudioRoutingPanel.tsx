@@ -16,7 +16,7 @@ const selectStyle: React.CSSProperties = {
   background: "var(--bg-primary)",
   border: "1px solid var(--border-primary)",
   color: "var(--text-primary)",
-  fontSize: 9,
+  fontSize: 13,
   padding: "4px 6px",
   borderRadius: 0,
   cursor: "pointer",
@@ -54,7 +54,7 @@ function SectionHeader({ title, open, onToggle }: { title: string; open: boolean
     >
       <SectionChevron open={open} />
       <span style={{
-        fontSize: 7, fontWeight: 700, letterSpacing: "0.12em",
+        fontSize: 11, fontWeight: 700, letterSpacing: "0.12em",
         color: "var(--text-secondary)", textTransform: "uppercase" as const,
       }}>{title}</span>
     </div>
@@ -144,7 +144,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
 
           {/* Station picker */}
           <div>
-            <div style={{ fontSize: 7, color: "var(--text-secondary)", letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const, opacity: 0.7 }}>Station</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const, opacity: 0.7 }}>Station</div>
             <select
               value={selectedStation ?? ""}
               onChange={e => setSelectedStation(Number(e.target.value))}
@@ -157,7 +157,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
 
           {/* Device picker */}
           <div>
-            <div style={{ fontSize: 7, color: "var(--text-secondary)", letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const, opacity: 0.7 }}>Output Device</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const, opacity: 0.7 }}>Output Device</div>
             <select
               value={selectedDevice}
               onChange={e => setSelectedDevice(e.target.value)}
@@ -169,7 +169,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
           </div>
 
           {/* Apply row */}
-          <div style={{ fontSize: 8, color: "var(--text-secondary)", opacity: 0.6, fontStyle: "italic" }}>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", opacity: 0.6, fontStyle: "italic" }}>
             Note: changing device may restart the current track.
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -177,7 +177,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
               onClick={handleApply}
               disabled={applying || selectedStation === null}
               style={{
-                padding: "5px 14px", fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+                padding: "5px 14px", fontSize: 13, fontWeight: 700, letterSpacing: "0.1em",
                 background: applying ? "var(--bg-tertiary)" : `${TEAL}22`,
                 border: `1px solid ${applying ? "var(--border-primary)" : TEAL}`,
                 color: applying ? "var(--text-secondary)" : TEAL,
@@ -187,7 +187,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
               }}
             >{applying ? "APPLYING…" : "APPLY"}</button>
             {successMsg && (
-              <span style={{ fontSize: 9, color: TEAL, fontWeight: 600 }}>{successMsg}</span>
+              <span style={{ fontSize: 13, color: TEAL, fontWeight: 600 }}>{successMsg}</span>
             )}
           </div>
 
@@ -239,7 +239,7 @@ export function CurrentRoutingSummary({ refreshKey }: { refreshKey: number }) {
       {open && (
         <div style={{ padding: "4px 0 6px" }}>
           {rows.length === 0 ? (
-            <div style={{ padding: "4px 12px", fontSize: 9, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+            <div style={{ padding: "4px 12px", fontSize: 13, color: "var(--text-tertiary)", fontStyle: "italic" }}>
               No stations configured
             </div>
           ) : rows.map(r => (
@@ -247,10 +247,10 @@ export function CurrentRoutingSummary({ refreshKey }: { refreshKey: number }) {
               display: "flex", alignItems: "center", gap: 5,
               padding: "3px 12px",
             }}>
-              <span style={{ fontSize: 9, fontWeight: 600, color: "var(--text-secondary)", flexShrink: 0 }}>{r.stationName}</span>
-              <span style={{ fontSize: 9, color: "var(--text-tertiary)", flexShrink: 0 }}>→</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-secondary)", flexShrink: 0 }}>{r.stationName}</span>
+              <span style={{ fontSize: 13, color: "var(--text-tertiary)", flexShrink: 0 }}>→</span>
               <span style={{
-                fontSize: 9, color: r.deviceName === "System Default" ? "var(--text-tertiary)" : "var(--text-primary)",
+                fontSize: 13, color: r.deviceName === "System Default" ? "var(--text-tertiary)" : "var(--text-primary)",
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                 fontStyle: r.deviceName === "System Default" ? "italic" : "normal",
               }}>{r.deviceName}</span>

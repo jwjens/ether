@@ -39,7 +39,7 @@ export default function PopoutShell({ title, children, headerExtra }: Props) {
           <span style={{
             fontSize: 9, fontWeight: 800, letterSpacing: "0.18em",
             color: "#2a3860", textTransform: "uppercase",
-          }}>ETHER</span>
+          }}>ETHERCAST</span>
           <span style={{ width: 1, height: 12, background: "#1e1e30" }} />
           <span style={{
             fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
