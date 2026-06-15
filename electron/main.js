@@ -4413,11 +4413,14 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
     // Load separation rules (fall back to safe defaults)
     let artistSepMin = 60;
     let songRepeatMin = 180;
+    let titleSepMin = 120;
     try {
       const ar = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get();
       if (ar) artistSepMin = ar.value;
       const sr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='song_separation_min' AND is_active=1 LIMIT 1").get();
       if (sr) songRepeatMin = sr.value;
+      const tr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='title_separation_min' AND is_active=1 LIMIT 1").get();
+      if (tr) titleSepMin = tr.value;
     } catch {}
 
     const { generatedScheduleClearAll, generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
@@ -4455,8 +4458,9 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
     const generatedRows = [];
 
     // Per-generation tracking maps (survive across hours/days)
-    const songLastTs   = new Map(); // songId   → unix ts last queued this run
-    const artistLastTs = new Map(); // artistId → unix ts last queued this run
+    const songLastTs   = new Map(); // songId        → unix ts last queued this run
+    const artistLastTs = new Map(); // artistId      → unix ts last queued this run
+    const titleLastTs  = new Map(); // norm. title   → unix ts last queued this run (covers covers/re-recordings)
 
     const now = new Date();
     now.setMinutes(0, 0, 0);
@@ -4480,9 +4484,10 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
         const slots = stmtSlots.all(show.clock_id);
         if (!slots.length) continue;
 
-        // Per-hour sets to avoid same song or artist within a single hour
+        // Per-hour sets to avoid same song, artist, or title within a single hour
         const usedSongIds   = new Set();
         const usedArtistIds = new Set();
+        const usedTitles    = new Set();
 
         const hourEnd = hourStartTs + 3600;
         let currentTs = hourStartTs;
@@ -4514,6 +4519,14 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
             const songAgeSec  = currentTs - lastSongTs;
             if (songAgeSec < songRepeatMin * 60) continue;
 
+            // Title separation — covers/re-recordings (same title, different recording/song_id)
+            // must not stack inside the window. Strict within the hour, time-based across hours.
+            const titleKey = (song.title || '').trim().toLowerCase();
+            if (titleKey) {
+              const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
+              if (usedTitles.has(titleKey) || (currentTs - lastTitleTs) < titleSepMin * 60) continue;
+            }
+
             // Artist separation — strict within the hour, soft across hours
             const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
             const artistAgeSec = currentTs - lastArtistTs;
@@ -4521,10 +4534,10 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
               || (song.artist_id && artistAgeSec < artistSepMin * 60);
 
             if (!artistBlocked) { picked = song; break; }
-            if (!softFallback)    softFallback = song; // same artist, but song repeat ok
+            if (!softFallback)    softFallback = song; // same artist, but song+title repeat ok
           }
 
-          // Soft fallback: violates artist sep but passes song repeat
+          // Soft fallback: violates artist sep but passes song+title repeat
           if (!picked) picked = softFallback;
           // Last resort: any unused song
           if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
@@ -4532,6 +4545,8 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
           if (picked) {
             usedSongIds.add(picked.id);
             if (picked.artist_id) usedArtistIds.add(picked.artist_id);
+            const pTitleKey = (picked.title || '').trim().toLowerCase();
+            if (pTitleKey) { usedTitles.add(pTitleKey); titleLastTs.set(pTitleKey, currentTs); }
             songLastTs.set(picked.id, currentTs);
             if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
 
@@ -4564,16 +4579,18 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
 
 // Shared generation context (prepared statements + separation rules + tracking maps).
 function _buildScheduleCtx(stationId) {
-  let artistSepMin = 60, songRepeatMin = 180;
+  let artistSepMin = 60, songRepeatMin = 180, titleSepMin = 120;
   try {
     const ar = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get();
     if (ar) artistSepMin = ar.value;
     const sr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='song_separation_min' AND is_active=1 LIMIT 1").get();
     if (sr) songRepeatMin = sr.value;
+    const tr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='title_separation_min' AND is_active=1 LIMIT 1").get();
+    if (tr) titleSepMin = tr.value;
   } catch {}
   return {
-    activeStationId: stationId, artistSepMin, songRepeatMin,
-    songLastTs: new Map(), artistLastTs: new Map(), generatedRows: [],
+    activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin,
+    songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(), generatedRows: [],
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
     stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
     stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND ((s.daypart_mask >> ?) & 1) = 1 ORDER BY RANDOM()`),
@@ -4583,7 +4600,7 @@ function _buildScheduleCtx(stationId) {
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
-  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, songLastTs, artistLastTs, artistSepMin, songRepeatMin, activeStationId, generatedRows } = ctx;
+  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, songLastTs, artistLastTs, titleLastTs, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
@@ -4598,7 +4615,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
     if (!show || !show.clock_id) continue;
     const slots = stmtSlots.all(show.clock_id);
     if (!slots.length) continue;
-    const usedSongIds = new Set(), usedArtistIds = new Set();
+    const usedSongIds = new Set(), usedArtistIds = new Set(), usedTitles = new Set();
     const hourEnd = hourStartTs + 3600;
     let currentTs = hourStartTs;
     for (const slot of slots) {
@@ -4626,6 +4643,11 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
         if (usedSongIds.has(song.id)) continue;
         const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
         if (currentTs - lastSongTs < songRepeatMin * 60) continue;
+        const titleKey = (song.title || '').trim().toLowerCase();
+        if (titleKey) {
+          const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
+          if (usedTitles.has(titleKey) || (currentTs - lastTitleTs) < titleSepMin * 60) continue;
+        }
         const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
         const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < artistSepMin * 60);
         if (!artistBlocked) { picked = song; break; }
@@ -4636,6 +4658,8 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       if (picked) {
         usedSongIds.add(picked.id);
         if (picked.artist_id) usedArtistIds.add(picked.artist_id);
+        const pTitleKey = (picked.title || '').trim().toLowerCase();
+        if (pTitleKey) { usedTitles.add(pTitleKey); titleLastTs.set(pTitleKey, currentTs); }
         songLastTs.set(picked.id, currentTs);
         if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
         const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : slotDurationS;
