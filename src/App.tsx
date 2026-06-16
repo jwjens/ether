@@ -63,7 +63,6 @@ import PDPicks from "./components/PDPicks";
 import SchedulePreview from "./components/SchedulePreview";
 import SchedulerReasons from "./components/SchedulerReasons";
 import VoiceTrackInbox from "./components/VoiceTrackInbox";
-import AIVoiceStudio from "./components/AIVoiceStudio";
 import ActiveStationBadge from "./components/ActiveStationBadge";
 import GSelectorImport from "./components/GSelectorImport";
 import HelpPanel from "./components/HelpPanel";
@@ -115,7 +114,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "aivoice" | "gselector" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -841,9 +840,26 @@ export default function App() {
       if (cmd === "help:shortcuts") window.dispatchEvent(new KeyboardEvent("keydown",{code:"Slash",shiftKey:true}));
       if (cmd === "help:check-updates") updater.checkForUpdate?.();
       if (cmd === "nav:about") setShowAbout(true);
+      if (cmd === "account:sign-out") setCurrentUser(null); // back to the profile / PIN screen
+      if (cmd === "account:switch") {
+        // Sign out of the cloud account and relaunch to sign in / sign up. Clears only the
+        // account/onboarding flags; local station data is left intact. Mirrors SubscriptionPanel.
+        (async () => {
+          if (!window.confirm("Switch account?\n\nThis signs out of the current account and restarts to the Sign in / Sign up screen, where you can sign in or create a new account.\n\nThis install's local station data isn't deleted — back it up to the cloud first if you need it. Continue?")) return;
+          const ether = (window as any).ether;
+          let sid = 1;
+          try { const a = await ether.stations?.getActive?.(); sid = a?.id ?? 1; } catch {}
+          const keys = ['license_key','license_email','plan_tier','account_name','first_run_complete','onboarding_account_joined','onboarding_license_entered','onboarding_library_pulled','onboarding_library_source'];
+          for (const k of keys) { try { await ether.stationConfigKv.removeByKey(sid, k); } catch {} }
+          try { await ether.invoke('app:relaunch'); } catch { window.alert("Couldn't switch accounts — please try again."); }
+        })();
+      }
     });
     return () => (window as any).ether.off("menu-action", handler);
   }, []);
+
+  // Keep the File ▸ Switch Account enabled/greyed state in sync with the plan.
+  useEffect(() => { (window as any).ether?.invoke?.("menu:rebuild")?.catch?.(() => {}); }, [currentPlan]);
 
   // Allow any UpgradePrompt button anywhere in the app to open the subscription panel
   useEffect(() => {
@@ -2140,7 +2156,6 @@ export default function App() {
               {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}
               {panel === "reasons" && <SchedulerReasons onClose={() => setPanel("live")} />}
               {panel === "vtinbox" && <VoiceTrackInbox onClose={() => setPanel("live")} />}
-              {panel === "aivoice" && <AIVoiceStudio onClose={() => setPanel("live")} />}
 
               {panel === "gselector" && <GSelectorImport onClose={() => setPanel("live")} />}
               {panel === "help" && <HelpPanel onClose={() => setPanel("live")} />}

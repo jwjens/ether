@@ -1052,6 +1052,11 @@ function buildMenu() {
     if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
     else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
   };
+  // Cloud account actions need an account — the free/solo tier has none, so Switch Account
+  // is greyed there. Read the live plan at build time; menu:rebuild refreshes it on change.
+  let planTier = 'free';
+  try { planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free'; } catch {}
+  const hasAccount = planTier !== 'free';
   const template = [
     { label: "File", submenu: [
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
@@ -1059,6 +1064,9 @@ function buildMenu() {
       { type: "separator" },
       { label: "Import Music...", click: () => send("file:import") },
       { label: "Preferences", click: () => send("file:preferences") },
+      { type: "separator" },
+      { label: "Sign Out", click: () => send("account:sign-out") },
+      { label: "Switch Account…", enabled: hasAccount, click: () => send("account:switch") },
       { type: "separator" },
       { label: "Quit Ether", accelerator: "CmdOrCtrl+Q", click: () => fullStopAndQuit() },
     ]},
@@ -1134,6 +1142,10 @@ function buildMenu() {
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
+
+// Rebuild the native menu (e.g. after the plan tier changes) so Switch Account's
+// enabled/greyed state stays correct without an app restart.
+ipcMain.handle('menu:rebuild', () => { try { buildMenu(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
 
 // ── VIP invite file detection ─────────────────────────────────
 // Checks for ether-invite.json in the exe dir or resources path.
