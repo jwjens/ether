@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import { queryOne } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -263,36 +264,37 @@ export default function OnShiftScreen({ onStart }: Props) {
         <div style={{ borderRight: `1px solid ${S.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ flex: 1, overflowY: "auto", padding: "32px 36px" }}>
 
-            {/* Station logo */}
-            {stationLogo && (
-              <div style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 14 }}>
+            {/* EtherCast brand (+ station logo if set) */}
+            <div style={{ marginBottom: 36, display: "flex", alignItems: "center", gap: 18 }}>
+              <img src={ethercastWordmark} alt="EtherCast" style={{ height: 40 }} />
+              {stationLogo && (
                 <img
                   src={stationLogo}
                   alt="Station logo"
-                  style={{ height: 48, maxWidth: 120, objectFit: "contain", opacity: 0.9 }}
+                  style={{ height: 44, maxWidth: 130, objectFit: "contain", opacity: 0.9, borderLeft: `1px solid ${S.border}`, paddingLeft: 18 }}
                 />
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Operator selector */}
             <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 10 }}>On Shift</div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 10 }}>On Shift</div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {operators.map(op => (
                   <button key={op.id} onClick={() => setOperator(op)} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "8px 14px", borderRadius: 0,
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "11px 18px", borderRadius: 0,
                     background: operator?.id === op.id ? S.purple + "20" : "transparent",
                     border: `1px solid ${operator?.id === op.id ? S.purple : S.border}`,
                     color: operator?.id === op.id ? S.text : S.muted,
-                    cursor: "pointer", fontSize: 13, fontWeight: operator?.id === op.id ? 700 : 400,
+                    cursor: "pointer", fontSize: 16, fontWeight: operator?.id === op.id ? 700 : 400,
                     transition: "all 0.12s",
                   }}>
                     <span style={{
-                      width: 26, height: 26, borderRadius: 0, flexShrink: 0,
+                      width: 32, height: 32, borderRadius: 0, flexShrink: 0,
                       background: operator?.id === op.id ? S.purple : S.border,
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 10, fontWeight: 800, color: "#fff",
+                      fontSize: 13, fontWeight: 800, color: "#fff",
                       fontFamily: "'Newsreader', Georgia, serif",
                     }}>{op.initials.slice(0, 2).toUpperCase()}</span>
                     {op.name}
@@ -310,18 +312,18 @@ export default function OnShiftScreen({ onStart }: Props) {
                     <button onClick={() => setShowNewOp(false)} style={{ padding: "6px 10px", background: "none", border: `1px solid ${S.border}`, color: S.muted, fontSize: 11, cursor: "pointer", borderRadius: 0 }}>✕</button>
                   </div>
                 ) : (
-                  <button onClick={() => setShowNewOp(true)} style={{ padding: "8px 12px", background: "none", border: `1px dashed ${S.border}`, color: S.muted, fontSize: 11, cursor: "pointer", borderRadius: 0 }}>+ Add operator</button>
+                  <button onClick={() => setShowNewOp(true)} style={{ padding: "11px 16px", background: "none", border: `1px dashed ${S.border}`, color: S.muted, fontSize: 14, cursor: "pointer", borderRadius: 0 }}>+ Add operator</button>
                 )}
               </div>
             </div>
 
             {/* Greeting */}
             {operator && (
-              <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 26, fontWeight: 800, color: S.text, letterSpacing: "-0.03em", fontFamily: "'Newsreader', Georgia, serif", lineHeight: 1.2, marginBottom: 6 }}>
+              <div style={{ marginBottom: 36 }}>
+                <div style={{ fontSize: 46, fontWeight: 800, color: S.text, letterSpacing: "-0.03em", fontFamily: "'Newsreader', Georgia, serif", lineHeight: 1.12, marginBottom: 10 }}>
                   {greeting()},<br />{operator.name}.
                 </div>
-                <div style={{ fontSize: 12, color: S.muted }}>
+                <div style={{ fontSize: 15, color: S.muted }}>
                   {currentShow ? `On air: ${currentShow.name}` : "No scheduled show right now"}
                   {nextBreakIn && <span> · Next transition in {nextBreakIn}</span>}
                 </div>
@@ -330,15 +332,15 @@ export default function OnShiftScreen({ onStart }: Props) {
 
             {/* Now on air */}
             <div style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>Now on air</div>
-              <div style={{ background: S.card, border: `1px solid ${S.border}`, borderLeft: `3px solid ${S.purple}`, padding: "14px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>Now on air</div>
+              <div style={{ background: S.card, border: `1px solid ${S.border}`, borderLeft: `3px solid ${S.purple}`, padding: "18px 20px" }}>
                 {currentShow ? (
                   <>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: S.text, marginBottom: 2 }}>{currentShow.name}</div>
-                    <div style={{ fontSize: 11, color: S.muted }}>{fmtTime(currentShow.start_hour)} – {fmtTime(currentShow.end_hour === 0 ? 24 : currentShow.end_hour)}</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: S.text, marginBottom: 4 }}>{currentShow.name}</div>
+                    <div style={{ fontSize: 14, color: S.muted }}>{fmtTime(currentShow.start_hour)} – {fmtTime(currentShow.end_hour === 0 ? 24 : currentShow.end_hour)}</div>
                   </>
                 ) : (
-                  <div style={{ fontSize: 13, color: S.muted, fontStyle: "italic" }}>No show scheduled</div>
+                  <div style={{ fontSize: 16, color: S.muted, fontStyle: "italic" }}>No show scheduled</div>
                 )}
               </div>
             </div>
@@ -346,13 +348,13 @@ export default function OnShiftScreen({ onStart }: Props) {
             {/* Coming up */}
             {upcomingShows.length > 0 && (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>Coming up</div>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>Coming up</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   {upcomingShows.map((s, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: S.card, border: `1px solid ${S.border}` }}>
-                      <div style={{ width: 4, height: 4, background: S.muted, flexShrink: 0 }} />
-                      <span style={{ fontSize: 11, color: S.muted, fontFamily: "'DM Mono', monospace", minWidth: 60 }}>{fmtTime(s.start_hour)}</span>
-                      <span style={{ fontSize: 12, color: S.text, fontWeight: 500 }}>{s.name}</span>
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, padding: "13px 16px", background: S.card, border: `1px solid ${S.border}` }}>
+                      <div style={{ width: 5, height: 5, background: S.muted, flexShrink: 0 }} />
+                      <span style={{ fontSize: 14, color: S.muted, fontFamily: "'DM Mono', monospace", minWidth: 68 }}>{fmtTime(s.start_hour)}</span>
+                      <span style={{ fontSize: 15, color: S.text, fontWeight: 500 }}>{s.name}</span>
                     </div>
                   ))}
                 </div>
@@ -362,7 +364,7 @@ export default function OnShiftScreen({ onStart }: Props) {
             {/* Queue preview */}
             {qDisplay.length > 0 && (
               <div style={{ marginBottom: 28 }}>
-                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>
                   Queue preview
                   <span style={{ marginLeft: 8, color: S.label }}>{engine.getQueue().length} tracks</span>
                 </div>
@@ -373,10 +375,10 @@ export default function OnShiftScreen({ onStart }: Props) {
                       <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", background: S.card, borderBottom: `1px solid ${S.border}`, borderLeft: `1px solid ${S.border}`, borderRight: `1px solid ${S.border}`, borderTop: i === 0 ? `1px solid ${S.border}` : "none" }}>
                         <span style={{ fontSize: 9, color: S.label, fontFamily: "'DM Mono', monospace", width: 14, textAlign: "right", flexShrink: 0 }}>{i + 1}</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: S.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.title}</div>
-                          <div style={{ fontSize: 10, color: S.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.artist}</div>
+                          <div style={{ fontSize: 15, fontWeight: 600, color: S.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.title}</div>
+                          <div style={{ fontSize: 13, color: S.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.artist}</div>
                         </div>
-                        {ms > 0 && <span style={{ fontSize: 10, color: S.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{fmtDur(ms)}</span>}
+                        {ms > 0 && <span style={{ fontSize: 13, color: S.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{fmtDur(ms)}</span>}
                       </div>
                     );
                   })}
@@ -391,10 +393,10 @@ export default function OnShiftScreen({ onStart }: Props) {
               onClick={startShift}
               disabled={!operator}
               style={{
-                width: "100%", padding: "16px", borderRadius: 0,
+                width: "100%", padding: "20px", borderRadius: 0,
                 background: operator ? S.purple : S.border,
                 border: "none", color: "#fff",
-                fontFamily: "'Newsreader', Georgia, serif", fontSize: 14, fontWeight: 800,
+                fontFamily: "'Newsreader', Georgia, serif", fontSize: 20, fontWeight: 800,
                 letterSpacing: "0.06em", textTransform: "uppercase",
                 cursor: operator ? "pointer" : "default",
                 transition: "background 0.2s",
@@ -415,17 +417,17 @@ export default function OnShiftScreen({ onStart }: Props) {
             <div style={{ marginBottom: 28 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                 <div style={{ width: 7, height: 7, borderRadius: "50%", background: S.iris }} />
-                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.iris, textTransform: "uppercase" }}>Iris · Executive Producer</span>
+                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.iris, textTransform: "uppercase" }}>Iris · Executive Producer</span>
               </div>
-              <div style={{ background: S.card, border: `1px solid ${S.border}`, borderLeft: `2px solid ${S.iris}`, padding: "16px 18px" }}>
+              <div style={{ background: S.card, border: `1px solid ${S.border}`, borderLeft: `3px solid ${S.iris}`, padding: "20px 22px" }}>
                 {irisText ? (
-                  <p style={{ fontSize: 13, color: S.text, lineHeight: 1.7, margin: 0 }}>{irisText}</p>
+                  <p style={{ fontSize: 17, color: S.text, lineHeight: 1.65, margin: 0 }}>{irisText}</p>
                 ) : (
-                  <p style={{ fontSize: 13, color: S.muted, lineHeight: 1.7, margin: 0, fontStyle: "italic" }}>Loading station data…</p>
+                  <p style={{ fontSize: 17, color: S.muted, lineHeight: 1.65, margin: 0, fontStyle: "italic" }}>Loading station data…</p>
                 )}
               </div>
               {!hasApiKey && (
-                <div style={{ fontSize: 10, color: S.muted, marginTop: 8, fontStyle: "italic" }}>
+                <div style={{ fontSize: 13, color: S.muted, marginTop: 10, fontStyle: "italic" }}>
                   Add your API key in Settings → AI &amp; Integrations for live Iris intelligence.
                 </div>
               )}
@@ -433,7 +435,7 @@ export default function OnShiftScreen({ onStart }: Props) {
 
             {/* Station health */}
             <div style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 10 }}>Station Health</div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 10 }}>Station Health</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {[
                   { label: "Library", value: `${songCount.toLocaleString()} tracks`, ok: songCount > 0 },
@@ -442,11 +444,11 @@ export default function OnShiftScreen({ onStart }: Props) {
                   { label: "Last backup", value: lastBackup ? new Date(Number(lastBackup) * 1000).toLocaleDateString() : "Never", ok: !!lastBackup },
                   { label: "Next hard break", value: nextBreakIn ? `in ${nextBreakIn}` : "None scheduled", ok: !!nextBreakIn },
                 ].map(row => (
-                  <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", background: S.card, border: `1px solid ${S.border}` }}>
-                    <span style={{ fontSize: 11, color: S.muted }}>{row.label}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 11, color: row.ok ? S.text : S.amber, fontFamily: "'DM Mono', monospace" }}>{row.value}</span>
-                      <div style={{ width: 5, height: 5, borderRadius: "50%", background: row.ok ? "#34d399" : S.amber }} />
+                  <div key={row.label} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", background: S.card, border: `1px solid ${S.border}` }}>
+                    <span style={{ fontSize: 15, color: S.muted }}>{row.label}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 15, color: row.ok ? S.text : S.amber, fontFamily: "'DM Mono', monospace" }}>{row.value}</span>
+                      <div style={{ width: 7, height: 7, borderRadius: "50%", background: row.ok ? "#34d399" : S.amber }} />
                     </div>
                   </div>
                 ))}
@@ -457,7 +459,7 @@ export default function OnShiftScreen({ onStart }: Props) {
             {operator && (
               <div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase" }}>Personal Notes</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase" }}>Personal Notes</div>
                   {noteSaved && <span style={{ fontSize: 9, color: "#34d399", fontFamily: "'DM Mono', monospace" }}>SAVED</span>}
                 </div>
                 <textarea
@@ -468,9 +470,9 @@ export default function OnShiftScreen({ onStart }: Props) {
                   placeholder="Your notes from last session…"
                   rows={5}
                   style={{
-                    width: "100%", padding: "12px 14px",
+                    width: "100%", padding: "14px 16px",
                     background: S.card, border: `1px solid ${S.border}`,
-                    color: S.text, fontSize: 12, lineHeight: 1.6,
+                    color: S.text, fontSize: 15, lineHeight: 1.6,
                     borderRadius: 0, resize: "vertical", outline: "none",
                     fontFamily: "'Inter', system-ui, sans-serif",
                     boxSizing: "border-box",
