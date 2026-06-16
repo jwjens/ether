@@ -464,6 +464,61 @@ function setActiveAccountKey(key) {
   } catch (e) { console.error("[account] setActiveAccountKey:", e.message); return false; }
 }
 
+// Which account's data this DB holds, kept at install level so it SURVIVES the per-station
+// account-key clears that File ▸ Switch Account / sign-out do (license_email gets wiped; this
+// doesn't). SELF-HEALING: on every startup, set the marker to the CURRENT license_email so it
+// can never go stale (e.g. djdeniro left over after signing into jensj on an old build). When
+// license_email is absent (just signed out), leave the marker as the last account so the next
+// sign-in can still detect a switch.
+function _backfillAccountMarker() {
+  try {
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_email' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get();
+    if (lic && lic.value) {
+      const email = String(lic.value).trim().toLowerCase();
+      const cur = db.prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get();
+      if (cur && cur.value === email) return; // already correct
+      const now = new Date().toISOString();
+      db.prepare(
+        "INSERT INTO install_config_kv (key, value, uuid, created_at, updated_at) VALUES ('account_email', ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, deleted_at=NULL"
+      ).run(email, require("crypto").randomUUID(), now, now);
+      console.log("[account] synced account_email marker →", email);
+    }
+  } catch (e) { console.error("[account] backfill marker:", e.message); }
+}
+
+// File ▸ Sign Out / Switch Account — run ENTIRELY in the main process (native dialog + relaunch).
+// The renderer's window.confirm silently no-ops in this packaged build (Electron 41), which is why
+// the menu items "did nothing". Clears the per-station account/onboarding keys so App re-runs the
+// sign-in gate; leaves the install-level account marker + local station data intact (the per-account
+// detection relies on the marker). `switching` only changes the wording.
+function accountSignOut(switching) {
+  try {
+    const { dialog } = require("electron");
+    const win = BrowserWindow.getFocusedWindow() || mainWindow;
+    const choice = dialog.showMessageBoxSync(win, {
+      type: "question", noLink: true, defaultId: 1, cancelId: 0,
+      buttons: ["Cancel", switching ? "Switch Account" : "Sign Out"],
+      title: switching ? "Switch Account" : "Sign Out",
+      message: switching ? "Switch to a different account?" : "Sign out of this account?",
+      detail: "Returns to the sign-in screen, where you can sign in as a different account. This computer's local station data is left in place.",
+    });
+    if (choice !== 1) return;
+    try {
+      const sid = getActiveStationId();
+      const now = new Date().toISOString();
+      const del = db.prepare("UPDATE station_config_kv SET deleted_at = ?, updated_at = ? WHERE station_id = ? AND key = ? AND deleted_at IS NULL");
+      for (const k of ["license_key", "license_email", "plan_tier", "account_name", "first_run_complete",
+                       "onboarding_account_joined", "onboarding_license_entered", "onboarding_library_pulled",
+                       "onboarding_library_source", "trial_ends_at"]) {
+        try { del.run(now, now, sid, k); } catch {}
+      }
+    } catch (e) { console.error("[account] sign-out clear:", e.message); }
+    try { markHaExpectedRestart(); } catch {}
+    app.relaunch();
+    app.exit(0);
+  } catch (e) { console.error("[accountSignOut]", e.message); }
+}
+
 function getDbPath() {
   // The DB MUST live on LOCAL disk. Managed/OV profiles redirect Roaming AppData (the legacy
   // app.getPath("appData") location) to a network H:\ share, where SQLite's WAL shared-memory
@@ -1100,8 +1155,8 @@ function buildMenu() {
       { label: "Import Music...", click: () => send("file:import") },
       { label: "Preferences", click: () => send("file:preferences") },
       { type: "separator" },
-      { label: "Sign Out", click: () => send("account:sign-out") },
-      { label: "Switch Account…", enabled: hasAccount, click: () => send("account:switch") },
+      { label: "Sign Out", click: () => accountSignOut(false) },
+      { label: "Switch Account…", click: () => accountSignOut(true) },
       { type: "separator" },
       { label: "Quit Ether", accelerator: "CmdOrCtrl+Q", click: () => fullStopAndQuit() },
     ]},
@@ -1266,6 +1321,7 @@ app.whenReady().then(() => {
   // OV failure). Guard it: surface a visible error and exit cleanly — never vanish silently.
   try {
     initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
+    try { _backfillAccountMarker(); } catch {}
   } catch (e) {
     let dbPath = "(could not resolve)";
     try { dbPath = getDbPath(); } catch {}
