@@ -504,13 +504,15 @@ function accountSignOut(switching) {
     });
     if (choice !== 1) return;
     try {
-      const sid = getActiveStationId();
       const now = new Date().toISOString();
-      const del = db.prepare("UPDATE station_config_kv SET deleted_at = ?, updated_at = ? WHERE station_id = ? AND key = ? AND deleted_at IS NULL");
+      // Clear the VALUE (not just tombstone) across ALL stations — App.tsx's first-run check reads
+      // get('first_run_complete')==="1" off the value, so a value left in place keeps showing the
+      // profile/PIN screen instead of the account sign-in screen.
+      const del = db.prepare("UPDATE station_config_kv SET value = NULL, deleted_at = ?, updated_at = ? WHERE key = ?");
       for (const k of ["license_key", "license_email", "plan_tier", "account_name", "first_run_complete",
                        "onboarding_account_joined", "onboarding_license_entered", "onboarding_library_pulled",
                        "onboarding_library_source", "trial_ends_at"]) {
-        try { del.run(now, now, sid, k); } catch {}
+        try { del.run(now, now, k); } catch {}
       }
     } catch (e) { console.error("[account] sign-out clear:", e.message); }
     try { markHaExpectedRestart(); } catch {}
