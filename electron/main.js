@@ -427,22 +427,57 @@ setupAudioBackend();
 let db;
 let cloudBackupTrigger = null; // set when cloud-backup module loads
 
+// The local data folder (machine-local; never the redirected Roaming/SMB path — see getDbPath).
+function _etherDir() {
+  const fs = require("fs");
+  let baseDir;
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    baseDir = path.join(process.env.LOCALAPPDATA, "Ether");
+  } else {
+    baseDir = app.getPath("userData");
+  }
+  const etherDir = path.join(baseDir, "com.ether.radio");
+  try { fs.mkdirSync(etherDir, { recursive: true }); }
+  catch (e) { throw new Error(`Cannot create local data folder ${etherDir}: ${e.message}`); }
+  return etherDir;
+}
+
+// ── Per-account local databases (account isolation, "refresh like a website") ──────────────────
+// Each account gets its OWN local DB file so signing into a different account swaps the active DB
+// (no data mixing, no factory reset, no re-download — switch back and the data's still there).
+// The "active account" pointer lives OUTSIDE the swappable DB, in a small file in the data folder.
+// Backward-compatible: with NO pointer set, getDbPath returns the legacy `openair.db` exactly as
+// before, so existing/single-account installs are unaffected until they switch accounts.
+function _accountDbKey(email) {
+  return require("crypto").createHash("sha256").update(String(email || "").trim().toLowerCase()).digest("hex").slice(0, 16);
+}
+function _activeAccountFile() { return path.join(_etherDir(), "active-account"); }
+function getActiveAccountKey() {
+  try { const v = require("fs").readFileSync(_activeAccountFile(), "utf8").trim(); return v || null; }
+  catch { return null; }
+}
+function setActiveAccountKey(key) {
+  try {
+    if (key) require("fs").writeFileSync(_activeAccountFile(), String(key));
+    else require("fs").rmSync(_activeAccountFile(), { force: true });
+    return true;
+  } catch (e) { console.error("[account] setActiveAccountKey:", e.message); return false; }
+}
+
 function getDbPath() {
   // The DB MUST live on LOCAL disk. Managed/OV profiles redirect Roaming AppData (the legacy
   // app.getPath("appData") location) to a network H:\ share, where SQLite's WAL shared-memory
   // (-shm mmap) is unsupported → new Database()/WAL throws and the app dies before its window.
   // %LOCALAPPDATA% is machine-local and not part of the usual folder-redirection set.
   const fs = require("fs");
-  let baseDir;
-  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    baseDir = path.join(process.env.LOCALAPPDATA, "Ether");
-  } else {
-    baseDir = app.getPath("userData"); // mac/Linux: not subject to the Windows folder-redirect problem
-  }
-  const etherDir = path.join(baseDir, "com.ether.radio");
-  try { fs.mkdirSync(etherDir, { recursive: true }); }
-  catch (e) { throw new Error(`Cannot create local data folder ${etherDir}: ${e.message}`); }
-  const localDb = path.join(etherDir, "openair.db");
+  const etherDir = _etherDir();
+  // Per-account DB when an account pointer is set; otherwise the legacy default file (unchanged).
+  const activeKey = getActiveAccountKey();
+  const localDb = activeKey
+    ? path.join(etherDir, `openair__${activeKey}.db`)
+    : path.join(etherDir, "openair.db");
+  // Legacy Roaming→local migration only applies to the default (unkeyed) DB.
+  if (activeKey) return localDb;
 
   // One-time migration from the legacy Roaming location (the redirected/SMB path on managed
   // profiles) so existing installs keep their library/config. Crash-safe: copy the WAL sidecars
@@ -2478,6 +2513,54 @@ ipcMain.handle("app:relaunch", () => {
   try { markHaExpectedRestart(); } catch {}
   app.relaunch(); app.exit(0);
   return { ok: true };
+});
+
+// Account isolation — swap the active local DB to another account's, then relaunch ("refresh like
+// a website"). Each account's data lives in its own DB file, so switching never mixes or wipes:
+//   - If leaving the legacy default openair.db, RENAME it to that account's keyed file first so its
+//     data is preserved (claim).
+//   - Point the active-account marker at the target account → relaunch → getDbPath opens its DB
+//     (fresh for a new account → onboarding; existing → its preserved data).
+// Swapping to an EMPTY/other DB grants no access on its own — the operator still authenticates on
+// the new DB. ⚠ UNTESTED on a real machine — verify before release (it moves DB files).
+ipcMain.handle("account:switch-to", (_, payload) => {
+  try {
+    const fs = require("fs");
+    const email = String(payload?.email || "").trim().toLowerCase();
+    if (!email) return { ok: false, error: "email required" };
+    const newKey = _accountDbKey(email);
+    const currentKey = getActiveAccountKey();
+
+    // Account currently in the active DB (so we can claim the default file under its key).
+    let currentEmail = "";
+    try { currentEmail = String(db.prepare("SELECT value FROM station_config_kv WHERE key='license_email' LIMIT 1").get()?.value || "").trim().toLowerCase(); } catch {}
+
+    // Already this account's DB → nothing to do.
+    if (newKey === currentKey) return { ok: true, switched: false };
+    if (!currentKey && currentEmail && _accountDbKey(currentEmail) === newKey) return { ok: true, switched: false };
+
+    const etherDir = _etherDir();
+    try { db.close(); } catch {}
+
+    // Leaving the default (unkeyed) DB: claim it for the current account so its data survives.
+    if (!currentKey && currentEmail) {
+      const defPath = path.join(etherDir, "openair.db");
+      const claimPath = path.join(etherDir, `openair__${_accountDbKey(currentEmail)}.db`);
+      try {
+        if (fs.existsSync(defPath) && !fs.existsSync(claimPath)) {
+          for (const sfx of ["", "-wal", "-shm", "-journal"]) {
+            if (fs.existsSync(defPath + sfx)) fs.renameSync(defPath + sfx, claimPath + sfx);
+          }
+        }
+      } catch (e) { console.error("[account:switch] claim failed:", e.message); }
+    }
+
+    setActiveAccountKey(newKey);
+    markHaExpectedRestart();
+    app.relaunch();
+    app.exit(0);
+    return { ok: true, switched: true };
+  } catch (e) { console.error("[account:switch-to]", e.message); return { ok: false, error: e.message }; }
 });
 
 // ── Legacy Tauri command aliases — called by SettingsPanel ────

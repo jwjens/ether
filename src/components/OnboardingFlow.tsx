@@ -307,6 +307,9 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const [authPassword, setAuthPassword] = useState('');
   const [authErr, setAuthErr] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
+  // Account isolation: the account currently loaded on THIS computer, when it differs from the one
+  // signing in — so we offer to switch (swap to that account's own local DB) instead of mixing.
+  const [switchFromAccount, setSwitchFromAccount] = useState<string | null>(null);
   // Account hub handle (listen.ether-technologies.com/@<handle>) — chosen at sign-up.
   const [authHandle, setAuthHandle] = useState('');
   const [handleState, setHandleState] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle');
@@ -375,6 +378,24 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return data.license_key as string;
   };
 
+  // The account whose data is loaded on THIS computer right now, if any (its license_email).
+  const currentAccountEmail = async (): Promise<string> => {
+    try {
+      const list = await (window as any).ether.stationConfigKv?.list?.(stationId);
+      const arr = Array.isArray(list) ? list : (list?.rows || []);
+      return String(arr.find((r: any) => r.key === 'license_email')?.value || '').trim().toLowerCase();
+    } catch { return ''; }
+  };
+
+  // Swap this computer to a different account's OWN local database, then relaunch ("refresh like a
+  // website"). The current account's data stays saved on disk (switch back anytime) — nothing mixes
+  // or is wiped. After the relaunch the operator authenticates against the target account's DB.
+  const doAccountSwitch = async (toEmail: string) => {
+    setAuthBusy(true); setAuthErr('');
+    try { await (window as any).ether.invoke('account:switch-to', { email: toEmail.trim().toLowerCase() }); }
+    catch { setAuthBusy(false); setAuthErr('Could not switch accounts — please try again.'); }
+  };
+
   // Sign in = returning user. On a FRESH machine the account already has stations
   // in the cloud (profiles, theme, shows, calendar, rotations) but nothing locally
   // — so instead of dropping straight to "create a profile", offer to pull them
@@ -382,6 +403,10 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // sync: mark first-run complete and go straight to the profile PIN login.
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
+    // Account isolation: if this computer is loaded with a DIFFERENT account's data, offer to switch
+    // to that account's own local database first (no mixing). Sign-in completes on the swapped DB.
+    const cur = await currentAccountEmail();
+    if (cur && cur !== authEmail.trim().toLowerCase()) { setSwitchFromAccount(cur); return; }
     setAuthBusy(true); setAuthErr('');
     try {
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
@@ -545,6 +570,8 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const doSignUp = async () => {
     if (!authEmail.trim()) { setAuthErr('Enter your email.'); return; }
     if (authPassword.length < 8) { setAuthErr('Password must be at least 8 characters.'); return; }
+    const cur = await currentAccountEmail();
+    if (cur && cur !== authEmail.trim().toLowerCase()) { setSwitchFromAccount(cur); return; }
     setAuthBusy(true); setAuthErr('');
     try {
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
@@ -979,6 +1006,18 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   : 'Create a free account — your trial starts right away.'}
               </p>
             </div>
+            {switchFromAccount ? (
+              <div style={{ maxWidth: 440, margin: "0 auto", padding: 22, border: "1px solid rgba(136,104,216,0.4)", background: "rgba(136,104,216,0.06)" }}>
+                <div style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 12, fontFamily: "'Newsreader', Georgia, serif" }}>Switch accounts on this computer?</div>
+                <div style={{ fontSize: 14, color: "rgba(255,255,255,0.62)", lineHeight: 1.65, marginBottom: 18 }}>
+                  This computer is currently showing <strong style={{ color: "#fff" }}>{switchFromAccount}</strong>'s station. Switching to <strong style={{ color: "#fff" }}>{authEmail}</strong> loads that account instead. <strong style={{ color: "#fff" }}>{switchFromAccount}</strong>'s data stays saved on this computer — you can switch back anytime — and the two accounts never share data.
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => doAccountSwitch(authEmail)} disabled={authBusy} style={{ flex: 1, padding: "13px 0", background: "#8868D8", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", letterSpacing: "0.04em", opacity: authBusy ? 0.7 : 1 }}>{authBusy ? 'Switching…' : `Switch to ${authEmail}`}</button>
+                  <button onClick={() => setSwitchFromAccount(null)} disabled={authBusy} style={{ padding: "13px 20px", background: "transparent", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 14, cursor: "pointer" }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
             <div style={{ maxWidth: 420, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
                 <button onClick={() => { setAuthMode('signin'); setAuthErr(''); }} style={tab(authMode === 'signin')}>Sign in</button>
@@ -1017,6 +1056,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                 </button>
               )}
             </div>
+            )}
           </div>
         </div>
         <style>{ANIMATION_CSS}</style>
