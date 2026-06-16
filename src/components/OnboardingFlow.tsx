@@ -307,9 +307,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const [authPassword, setAuthPassword] = useState('');
   const [authErr, setAuthErr] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
-  // Account-isolation: the email this install is already bound to, when it differs from the one
-  // being signed in (so we never mix/leak one account's local stations into another's).
-  const [switchConflict, setSwitchConflict] = useState<string | null>(null);
   // Account hub handle (listen.ether-technologies.com/@<handle>) — chosen at sign-up.
   const [authHandle, setAuthHandle] = useState('');
   const [handleState, setHandleState] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle');
@@ -375,34 +372,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
     setPlanGlobally(data.plan as PlanTier);
     if (!data.license_key) throw new Error('No license returned for this account. Please contact support.');
-    // Bind this install to the account at INSTALL level (survives the per-station account-key
-    // clears that Switch Account / sign-out do), so a later sign-in as a different account is
-    // detected and its data is reset before pulling — accounts never share local data.
-    try { await (window as any).ether.installConfigKv?.upsertByKey?.('account_email', String(data.email || email).trim().toLowerCase()); } catch {}
     return data.license_key as string;
-  };
-
-  // Returns the account this install already belongs to IF it differs from `email` (so we can
-  // refuse to mix a different account's local data), else null.
-  const conflictingAccount = async (email: string): Promise<string | null> => {
-    try {
-      const ether = (window as any).ether;
-      let bound = String((await ether.installConfigKv?.get?.('account_email'))?.row?.value || '').toLowerCase();
-      if (!bound) {
-        // Backfill for installs created before the install-level marker existed: fall back to the
-        // per-station license_email so an existing account's data is still protected on first switch.
-        const list = await ether.stationConfigKv?.list?.(stationId);
-        const arr = Array.isArray(list) ? list : (list?.rows || []);
-        bound = String(arr.find((r: any) => r.key === 'license_email')?.value || '').toLowerCase();
-      }
-      return (bound && bound !== email.trim().toLowerCase()) ? bound : null;
-    } catch { return null; }
-  };
-
-  // Wipe this computer (DB + relaunch) so a different account can sign in clean. Their cloud data
-  // is untouched; audio files on disk survive. After relaunch the install is unbound → clean.
-  const resetForAccountSwitch = async () => {
-    try { await (window as any).ether.invoke('system:factoryReset'); } catch {}
   };
 
   // Sign in = returning user. On a FRESH machine the account already has stations
@@ -412,8 +382,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // sync: mark first-run complete and go straight to the profile PIN login.
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
-    const conflict = await conflictingAccount(authEmail);
-    if (conflict) { setSwitchConflict(conflict); return; }
     setAuthBusy(true); setAuthErr('');
     try {
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
@@ -577,8 +545,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const doSignUp = async () => {
     if (!authEmail.trim()) { setAuthErr('Enter your email.'); return; }
     if (authPassword.length < 8) { setAuthErr('Password must be at least 8 characters.'); return; }
-    const conflict = await conflictingAccount(authEmail);
-    if (conflict) { setSwitchConflict(conflict); return; }
     setAuthBusy(true); setAuthErr('');
     try {
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
@@ -1013,18 +979,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   : 'Create a free account — your trial starts right away.'}
               </p>
             </div>
-            {switchConflict ? (
-              <div style={{ maxWidth: 440, margin: "0 auto", padding: 22, border: "1px solid rgba(239,68,68,0.4)", background: "rgba(239,68,68,0.06)" }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: "#f87171", marginBottom: 12, fontFamily: "'Newsreader', Georgia, serif" }}>This computer belongs to a different account</div>
-                <div style={{ fontSize: 14, color: "rgba(255,255,255,0.62)", lineHeight: 1.65, marginBottom: 18 }}>
-                  This computer is set up for <strong style={{ color: "#fff" }}>{switchConflict}</strong>. Signing in as <strong style={{ color: "#fff" }}>{authEmail}</strong> will first erase {switchConflict}'s stations and library <em>from this computer</em> — so the two accounts never share data. Their cloud data is untouched, and your audio files on disk are kept.
-                </div>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={resetForAccountSwitch} style={{ flex: 1, padding: "13px 0", background: "#ef4444", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer", letterSpacing: "0.04em" }}>Reset this computer &amp; continue</button>
-                  <button onClick={() => setSwitchConflict(null)} style={{ padding: "13px 20px", background: "transparent", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 14, cursor: "pointer" }}>Cancel</button>
-                </div>
-              </div>
-            ) : (
             <div style={{ maxWidth: 420, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
                 <button onClick={() => { setAuthMode('signin'); setAuthErr(''); }} style={tab(authMode === 'signin')}>Sign in</button>
@@ -1063,7 +1017,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                 </button>
               )}
             </div>
-            )}
           </div>
         </div>
         <style>{ANIMATION_CSS}</style>
