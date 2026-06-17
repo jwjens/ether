@@ -72,8 +72,8 @@ function stationsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (name, callsign, frequency, city, state, country, website, is_active, created_at, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format, uuid, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.name, row.callsign, row.frequency, row.city, row.state, row.country, row.website, row.is_active, row.created_at, row.icecast_server_url, row.icecast_mount, row.icecast_password, row.icecast_bitrate, row.icecast_format, row.uuid, row.updated_at, row.deleted_at);
+      `INSERT INTO ${TABLE} (name, callsign, frequency, city, state, country, website, is_active, created_at, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format, uuid, updated_at, deleted_at, owner_license_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.name, row.callsign, row.frequency, row.city, row.state, row.country, row.website, row.is_active, row.created_at, row.icecast_server_url, row.icecast_mount, row.icecast_password, row.icecast_bitrate, row.icecast_format, row.uuid, row.updated_at, row.deleted_at, row.owner_license_key ?? null);
   });
   return stationsGet(db, uuid);
 }

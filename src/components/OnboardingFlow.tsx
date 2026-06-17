@@ -375,21 +375,28 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
     setPlanGlobally(data.plan as PlanTier);
     if (!data.license_key) throw new Error('No license returned for this account. Please contact support.');
+    // Mark which account owns this install's data, at INSTALL level so it survives the per-station
+    // key clears that Switch Account / sign-out do — that's what lets a later different-account
+    // sign-in be detected and routed to its own database.
+    try { await (window as any).ether.installConfigKv?.upsertByKey?.('account_email', String(data.email || email).trim().toLowerCase()); } catch {}
     return data.license_key as string;
   };
 
-  // The account whose data is loaded on THIS computer right now, if any (its license_email).
+  // The account whose data is loaded on THIS computer right now, if any. Prefer the install-level
+  // marker (survives Switch Account); fall back to the per-station license_email.
   const currentAccountEmail = async (): Promise<string> => {
     try {
-      const list = await (window as any).ether.stationConfigKv?.list?.(stationId);
+      const ether = (window as any).ether;
+      const marker = String((await ether.installConfigKv?.get?.('account_email'))?.row?.value || '').trim().toLowerCase();
+      if (marker) return marker;
+      const list = await ether.stationConfigKv?.list?.(stationId);
       const arr = Array.isArray(list) ? list : (list?.rows || []);
       return String(arr.find((r: any) => r.key === 'license_email')?.value || '').trim().toLowerCase();
     } catch { return ''; }
   };
 
-  // Swap this computer to a different account's OWN local database, then relaunch ("refresh like a
-  // website"). The current account's data stays saved on disk (switch back anytime) — nothing mixes
-  // or is wiped. After the relaunch the operator authenticates against the target account's DB.
+  // Sign the current account out and relaunch to the sign-in screen (one database per install — the
+  // per-account DB-swap was removed). After relaunch the operator signs in as the target account.
   const doAccountSwitch = async (toEmail: string) => {
     setAuthBusy(true); setAuthErr('');
     try { await (window as any).ether.invoke('account:switch-to', { email: toEmail.trim().toLowerCase() }); }
@@ -403,10 +410,8 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // sync: mark first-run complete and go straight to the profile PIN login.
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
-    // Account isolation: if this computer is loaded with a DIFFERENT account's data, offer to switch
-    // to that account's own local database first (no mixing). Sign-in completes on the swapped DB.
-    const cur = await currentAccountEmail();
-    if (cur && cur !== authEmail.trim().toLowerCase()) { setSwitchFromAccount(cur); return; }
+    // One database per install now — signing in just signs in. (The old "switch accounts on this
+    // computer" detour belonged to the removed per-account-DB swap and caused a sign-in loop.)
     setAuthBusy(true); setAuthErr('');
     try {
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
@@ -430,6 +435,12 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
           setConnectAccountName(data.account_name || '');
         }
       } catch { /* network/seat error — fall through to a fresh profile setup */ }
+
+      // Account isolation: license_key is now written (activateAndContinue). Stamp ownership on
+      // this account's authoritative stations and make sure an owned station is active, so the
+      // visible station set switches to this account (and the previous account's stations drop
+      // out). Runs in both branches below. Account-agnostic — uses whatever account just signed in.
+      try { await (window as any).ether.invoke('account:reconcile-stations', stations.map(s => s.uuid)); } catch {}
 
       if (stations.length > 0) {
         setConnectStations(stations);
@@ -536,7 +547,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       setSyncPct(100);
       setSyncSub(errs > 0 ? `${errs.toLocaleString()} file${errs === 1 ? '' : 's'} skipped` : '');
       setSyncMsg('Finished — starting Ether…');
-      await ether.invoke('app:relaunch').catch(() => {});
+      window.location.reload();
     } catch (e: any) {
       setSyncPhase('error');
       setSyncMsg(String(e?.message || e));
@@ -570,8 +581,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const doSignUp = async () => {
     if (!authEmail.trim()) { setAuthErr('Enter your email.'); return; }
     if (authPassword.length < 8) { setAuthErr('Password must be at least 8 characters.'); return; }
-    const cur = await currentAccountEmail();
-    if (cur && cur !== authEmail.trim().toLowerCase()) { setSwitchFromAccount(cur); return; }
+    // One database per install — sign up directly (no per-account-DB switch detour).
     setAuthBusy(true); setAuthErr('');
     try {
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
@@ -1010,10 +1020,10 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
               <div style={{ maxWidth: 440, margin: "0 auto", padding: 22, border: "1px solid rgba(136,104,216,0.4)", background: "rgba(136,104,216,0.06)" }}>
                 <div style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 12, fontFamily: "'Newsreader', Georgia, serif" }}>Switch accounts on this computer?</div>
                 <div style={{ fontSize: 14, color: "rgba(255,255,255,0.62)", lineHeight: 1.65, marginBottom: 18 }}>
-                  This computer is currently showing <strong style={{ color: "#fff" }}>{switchFromAccount}</strong>'s station. Switching to <strong style={{ color: "#fff" }}>{authEmail}</strong> loads that account instead. <strong style={{ color: "#fff" }}>{switchFromAccount}</strong>'s data stays saved on this computer — you can switch back anytime — and the two accounts never share data.
+                  This computer is currently signed in as <strong style={{ color: "#fff" }}>{switchFromAccount}</strong>. Continuing signs that account out and returns to the sign-in screen, where you can sign in as <strong style={{ color: "#fff" }}>{authEmail}</strong>.
                 </div>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={() => doAccountSwitch(authEmail)} disabled={authBusy} style={{ flex: 1, padding: "13px 0", background: "#8868D8", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", letterSpacing: "0.04em", opacity: authBusy ? 0.7 : 1 }}>{authBusy ? 'Switching…' : `Switch to ${authEmail}`}</button>
+                  <button onClick={() => doAccountSwitch(authEmail)} disabled={authBusy} style={{ flex: 1, padding: "13px 0", background: "#8868D8", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", letterSpacing: "0.04em", opacity: authBusy ? 0.7 : 1 }}>{authBusy ? 'Signing out…' : 'Sign out & continue'}</button>
                   <button onClick={() => setSwitchFromAccount(null)} disabled={authBusy} style={{ padding: "13px 20px", background: "transparent", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 14, cursor: "pointer" }}>Cancel</button>
                 </div>
               </div>

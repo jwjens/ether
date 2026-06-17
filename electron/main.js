@@ -355,6 +355,7 @@ if (AUDIO_DAEMON_DESIRED) {
         _daemonStreamStates.set(m.stationId, m.state);
         let liveCount = 0; for (const s of _daemonStreamStates.values()) if (s === "live") liveCount++;
         sendToAllWindows("stream:status:global", { anyLive: liveCount > 0, liveCount });
+        _persistOnAir(liveCount > 0);
         sseAirstate(liveCount > 0, liveCount);
       }
     } catch {}
@@ -442,26 +443,22 @@ function _etherDir() {
   return etherDir;
 }
 
-// ── Per-account local databases (account isolation, "refresh like a website") ──────────────────
-// Each account gets its OWN local DB file so signing into a different account swaps the active DB
-// (no data mixing, no factory reset, no re-download — switch back and the data's still there).
-// The "active account" pointer lives OUTSIDE the swappable DB, in a small file in the data folder.
-// Backward-compatible: with NO pointer set, getDbPath returns the legacy `openair.db` exactly as
-// before, so existing/single-account installs are unaffected until they switch accounts.
-function _accountDbKey(email) {
-  return require("crypto").createHash("sha256").update(String(email || "").trim().toLowerCase()).digest("hex").slice(0, 16);
-}
-function _activeAccountFile() { return path.join(_etherDir(), "active-account"); }
-function getActiveAccountKey() {
-  try { const v = require("fs").readFileSync(_activeAccountFile(), "utf8").trim(); return v || null; }
-  catch { return null; }
-}
-function setActiveAccountKey(key) {
-  try {
-    if (key) require("fs").writeFileSync(_activeAccountFile(), String(key));
-    else require("fs").rmSync(_activeAccountFile(), { force: true });
-    return true;
-  } catch (e) { console.error("[account] setActiveAccountKey:", e.message); return false; }
+// ── Account session keys ───────────────────────────────────────────────────────────────────────
+// Sign Out / Switch Account clear these so App re-runs the sign-in gate. (The per-account DB-swap
+// that used to back "Switch Account" was removed — it made sign-out unreliable. There is ONE
+// database per install now; switching accounts = sign out + sign back in on the same DB.)
+const ACCOUNT_SESSION_KEYS = [
+  "license_key", "license_email", "plan_tier", "account_name", "first_run_complete",
+  "onboarding_account_joined", "onboarding_license_entered", "onboarding_library_pulled",
+  "onboarding_library_source", "trial_ends_at",
+];
+// Clear the VALUE (not just a tombstone) across ALL stations — App.tsx's first-run check reads
+// get('first_run_complete')==="1" off the value, so a value left in place keeps showing the
+// profile/PIN screen instead of the account sign-in screen.
+function _clearAccountSessionKeys() {
+  const now = new Date().toISOString();
+  const del = db.prepare("UPDATE station_config_kv SET value = NULL, deleted_at = ?, updated_at = ? WHERE key = ?");
+  for (const k of ACCOUNT_SESSION_KEYS) { try { del.run(now, now, k); } catch {} }
 }
 
 // Which account's data this DB holds, kept at install level so it SURVIVES the per-station
@@ -503,18 +500,9 @@ function accountSignOut(switching) {
       detail: "Returns to the sign-in screen, where you can sign in as a different account. This computer's local station data is left in place.",
     });
     if (choice !== 1) return;
-    try {
-      const now = new Date().toISOString();
-      // Clear the VALUE (not just tombstone) across ALL stations — App.tsx's first-run check reads
-      // get('first_run_complete')==="1" off the value, so a value left in place keeps showing the
-      // profile/PIN screen instead of the account sign-in screen.
-      const del = db.prepare("UPDATE station_config_kv SET value = NULL, deleted_at = ?, updated_at = ? WHERE key = ?");
-      for (const k of ["license_key", "license_email", "plan_tier", "account_name", "first_run_complete",
-                       "onboarding_account_joined", "onboarding_license_entered", "onboarding_library_pulled",
-                       "onboarding_library_source", "trial_ends_at"]) {
-        try { del.run(now, now, k); } catch {}
-      }
-    } catch (e) { console.error("[account] sign-out clear:", e.message); }
+    try { _clearAccountSessionKeys(); }
+    catch (e) { console.error("[account] sign-out clear:", e.message); }
+    try { _persistOnAir(false); } catch {}  // explicit sign-out → next launch requires sign-in
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);
@@ -528,13 +516,27 @@ function getDbPath() {
   // %LOCALAPPDATA% is machine-local and not part of the usual folder-redirection set.
   const fs = require("fs");
   const etherDir = _etherDir();
-  // Per-account DB when an account pointer is set; otherwise the legacy default file (unchanged).
-  const activeKey = getActiveAccountKey();
-  const localDb = activeKey
-    ? path.join(etherDir, `openair__${activeKey}.db`)
-    : path.join(etherDir, "openair.db");
-  // Legacy Roaming→local migration only applies to the default (unkeyed) DB.
-  if (activeKey) return localDb;
+  // ONE database per install. The per-account DB-swap experiment was removed (it made sign-out
+  // unreliable — it cleared the login flag in one DB but reopened another). Safety net: if a prior
+  // build stranded the active data in a keyed openair__<hash>.db and there's no default file, reclaim
+  // the newest keyed file as the single DB so no data is lost, and drop the stale account pointer.
+  const localDb = path.join(etherDir, "openair.db");
+  try {
+    if (!fs.existsSync(localDb)) {
+      const keyed = fs.readdirSync(etherDir)
+        .filter((f) => /^openair__[0-9a-f]+\.db$/.test(f))
+        .map((f) => ({ f, m: fs.statSync(path.join(etherDir, f)).mtimeMs }))
+        .sort((a, b) => b.m - a.m);
+      if (keyed.length) {
+        const src = path.join(etherDir, keyed[0].f);
+        for (const sfx of ["", "-wal", "-shm", "-journal"]) {
+          if (fs.existsSync(src + sfx)) fs.renameSync(src + sfx, localDb + sfx);
+        }
+        console.log("[DB] reclaimed per-account DB → single DB:", keyed[0].f);
+      }
+    }
+    fs.rmSync(path.join(etherDir, "active-account"), { force: true });
+  } catch (e) { console.warn("[DB] per-account reclaim skipped:", e.message); }
 
   // One-time migration from the legacy Roaming location (the redirected/SMB path on managed
   // profiles) so existing installs keep their library/config. Crash-safe: copy the WAL sidecars
@@ -685,6 +687,31 @@ function runMigrations() {
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_password TEXT DEFAULT 'hackme'");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
+
+  // Account isolation: each station is owned by the license_key of the account that created it.
+  // Visibility (stations:list / :get-active) is scoped to the currently signed-in license, so
+  // signing out of one account and into another switches the visible station set. Nullable +
+  // backfilled below; rows with no owner (orphans created before accounts existed) stay hidden
+  // but are NOT deleted — recoverable by claiming them for an account later.
+  alterSafe("ALTER TABLE stations ADD COLUMN owner_license_key TEXT");
+  // One-time idempotent backfill: adopt the per-station KV license_key that older builds wrote.
+  // Only fills NULLs, so it is safe to re-run on every startup. Stations with no per-station
+  // license_key remain NULL (orphan → hidden).
+  try {
+    db.exec(`
+      UPDATE stations SET owner_license_key = (
+        SELECT k.value FROM station_config_kv k
+        WHERE k.station_id = stations.id AND k.key='license_key'
+          AND k.deleted_at IS NULL AND k.value IS NOT NULL AND k.value != ''
+      )
+      WHERE owner_license_key IS NULL
+        AND EXISTS (
+          SELECT 1 FROM station_config_kv k
+          WHERE k.station_id = stations.id AND k.key='license_key'
+            AND k.deleted_at IS NULL AND k.value IS NOT NULL AND k.value != ''
+        )
+    `);
+  } catch (e) { console.error("[account] station owner backfill:", e.message); }
 
   // Ensure station 1 Icecast columns are filled if they were just added and are empty
   {
@@ -897,6 +924,49 @@ function getActiveStationId() {
     const row = db.prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get();
     return row?.id ?? 1;
   } catch { return 1; }
+}
+
+// ── Account-scoped station ownership ───────────────────────────
+// The currently signed-in account = the install-wide license_key in station_config_kv
+// (LIMIT 1; cleared on sign-out, rewritten on sign-in). Station visibility is scoped to it.
+function getCurrentLicenseKey() {
+  try {
+    return db.prepare(
+      "SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1"
+    ).get()?.value ?? null;
+  } catch { return null; }
+}
+
+// On sign-in, stamp owner_license_key on the local rows the backend (/account/connect) says
+// belong to the signed-in account — covers stations that arrived via cloud install or sync and
+// have no owner yet. Account-agnostic: uses whatever license is currently signed in.
+function adoptStationsForCurrentAccount(uuids) {
+  const lk = getCurrentLicenseKey();
+  if (!lk || !Array.isArray(uuids) || !uuids.length) return;
+  const upd = db.prepare("UPDATE stations SET owner_license_key=? WHERE uuid=? AND deleted_at IS NULL");
+  const tx  = db.transaction(() => { for (const u of uuids) { if (u) upd.run(lk, u); } });
+  tx();
+}
+
+// Guarantee the active station belongs to the signed-in account, so switching accounts never
+// leaves the previous account's station flagged active. No-op when the account owns no stations
+// yet (a brand-new account → onboarding sets up its first station).
+function enforceActiveStationForCurrentAccount() {
+  const lk = getCurrentLicenseKey();
+  if (!lk) return;
+  const owned = db.prepare(
+    "SELECT id, is_active FROM stations WHERE deleted_at IS NULL AND owner_license_key=? ORDER BY id"
+  ).all(lk);
+  if (!owned.length) return;
+  if (owned.some(s => s.is_active)) {
+    // An owned station is already active — just clear is_active on any non-owned leftovers.
+    db.prepare(
+      "UPDATE stations SET is_active=0 WHERE deleted_at IS NULL AND (owner_license_key IS NULL OR owner_license_key!=?)"
+    ).run(lk);
+    return;
+  }
+  db.prepare("UPDATE stations SET is_active=0").run();
+  db.prepare("UPDATE stations SET is_active=1 WHERE id=?").run(owned[0].id);
 }
 
 // ── Deck config seeder ────────────────────────────────────────
@@ -1324,6 +1394,9 @@ app.whenReady().then(() => {
   try {
     initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
     try { _backfillAccountMarker(); } catch {}
+    // Re-scope the active station to the signed-in account on every launch, so a session restored
+    // from KV (keep-session relaunch) never leaves a different account's station active.
+    try { enforceActiveStationForCurrentAccount(); } catch {}
   } catch (e) {
     let dbPath = "(could not resolve)";
     try { dbPath = getDbPath(); } catch {}
@@ -1449,8 +1522,16 @@ app.whenReady().then(() => {
         // correctly. main.js owns getActiveStationId(); SyncEngine stores only the getter.
         getStationId: () => String(getActiveStationId()),
       });
-      scheduler.start();
+      // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
+      // database — it runs ONLY after an operator has actually signed in. The renderer calls
+      // "sync:set-active" with true on sign-in and false on sign-out. This is what stops Ether from
+      // assuming a license and pushing/pulling data before anyone has signed in. [account-isolation]
       app._syncScheduler = scheduler;
+      ipcMain.handle("sync:set-active", (_e, active) => {
+        try { if (active) scheduler.start(); else scheduler.stop(); }
+        catch (e) { console.error("[sync:set-active]", e.message); }
+        return { ok: true };
+      });
 
       powerMonitor.on('suspend',       () => scheduler.pause());
       powerMonitor.on('lock-screen',   () => scheduler.pause());
@@ -1610,6 +1691,42 @@ function writeHaSentinel(name) {
   catch (e) { console.error("[HA] sentinel write failed:", name, e.message); }
 }
 function markHaExpectedRestart() { _haExpectedRestart = true; writeHaSentinel(".ether-expected-restart"); }
+
+// On-air marker: written while ANY Icecast stream is live, removed when all streams stop or on an
+// explicit sign-out. The launch gate reads it (account:was-on-air): if a stream was live, a crash /
+// reboot / watchdog respawn must come straight back on air WITHOUT a sign-in (no human is there to
+// enter a PIN on an unattended box). If nothing was on air, the launch requires sign-in.
+function _onAirMarkerFile() { return path.join(app.getPath("userData"), ".ether-on-air"); }
+function _persistOnAir(anyLive) {
+  try {
+    if (anyLive) fs.writeFileSync(_onAirMarkerFile(), String(Date.now()));
+    else fs.rmSync(_onAirMarkerFile(), { force: true });
+  } catch (e) { console.error("[HA] on-air marker:", e.message); }
+}
+function _wasOnAir() {
+  try { return fs.existsSync(_onAirMarkerFile()); } catch { return false; }
+}
+ipcMain.handle("account:was-on-air", () => _wasOnAir());
+
+// Keep-session marker: written immediately before a CONTINUATION self-relaunch (cloud-install DB
+// reload, generic reload, update install) so the next launch carries the signed-in session instead
+// of forcing sign-in again — that self-relaunch-resets-the-flag bug caused a sign-in loop. NOT
+// written by sign-out / switch / factory-reset (those must land on the sign-in screen). Consumed on
+// read and only honored if recent (<2min), so a later cold start or reboot still requires sign-in.
+function markKeepSession() {
+  try { fs.writeFileSync(path.join(app.getPath("userData"), ".ether-keep-session"), String(Date.now())); }
+  catch (e) { console.error("[HA] keep-session write:", e.message); }
+}
+function _consumeRecentKeepSession() {
+  try {
+    const f = path.join(app.getPath("userData"), ".ether-keep-session");
+    if (!fs.existsSync(f)) return false;
+    const ts = parseInt(fs.readFileSync(f, "utf8").trim(), 10) || 0;
+    fs.rmSync(f, { force: true });
+    return (Date.now() - ts) < 120000;
+  } catch { return false; }
+}
+ipcMain.handle("account:resume-session", () => _consumeRecentKeepSession());
 
 app.on("window-all-closed", () => {
   // Keep running on Windows/Linux (app lives in tray)
@@ -2566,55 +2683,24 @@ ipcMain.handle("system:factoryReset", () => {
 });
 
 // Clean relaunch — used after a cloud install (the DB was swapped under the app) so the
-// renderer reloads against the new database. Mirrors the factory-reset relaunch.
+// renderer reloads against the new database. Mirrors the factory-reset relaunch. Carries the
+// signed-in session across the reload (markKeepSession) so it doesn't bounce back to sign-in.
 ipcMain.handle("app:relaunch", () => {
-  try { markHaExpectedRestart(); } catch {}
+  try { markHaExpectedRestart(); markKeepSession(); } catch {}
   app.relaunch(); app.exit(0);
   return { ok: true };
 });
 
-// Account isolation — swap the active local DB to another account's, then relaunch ("refresh like
-// a website"). Each account's data lives in its own DB file, so switching never mixes or wipes:
-//   - If leaving the legacy default openair.db, RENAME it to that account's keyed file first so its
-//     data is preserved (claim).
-//   - Point the active-account marker at the target account → relaunch → getDbPath opens its DB
-//     (fresh for a new account → onboarding; existing → its preserved data).
-// Swapping to an EMPTY/other DB grants no access on its own — the operator still authenticates on
-// the new DB. ⚠ UNTESTED on a real machine — verify before release (it moves DB files).
-ipcMain.handle("account:switch-to", (_, payload) => {
+// Switch Account — the per-account DB-swap was removed (one database per install). This now simply
+// signs out: clear the account/onboarding session keys and relaunch, landing on the sign-in screen
+// where the operator authenticates as whichever account they want. No file moves, no data mixing.
+// (Account data isolation is handled by scoping what's shown to the signed-in account, not by
+// juggling DB files.) The `email` arg is ignored — kept for call-site compatibility.
+ipcMain.handle("account:switch-to", () => {
   try {
-    const fs = require("fs");
-    const email = String(payload?.email || "").trim().toLowerCase();
-    if (!email) return { ok: false, error: "email required" };
-    const newKey = _accountDbKey(email);
-    const currentKey = getActiveAccountKey();
-
-    // Account currently in the active DB (so we can claim the default file under its key).
-    let currentEmail = "";
-    try { currentEmail = String(db.prepare("SELECT value FROM station_config_kv WHERE key='license_email' LIMIT 1").get()?.value || "").trim().toLowerCase(); } catch {}
-
-    // Already this account's DB → nothing to do.
-    if (newKey === currentKey) return { ok: true, switched: false };
-    if (!currentKey && currentEmail && _accountDbKey(currentEmail) === newKey) return { ok: true, switched: false };
-
-    const etherDir = _etherDir();
-    try { db.close(); } catch {}
-
-    // Leaving the default (unkeyed) DB: claim it for the current account so its data survives.
-    if (!currentKey && currentEmail) {
-      const defPath = path.join(etherDir, "openair.db");
-      const claimPath = path.join(etherDir, `openair__${_accountDbKey(currentEmail)}.db`);
-      try {
-        if (fs.existsSync(defPath) && !fs.existsSync(claimPath)) {
-          for (const sfx of ["", "-wal", "-shm", "-journal"]) {
-            if (fs.existsSync(defPath + sfx)) fs.renameSync(defPath + sfx, claimPath + sfx);
-          }
-        }
-      } catch (e) { console.error("[account:switch] claim failed:", e.message); }
-    }
-
-    setActiveAccountKey(newKey);
-    markHaExpectedRestart();
+    _clearAccountSessionKeys();
+    try { _persistOnAir(false); } catch {}  // explicit switch → next launch requires sign-in
+    try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);
     return { ok: true, switched: true };
@@ -2678,7 +2764,7 @@ ipcMain.handle("restore_db", (_, { backupName } = {}) => {
 // if the local DB already has songs unless force=true.
 ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
   try {
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
     const licenseKey = lic?.value?.trim();
     if (!licenseKey) return { ok: false, error: "No license key — sign in first." };
 
@@ -2741,7 +2827,7 @@ ipcMain.handle("station:cloud-install-available", async () => {
     let songCount = 0;
     try { songCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
     if (songCount > 0) return { available: false, reason: "has_library" };
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
     const licenseKey = lic?.value?.trim();
     if (!licenseKey) return { available: false, reason: "no_license" };
     const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
@@ -2934,7 +3020,7 @@ ipcMain.on("desk-send-to-queue", (_, payload) => {
 });
 
 // ── Relaunch ──────────────────────────────────────────────────
-ipcMain.handle("relaunch", () => { markHaExpectedRestart(); app.relaunch(); app.exit(0); });
+ipcMain.handle("relaunch", () => { markHaExpectedRestart(); markKeepSession(); app.relaunch(); app.exit(0); });
 
 // ── Multi-monitor pop-out windows — Tony Stark mode ──────────
 // Each popped panel gets a frameless BrowserWindow loading #popout/<panel>
@@ -3117,6 +3203,7 @@ ipcMain.handle("updater:download", async () => {
 
 ipcMain.handle("updater:install", () => {
   markHaExpectedRestart(); // HA: the watchdog must expect us back, not respawn us
+  markKeepSession();        // carry the signed-in session across the update relaunch
   if (!autoUpdater) { app.relaunch(); app.exit(0); return; }
   autoUpdater.quitAndInstall();
 });
@@ -4458,7 +4545,7 @@ async function fetchR2Track(fileKey) {
   }
 
   // License key required
-  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' LIMIT 1").get())?.value;
+  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
   if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -4982,6 +5069,7 @@ function _emitGlobal() {
   }
   if (_rtmpStreamStatus.statusState === 'live') liveCount++;
   mainWindow.webContents.send('stream:status:global', { anyLive: liveCount > 0, liveCount });
+  _persistOnAir(liveCount > 0);
   sseAirstate(liveCount > 0, liveCount);
 }
 
@@ -5239,13 +5327,33 @@ ipcMain.handle('stream:get-all-status', () => {
 });
 
 // ── Stations CRUD ─────────────────────────────────────────────
-ipcMain.handle('stations:list', () =>
-  db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all()
-);
+// Scoped to the signed-in account: only stations owned by the current license_key are visible.
+// Signed out (no license) → empty list, so no station leaks across the sign-in gap.
+ipcMain.handle('stations:list', () => {
+  const lk = getCurrentLicenseKey();
+  if (!lk) return [];
+  return db.prepare(
+    "SELECT * FROM stations WHERE deleted_at IS NULL AND owner_license_key = ? ORDER BY id"
+  ).all(lk);
+});
 
-ipcMain.handle('stations:get-active', () =>
-  db.prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null
-);
+ipcMain.handle('stations:get-active', () => {
+  const lk = getCurrentLicenseKey();
+  if (!lk) return null;
+  return db.prepare(
+    "SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL AND owner_license_key = ? LIMIT 1"
+  ).get() ?? null;
+});
+
+// Sign-in reconcile: stamp ownership on the account's authoritative stations, then make sure an
+// owned station is the active one. Called from OnboardingFlow.doSignIn with /account/connect uuids.
+ipcMain.handle('account:reconcile-stations', (_, uuids) => {
+  try {
+    adoptStationsForCurrentAccount(uuids);
+    enforceActiveStationForCurrentAccount();
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 ipcMain.handle('stations:switch', (_, id) => {
   try {
@@ -5289,6 +5397,8 @@ ipcMain.handle('stations:create', (_, data) => {
       icecast_password: data.icecast_password || 'hackme',
       icecast_bitrate: data.icecast_bitrate || 128, icecast_format: data.icecast_format || 'mp3',
       is_active: 0,
+      // Stamp the creating account so the station is visible only to it. Account-agnostic.
+      owner_license_key: getCurrentLicenseKey(),
     });
     return { ok: true, id: row.id };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -5360,7 +5470,7 @@ ipcMain.handle('identity:get', () => {
 // row is THIS machine (machine_id = our client_id). Powers the Multi-Device Sync clarity panel.
 ipcMain.handle('sync:devices', async () => {
   try {
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
     const licenseKey = lic?.value?.trim();
     if (!licenseKey) return { ok: false, error: 'No license key — sign in first.' };
     const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
@@ -5384,7 +5494,7 @@ ipcMain.handle('sync:removeDevice', async (_evt, machineId) => {
     if (!mid) return { ok: false, error: 'No device specified.' };
     const me = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get()?.client_id || null;
     if (mid === me) return { ok: false, error: "Can't remove the device you're currently on." };
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key'").get();
+    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
     const licenseKey = lic?.value?.trim();
     if (!licenseKey) return { ok: false, error: 'No license key — sign in first.' };
     const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
@@ -5443,7 +5553,7 @@ ipcMain.handle('library:sync-r2:upload', async () => {
   }
 
   // License key required — set during onboarding / SubscriptionPanel validate
-  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' LIMIT 1").get())?.value;
+  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
   if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   // Resume-aware SELECT: skip songs already uploaded on this machine.
@@ -5594,7 +5704,7 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
   }
 
   // License key required
-  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' LIMIT 1").get())?.value;
+  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
   if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   const candidates = db.prepare(
