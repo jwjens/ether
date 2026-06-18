@@ -24,6 +24,7 @@ timeout /t 2 /nobreak >nul
 
 echo  Deleting data...
 rmdir /S /Q "%LOCALAPPDATA%\Ether" 2>nul
+rmdir /S /Q "%APPDATA%\Ether" 2>nul
 rmdir /S /Q "%APPDATA%\openair" 2>nul
 rmdir /S /Q "%APPDATA%\com.ether.radio" 2>nul
 

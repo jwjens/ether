@@ -128,6 +128,28 @@ const path = require("path");
 const fs = require("fs");
 const semver = require("semver");
 const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
+
+// Stop leaving a Roaming\openair folder behind: store this app's userData under an "Ether" folder
+// instead of the legacy "openair" app-name default. We redirect the userData PATH only (not the
+// Electron app name) so the updater, single-instance lock, and watchdog identity are untouched.
+// One-time move-over: if a computer already has the old openair userData and no Ether one yet, copy
+// it across so markers/backups/settings carry over. The station database is NOT here (it lives in
+// %LOCALAPPDATA%\Ether\com.ether.radio), so this never risks the library/stations. Best-effort:
+// any failure just falls through to the default location. MUST run before any getPath('userData').
+try {
+  const _appData = app.getPath("appData");
+  const _newUserData = path.join(_appData, "Ether");
+  const _oldUserData = path.join(_appData, "openair");
+  try {
+    if (!fs.existsSync(_newUserData) && fs.existsSync(_oldUserData)) {
+      // Prefer an instant rename (same drive, no copy); fall back to copy+delete if that fails
+      // (e.g. cross-device or locked). Either way the old openair folder is gone afterward.
+      try { fs.renameSync(_oldUserData, _newUserData); }
+      catch { fs.cpSync(_oldUserData, _newUserData, { recursive: true }); try { fs.rmSync(_oldUserData, { recursive: true, force: true }); } catch {} }
+    }
+  } catch (e) { console.warn("[userData] migrate openair→Ether skipped:", e.message); }
+  app.setPath("userData", _newUserData);
+} catch (e) { console.warn("[userData] redirect to Ether folder skipped:", e.message); }
 if (global.__etherDiag) global.__etherDiag('POINT-1b: path/fs loaded OK');
 let Database;
 try { Database = require("better-sqlite3"); if (global.__etherDiag) global.__etherDiag('POINT-1c: better-sqlite3 loaded OK'); }
@@ -2701,6 +2723,7 @@ ipcMain.handle("system:factoryReset", () => {
     // install resurrect on the next launch. Nuke the whole local data folder + legacy + markers.
     rm(path.dirname(_etherDir()));                                  // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
     rm(path.join(app.getPath("appData"), "com.ether.radio"));      // legacy Roaming DB (redirected to network on managed boxes)
+    rm(path.join(app.getPath("appData"), "openair"));              // old (pre-rename) Roaming userData, if any lingers
     for (const m of [".ether-on-air", ".ether-keep-session"]) {    // markers that skip sign-in / trigger resurrection
       try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
     }
