@@ -977,14 +977,19 @@ function adoptStationsForCurrentAccount(uuids) {
 function enforceActiveStationForCurrentAccount() {
   const lk = getCurrentLicenseKey();
   if (!lk) return;
+  // Claim any not-yet-tagged stations for the current account. This is what makes scoping reliable:
+  // a synced/legacy station with no owner becomes this account's, so it shows for this account and
+  // is hidden from any OTHER account that signs in later. (Replaces the old behavior that wrongly
+  // deactivated NULL-owner stations and made them vanish.)
+  try { db.prepare("UPDATE stations SET owner_license_key=? WHERE deleted_at IS NULL AND owner_license_key IS NULL").run(lk); } catch {}
   const owned = db.prepare(
     "SELECT id, is_active FROM stations WHERE deleted_at IS NULL AND owner_license_key=? ORDER BY id"
   ).all(lk);
   if (!owned.length) return;
   if (owned.some(s => s.is_active)) {
-    // An owned station is already active — just clear is_active on any non-owned leftovers.
+    // An owned station is already active — clear is_active only on stations owned by ANOTHER account.
     db.prepare(
-      "UPDATE stations SET is_active=0 WHERE deleted_at IS NULL AND (owner_license_key IS NULL OR owner_license_key!=?)"
+      "UPDATE stations SET is_active=0 WHERE deleted_at IS NULL AND owner_license_key IS NOT NULL AND owner_license_key!=?"
     ).run(lk);
     return;
   }
@@ -5350,21 +5355,24 @@ ipcMain.handle('stream:get-all-status', () => {
 });
 
 // ── Stations CRUD ─────────────────────────────────────────────
-// Scoped to the signed-in account: only stations owned by the current license_key are visible.
-// Signed out (no license) → empty list, so no station leaks across the sign-in gap.
+// Scoped to the signed-in account, resiliently: returns stations owned by the current license PLUS
+// any not-yet-tagged (NULL-owner) ones — so a freshly-synced/legacy station is NEVER hidden. On
+// sign-in, enforceActiveStationForCurrentAccount() claims NULL-owner stations to the current
+// account, so a DIFFERENT account signing in later (e.g. a personal account at home) won't see
+// them. No license yet (pre sign-in) → show all so first-run setup works.
 ipcMain.handle('stations:list', () => {
   const lk = getCurrentLicenseKey();
-  if (!lk) return [];
+  if (!lk) return db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all();
   return db.prepare(
-    "SELECT * FROM stations WHERE deleted_at IS NULL AND owner_license_key = ? ORDER BY id"
+    "SELECT * FROM stations WHERE deleted_at IS NULL AND (owner_license_key = ? OR owner_license_key IS NULL) ORDER BY id"
   ).all(lk);
 });
 
 ipcMain.handle('stations:get-active', () => {
   const lk = getCurrentLicenseKey();
-  if (!lk) return null;
+  if (!lk) return db.prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null;
   return db.prepare(
-    "SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL AND owner_license_key = ? LIMIT 1"
+    "SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL AND (owner_license_key = ? OR owner_license_key IS NULL) LIMIT 1"
   ).get() ?? null;
 });
 
