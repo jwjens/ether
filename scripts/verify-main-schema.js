@@ -568,7 +568,7 @@ alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_title TEXT");
 alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_artist TEXT");
 alterSafe("ALTER TABLE crash_recovery ADD COLUMN deck_a_position INTEGER DEFAULT 0");
 alterSafe("ALTER TABLE crash_recovery ADD COLUMN was_playing INTEGER DEFAULT 0");
-alterSafe("ALTER TABLE stations ADD COLUMN icecast_server_url TEXT DEFAULT '127.0.0.1'");
+alterSafe("ALTER TABLE stations ADD COLUMN icecast_server_url TEXT DEFAULT '44.244.52.207'");
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_mount TEXT DEFAULT '/live'");
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_password TEXT DEFAULT 'hackme'");
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");

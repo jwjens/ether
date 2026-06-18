@@ -610,8 +610,11 @@ function runMigrations() {
   const alterSafe = (sql) => { try { db.exec(sql); } catch(e) { /* column already exists */ } };
   alterSafe("ALTER TABLE songs ADD COLUMN is_explicit INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE songs ADD COLUMN raw_metadata TEXT");
-  // Fix songs that got the wrong daypart_mask default (127 = only hours 0-6)
-  db.exec("UPDATE songs SET daypart_mask = 16777215 WHERE daypart_mask = 127");
+  // Fix songs that aren't eligible to play in any (daytime) hour: daypart_mask = 127 is the old
+  // default (only hours 0-6), and NULL (e.g. from a cloud-restored/synced library) means eligible
+  // for NO hours at all — both make the scheduler generate nothing during the day. Normalize both
+  // to 16777215 (all 24 hours) so Generate always has candidates. See _generateDayRows.
+  db.exec("UPDATE songs SET daypart_mask = 16777215 WHERE daypart_mask = 127 OR daypart_mask IS NULL");
   alterSafe("ALTER TABLE songs ADD COLUMN daypart_mask INTEGER DEFAULT 127");
   alterSafe("ALTER TABLE songs ADD COLUMN no_repeat_hours INTEGER DEFAULT 2");
   alterSafe("ALTER TABLE songs ADD COLUMN rotation_status TEXT DEFAULT 'active'");
@@ -686,7 +689,7 @@ function runMigrations() {
 
   // ── Phase 1: Multi-station schema ────────────────────────────
   // Add Icecast columns to stations table
-  alterSafe("ALTER TABLE stations ADD COLUMN icecast_server_url TEXT DEFAULT '127.0.0.1'");
+  alterSafe("ALTER TABLE stations ADD COLUMN icecast_server_url TEXT DEFAULT '44.244.52.207'");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_mount TEXT DEFAULT '/live'");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_password TEXT DEFAULT 'hackme'");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
@@ -725,7 +728,7 @@ function runMigrations() {
       const pwKv     = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
       db.prepare(
         "UPDATE stations SET icecast_server_url=?, icecast_mount='/live', icecast_password=? WHERE id=1"
-      ).run(serverKv?.value?.trim() || '127.0.0.1', pwKv?.value?.trim() || 'hackme');
+      ).run(serverKv?.value?.trim() || '44.244.52.207', pwKv?.value?.trim() || 'hackme');
     }
   }
 
@@ -900,7 +903,7 @@ function seedFreshInstall() {
     const nameKv   = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name'").get();
     db.prepare(
       "INSERT INTO stations (id, name, callsign, is_active, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format) VALUES (1, ?, '', 1, ?, '/live', ?, 128, 'mp3')"
-    ).run(nameKv?.value || 'Station 1', serverKv?.value?.trim() || '127.0.0.1', pwKv?.value?.trim() || 'hackme');
+    ).run(nameKv?.value || 'Station 1', serverKv?.value?.trim() || '44.244.52.207', pwKv?.value?.trim() || 'hackme');
     console.log("[DB] Seeded station 1");
   }
 
@@ -939,6 +942,22 @@ function getCurrentLicenseKey() {
       "SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1"
     ).get()?.value ?? null;
   } catch { return null; }
+}
+
+// Mirror of src/lib/slug.ts slugify — turns a station name into a URL-safe slug used as the default
+// Icecast mount (e.g. "OV" → "ov", "All Day Safe Park Music" → "all-day-safe-park-music"). Each
+// station's mount must be unique on the shared Icecast server; deriving it from the name auto-fills
+// a sensible per-station mount instead of the old shared '/live' placeholder.
+function _slugifyName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\x00-\x7f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+    .replace(/-+$/g, "");
 }
 
 // On sign-in, stamp owner_license_key on the local rows the backend (/account/connect) says
@@ -4698,7 +4717,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
        WHERE s.category_id = ?
          AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-         AND ((s.daypart_mask >> ?) & 1) = 1
+         AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1)
        ORDER BY RANDOM()`
     );
     const generatedRows = [];
@@ -4887,7 +4906,7 @@ function _buildScheduleCtx(stationId) {
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
     stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
     stmtSpots: db.prepare(SPOT_SELECT),
-    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND ((s.daypart_mask >> ?) & 1) = 1 ORDER BY RANDOM()`),
+    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
 }
@@ -5396,8 +5415,8 @@ ipcMain.handle('stations:create', (_, data) => {
       name: data.name || 'New Station', callsign: data.callsign || '',
       frequency: data.frequency || '', city: data.city || '',
       state: data.state || '', country: data.country || 'US', website: data.website || '',
-      icecast_server_url: data.icecast_server_url || '127.0.0.1',
-      icecast_mount: data.icecast_mount || '/live',
+      icecast_server_url: data.icecast_server_url || '44.244.52.207',
+      icecast_mount: data.icecast_mount || ('/' + (_slugifyName(data.name) || 'live')),
       icecast_password: data.icecast_password || 'hackme',
       icecast_bitrate: data.icecast_bitrate || 128, icecast_format: data.icecast_format || 'mp3',
       is_active: 0,

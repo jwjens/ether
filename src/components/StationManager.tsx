@@ -345,7 +345,7 @@ function StationEditor({
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 8 }}>ICECAST</div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <EF label="Server URL"><input value={form.icecast_server_url || ""} onChange={e => set("icecast_server_url", e.target.value)} placeholder="127.0.0.1" style={inp} /></EF>
+            <EF label="Server URL"><input value={form.icecast_server_url || ""} onChange={e => set("icecast_server_url", e.target.value)} placeholder="44.244.52.207" style={inp} /></EF>
             <EF label="Mount"><input value={form.icecast_mount || ""} onChange={e => set("icecast_mount", e.target.value)} placeholder="/live" style={inp} /></EF>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>

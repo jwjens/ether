@@ -192,8 +192,8 @@ function NewStationModal({ onClose, onCreated }: { onClose: () => void; onCreate
     try {
       const r = await ether.stations.create({
         name: name.trim(), callsign: callsign.trim(),
-        icecast_server_url: serverUrl.trim() || "127.0.0.1",
-        icecast_mount: mount.trim() || "/live",
+        icecast_server_url: serverUrl.trim() || "44.244.52.207",
+        icecast_mount: mount.trim() || "",   // blank → main process derives '/<slug>' from the name
         icecast_password: password.trim() || "hackme",
         icecast_bitrate: parseInt(bitrate) || 128,
         icecast_format: format,
@@ -255,7 +255,7 @@ function NewStationModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <F label="Server URL">
-              <input value={serverUrl} onChange={e => setServerUrl(e.target.value)} placeholder="127.0.0.1" style={inp} />
+              <input value={serverUrl} onChange={e => setServerUrl(e.target.value)} placeholder="44.244.52.207" style={inp} />
             </F>
             <F label="Mount">
               <input value={mount} onChange={e => setMount(e.target.value)} placeholder="/live" style={inp} />
