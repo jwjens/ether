@@ -565,6 +565,10 @@ function getDbPath() {
 function initDb() {
   const dbPath = getDbPath();
   console.log("[DB] Path:", dbPath);
+  // Defensive: guarantee the parent folder exists at the open site too. getDbPath()/_etherDir()
+  // already creates it, but this also covers an ETHER_DB_PATH override pointing elsewhere. SQLite
+  // throws SQLITE_CANTOPEN if the directory is missing (fresh-install crash).
+  try { fs.mkdirSync(path.dirname(dbPath), { recursive: true }); } catch {}
   try { db = new Database(dbPath); }
   catch (e) { throw new Error(`Cannot open database ${dbPath}: ${e.message}`); }
   db.pragma("journal_mode = WAL");   // WAL is safe now that the DB is guaranteed local disk

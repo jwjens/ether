@@ -58,7 +58,18 @@ let _db = null;
 function getDb() {
   if (_db) return _db;
   const { DatabaseSync } = require("node:sqlite");
-  const dbPath = process.env.ETHER_DB_PATH || path.join(os.homedir(), "AppData", "Roaming", "com.ether.radio", "openair.db");
+  // Resolve the DB path the SAME way the main app does (electron/main.js _etherDir): prefer the
+  // explicit ETHER_DB_PATH the app sets, then the machine-local %LOCALAPPDATA%\Ether path. The old
+  // Roaming location is kept only as a last-resort legacy fallback. Without this unification the
+  // daemon could open a DIFFERENT, empty DB (Roaming) if ETHER_DB_PATH were ever missing.
+  const dbPath = process.env.ETHER_DB_PATH || (
+    (process.platform === "win32" && process.env.LOCALAPPDATA)
+      ? path.join(process.env.LOCALAPPDATA, "Ether", "com.ether.radio", "openair.db")
+      : path.join(os.homedir(), "AppData", "Roaming", "com.ether.radio", "openair.db")
+  );
+  // Ensure the parent folder exists before opening — on a clean machine it won't, and SQLite
+  // throws SQLITE_CANTOPEN if the directory is missing (fresh-install crash).
+  try { require("fs").mkdirSync(path.dirname(dbPath), { recursive: true }); } catch {}
   // Read-WRITE: the daemon reads the library (loggen) AND writes the play log (Step 4).
   // WAL + busy_timeout makes cross-process contention with the app's better-sqlite3 a
   // microsecond wait, not a failure (proven by spike-write-contention.js).

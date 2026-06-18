@@ -478,6 +478,13 @@ export default function App() {
   useMacroClock(stationId);
   const [splashDone, setSplashDone] = useState(false);
   const [wizardDone, setWizardDone] = useState(false);
+  // SESSION sign-in flag — resets on every app launch. Ether always opens on the sign-in/create-account
+  // screen and stays "signed out" until you sign in THIS session, so it can never drop you into a
+  // previous account's profile picker. Flipped true by handleWizardComplete (onboarding/sign-in done).
+  const [accountSignedIn, setAccountSignedIn] = useState(false);
+  // True when a live Icecast stream was active at launch (crash / reboot / watchdog recovery): the
+  // gate then SKIPS sign-in so the broadcast resumes unattended. null = not yet checked.
+  const [wasOnAir, setWasOnAir] = useState<boolean | null>(null);
   // Sign in / sign up is required for everyone before the profile screen. Tracked separately from
   // wizardDone (first_run_complete) because a carried-over / invite / restored install can have
   // first_run_complete=1 without anyone ever signing into an account — those must still see auth.
@@ -747,7 +754,9 @@ export default function App() {
           if (p) setCurrentPlan(p);
         }
         const apiKey = get('license_key');
-        if (apiKey) { apiKeyRef.current = apiKey; pushInstallUsers(apiKey); }
+        // Remember the license for later, but DO NOT push/sync here — a license sitting in the DB
+        // proves nothing. Sync only runs once an operator signs in (see the currentUser effect below).
+        if (apiKey) { apiKeyRef.current = apiKey; }
         // experience_mode key in DB is now ignored — deck visibility is
         // driven entirely by Configure Decks. Old key left in DB for now.
 
@@ -762,6 +771,13 @@ export default function App() {
           setInstallOperating(songs > 0 || shows > 0);
         } catch { setInstallOperating(false); }
       } catch {}
+      // Was a live stream active at launch? If so the gate skips sign-in (crash/reboot recovery →
+      // resume on air unattended). Resolve BEFORE firstRunChecked so the gate never flashes sign-in.
+      try { const r = await (window as any).ether.invoke("account:was-on-air"); setWasOnAir(!!r); }
+      catch { setWasOnAir(false); }
+      // A continuation self-relaunch (cloud install / update / reload) carries the signed-in session
+      // so the gate doesn't bounce back to sign-in in a loop. Only a recent self-relaunch counts.
+      try { if (await (window as any).ether.invoke("account:resume-session")) setAccountSignedIn(true); } catch {}
       setFirstRunChecked(true);
       consoleLog("system", "ether started — engine ready");
     })();
@@ -773,23 +789,23 @@ export default function App() {
   // apiKeyRef.current (same reliable source as the now-playing push), not the per-pass
   // license_key, which only exists under station 1's config. (Phase 2b read-path fix.)
   useEffect(() => {
-    if (firstRunChecked && apiKeyRef.current && stationUuid) {
+    if (firstRunChecked && apiKeyRef.current && stationUuid && currentUser) {
       for (const t of ["categories", "clocks", "clock_slots", "shows", "spots"]) {
         pushCcTable(apiKeyRef.current, stationUuid, stationId, t);
       }
       pushLibrary(apiKeyRef.current, stationUuid, stationId);
     }
-  }, [stationId, stationUuid, firstRunChecked]);
+  }, [stationId, stationUuid, firstRunChecked, currentUser]);
 
   // Push play history for analytics (Phase 3a): catch up on boot, then every 3 min so
   // the dashboard's Analytics view stays current. Incremental + deduped server-side.
   useEffect(() => {
-    if (!firstRunChecked || !apiKeyRef.current || !stationUuid) return;
+    if (!firstRunChecked || !apiKeyRef.current || !stationUuid || !currentUser) return;
     const push = () => pushPlayHistory(apiKeyRef.current, stationUuid, stationId);
     push();
     const id = setInterval(push, 3 * 60 * 1000);
     return () => clearInterval(id);
-  }, [stationId, stationUuid, firstRunChecked]);
+  }, [stationId, stationUuid, firstRunChecked, currentUser]);
 
   // When a cloud→local download finishes (materialize writes file_path), re-push the
   // library view so the dashboard's local/cloud status reflects the new local files.
@@ -807,16 +823,27 @@ export default function App() {
       const result = await (window as any).ether.stationConfigKv.list(stationId);
       const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
       const key = rows.find((r: any) => r.key === 'license_key')?.value;
-      if (key) { apiKeyRef.current = key; pushInstallUsers(key); }
+      // Remember the license, but only push profiles up if an operator is actually signed in.
+      if (key) { apiKeyRef.current = key; if (currentUser) pushInstallUsers(key); }
     };
-    const pushUsers = () => pushInstallUsers(apiKeyRef.current);
+    const pushUsers = () => { if (currentUser) pushInstallUsers(apiKeyRef.current); };
     window.addEventListener('ether:license-changed', reload);
     window.addEventListener('ether:users-changed', pushUsers);
     return () => {
       window.removeEventListener('ether:license-changed', reload);
       window.removeEventListener('ether:users-changed', pushUsers);
     };
-  }, [stationId]);
+  }, [stationId, currentUser]);
+
+  // THE SYNC GATE. Sync (push AND pull) runs ONLY while an operator is signed in — never off a
+  // license_key that's merely sitting in the database. Signing in starts the scheduler and mirrors
+  // this install's profiles up; signing out stops all sync. This is what stops Ether from assuming
+  // a license and pulling/pushing another account's data before anyone has signed in.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    ether?.invoke?.("sync:set-active", !!currentUser);
+    if (currentUser && apiKeyRef.current) pushInstallUsers(apiKeyRef.current);
+  }, [currentUser]);
 
   // Native menu IPC handler
   useEffect(() => {
@@ -1071,6 +1098,7 @@ export default function App() {
     setStationName(profile.name);
     setWizardDone(true);
     setAccountJoined(true); // completing onboarding means an account was signed in
+    setAccountSignedIn(true); // session sign-in complete — gate can advance past the sign-in screen
   };
 
   useEffect(() => {
@@ -1727,12 +1755,18 @@ export default function App() {
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
-  // Sign-in gate. Force the account sign-in/sign-up screen when onboarding isn't done OR
-  // when there's no account signed in AND the install isn't operating (no library/shows).
-  // The operating exception is what lets a real working station through without a forced
-  // sign-in (the regression that reverted the old account-gate) while still catching empty
-  // or leftover installs whose stale first_run_complete=1 survived an uninstall.
-  const forceAuth = firstRunChecked && !accountJoined && !installOperating;
+  // Sign-in gate (reverted to the stable behavior). Force the account sign-in/sign-up screen when
+  // onboarding isn't done, OR when no account is signed in AND the install isn't operating (no library
+  // / shows). The operating exception lets a real working station through without a forced sign-in —
+  // so a self-relaunch / reboot of a set-up station doesn't loop on the sign-in screen. Empty or
+  // leftover installs still hit the sign-in gate. (The "force sign-in on every launch" experiment was
+  // reverted — it fought the app's many self-relaunch flows and caused sign-in loops.)
+  // No account on this install → MUST show account sign-in (no account ⇒ no station possible). This
+  // also covers a carried-over/restored DB with a stale first_run_complete but no signed-in account.
+  // The installOperating exception only applies to installs that HAVE an account (a real working
+  // station reboot), so those aren't forced to re-sign-in every launch.
+  const noAccount = firstRunChecked && !accountJoined;
+  const forceAuth = noAccount || (firstRunChecked && !installOperating);
   if (firstRunChecked && (!wizardDone || forceAuth)) return <EtherErrorBoundary><OnboardingFlow forceAuth={forceAuth} onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;

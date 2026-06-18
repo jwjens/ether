@@ -60,8 +60,12 @@ async function loadActiveStation(): Promise<void> {
     if (row?.id) {
       notifyAll({ id: row.id, name: row.name ?? "", uuid: row.uuid ?? "" }, true);
     } else {
-      // No active station found — fall back to id=1, mark not-ready so callers wait
-      notifyAll({ id: 1, name: "", uuid: "" }, false);
+      // No active station (e.g. no account signed in yet — stations:get-active is scoped to the
+      // signed-in license) is a real, RESOLVED state, not "still loading". Mark ready (id=1
+      // fallback) so the first-run gate in App.tsx can complete and route to account sign-in.
+      // (Was `false`, which hung the gate and dropped fresh-install / signed-out states onto the
+      // PIN profile picker instead of the account sign-in screen.)
+      notifyAll({ id: 1, name: "", uuid: "" }, true);
     }
   } catch {
     if (v !== _version) return;
