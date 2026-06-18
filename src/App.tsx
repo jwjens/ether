@@ -771,12 +771,12 @@ export default function App() {
           setInstallOperating(songs > 0 || shows > 0);
         } catch { setInstallOperating(false); }
       } catch {}
-      // Was a live stream active at launch? If so the gate skips sign-in (crash/reboot recovery →
-      // resume on air unattended). Resolve BEFORE firstRunChecked so the gate never flashes sign-in.
-      try { const r = await (window as any).ether.invoke("account:was-on-air"); setWasOnAir(!!r); }
+      // Was a live stream active at launch? An unattended on-air box that reboots must resume on air
+      // without a human at the keyboard → treat it as already signed in for this session.
+      try { const r = await (window as any).ether.invoke("account:was-on-air"); setWasOnAir(!!r); if (r) setAccountSignedIn(true); }
       catch { setWasOnAir(false); }
       // A continuation self-relaunch (cloud install / update / reload) carries the signed-in session
-      // so the gate doesn't bounce back to sign-in in a loop. Only a recent self-relaunch counts.
+      // so the app's OWN relaunch doesn't bounce back to sign-in in a loop. Only a recent one counts.
       try { if (await (window as any).ether.invoke("account:resume-session")) setAccountSignedIn(true); } catch {}
       setFirstRunChecked(true);
       consoleLog("system", "ether started — engine ready");
@@ -1755,19 +1755,13 @@ export default function App() {
 
   // Wrap pre-main-UI screens in the error boundary so a crash shows an error, not a blank screen
   if (!splashDone) return <EtherErrorBoundary><SplashScreen onDone={() => setSplashDone(true)} /></EtherErrorBoundary>;
-  // Sign-in gate (reverted to the stable behavior). Force the account sign-in/sign-up screen when
-  // onboarding isn't done, OR when no account is signed in AND the install isn't operating (no library
-  // / shows). The operating exception lets a real working station through without a forced sign-in —
-  // so a self-relaunch / reboot of a set-up station doesn't loop on the sign-in screen. Empty or
-  // leftover installs still hit the sign-in gate. (The "force sign-in on every launch" experiment was
-  // reverted — it fought the app's many self-relaunch flows and caused sign-in loops.)
-  // No account on this install → MUST show account sign-in (no account ⇒ no station possible). This
-  // also covers a carried-over/restored DB with a stale first_run_complete but no signed-in account.
-  // The installOperating exception only applies to installs that HAVE an account (a real working
-  // station reboot), so those aren't forced to re-sign-in every launch.
-  const noAccount = firstRunChecked && !accountJoined;
-  const forceAuth = noAccount || (firstRunChecked && !installOperating);
-  if (firstRunChecked && (!wizardDone || forceAuth)) return <EtherErrorBoundary><OnboardingFlow forceAuth={forceAuth} onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  // Sign-in gate — the account sign-in screen is ALWAYS the first screen, until an account is signed
+  // in THIS session. No persisted onboarding flag, existing profile, or library can bypass it.
+  // accountSignedIn resets every launch and is set true only by: completing sign-in
+  // (handleWizardComplete), an unattended on-air recovery, or the app's own continuation
+  // self-relaunch (so the app's relaunches can't loop the user back to sign-in). Only AFTER an
+  // account session exists does the PIN profile picker (UserLogin) render.
+  if (firstRunChecked && !accountSignedIn) return <EtherErrorBoundary><OnboardingFlow forceAuth onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
