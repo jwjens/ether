@@ -2695,13 +2695,14 @@ ipcMain.handle("db:restore", (_, backupName) => {
 ipcMain.handle("system:factoryReset", () => {
   try {
     try { db.close(); } catch {}
-    const live = getDbPath();
-    const legacy = path.join(app.getPath("appData"), "com.ether.radio", "openair.db");
-    for (const base of [live, legacy]) {
-      for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-        const f = base + suffix;
-        try { if (fs.existsSync(f)) fs.rmSync(f, { force: true }); } catch {}
-      }
+    const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
+    // Wipe EVERYTHING so a reset is truly clean. The old version only deleted openair.db and left
+    // keyed copies (openair__*.db) + the legacy folder + userData markers behind, which let the old
+    // install resurrect on the next launch. Nuke the whole local data folder + legacy + markers.
+    rm(path.dirname(_etherDir()));                                  // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
+    rm(path.join(app.getPath("appData"), "com.ether.radio"));      // legacy Roaming DB (redirected to network on managed boxes)
+    for (const m of [".ether-on-air", ".ether-keep-session"]) {    // markers that skip sign-in / trigger resurrection
+      try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
     }
     markHaExpectedRestart();
     app.relaunch();

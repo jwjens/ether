@@ -36,6 +36,12 @@
       "to": "ha-setup.exe"
     }
   ],
+  "extraFiles": [
+    {
+      "from": "build-resources/Reset Ether Data.bat",
+      "to": "Reset Ether Data.bat"
+    }
+  ],
   "win": {
     "target": [
       { "target": "nsis", "arch": ["x64"] }
