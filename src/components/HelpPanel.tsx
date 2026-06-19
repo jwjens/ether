@@ -34,7 +34,6 @@ Ether is a complete broadcast automation suite — think RCS Zetta or Wide Orbit
 
 - Clocks (Schedule → Clocks) — build your rotation hour by hour
 - Pair Mobile App (Settings → Pair Mobile App) — voice-track from your phone
-- AI Voice Studio (Tools → AI Voice Studio) — generate station IDs and weather from text
 - Stream Metadata (Settings → Stream Metadata Outputs) — push now-playing to Icecast/Shoutcast/TuneIn/RDS
 `,
   },
@@ -101,38 +100,6 @@ On the studio side, Tools → Voice Track Inbox shows every upload. Click "→ Q
 
 - Record in a quiet space. Ether2Go uses the phone mic's built-in echo cancellation + noise suppression.
 - Mobile phones can record with the screen off — just start recording, lock the phone, come back later.
-`,
-  },
-  {
-    id: "ai-voice", category: "AI", tags: ["ai", "tts", "voice", "autodj", "station id"],
-    title: "AI Voice Studio (Auto-DJ)",
-    body: `
-# What it is
-
-AI Voice Studio generates broadcast-ready voice segments from text. Station IDs, weather reports, time checks, "coming up next" intros — anything you'd have a human voice track.
-
-# Providers
-
-- ElevenLabs — best quality, supports voice cloning. Paid, ~$5/mo for 30k chars.
-- OpenAI TTS — six built-in voices, simple. $15/M chars on tts-1.
-- Browser Web Speech — free, uses your OS voices. Fine for testing; not great on-air.
-
-Configure in Settings → AI Voice Generation.
-
-# Templates with variables
-
-A template like "Right now in {{city}} it is {{temperature}} degrees" becomes reusable. When you hit Generate, Ether renders the template with your values and calls the TTS API.
-
-Default templates: Time check, Weather report, Now playing intro, Station ID, Up next, Top of hour. Add your own in the Templates tab.
-
-# Workflow
-
-Tools → AI Voice Studio → Compose tab:
-1. Pick a template or write free-form text
-2. Fill in any variables
-3. Generate (takes 2-5 seconds)
-4. Preview plays inline
-5. Library tab → "→ Queue" drops into rotation
 `,
   },
   {

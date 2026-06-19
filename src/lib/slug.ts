@@ -2,7 +2,9 @@
 // UX feedback in the Public Page settings. The backend remains the gatekeeper on
 // save — this only drives the red/green indicator before the network check.
 
-export const STATION_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
+// 2–32 chars, lowercase alphanumeric + hyphens, no leading/trailing hyphen. Allows 2-letter
+// station codes like "ov" / "kj" (the old rule blocked exactly-2-char slugs).
+export const STATION_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,30}[a-z0-9]$/;
 
 export const RESERVED_SLUGS = new Set([
   "admin", "api", "www", "public", "account", "accounts", "auth", "login", "logout",

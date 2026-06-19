@@ -436,12 +436,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
         }
       } catch { /* network/seat error — fall through to a fresh profile setup */ }
 
-      // Account isolation: license_key is now written (activateAndContinue). Stamp ownership on
-      // this account's authoritative stations and make sure an owned station is active, so the
-      // visible station set switches to this account (and the previous account's stations drop
-      // out). Runs in both branches below. Account-agnostic — uses whatever account just signed in.
-      try { await (window as any).ether.invoke('account:reconcile-stations', stations.map(s => s.uuid)); } catch {}
-
       if (stations.length > 0) {
         setConnectStations(stations);
         setSyncSel(new Set(stations.map(s => s.uuid))); // default: everything selected
@@ -2136,6 +2130,19 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
   const [matchedPairs, setMatchedPairs] = useState<Array<{ id: number; file_path: string }>>([]);
   const [applyDone, setApplyDone]       = useState(0);
   const [error, setError]               = useState<string | null>(null);
+  // Is there actually a synced song list? This screen is reused both after sign-in (a list WAS
+  // pulled) and at the end of creating a brand-new station (no list yet) — so the heading must not
+  // claim "already synced" when the station is empty.
+  const [hasSongs, setHasSongs]         = useState<boolean | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await (window as any).ether.db.query("SELECT COUNT(*) AS n FROM songs WHERE deleted_at IS NULL", []);
+        const rows = Array.isArray(r) ? r : (r?.data ?? r?.rows ?? []);
+        setHasSongs(Number(rows?.[0]?.n ?? 0) > 0);
+      } catch { setHasSongs(false); }
+    })();
+  }, []);
 
   // Write the library source choice BEFORE acting on it. If the app crashes
   // mid-action, next launch knows what the operator picked (resumption routing
@@ -2257,10 +2264,11 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
             <>
               <div style={{ textAlign: "center", marginBottom: 32 }}>
                 <div style={LABEL_STYLE}>Setup</div>
-                <h1 style={HEADING_STYLE}>Where's your audio?</h1>
+                <h1 style={HEADING_STYLE}>{hasSongs ? "Where's your audio?" : "Add your music"}</h1>
                 <p style={{ ...SUB_STYLE, marginTop: 8, maxWidth: 520, marginLeft: "auto", marginRight: "auto" }}>
-                  Your song list is already synced. Now we need to find the audio files —
-                  on this computer, in the cloud, or skip for now and add them later.
+                  {hasSongs
+                    ? "Your song list is already synced. Now we need to find the audio files — on this computer, in the cloud, or skip for now and add them later."
+                    : "Point Ether at your music — on this computer, in the cloud, or skip for now and add it later."}
                 </p>
               </div>
 

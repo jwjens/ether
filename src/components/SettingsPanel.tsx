@@ -11,7 +11,6 @@ import StreamMetadataPanel from "./StreamMetadataPanel";
 import StreamStatusPill from "./StreamStatusPill";
 import { useStreamStatus } from "../contexts/StreamStatusContext";
 import PairMobileApp from "./PairMobileApp";
-import AIVoiceSettings from "./AIVoiceSettings";
 import BetaProgram from "./BetaProgram";
 import { validateSlug, slugify } from "../lib/slug";
 
@@ -27,6 +26,51 @@ const CATEGORIES: { id: SettingsCategory; label: string; icon: React.ReactNode }
   { id: "integrations", label: "Integrations", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
   { id: "system",       label: "System",       icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
 ];
+
+// ── Settings visual layer ─────────────────────────────────────
+// Scoped stylesheet for the Preferences shell + cards. Inline styles can't
+// express hover/focus/transitions, which is most of what made this panel feel
+// unfinished. Classes here drive the chrome (header, search, rail) and the
+// Section card; brand stays intact (sharp corners, purple accent, dark base).
+const SETTINGS_CSS = `
+.eth-settings__head { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; margin-bottom:22px; flex-wrap:wrap; }
+.eth-settings__title { font-family:'Inter',system-ui,sans-serif; font-size:28px; font-weight:700; letter-spacing:-0.045em; color:var(--text-primary); margin:0; line-height:1; }
+.eth-settings__sub { font-size:13px; color:var(--text-tertiary); margin-top:7px; }
+.eth-search { position:relative; flex:1; max-width:360px; min-width:200px; }
+.eth-search__icon { position:absolute; left:11px; top:50%; transform:translateY(-50%); color:var(--text-tertiary); pointer-events:none; }
+.eth-search input { width:100%; padding:11px 30px 11px 36px; background:var(--bg-tertiary); border:1px solid var(--border-primary); color:var(--text-primary); font-size:14.5px; outline:none; box-sizing:border-box; transition:border-color .15s, box-shadow .15s; }
+.eth-search input::placeholder { color:var(--text-tertiary); }
+.eth-search input:focus { border-color:var(--accent-blue); box-shadow:0 0 0 3px rgb(from var(--accent-blue) r g b / 0.18); }
+.eth-search__clear { position:absolute; right:6px; top:50%; transform:translateY(-50%); background:none; border:none; color:var(--text-tertiary); cursor:pointer; font-size:16px; line-height:1; padding:2px 6px; }
+.eth-search__clear:hover { color:var(--text-primary); }
+
+.eth-rail { background:var(--bg-secondary); border:1px solid var(--border-primary); padding:8px; position:sticky; top:10px; display:flex; flex-direction:column; gap:2px; }
+.eth-rail__label { font-size:11px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:var(--text-tertiary); padding:8px 12px 10px; }
+.eth-rail__btn { display:flex; align-items:center; gap:12px; padding:11px 14px; font-size:14.5px; font-weight:600; cursor:pointer; text-align:left; width:100%; background:transparent; color:var(--text-secondary); border:none; border-left:2px solid transparent; transition:background .12s, color .12s, border-color .12s; font-family:inherit; }
+.eth-rail__btn:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+.eth-rail__btn--active { background:rgb(from var(--accent-blue) r g b / 0.12); color:var(--accent-blue); border-left-color:var(--accent-blue); }
+.eth-rail__icon { display:flex; align-items:center; flex-shrink:0; opacity:.9; }
+
+.eth-card { background:var(--bg-secondary); border:1px solid var(--border-primary); margin-bottom:18px; transition:border-color .15s; }
+.eth-card:hover { border-color:var(--border-secondary); }
+.eth-card__head { padding:20px 24px 18px; border-bottom:1px solid var(--border-primary); display:flex; align-items:flex-start; gap:15px; }
+.eth-card__icon { display:flex; align-items:center; color:var(--accent-blue); opacity:.95; margin-top:2px; }
+.eth-card__icon svg { width:22px; height:22px; }
+.eth-card__title { font-family:'Inter',system-ui,sans-serif; font-size:18px; font-weight:700; color:var(--text-primary); letter-spacing:-0.02em; line-height:1.25; }
+.eth-card__desc { font-size:14px; color:var(--text-secondary); margin-top:5px; line-height:1.5; }
+.eth-card__body { padding:22px 24px; font-size:14px; color:var(--text-secondary); }
+
+/* Field primitives — consistent focus + hover across every settings card */
+.eth-card__body input:not([type=range]):not([type=checkbox]):not([type=color]),
+.eth-card__body select,
+.eth-card__body textarea { transition:border-color .15s, box-shadow .15s; }
+.eth-card__body input:not([type=range]):not([type=checkbox]):not([type=color]):focus,
+.eth-card__body select:focus,
+.eth-card__body textarea:focus { border-color:var(--accent-blue) !important; box-shadow:0 0 0 3px rgb(from var(--accent-blue) r g b / 0.18); outline:none; }
+.eth-card__body button { transition:filter .12s, background .12s, border-color .12s; }
+.eth-card__body button:not(:disabled):hover { filter:brightness(1.12); }
+.eth-card__body button:disabled { cursor:default; opacity:.6; }
+`;
 
 // ── Settings filter context ───────────────────────────────────
 // Each <Section> self-filters against this. Keeps the filter logic in ONE
@@ -70,17 +114,15 @@ function Section({ icon, title, description, category, children }: {
   if (!shouldRender) return null;
 
   return (
-    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", marginBottom: 12 }}>
-      <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid var(--border-primary)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>{icon}</span>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", fontFamily: "'Inter', sans-serif" }}>{title}</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{description}</div>
-          </div>
+    <div className="eth-card">
+      <div className="eth-card__head">
+        <span className="eth-card__icon">{icon}</span>
+        <div>
+          <div className="eth-card__title">{title}</div>
+          <div className="eth-card__desc">{description}</div>
         </div>
       </div>
-      <div style={{ padding: "16px 20px" }}>{children}</div>
+      <div className="eth-card__body">{children}</div>
     </div>
   );
 }
@@ -112,17 +154,17 @@ function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: bool
           transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
         }} />
       </div>
-      <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{label}</span>
+      <span style={{ fontSize: 14.5, color: "var(--text-secondary)" }}>{label}</span>
     </div>
   );
 }
 
 function SettingRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "12px 0", borderBottom: "1px solid var(--border-primary)" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "16px 0", borderBottom: "1px solid var(--border-primary)" }}>
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>{label}</div>
-        {hint && <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{hint}</div>}
+        <div style={{ fontSize: 15, fontWeight: 600, color: "var(--text-primary)" }}>{label}</div>
+        {hint && <div style={{ fontSize: 13.5, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.5 }}>{hint}</div>}
       </div>
       <div style={{ flexShrink: 0 }}>{children}</div>
     </div>
@@ -133,9 +175,9 @@ function CodeBox({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, background: "var(--bg-tertiary)", borderRadius: 0, padding: "10px 14px", border: "1px solid var(--border-primary)" }}>
-      <span style={{ flex: 1, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 12, color: "var(--accent-cyan)", wordBreak: "break-all" as any }}>{value}</span>
+      <span style={{ flex: 1, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 14, color: "#c4b5fd", wordBreak: "break-all" as any }}>{value}</span>
       <button onClick={() => { navigator.clipboard.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-        style={{ padding: "3px 10px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", flexShrink: 0 }}>
+        style={{ padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", flexShrink: 0 }}>
         {copied ? "✓" : "Copy"}
       </button>
     </div>
@@ -835,7 +877,7 @@ function DiscogsCredentialForm() {
       </div>
       <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
         Credentials stored securely. Get your keys at{" "}
-        <a href="#" onClick={e => { e.preventDefault(); (window as any).ether.system.openUrl("https://www.discogs.com/settings/developers"); }} style={{ color: "var(--accent-blue)" }}>discogs.com/settings/developers</a>
+        <a href="#" onClick={e => { e.preventDefault(); (window as any).ether.system.openUrl("https://www.discogs.com/settings/developers"); }} style={{ color: "#c4b5fd", textDecoration: "underline" }}>discogs.com/settings/developers</a>
         {" "}— create an app, use Consumer Key + Consumer Secret.
       </div>
     </div>
@@ -1185,7 +1227,7 @@ function KeepOnAirSection() {
 function publicPageErrText(code?: string): string {
   switch (code) {
     case "slug_taken": case "taken":        return "That address is already taken.";
-    case "slug_invalid": case "invalid":    return "Use 3–32 lowercase letters, numbers, or hyphens.";
+    case "slug_invalid": case "invalid":    return "Use 2–32 lowercase letters, numbers, or hyphens.";
     case "slug_reserved": case "reserved":  return "That name is reserved — pick another.";
     case "slug_required_for_public":        return "Choose an address before making the page public.";
     case "station_not_found_or_not_owned":  return "This station isn't linked to your account.";
@@ -1404,7 +1446,7 @@ export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: st
           <SettingRow label="Your listener page">
             {published ? (
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
-                <code style={{ fontSize: 12, fontFamily: "'DM Mono', monospace", color: "var(--accent-blue)", wordBreak: "break-all" as const }}>{liveUrl}</code>
+                <code style={{ fontSize: 14, fontFamily: "'DM Mono', monospace", color: "#c4b5fd", wordBreak: "break-all" as const }}>{liveUrl}</code>
                 <button onClick={copyUrl} style={linkBtn}>{copied ? "Copied!" : "Copy"}</button>
                 <button onClick={openUrl} style={linkBtn}>Open</button>
               </div>
@@ -1736,19 +1778,43 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   }, []);
 
   const loadDevices = async () => {
+    const apply = (all: MediaDeviceInfo[]) => setDevices(
+      all.filter(d => d.kind === "audioinput" || d.kind === "audiooutput").map(d => ({
+        deviceId: d.deviceId,
+        label: d.label || (d.kind === "audiooutput" ? "Output " : "Input ") + (d.deviceId ? d.deviceId.substring(0, 8) : "device"),
+        kind: d.kind,
+      }))
+    );
+    // Enumerate FIRST — device existence (and outputs) don't require mic permission,
+    // so the pickers always populate even if the mic prompt is denied/unavailable.
+    // The old code put getUserMedia first inside a silent catch, so any permission
+    // failure wiped the entire list — including outputs that never needed the mic.
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
-      const all = await navigator.mediaDevices.enumerateDevices();
-      setDevices(all.filter(d => d.kind === "audioinput" || d.kind === "audiooutput").map(d => ({
-        deviceId: d.deviceId, label: d.label || "Device " + d.deviceId.substring(0, 8), kind: d.kind,
-      })));
-    } catch {}
+      apply(await navigator.mediaDevices.enumerateDevices());
+    } catch (e) {
+      console.error("[SettingsPanel] enumerateDevices failed:", e);
+    }
+    // Then request mic access to unlock input *labels*, and re-enumerate. A failure
+    // here leaves the already-listed devices intact (labels may be generic).
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      s.getTracks().forEach(t => t.stop());
+      apply(await navigator.mediaDevices.enumerateDevices());
+    } catch (e) {
+      console.warn("[SettingsPanel] mic permission unavailable; device labels limited:", e);
+    }
   };
 
   const saveStationName = async () => {
     if (stationId != null) {
       const r = await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'station_name', stationName).catch(() => ({ ok: false }));
       if (!r.ok) console.error('[SettingsPanel] station_name upsert:', r.error);
+      // ALSO update the stations table row name. The switcher, active-station, and station identity
+      // read stations.name — writing only the KV copy above left the real name as "Station 1", which
+      // is why renames "didn't take". Update both so the new name actually shows everywhere.
+      try { await (window as any).ether.stations.update(stationId, { name: stationName }); }
+      catch (e) { console.error('[SettingsPanel] stations.update name:', e); }
+      try { window.dispatchEvent(new Event('station-switched')); } catch {}  // refresh the active-station cache
     }
     setStationNameSaved(true);
     setTimeout(() => setStationNameSaved(false), 2000);
@@ -1935,55 +2001,42 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     setTimeout(() => setAiProviderSaved(false), 1500);
   };
 
-  const catBtnStyle = (id: SettingsCategory): React.CSSProperties => ({
-    display: "flex", alignItems: "center", gap: 10,
-    padding: "9px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, cursor: "pointer",
-    textAlign: "left" as const, width: "100%",
-    background: activeCategory === id && !searchText ? "var(--bg-tertiary)" : "transparent",
-    color:      activeCategory === id && !searchText ? "var(--accent-blue)" : "var(--text-secondary)",
-    border: "none",
-    borderLeft: "2px solid " + (activeCategory === id && !searchText ? "var(--accent-blue)" : "transparent"),
-    transition: "all 0.12s",
-  });
-
   const activeCat = CATEGORIES.find(c => c.id === activeCategory);
 
   return (
     <SettingsFilterContext.Provider value={{ activeCategory, searchText, registerSection: () => {} }}>
-    <div style={{ maxWidth: 1100, margin: "0 auto", padding: "4px 0 40px", fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <style>{SETTINGS_CSS}</style>
+    <div className="eth-settings" style={{ maxWidth: 1100, margin: "0 auto", padding: "4px 0 48px", fontFamily: "'Inter', system-ui, sans-serif" }}>
 
       {/* Header: title + search */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 16, flexWrap: "wrap" as any }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Inter', sans-serif" }}>Settings</h1>
-        <div style={{ position: "relative", flex: 1, maxWidth: 400, minWidth: 200 }}>
-          <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "var(--text-tertiary)", pointerEvents: "none", fontSize: 13 }}>🔍</span>
+      <div className="eth-settings__head">
+        <div>
+          <h1 className="eth-settings__title">Settings</h1>
+          <div className="eth-settings__sub">Configure your station, audio, automation, and account.</div>
+        </div>
+        <div className="eth-search">
+          <svg className="eth-search__icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input
             value={searchText}
             onChange={e => setSearchText(e.target.value)}
             placeholder="Search all settings…"
-            style={{
-              width: "100%", padding: "8px 12px 8px 32px", borderRadius: 0,
-              background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-              color: "var(--text-primary)", fontSize: 13, outline: "none",
-              boxSizing: "border-box",
-            }}
           />
           {searchText && (
-            <button onClick={() => setSearchText("")}
-              style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: "2px 6px" }}
-              aria-label="Clear search">×</button>
+            <button className="eth-search__clear" onClick={() => setSearchText("")} aria-label="Clear search">×</button>
           )}
         </div>
       </div>
 
       {/* Two-column layout: sidebar + content */}
-      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 24, alignItems: "start" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "210px 1fr", gap: 24, alignItems: "start" }}>
 
         {/* Left sidebar — category nav */}
-        <nav style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "6px 0", position: "sticky" as const, top: 10 }}>
+        <nav className="eth-rail">
+          <div className="eth-rail__label">Settings</div>
           {CATEGORIES.map(c => (
-            <button key={c.id} onClick={() => { setSearchText(""); setActiveCategory(c.id); }} style={catBtnStyle(c.id)}>
-              <span style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>{c.icon}</span>
+            <button key={c.id} onClick={() => { setSearchText(""); setActiveCategory(c.id); }}
+              className={"eth-rail__btn" + (activeCategory === c.id && !searchText ? " eth-rail__btn--active" : "")}>
+              <span className="eth-rail__icon">{c.icon}</span>
               <span>{c.label}</span>
             </button>
           ))}
@@ -1993,12 +2046,12 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         <div>
           {/* Breadcrumb / context line */}
           {!searchText && activeCat && (
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "var(--text-tertiary)", marginBottom: 12 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "var(--text-tertiary)", marginBottom: 16 }}>
               {activeCat.label}
             </div>
           )}
           {searchText && (
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12 }}>
+            <div style={{ fontSize: 13.5, color: "var(--text-tertiary)", marginBottom: 16 }}>
               Showing settings matching "<b style={{ color: "var(--text-secondary)" }}>{searchText}</b>" across all categories
             </div>
           )}
@@ -2232,14 +2285,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         <PairMobileApp />
       </Section>
 
-      {/* ── AI Voice Generation (Auto-DJ) ── */}
-      <Section
-        category="integrations"
-        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/><path d="M3 9l3-1 3 1"/></svg>}
-        title="AI Voice Generation"
-        description="Pick a TTS provider and voice for AI Auto-DJ — generates station IDs, weather, news intros from text">
-        <AIVoiceSettings />
-      </Section>
+      {/* AI Voice Generation removed (v4.3.77) — Iris is the single station voice. */}
 
       {/* ── Beta Program & Feedback ── */}
       <Section
@@ -2721,7 +2767,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               <div style={{ padding: "14px 20px" }}>
                 <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>
                   Get your API key at{" "}
-                  <a href={card.keyUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl(card.keyUrl); }}>
+                  <a href={card.keyUrl} target="_blank" rel="noreferrer" style={{ color: "#c4b5fd", textDecoration: "underline" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl(card.keyUrl); }}>
                     {card.keyUrlLabel}
                   </a>
                 </div>
@@ -2761,7 +2807,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         >
           <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>
             Free API key at{" "}
-            <a href="https://openweathermap.org/api" target="_blank" rel="noreferrer" style={{ color: "var(--accent-cyan)", textDecoration: "none" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl("https://openweathermap.org/api"); }}>
+            <a href="https://openweathermap.org/api" target="_blank" rel="noreferrer" style={{ color: "#c4b5fd", textDecoration: "underline" }} onClick={e => { e.preventDefault(); (window as any).ether?.system?.openUrl("https://openweathermap.org/api"); }}>
               openweathermap.org/api
             </a>
             {" "}— sign up, then copy the key from your dashboard. You can also set <code style={{ fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 12, background: "var(--bg-tertiary)", padding: "1px 5px", borderRadius: 0 }}>OPENWEATHERMAP_API_KEY</code> in your .env file.

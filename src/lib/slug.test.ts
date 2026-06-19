@@ -3,12 +3,12 @@ import { validateSlug, slugify } from "./slug";
 
 describe("validateSlug (client mirror)", () => {
   it("accepts valid slugs", () => {
-    for (const s of ["rock1029", "kjazz", "wxyz-fm", "abc", "my-cool-station"]) {
+    for (const s of ["ov", "ab", "rock1029", "kjazz", "wxyz-fm", "abc", "my-cool-station"]) {
       expect(validateSlug(s)).toEqual({ ok: true });
     }
   });
   it("rejects too short / long / bad chars / hyphen edges as invalid", () => {
-    for (const s of ["ab", "a".repeat(33), "Rock", "my station", "under_score", "-abc", "abc-", "a--b"]) {
+    for (const s of ["a", "a".repeat(33), "Rock", "my station", "under_score", "-abc", "abc-", "a--b"]) {
       expect(validateSlug(s)).toMatchObject({ ok: false, reason: "invalid" });
     }
   });

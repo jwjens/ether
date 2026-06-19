@@ -956,16 +956,6 @@ function getActiveStationId() {
 }
 
 // ── Account-scoped station ownership ───────────────────────────
-// The currently signed-in account = the install-wide license_key in station_config_kv
-// (LIMIT 1; cleared on sign-out, rewritten on sign-in). Station visibility is scoped to it.
-function getCurrentLicenseKey() {
-  try {
-    return db.prepare(
-      "SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1"
-    ).get()?.value ?? null;
-  } catch { return null; }
-}
-
 // Mirror of src/lib/slug.ts slugify — turns a station name into a URL-safe slug used as the default
 // Icecast mount (e.g. "OV" → "ov", "All Day Safe Park Music" → "all-day-safe-park-music"). Each
 // station's mount must be unique on the shared Icecast server; deriving it from the name auto-fills
@@ -982,42 +972,6 @@ function _slugifyName(name) {
     .replace(/-+$/g, "");
 }
 
-// On sign-in, stamp owner_license_key on the local rows the backend (/account/connect) says
-// belong to the signed-in account — covers stations that arrived via cloud install or sync and
-// have no owner yet. Account-agnostic: uses whatever license is currently signed in.
-function adoptStationsForCurrentAccount(uuids) {
-  const lk = getCurrentLicenseKey();
-  if (!lk || !Array.isArray(uuids) || !uuids.length) return;
-  const upd = db.prepare("UPDATE stations SET owner_license_key=? WHERE uuid=? AND deleted_at IS NULL");
-  const tx  = db.transaction(() => { for (const u of uuids) { if (u) upd.run(lk, u); } });
-  tx();
-}
-
-// Guarantee the active station belongs to the signed-in account, so switching accounts never
-// leaves the previous account's station flagged active. No-op when the account owns no stations
-// yet (a brand-new account → onboarding sets up its first station).
-function enforceActiveStationForCurrentAccount() {
-  const lk = getCurrentLicenseKey();
-  if (!lk) return;
-  // Claim any not-yet-tagged stations for the current account. This is what makes scoping reliable:
-  // a synced/legacy station with no owner becomes this account's, so it shows for this account and
-  // is hidden from any OTHER account that signs in later. (Replaces the old behavior that wrongly
-  // deactivated NULL-owner stations and made them vanish.)
-  try { db.prepare("UPDATE stations SET owner_license_key=? WHERE deleted_at IS NULL AND owner_license_key IS NULL").run(lk); } catch {}
-  const owned = db.prepare(
-    "SELECT id, is_active FROM stations WHERE deleted_at IS NULL AND owner_license_key=? ORDER BY id"
-  ).all(lk);
-  if (!owned.length) return;
-  if (owned.some(s => s.is_active)) {
-    // An owned station is already active — clear is_active only on stations owned by ANOTHER account.
-    db.prepare(
-      "UPDATE stations SET is_active=0 WHERE deleted_at IS NULL AND owner_license_key IS NOT NULL AND owner_license_key!=?"
-    ).run(lk);
-    return;
-  }
-  db.prepare("UPDATE stations SET is_active=0").run();
-  db.prepare("UPDATE stations SET is_active=1 WHERE id=?").run(owned[0].id);
-}
 
 // ── Deck config seeder ────────────────────────────────────────
 // Deck slots A-F are defined HERE, in the database, on every startup.
@@ -1444,9 +1398,6 @@ app.whenReady().then(() => {
   try {
     initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
     try { _backfillAccountMarker(); } catch {}
-    // Re-scope the active station to the signed-in account on every launch, so a session restored
-    // from KV (keep-session relaunch) never leaves a different account's station active.
-    try { enforceActiveStationForCurrentAccount(); } catch {}
   } catch (e) {
     let dbPath = "(could not resolve)";
     try { dbPath = getDbPath(); } catch {}
@@ -5379,36 +5330,13 @@ ipcMain.handle('stream:get-all-status', () => {
 });
 
 // ── Stations CRUD ─────────────────────────────────────────────
-// Scoped to the signed-in account, resiliently: returns stations owned by the current license PLUS
-// any not-yet-tagged (NULL-owner) ones — so a freshly-synced/legacy station is NEVER hidden. On
-// sign-in, enforceActiveStationForCurrentAccount() claims NULL-owner stations to the current
-// account, so a DIFFERENT account signing in later (e.g. a personal account at home) won't see
-// them. No license yet (pre sign-in) → show all so first-run setup works.
-ipcMain.handle('stations:list', () => {
-  const lk = getCurrentLicenseKey();
-  if (!lk) return db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all();
-  return db.prepare(
-    "SELECT * FROM stations WHERE deleted_at IS NULL AND (owner_license_key = ? OR owner_license_key IS NULL) ORDER BY id"
-  ).all(lk);
-});
+ipcMain.handle('stations:list', () =>
+  db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all()
+);
 
-ipcMain.handle('stations:get-active', () => {
-  const lk = getCurrentLicenseKey();
-  if (!lk) return db.prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null;
-  return db.prepare(
-    "SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL AND (owner_license_key = ? OR owner_license_key IS NULL) LIMIT 1"
-  ).get() ?? null;
-});
-
-// Sign-in reconcile: stamp ownership on the account's authoritative stations, then make sure an
-// owned station is the active one. Called from OnboardingFlow.doSignIn with /account/connect uuids.
-ipcMain.handle('account:reconcile-stations', (_, uuids) => {
-  try {
-    adoptStationsForCurrentAccount(uuids);
-    enforceActiveStationForCurrentAccount();
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
+ipcMain.handle('stations:get-active', () =>
+  db.prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null
+);
 
 ipcMain.handle('stations:switch', (_, id) => {
   try {
@@ -5452,8 +5380,6 @@ ipcMain.handle('stations:create', (_, data) => {
       icecast_password: data.icecast_password || 'hackme',
       icecast_bitrate: data.icecast_bitrate || 128, icecast_format: data.icecast_format || 'mp3',
       is_active: 0,
-      // Stamp the creating account so the station is visible only to it. Account-agnostic.
-      owner_license_key: getCurrentLicenseKey(),
     });
     return { ok: true, id: row.id };
   } catch (e) { return { ok: false, error: e.message }; }
