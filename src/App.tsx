@@ -5,7 +5,7 @@ import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -807,6 +807,18 @@ export default function App() {
     const id = setInterval(push, 3 * 60 * 1000);
     return () => clearInterval(id);
   }, [stationId, stationUuid, firstRunChecked, currentUser]);
+
+  // Auto-materialize cloud stations on a running install: poll /account/connect and create any
+  // account station missing locally (add-only; never switches/deletes), so a station created in
+  // the dashboard appears without a sign-out/in. Gated post-sign-in with a license present.
+  useEffect(() => {
+    if (!firstRunChecked || !accountSignedIn || !apiKeyRef.current) return;
+    let alive = true;
+    const tick = () => { if (alive) reconcileAccountStations(apiKeyRef.current).catch(() => {}); };
+    tick();                                  // immediate — catches a station created just before this session
+    const id = setInterval(tick, 60 * 1000); // then every 60s
+    return () => { alive = false; clearInterval(id); };
+  }, [firstRunChecked, accountSignedIn]);
 
   // When a cloud→local download finishes (materialize writes file_path), re-push the
   // library view so the dashboard's local/cloud status reflects the new local files.

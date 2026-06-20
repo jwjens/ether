@@ -247,6 +247,57 @@ async function resolveLocalStationId(ether: any, stationUuid: string | undefined
   } catch { return null; }
 }
 
+// Periodic reconcile: ensure every cloud station for this license exists in the LOCAL stations
+// table, so a station created in the dashboard materializes on a running install WITHOUT a
+// sign-out/in (the only other path is OnboardingFlow at sign-in). Reuses the exact mechanism
+// onboarding uses (/account/connect → stations.create with the backend uuid).
+//
+// STRICTLY ADDITIVE — creates stations missing locally; never deletes a local station absent
+// from the cloud (that pruning is a separate, deliberately-deferred reconciliation), never
+// switches the active station, and reuses this install's existing machine_id (no new seat).
+// Best-effort: returns the number created; swallows errors so the next tick just retries.
+export async function reconcileAccountStations(licenseKey: string | null | undefined): Promise<number> {
+  if (!licenseKey) return 0;
+  const ether = (window as any).ether;
+  try {
+    const idResp = await ether.identity?.get?.().catch(() => null);
+    const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        license_key:  licenseKey,
+        machine_id:   idResp?.ok ? idResp.machine_id   : "",
+        machine_name: idResp?.ok ? idResp.machine_name : "",
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const cloud: any[] = Array.isArray(data.stations) ? data.stations : [];
+    if (cloud.length === 0) return 0;
+
+    const local = await ether.stations.list();
+    const haveUuids = new Set((Array.isArray(local) ? local : (local?.rows || [])).map((s: any) => s.uuid));
+
+    let created = 0;
+    for (const s of cloud) {
+      if (!s?.uuid || haveUuids.has(s.uuid)) continue;
+      const r = await ether.stations.create({
+        uuid:      s.uuid,
+        name:      s.name         || "Station",
+        callsign:  s.call_letters || "",
+        frequency: s.frequency    || "",
+      });
+      // NOTE: no stations.switch — never change the active/on-air station.
+      if (r?.ok) { created++; console.log(`[reconcile] materialized cloud station ${s.name} (${s.uuid})`); }
+      else console.warn("[reconcile] local station insert failed:", r?.error);
+    }
+    if (created > 0) window.dispatchEvent(new Event("station-switched")); // nudge the switcher/badge to refresh
+    return created;
+  } catch (e) {
+    console.warn("[reconcile] account stations reconcile failed:", (e as any)?.message ?? e);
+    return 0;
+  }
+}
+
 // Apply a remote dashboard edit to the local DB via the existing typed sync handlers
 // (they wrap writes in withMutation -> HLC mutation -> syncs), then re-push the changed
 // table so the dashboard reflects it. Whitelisted tables/ops only.
