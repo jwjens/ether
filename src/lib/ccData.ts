@@ -159,7 +159,17 @@ export async function addLibrarySong(
   },
 ): Promise<void> {
   const ether = (window as any).ether;
-  const { file_key, title, artist, category_id, duration_ms, station_id, station_uuid } = data;
+  const { file_key, title, artist, category_id, duration_ms, station_uuid } = data;
+  // Resolve the install's local station_id from the UUID (dashboard never supplies the integer).
+  let station_id: number | null = data.station_id ?? null;
+  if (station_uuid) {
+    const resolved = await resolveLocalStationId(ether, station_uuid);
+    if (resolved == null) {
+      console.error(`[addSong] station ${station_uuid} not found on this install — cannot add song. Let the station sync down first.`);
+      return;
+    }
+    station_id = resolved;
+  }
   if (!file_key || !title || station_id == null) {
     console.warn("[addSong] missing file_key/title/station_id — skipped");
     return;
@@ -218,6 +228,25 @@ const NS: Record<string, string> = {
 // raw table. Everything else re-pushes its own table.
 const LIBRARY_TABLES = new Set(["songs", "station_programming", "artists", "albums"]);
 
+// Station-scoped tables whose remote create/delete must carry THIS install's local integer
+// station_id. (Install-scoped library tables — songs/artists/albums — ignore station_id.)
+const STATION_SCOPED = new Set(["categories", "clocks", "clock_slots", "shows", "station_programming", "spots"]);
+
+// Resolve this install's LOCAL integer station_id from the station UUID the dashboard sends.
+// The dashboard knows the station only by UUID and cannot know the install's local integer id,
+// so the install is the source of truth — this is what lets the dashboard seed the FIRST row of
+// a brand-new station (there's no existing row to read the id from). Returns null when the
+// station is not on this install; callers MUST bail rather than write a guessed/null station_id.
+async function resolveLocalStationId(ether: any, stationUuid: string | undefined | null): Promise<number | null> {
+  if (!stationUuid) return null;
+  try {
+    const res = await ether.stations.list();
+    const rows = Array.isArray(res) ? res : (res?.rows || []);
+    const match = rows.find((s: any) => s.uuid === stationUuid);
+    return match?.id ?? null;
+  } catch { return null; }
+}
+
 // Apply a remote dashboard edit to the local DB via the existing typed sync handlers
 // (they wrap writes in withMutation -> HLC mutation -> syncs), then re-push the changed
 // table so the dashboard reflects it. Whitelisted tables/ops only.
@@ -228,20 +257,40 @@ export async function applyDbMutation(
   const ether = (window as any).ether;
   const ns = NS[data.table] ? ether[NS[data.table]] : null;
   if (!ns) { console.warn("[db:apply] unsupported table:", data.table); return; }
+
+  // Resolve THIS install's local station_id from the UUID the dashboard sent — so the dashboard
+  // never needs to know or supply the integer (fixes first-row bootstrap on a fresh station).
+  // Authoritative when it resolves; for station-scoped tables a non-resolving UUID is a hard bail
+  // (the station isn't on this install yet) — never write a guessed/null station_id.
+  let localStationId: number | null = data.station_id ?? null;
+  if (data.station_uuid) {
+    const resolved = await resolveLocalStationId(ether, data.station_uuid);
+    if (resolved != null) localStationId = resolved;
+    else if (STATION_SCOPED.has(data.table)) {
+      console.error(`[db:apply] station ${data.station_uuid} not found on this install — cannot ${data.op} ${data.table}. Sign the station in / let it sync down first.`);
+      return;
+    }
+  }
+
   try {
-    if (data.op === "create") await ns.create(data.payload);
-    else if (data.op === "update") await ns.update(data.uuid, data.payload);
-    else if (data.op === "delete") await ns.delete(data.uuid, data.station_id);
-    else { console.warn("[db:apply] unsupported op:", data.op); return; }
+    if (data.op === "create") {
+      const payload = STATION_SCOPED.has(data.table) ? { ...data.payload, station_id: localStationId } : data.payload;
+      await ns.create(payload);
+    } else if (data.op === "update") {
+      await ns.update(data.uuid, data.payload);
+    } else if (data.op === "delete") {
+      await ns.delete(data.uuid, STATION_SCOPED.has(data.table) ? (localStationId ?? undefined) : data.station_id);
+    } else { console.warn("[db:apply] unsupported op:", data.op); return; }
   } catch (e) {
     console.error("[db:apply] handler failed:", data.table, data.op, e);
     return;
   }
+
   if (data.station_uuid) {
     if (LIBRARY_TABLES.has(data.table)) {
-      await pushLibrary(licenseKey, data.station_uuid, data.station_id as number);
+      await pushLibrary(licenseKey, data.station_uuid, localStationId as number);
     } else {
-      await pushCcTable(licenseKey, data.station_uuid, data.station_id as number, data.table);
+      await pushCcTable(licenseKey, data.station_uuid, localStationId as number, data.table);
     }
   }
 }
