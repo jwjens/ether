@@ -2905,14 +2905,15 @@ function UserManagement() {
   const [addPin, setAddPin] = useState("");
 
   const ether = (window as any).ether;
-  // Profiles are per-station (account ⊃ station ⊃ profile) — manage only the
-  // active station's roster.
+  // Profiles are INSTALL-level operators (in-app permissions), NOT station-scoped — manage
+  // the whole install's roster regardless of which station is active. stationId is still
+  // resolved to STAMP onto newly-added profiles (the station_id column is inert/legacy).
   const { stationId } = useActiveStation();
 
   const loadUsers = useCallback(async () => {
-    const rows = await query<ManagedUser>("SELECT * FROM users WHERE station_id = ? ORDER BY id", [stationId]);
+    const rows = await query<ManagedUser>("SELECT * FROM users ORDER BY id");
     setUsers(rows || []);
-  }, [stationId]);
+  }, []);
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
   const handleAddUser = async () => {
@@ -3101,7 +3102,6 @@ interface ManageStation { id: number; name: string; callsign?: string; is_active
 
 function StationManagementSection() {
   const ether = (window as any).ether;
-  const { stationId: activeStationId } = useActiveStation();
   const [stations, setStations] = useState<ManageStation[]>([]);
   const [target, setTarget]     = useState<ManageStation | null>(null);
   const [pin, setPin]           = useState("");
@@ -3127,10 +3127,11 @@ function StationManagementSection() {
     if (!target || busy) return;
     setBusy(true); setErr("");
     try {
-      // Gate on the operator's admin PIN — verified against this station's admin
-      // profiles. If no admin has a PIN set, there's nothing to verify against.
+      // Gate on the operator's admin PIN — verified against the install's admin profiles
+      // (install-level, not station-scoped; otherwise a station with no local admin row
+      // would skip the PIN gate entirely). If no admin has a PIN set, nothing to verify.
       const admins = await query<{ pin_hash: string | null }>(
-        "SELECT pin_hash FROM users WHERE station_id = ? AND role = 'admin'", [activeStationId]
+        "SELECT pin_hash FROM users WHERE role = 'admin'"
       );
       const withPin = (admins || []).filter(a => a.pin_hash);
       if (withPin.length > 0) {

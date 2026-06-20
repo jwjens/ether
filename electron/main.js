@@ -717,11 +717,13 @@ function runMigrations() {
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
 
-  // Account isolation: each station is owned by the license_key of the account that created it.
-  // Visibility (stations:list / :get-active) is scoped to the currently signed-in license, so
-  // signing out of one account and into another switches the visible station set. Nullable +
-  // backfilled below; rows with no owner (orphans created before accounts existed) stay hidden
-  // but are NOT deleted — recoverable by claiming them for an account later.
+  // Account ownership: each station records the license_key of the account that created it.
+  // NOTE: this column is recorded but NOT currently enforced at the list layer — `stations:list`
+  // and `:get-active` (see handlers below) return ALL local non-deleted rows regardless of
+  // owner_license_key / the signed-in account. License-scoped visibility is intentionally
+  // deferred to the v4.5 account-vs-license rework (stations are license-owned, not
+  // account-owned, in both client and backend today). See docs/account-license-architecture-v4.5.md.
+  // Nullable + backfilled below; orphan rows (no owner) are NOT deleted.
   alterSafe("ALTER TABLE stations ADD COLUMN owner_license_key TEXT");
   // One-time idempotent backfill: adopt the per-station KV license_key that older builds wrote.
   // Only fills NULLs, so it is safe to re-run on every startup. Stations with no per-station
@@ -1705,7 +1707,16 @@ function _persistOnAir(anyLive) {
   } catch (e) { console.error("[HA] on-air marker:", e.message); }
 }
 function _wasOnAir() {
-  try { return fs.existsSync(_onAirMarkerFile()); } catch { return false; }
+  try {
+    if (!fs.existsSync(_onAirMarkerFile())) return false;
+    // The marker alone is not enough to skip sign-in: it can be stranded by an unclean prior
+    // run (crash, force-kill, dev taskkill). Only HONOR it as on-air recovery when THIS launch
+    // is actually a watchdog/crash respawn — the watchdog brands every app instance it spawns
+    // with ETHER_WATCHDOG_PID (watchdog.js). A plain cold/manual launch has no such env var, so
+    // a stale marker is ignored and sign-in shows normally (CLAUDE.md: the ONLY sign-in-skip
+    // exception is the watchdog auto-restart while a station was streaming live).
+    return !!process.env.ETHER_WATCHDOG_PID;
+  } catch { return false; }
 }
 ipcMain.handle("account:was-on-air", () => _wasOnAir());
 
@@ -1751,7 +1762,15 @@ app.on("before-quit", () => {
   // HA: signal an intentional quit so the watchdog stands down — UNLESS we're
   // intentionally relaunching (update), in which case the expected-restart
   // sentinel is already written and we must NOT also write clean-exit.
-  if (!_haExpectedRestart) writeHaSentinel(".ether-clean-exit");
+  if (!_haExpectedRestart) {
+    writeHaSentinel(".ether-clean-exit");
+    // Clean, user-initiated quit (NOT an update/continuation relaunch): clear the on-air
+    // marker so the NEXT cold launch requires sign-in. A crash / power-loss / force-kill
+    // never runs before-quit, so the marker survives those → genuine watchdog on-air
+    // recovery is preserved. Without this, a marker stranded by an unclean prior run would
+    // make a normal launch falsely skip sign-in (the stale-marker bug).
+    try { _persistOnAir(false); } catch {}
+  }
 
   // Deliberate close → STOP the broadcast. The out-of-process daemon is detached and outlives
   // the app, so we must tell it to shut down. Previously only the HA watchdog did this (reading

@@ -29,8 +29,10 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function UserLogin({ onLogin }: Props) {
   const [users, setUsers] = useState<AppUser[]>([]);
-  // Profiles are scoped per-station (account ⊃ station ⊃ profile). Resolved from
-  // the active station on mount; defaults to 1 until then.
+  // Profiles are INSTALL-level operators (in-app permissions), NOT station-scoped — an
+  // operator must be able to sign in regardless of which station is currently active. We
+  // still resolve the active station to STAMP onto any new profile (the station_id column
+  // is inert/legacy), but we never FILTER the picker by it.
   const [stationId, setStationId] = useState(1);
   const [selected, setSelected] = useState<AppUser | null>(null);
   const [pin, setPin] = useState("");
@@ -54,7 +56,8 @@ export default function UserLogin({ onLogin }: Props) {
         const active = await (window as any).ether?.stations?.getActive?.().catch(() => null);
         const sid = active?.id ?? 1;
         setStationId(sid);
-        const rows = await query<AppUser>("SELECT * FROM users WHERE station_id = ? ORDER BY id", [sid]);
+        // Install-level: show ALL profiles, not just the active station's (see note above).
+        const rows = await query<AppUser>("SELECT * FROM users ORDER BY id");
         if (rows.length > 0) setUsers(rows);
         else setSetupMode(true);
       } catch {} finally { setLoading(false); }
