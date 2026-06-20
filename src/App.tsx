@@ -88,6 +88,7 @@ import SplashScreen from "./components/SplashScreen";
 import OnShiftScreen from "./components/OnShiftScreen";
 import LibraryImport from "./components/LibraryImport";
 import SpotifyImport from "./components/SpotifyImport";
+import { useLibraryBorrowed } from "./hooks/useLibraryBorrowed";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
 import BulkAssignModal from "./components/BulkAssignModal";
 import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
@@ -3923,6 +3924,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     catch { return new Set(); }
   }, []);
   const [showImport, setShowImport]   = useState(false);
+  // Borrowed catalog → read-only: gate ingest + core-field edits (the hard guarantee lives in
+  // electron/sync/mutation-writer.js). Station-scoped tagging/programming stays fully editable.
+  const libraryBorrowed = useLibraryBorrowed();
   const [showNexGen, setShowNexGen]   = useState(false);
   const [showSpotify, setShowSpotify] = useState(false);
   const [showCreateCat, setShowCreateCat] = useState(false);
@@ -4093,6 +4097,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
 
   const commitInline = async () => {
     if (!inlineEdit) return;
+    if (libraryBorrowed) { setInlineEdit(null); return; }  // catalog core fields (title/artist/album/year/genre/bpm) are read-only when borrowed
     const { id, col, value } = inlineEdit;
     setInlineEdit(null);
     const fieldMap: Partial<Record<LibCol, string>> = { title: "title", artist: "artist", album: "album", year: "year", genre: "genre", bpm: "bpm" };
@@ -4508,9 +4513,18 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             : <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "rgba(167,139,250,0.08)", color: "#a78bfa", border: "1px solid rgba(167,139,250,0.25)", cursor: "pointer" }} title="Network plan required">🔒 NexGen / ENCO</button>
           }
           <button onClick={() => { setShowCreateCat(p => !p); setShowImport(false); }} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: showCreateCat ? "var(--accent-purple)" : "var(--bg-secondary)", color: showCreateCat ? "#fff" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" }}>{showCreateCat ? "Cancel" : "+ Category"}</button>
-          <button onClick={() => { setShowImport(p => !p); setShowCreateCat(false); }} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>
+          {libraryBorrowed
+            ? <button disabled title="Library is read-only — its catalog is borrowed from another account. You can still program and tag these songs for your station." style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "not-allowed", opacity: 0.6 }}>🔒 Borrowed (read-only)</button>
+            : <button onClick={() => { setShowImport(p => !p); setShowCreateCat(false); }} style={{ padding: "7px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", boxShadow: "0 2px 8px rgba(14,165,233,0.35)" }}>{showImport ? "Cancel" : "+ Import Music"}</button>
+          }
         </div>
       </div>
+
+      {libraryBorrowed && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 4, borderRadius: 0, background: "rgba(167,139,250,0.10)", border: "1px solid rgba(167,139,250,0.35)", color: "#a78bfa", fontSize: 12, fontWeight: 600 }}>
+          🔒 This library is read-only — its catalog (songs, artists, albums) is borrowed from another account. You can still program and tag these songs for your station.
+        </div>
+      )}
 
       {/* Filters row */}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

@@ -55,6 +55,23 @@ function _resetForTest() {
 
 const VALID_OPS = new Set(['insert', 'update', 'delete', 'checkpoint']);
 
+// ── Library-borrowed read-only guard ──────────────────────────
+// When this install's catalog is BORROWED from another license via a grant
+// (install_config_kv.library_borrowed set), LOCAL writes to the install-scoped catalog tables
+// are rejected, so no 'pending' library mutation can ever be created — even if a UI control is
+// missed. Only the catalog is frozen; station-scoped tables (this install's own programming /
+// tagging of borrowed songs) are unaffected. Inbound (pulled) borrowed rows apply via the
+// receiver/apply path, which does NOT go through withMutation, so they're allowed in.
+const LIBRARY_CATALOG_TABLES = new Set(['songs', 'artists', 'albums']);
+function isLibraryBorrowed(db) {
+  try {
+    const r = db.prepare(
+      "SELECT value FROM install_config_kv WHERE key='library_borrowed' AND deleted_at IS NULL"
+    ).get();
+    return !!(r && r.value && r.value !== '0' && r.value !== '');
+  } catch { return false; }
+}
+
 // Per [N-08]: these 3 mutation fields are LOCAL-ONLY and excluded from wire format.
 //   applied_at   — timestamp this peer applied the mutation
 //   origin       — 'local'/'remote'/'system'/'migration', set per-peer
@@ -358,6 +375,17 @@ function logMutation(db, opts) {
  * @returns {any} the return value of fn
  */
 function withMutation(db, opts, fn) {
+  // Library-borrowed read-only guard: reject LOCAL writes to the install-scoped catalog while
+  // this install is borrowing a library via a grant. The KV lookup runs ONLY for catalog-table
+  // writes (rare), so all other synced writes are unaffected. (Remote/pulled rows apply via the
+  // receiver path, not withMutation, so the borrowed catalog still syncs in normally.)
+  if (LIBRARY_CATALOG_TABLES.has(opts.table_name) && isLibraryBorrowed(db)) {
+    throw new Error(
+      `[library borrowed] catalog is read-only on this install (borrowed via grant) — ` +
+      `cannot ${opts.op || 'write'} ${opts.table_name}`
+    );
+  }
+
   // Pre-generate the mutation id so we can push it onto the context stack
   // before fn() runs, making it available as parent for any nested withMutation calls.
   const mutation_id = crypto.randomUUID();
