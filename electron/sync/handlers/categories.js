@@ -71,9 +71,19 @@ function categoriesCreate(db, payload) {
     station_id:     payload.station_id,
     actor_id:       payload.actor_id ?? null,
   }, () => {
-    db.prepare(
-      `INSERT INTO ${TABLE} (code, name, color, spins_per_hour, priority, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.code, row.name, row.color, row.spins_per_hour, row.priority, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+    // Honor an explicit id when provided (parallels the uuid-passthrough above). Used by the
+    // cloud-staged-programming import to clone DJ Deniro's category scheme into OV's station with
+    // the SAME integer ids, so the borrowed library's songs (which carry DJ's category_id) match
+    // OV's clock_slots and fill rotation. Normal creates omit id → SQLite AUTOINCREMENT, as before.
+    if (payload.id != null) {
+      db.prepare(
+        `INSERT INTO ${TABLE} (id, code, name, color, spins_per_hour, priority, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(payload.id, row.code, row.name, row.color, row.spins_per_hour, row.priority, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+    } else {
+      db.prepare(
+        `INSERT INTO ${TABLE} (code, name, color, spins_per_hour, priority, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(row.code, row.name, row.color, row.spins_per_hour, row.priority, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+    }
   });
   return categoriesGet(db, uuid);
 }

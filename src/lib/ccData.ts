@@ -247,6 +247,72 @@ async function resolveLocalStationId(ether: any, stationUuid: string | undefined
   } catch { return null; }
 }
 
+// Sign-in import of cloud-STAGED programming: pull dashboard-authored categories/clocks/shows/
+// clock_slots (created with no running install) and apply them locally via the db:apply path,
+// resolving station_uuid + cross-row parent UUIDs (clock_uuid, category_uuid) to LOCAL integer
+// ids in dependency order. Rows carry their stable row_uuid (uuid-passthrough) so a re-import is a
+// no-op (UNIQUE uuid) and mark-imported stops re-delivery. Categories may carry an explicit `id`
+// (cloned from DJ Deniro's scheme) so the borrowed library's songs match OV's clock_slots.
+export async function importStagedProgramming(licenseKey: string | null | undefined): Promise<{ imported: number }> {
+  if (!licenseKey) return { imported: 0 };
+  const ether = (window as any).ether;
+  let imported = 0;
+  try {
+    const local = await ether.stations.list();
+    const stations = Array.isArray(local) ? local : (local?.rows || []);
+    for (const st of stations) {
+      if (!st?.uuid) continue;
+      let rows: any[] = [];
+      try {
+        const res = await fetch(`${ETHER_BACKEND_URL}/api/account/station/${encodeURIComponent(st.uuid)}/staged/pending`, {
+          headers: { "x-license-key": licenseKey },
+        });
+        const data = await res.json().catch(() => ({}));
+        rows = Array.isArray(data.rows) ? data.rows : [];
+      } catch { continue; }
+      if (rows.length === 0) continue;
+
+      const uuidToLocalId = new Map<string, number>();   // staged row_uuid -> local integer id (categories, clocks)
+      const applied: string[] = [];
+      for (const r of rows) {
+        const table = r.table_name as string;
+        const p: any = { ...r.payload, uuid: r.row_uuid };   // uuid-passthrough (stable identity / idempotency)
+        // Resolve cross-row parent FKs from staged UUIDs -> local integer ids (parents already applied).
+        if (table === "shows" && p.clock_uuid != null) { p.clock_id = uuidToLocalId.get(p.clock_uuid) ?? null; delete p.clock_uuid; }
+        if (table === "clock_slots") {
+          if (p.clock_uuid != null)    { p.clock_id    = uuidToLocalId.get(p.clock_uuid)    ?? null; delete p.clock_uuid; }
+          if (p.category_uuid != null) { p.category_id = uuidToLocalId.get(p.category_uuid) ?? null; delete p.category_uuid; }
+        }
+        // Apply through the db:apply path: resolves station_uuid -> local station_id, stamps it,
+        // and generates a NORMAL local mutation that syncs up. (Core sync/merge path untouched.)
+        await applyDbMutation(licenseKey, { table, op: "create", payload: p, station_uuid: st.uuid });
+        // Record the local id of parents so dependent rows can resolve their FKs.
+        if (table === "categories" || table === "clocks") {
+          try {
+            const got = await query<{ id: number }>(`SELECT id FROM ${table} WHERE uuid = ? AND deleted_at IS NULL LIMIT 1`, [r.row_uuid]);
+            const id = got?.[0]?.id;
+            if (id != null) uuidToLocalId.set(r.row_uuid, id);
+          } catch { /* parent lookup failed — dependents will resolve to null and be skipped */ }
+        }
+        applied.push(r.row_uuid);
+        imported++;
+      }
+      if (applied.length > 0) {
+        try {
+          await fetch(`${ETHER_BACKEND_URL}/api/account/station/${encodeURIComponent(st.uuid)}/staged/mark-imported`, {
+            method: "POST",
+            headers: { "x-license-key": licenseKey, "Content-Type": "application/json" },
+            body: JSON.stringify({ row_uuids: applied }),
+          });
+        } catch { /* best-effort; uuid-UNIQUE keeps a re-run idempotent even if this ack is lost */ }
+      }
+    }
+  } catch (e) {
+    console.warn("[import-staged] failed:", (e as any)?.message ?? e);
+  }
+  return { imported };
+}
+
 // Periodic reconcile: ensure every cloud station for this license exists in the LOCAL stations
 // table, so a station created in the dashboard materializes on a running install WITHOUT a
 // sign-out/in (the only other path is OnboardingFlow at sign-in). Reuses the exact mechanism

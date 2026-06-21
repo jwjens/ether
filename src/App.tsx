@@ -5,7 +5,7 @@ import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -814,9 +814,14 @@ export default function App() {
   useEffect(() => {
     if (!firstRunChecked || !accountSignedIn || !apiKeyRef.current) return;
     let alive = true;
-    const tick = () => { if (alive) reconcileAccountStations(apiKeyRef.current).catch(() => {}); };
-    tick();                                  // immediate — catches a station created just before this session
-    const id = setInterval(tick, 60 * 1000); // then every 60s
+    // First pass: materialize cloud stations, THEN import any cloud-staged programming (so the
+    // station exists locally before its categories/clocks/slots/shows apply). Idempotent.
+    (async () => {
+      await reconcileAccountStations(apiKeyRef.current).catch(() => {});
+      if (alive) await importStagedProgramming(apiKeyRef.current).catch(() => {});
+    })();
+    // Then keep materializing new cloud stations every 60s (no re-import — that's sign-in-once).
+    const id = setInterval(() => { if (alive) reconcileAccountStations(apiKeyRef.current).catch(() => {}); }, 60 * 1000);
     return () => { alive = false; clearInterval(id); };
   }, [firstRunChecked, accountSignedIn]);
 
