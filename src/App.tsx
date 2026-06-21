@@ -814,14 +814,18 @@ export default function App() {
   useEffect(() => {
     if (!firstRunChecked || !accountSignedIn || !apiKeyRef.current) return;
     let alive = true;
-    // First pass: materialize cloud stations, THEN import any cloud-staged programming (so the
-    // station exists locally before its categories/clocks/slots/shows apply). Idempotent.
-    (async () => {
+    // Continuously keep this install in sync with the cloud: materialize any new account stations,
+    // then import any cloud-staged programming (categories/clocks/slots/shows authored in the
+    // dashboard). Both are idempotent — import only applies rows not yet imported — so it's cheap
+    // to run on a short poll. This is what makes "author in the dashboard, it just shows up" work
+    // without any mode/toggle: a running install picks up new programming within one poll.
+    const syncCloud = async () => {
+      if (!alive) return;
       await reconcileAccountStations(apiKeyRef.current).catch(() => {});
       if (alive) await importStagedProgramming(apiKeyRef.current).catch(() => {});
-    })();
-    // Then keep materializing new cloud stations every 60s (no re-import — that's sign-in-once).
-    const id = setInterval(() => { if (alive) reconcileAccountStations(apiKeyRef.current).catch(() => {}); }, 60 * 1000);
+    };
+    syncCloud();
+    const id = setInterval(syncCloud, 20 * 1000); // ~every 20s
     return () => { alive = false; clearInterval(id); };
   }, [firstRunChecked, accountSignedIn]);
 
