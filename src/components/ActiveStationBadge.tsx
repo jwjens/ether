@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { usePlan } from "../hooks/usePlan";
+import { fetchMyMemberships, type Membership } from "../lib/memberships";
 
 interface Station {
   id: number;
@@ -21,6 +22,10 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
   const [active, setActive]     = useState<Station | null>(null);
   const [open, setOpen]         = useState(false);
   const [showNew, setShowNew]   = useState(false);
+  // RBAC foundation (read-only): the accounts + accessible stations this person belongs to, and the
+  // account currently seated on this install. Used only to LIST other accessible stations — no switch.
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const [accountEmail, setAccountEmail] = useState<string>("");
   const dropRef = useRef<HTMLDivElement>(null);
 
   const loadStations = async () => {
@@ -37,6 +42,17 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     const handler = () => loadStations();
     window.addEventListener("station-switched", handler);
     return () => window.removeEventListener("station-switched", handler);
+  }, []);
+
+  // Load the person's memberships (other accounts they can access) + the seated account email.
+  useEffect(() => {
+    fetchMyMemberships().then(setMemberships).catch(() => {});
+    (async () => {
+      try {
+        const row = (await ether.installConfigKv?.get?.("account_email"))?.row;
+        setAccountEmail(row?.value ? String(row.value).trim().toLowerCase() : "");
+      } catch {}
+    })();
   }, []);
 
   // Close dropdown on outside click
@@ -62,6 +78,12 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     const ok = await onSwitch(s.id, s.name);
     if (ok) loadStations();
   };
+
+  // Accounts other than the one seated on this install that this person can access. Listed read-only
+  // for now (operating them — syncing their data — is the separate flagged sync bridge, Plan A).
+  const otherAccounts = memberships.filter(
+    (m) => (m.account_email || "").trim().toLowerCase() !== accountEmail && (m.stations?.length || 0) > 0
+  );
 
   return (
     <div ref={dropRef} style={{ position: "relative", flexShrink: 0 }}>
@@ -121,6 +143,31 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
               {s.callsign && <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "monospace" }}>{s.callsign}</span>}
             </button>
           ))}
+
+          {/* RBAC foundation: stations in OTHER accounts this person can access (read-only listing) */}
+          {otherAccounts.length > 0 && (
+            <>
+              <div style={{ height: 1, background: "var(--border-primary)", margin: "4px 0" }} />
+              <div style={{ padding: "6px 12px 2px", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)" }}>
+                ACCESSIBLE VIA YOUR ACCOUNT
+              </div>
+              {otherAccounts.map((m) => (
+                <div key={m.account_id} style={{ padding: "0 0 4px" }}>
+                  <div style={{ padding: "2px 12px", fontSize: 10, color: "var(--text-secondary)" }}>
+                    {(m.account_name || m.account_email)} · {m.position}
+                  </div>
+                  {m.stations.map((st) => (
+                    <div key={st.uuid}
+                      title="View-only here for now — operating this station (switching to it) arrives with the sync bridge."
+                      style={{ display: "flex", alignItems: "center", gap: 9, padding: "5px 12px 5px 22px", color: "var(--text-tertiary)", fontSize: 12, cursor: "default" }}>
+                      <span style={{ flex: 1 }}>{st.name}</span>
+                      <span style={{ fontSize: 9, opacity: 0.7 }}>view-only</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </>
+          )}
 
           {/* Divider */}
           <div style={{ height: 1, background: "var(--border-primary)", margin: "4px 0" }} />

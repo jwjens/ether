@@ -13,6 +13,7 @@ import { useStreamStatus } from "../contexts/StreamStatusContext";
 import PairMobileApp from "./PairMobileApp";
 import BetaProgram from "./BetaProgram";
 import { validateSlug, slugify } from "../lib/slug";
+import { fetchMyMemberships, type Membership } from "../lib/memberships";
 
 // ── Settings categories ──────────────────────────────────────
 // 6 buckets that cover all 18 Section components without any one category
@@ -885,6 +886,39 @@ function DiscogsCredentialForm() {
 }
 
 // ── Multi-Device Sync ─────────────────────────────────────────
+
+// RBAC foundation (read-only): the accounts + stations this person can access via their sign-in.
+// Listing only — operating a cross-account station (syncing its data) is the flagged sync bridge (Plan A).
+function AccessibleAccountsSection() {
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  useEffect(() => { fetchMyMemberships().then(setMemberships).catch(() => {}); }, []);
+  if (memberships.length === 0) return null;
+  return (
+    <Section category="system"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
+      title="Accounts You Can Access"
+      description="Accounts and stations your sign-in gives you access to. Listing only for now — operating another account's station arrives with the sync bridge.">
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {memberships.map((m) => (
+          <div key={m.account_id} style={{ border: "1px solid var(--border-primary)", padding: "12px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>{m.account_name || m.account_email}</div>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as any, color: "var(--text-tertiary)" }}>{m.position}</span>
+            </div>
+            {m.stations.length === 0
+              ? <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No stations.</div>
+              : m.stations.map((st) => (
+                <div key={st.uuid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12, color: "var(--text-secondary)" }}>
+                  <span style={{ flex: 1 }}>{st.name}</span>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{st.can_edit === false ? "read-only" : "can edit"}</span>
+                </div>
+              ))}
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
 
 function SyncSection() {
   const { stationId } = useActiveStation();
@@ -2482,6 +2516,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
 
       {/* ── Keep My Station On Air (HA auto-logon) ── */}
       <KeepOnAirSection />
+
+      {/* ── Accounts you can access (RBAC, read-only) ── */}
+      <AccessibleAccountsSection />
 
       {/* ── Backup ── */}
       <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Local Backup (this PC)" description="Save a snapshot of your database — library list, schedule, and settings — to this computer. Audio files are not included.">
