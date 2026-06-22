@@ -165,6 +165,11 @@ const REGISTRY = {
       updated_at:   'scalar',
       deleted_at:   'scalar',
     },
+    // UUID-identity (Tier-2): local-integer reference columns → the table they point at. On push the
+    // sender resolves each to the parent's stable uuid (ref_uuids); on apply the receiver resolves
+    // back to its OWN local id. station_id is the universal default for all scope:'station' tables;
+    // declared here in full for the columns that also carry parent FKs.
+    refs: { station_id: 'stations', clock_id: 'clocks', category_id: 'categories' },
   },
 
   clocks: {
@@ -183,6 +188,7 @@ const REGISTRY = {
       updated_at:  'scalar',
       deleted_at:  'scalar',
     },
+    refs: { station_id: 'stations', show_id: 'shows' },
   },
 
   deck_configs: {

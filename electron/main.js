@@ -1520,11 +1520,21 @@ app.whenReady().then(() => {
       const urlRow  = db.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
       const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || '';
       const transport = new HttpTransport(db, { baseUrl });
+      // UUID-identity (Tier-2): scope/route station programming by stable station UUID instead of the
+      // per-machine local integer, so edits sync both ways across machines whose local ids differ.
+      // Off by default (shadow-first); set sync_uuid_identity=true in station_config_kv to enable.
+      const uuidIdentity = db.prepare(
+        "SELECT value FROM station_config_kv WHERE key = 'sync_uuid_identity' LIMIT 1"
+      ).get()?.value === 'true';
       const scheduler = new SyncScheduler(db, transport, {
         // Read active station on every pull so mid-session station switches are handled
         // correctly. main.js owns getActiveStationId(); SyncEngine stores only the getter.
-        getStationId: () => String(getActiveStationId()),
+        getStationId:   () => String(getActiveStationId()),
+        // The active station's stable UUID — used for UUID-identity scoping when enabled.
+        getStationUuid: () => db.prepare('SELECT uuid FROM stations WHERE id = ?').get(getActiveStationId())?.uuid ?? null,
+        uuidIdentity,
       });
+      if (uuidIdentity) console.log('[SYNC] UUID-identity scoping ENABLED (station programming syncs by station UUID)');
       // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
       // database — it runs ONLY after an operator has actually signed in. The renderer calls
       // "sync:set-active" with true on sign-in and false on sign-out. This is what stops Ether from

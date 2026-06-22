@@ -56,12 +56,18 @@ class SyncEngine {
     this._cursor       = this._loadCursor();
     this._getStationId = opts.getStationId ?? (() => null);
     this._onProgress   = opts.onProgress   ?? null;
+    // UUID-identity (Tier-2): when on, push enriches station-scoped mutations with station_uuid +
+    // parent-FK uuids, pull scopes by station_uuid, and merge remaps to local ids. Off → legacy.
+    this._uuidIdentity   = opts.uuidIdentity   ?? false;
+    this._getStationUuid = opts.getStationUuid ?? (() => null);
+    this._uuidStmts      = {};
 
     this._causalQueue = new CausalOrderQueue();
     this._mergeEngine = new MergeEngine(db, {
       localSchemaVersion: this._localSV,
       causalQueue:        this._causalQueue,
       onCursorAdvance:    (cid, hlc) => this._advanceCursor(cid, hlc),
+      uuidIdentity:       this._uuidIdentity,
     });
 
     // Prepared statements for push
@@ -81,7 +87,7 @@ class SyncEngine {
       const batch = {
         client_id:  chunk[0].client_id,
         station_id: null,
-        batch:      chunk.map(toWireFormat),
+        batch:      chunk.map(m => this._enrichWire(toWireFormat(m))),
       };
 
       let result;
@@ -123,9 +129,10 @@ class SyncEngine {
     let result;
     try {
       result = await this._transport.pull({
-        client_id:  clientId,
-        station_id: this._getStationId(),
-        cursor:     this._cursor,
+        client_id:    clientId,
+        station_id:   this._getStationId(),
+        station_uuid: this._uuidIdentity ? this._getStationUuid() : null,
+        cursor:       this._cursor,
       });
     } catch (err) {
       console.error('[sync-engine] pull transport error:', err.message);
@@ -325,6 +332,34 @@ class SyncEngine {
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────
+
+  // UUID-identity (Tier-2): attach stable parent uuids to a station-scoped wire mutation so the
+  // receiver can remap to its own local ids. station_uuid (the row's station) is lifted out for the
+  // backend's scoping. Resolves each reference column's local id → parent uuid from the live tables.
+  _enrichWire(wire) {
+    if (!this._uuidIdentity) return wire;
+    const entry = REGISTRY[wire.table_name];
+    if (!entry || entry.scope !== 'station') return wire;
+    const refs = entry.refs || { station_id: 'stations' };
+    const src  = wire.payload_after || wire.payload_before || {};
+    const refUuids = {};
+    for (const [col, refTable] of Object.entries(refs)) {
+      const localId = src[col];
+      if (localId == null) continue;                    // null FK (e.g. no show_id) — nothing to map
+      const row = this._uuidStmt(refTable).get(localId);
+      if (row?.uuid) refUuids[col] = row.uuid;
+    }
+    wire.ref_uuids    = refUuids;
+    wire.station_uuid = refUuids.station_id ?? null;     // null for the stations row itself → install-scope
+    return wire;
+  }
+
+  _uuidStmt(table) {
+    if (!this._uuidStmts[table]) {
+      this._uuidStmts[table] = this._db.prepare(`SELECT uuid FROM ${table} WHERE id = ?`);
+    }
+    return this._uuidStmts[table];
+  }
 
   _loadPendingMutations() {
     if (EXCLUDED_TABLES.size === 0) {

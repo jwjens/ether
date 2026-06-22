@@ -61,12 +61,15 @@ class HttpTransport extends EtherTransport {
    * @returns {Promise<{mutations: WireMutation[], server_hlc: string|null}>}
    */
   async pull(cursor) {
-    const { client_id, station_id = null } = cursor;
+    const { client_id, station_id = null, station_uuid = null } = cursor;
     const params = new URLSearchParams({
       client_id,
       since_seq: String(this._serverSeq),
     });
     if (station_id) params.set('station_id', station_id);
+    // UUID-identity (Tier-2): when present, the backend scopes station rows by stable station_uuid
+    // instead of the local integer station_id. Absent for legacy clients → unchanged scoping.
+    if (station_uuid) params.set('station_uuid', station_uuid);
 
     const result = await this._fetchWithRetry('GET', '/sync/mutations?' + params.toString());
 

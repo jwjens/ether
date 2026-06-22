@@ -51,11 +51,16 @@ class MergeEngine {
    * @param {import('./causal-order').CausalOrderQueue} opts.causalQueue
    * @param {function} opts.onCursorAdvance  (clientId: string, hlc: string) => void
    */
-  constructor(db, { localSchemaVersion, causalQueue, onCursorAdvance }) {
+  constructor(db, { localSchemaVersion, causalQueue, onCursorAdvance, uuidIdentity }) {
     this._db                  = db;
     this._localSchemaVersion  = localSchemaVersion;
     this._causalQueue         = causalQueue;
     this._onCursorAdvance     = onCursorAdvance ?? (() => {});
+    // UUID-identity (Tier-2): when on, incoming station_id / parent-FK columns are remapped from the
+    // sender's local integers to THIS install's local ids via the row's stable uuids (m.ref_uuids),
+    // and the row's own integer `id` is never written (matched by uuid). Off → legacy behavior.
+    this._uuidIdentity        = uuidIdentity ?? false;
+    this._refStmts            = {};
 
     // Prepare reusable statements
     this._stmtExists = db.prepare('SELECT 1 FROM mutations WHERE id = ? LIMIT 1');
@@ -178,8 +183,16 @@ class MergeEngine {
       if (!payload_after) return;
       const row = deserializePayload(payload_after, table_name);
 
-      // Build column list from defined values (undefined = column missing from payload)
-      const cols = Object.keys(row).filter(k => row[k] !== undefined);
+      // UUID-identity: remap the sender's local-integer references (station_id + parent FKs) to THIS
+      // install's local ids via their stable uuids before writing, so a station that is local id 1 on
+      // the sender and id 2 here lands on id 2 here (and its slots link to the local clock/category).
+      if (this._uuidIdentity) this._remapRefs(m, row);
+
+      // Build column list from defined values (undefined = column missing from payload).
+      // Under uuid-identity the row's own integer `id` is NOT cross-install identity (rows are keyed
+      // by uuid), so never write it — that is what prevents renumbering local rows out from under
+      // generated_schedule's local-id references.
+      const cols = Object.keys(row).filter(k => row[k] !== undefined && !(this._uuidIdentity && k === 'id'));
       if (cols.length === 0) return;
 
       const placeholders = cols.map(() => '?').join(', ');
@@ -220,6 +233,35 @@ class MergeEngine {
       // If row not present locally: no-op — tombstone already satisfied [N-107]
     }
     // op='checkpoint': reserved; not applied to live tables in v0 [N-10]
+  }
+
+  // ── UUID-identity helpers (Tier-2) ────────────────────────────────────────────
+  // Resolve a stable row uuid to THIS install's local integer id in the referenced table.
+  _resolveLocalId(table, uuid) {
+    if (!uuid) return null;
+    if (!this._refStmts[table]) {
+      this._refStmts[table] = this._db.prepare(`SELECT id FROM ${table} WHERE uuid = ?`);
+    }
+    return this._refStmts[table].get(uuid)?.id ?? null;
+  }
+
+  // Rewrite each reference column on `row` from the sender's local id to this install's local id,
+  // using the parent uuids the sender attached (m.ref_uuids: column → parent uuid) and the registry's
+  // refs map (column → referenced table). station_id is the universal default for station-scoped
+  // tables. An unresolved uuid means the parent isn't on this install yet — left as-is and logged;
+  // ordered delivery (parents before children, by server_seq) makes this the rare case.
+  _remapRefs(m, row) {
+    const entry = REGISTRY[m.table_name];
+    if (!entry || entry.scope !== 'station') return;
+    const refs = entry.refs || { station_id: 'stations' };
+    const refUuids = m.ref_uuids || {};
+    for (const [col, refTable] of Object.entries(refs)) {
+      const uuid = refUuids[col];
+      if (uuid == null) continue;               // sender had no value for this ref (e.g. null show_id)
+      const localId = this._resolveLocalId(refTable, uuid);
+      if (localId != null) row[col] = localId;
+      else console.warn(`[merge-engine] uuid-identity: ${m.table_name}.${col} uuid=${uuid} not resolvable on this install`);
+    }
   }
 
   _logRemote(m, appliedAt, syncStatus = 'synced') {
