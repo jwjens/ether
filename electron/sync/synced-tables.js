@@ -600,6 +600,11 @@ const REGISTRY = {
       updated_at:  'scalar',
       deleted_at:  'scalar',
     },
+    // UUID-identity (Tier-2): the show→clock link, the reverse of clocks.show_id. Only the core
+    // rotation gap. Machine-generated logs (scheduled_log, play_log, …) intentionally get NO refs —
+    // they are not hand-edited and must not enter the edit-sync path; sacred value columns
+    // (play_log.deck_id, play_log.session_id) are NEVER remapped.
+    refs: { station_id: 'stations', clock_id: 'clocks' },
   },
 
   smart_schedule_rules: {
