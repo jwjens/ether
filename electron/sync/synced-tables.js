@@ -363,6 +363,7 @@ const REGISTRY = {
       updated_at:    'scalar',
       deleted_at:    'scalar',
     },
+    refs: { station_id: 'stations', definition_id: 'metadata_definitions' },
   },
 
   monitor_routing: {
@@ -451,6 +452,9 @@ const REGISTRY = {
       updated_at:    'scalar',
       deleted_at:    'scalar',
     },
+    // pinned_by is TEXT (who pinned) — a value, NOT remapped. song_id → install-scope songs (depends
+    // on the borrowed-library/grant path carrying stable song UUIDs).
+    refs: { station_id: 'stations', song_id: 'songs' },
   },
 
   play_log: {
@@ -646,6 +650,9 @@ const REGISTRY = {
       updated_at:          'scalar',
       deleted_at:          'scalar',
     },
+    // value_text is the free-text value (left alone); value_vocabulary_id is the FK used instead when
+    // the value comes from a vocabulary (null for free-text rows → skipped). song_id → install-scope songs.
+    refs: { station_id: 'stations', song_id: 'songs', definition_id: 'metadata_definitions', value_vocabulary_id: 'metadata_vocabulary' },
   },
 
   songs: {
@@ -765,6 +772,8 @@ const REGISTRY = {
       updated_at:      'scalar',
       deleted_at:      'scalar',
     },
+    // song_id → install-scope songs (borrowed-library/grant dependency).
+    refs: { station_id: 'stations', song_id: 'songs', category_id: 'categories' },
   },
 
   station_programming_moods: {
@@ -780,6 +789,15 @@ const REGISTRY = {
       updated_at:            'scalar',
       deleted_at:            'scalar',
     },
+    // Moods scoping decision: this join table has NO station_id (the handler stamps the mutation
+    // station_id null), so it is install-scoped today and STAYS install-scoped — refs carry no
+    // station_id, so station_uuid stays null and delivery is unchanged. The only fix is remapping its
+    // two parent FKs to the receiver's local ids. station_programming_id → station-scoped parent;
+    // mood_tag_id → install-scope mood_tags (must sync with stable UUIDs). Caveat: in a multi-station
+    // account an install may receive a moods row whose station_programming parent it doesn't hold →
+    // the parent uuid won't resolve (logged, left unmapped, not corrupting). A deeper fix would scope
+    // moods by its parent's station; not needed for single-station-per-account use.
+    refs: { station_programming_id: 'station_programming', mood_tag_id: 'mood_tags' },
   },
 
   stations: {
@@ -831,6 +849,10 @@ const REGISTRY = {
       updated_at:     'scalar',
       deleted_at:     'scalar',
     },
+    // recorded_by is TEXT (who recorded) — a value, NOT remapped. file_path is a blob-ref: the row
+    // syncs but the actual audio travels separately (R2), so a voice track is only usable on the
+    // receiver once its audio is present too.
+    refs: { station_id: 'stations', show_id: 'shows', clock_slot_id: 'clock_slots' },
   },
 
 };
