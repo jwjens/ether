@@ -1581,6 +1581,10 @@ app.whenReady().then(() => {
         try { const s = await fetch(`${baseUrl}/api/me/switch-account/${accountId}`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } }); if (s.ok) token = (await s.json())?.token || null; }
         catch (e) { console.warn('[SYNC] member-sync: switch-account ' + accountId + ': ' + e.message); }
         if (!token) { console.warn('[SYNC] member-sync: no token for account ' + accountId + ' — skip ' + uuid); return; }
+        // Hold the member token so fetchR2Track can address this station's audio under the operated
+        // account's R2 prefix while it's the active station (in-memory; re-minted each session).
+        app._memberTokens = app._memberTokens || new Map();
+        app._memberTokens.set(uuid, token);
         const { SyncEngine } = require('./sync/sync-engine');
         const mt = new HttpTransport(db, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + uuid });
         // Resolve OV's LOCAL station id on THIS install (created at provision time). Used both to pull
@@ -4669,20 +4673,36 @@ ipcMain.handle('music:set-dir', (_, dir) => setMusicDir(dir));
 // 'r2:fetch-track' handler AND audio:load's fallback path) get a single
 // source of truth for the gate. Cache layer unchanged — see OB7 for
 // unbounded growth; see OB8 for concurrent-fetch dedup.
+// The member token for the currently-active station, if it's a member-operated station (one station
+// is active at a time, so the active station determines which credential addresses its R2 audio).
+// Tokens are minted by pullMemberStation and held in app._memberTokens (uuid → token). Null for an
+// owned active station → fetchR2Track uses this install's license key, unchanged.
+function memberTokenForActiveStation() {
+  try {
+    if (!app._memberTokens || app._memberTokens.size === 0) return null;
+    const uuid = db.prepare('SELECT uuid FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1').get()?.uuid;
+    return uuid ? (app._memberTokens.get(uuid) || null) : null;
+  } catch (_) { return null; }
+}
+
 async function fetchR2Track(fileKey) {
   if (!fileKey) return { ok: false, error: 'No file_key' };
 
+  // Member-operated active station: fetch its audio under the MEMBER token (the operated account's R2
+  // prefix), bypassing this install's license/tier gate — the active membership IS the authorization.
+  const memberToken = memberTokenForActiveStation();
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
-
-  // Tier gate — Network+ only
-  const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
-  if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
-    return { ok: false, error: `Audio fetch from cloud requires Network (station) tier or higher — current: ${planTier}` };
+  let licenseKey = null;
+  if (!memberToken) {
+    // Tier gate — Network+ only
+    const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
+    if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
+      return { ok: false, error: `Audio fetch from cloud requires Network (station) tier or higher — current: ${planTier}` };
+    }
+    // License key required
+    licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
+    if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
   }
-
-  // License key required
-  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
-  if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
   const cachePath = path.join(getMusicDir(), safeName);
@@ -4691,11 +4711,13 @@ async function fetchR2Track(fileKey) {
   if (fs.existsSync(cachePath)) return { ok: true, filePath: cachePath };
 
   try {
-    // 1. Request signed GET URL from backend
+    // 1. Request signed GET URL from backend — member Bearer for an operated station, else license key.
     const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/download-url`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
+      headers: memberToken
+        ? { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + memberToken }
+        : { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(memberToken ? { file_key: fileKey } : { license_key: licenseKey, file_key: fileKey }),
     });
     const urlData = await urlRes.json().catch(() => ({}));
     if (!urlRes.ok || !urlData.signed_url) {
