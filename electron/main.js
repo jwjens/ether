@@ -2918,6 +2918,14 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     let myClientId = null;
     try { myClientId = db.prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || null; } catch {}
 
+    // Preserve the SIGNED-IN ACCOUNT SESSION across the swap. The cloud backup is a snapshot of the
+    // SOURCE machine and carries ITS (often empty) session markers; without re-stamping these, the
+    // restore wipes the account_jwt the operator just signed in with → the app gates back to the
+    // sign-in screen → infinite sign-in loop. Capture now, re-stamp after the swap. [loop fix]
+    let myAccountJwt = null, myAccountEmail = null;
+    try { myAccountJwt   = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+    try { myAccountEmail = db.prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get()?.value || null; } catch {}
+
     const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
     const urlRes = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -2948,6 +2956,21 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     // license key the operator signed in with.
     if (myClientId) { try { db.prepare("UPDATE client_identity SET client_id = ?").run(myClientId); } catch (e) { console.warn("[install-from-cloud] client_id restore:", e.message); } }
     try { db.prepare("UPDATE station_config_kv SET value = ? WHERE key = 'license_key'").run(licenseKey); } catch {}
+
+    // Re-stamp the signed-in account session so the restore does NOT sign the operator out → no loop.
+    {
+      const nowIso = new Date().toISOString();
+      const upsertInstall = (key, val) => {
+        if (val == null) return;
+        try {
+          const ex = db.prepare("SELECT 1 FROM install_config_kv WHERE key=?").get(key);
+          if (ex) db.prepare("UPDATE install_config_kv SET value=?, updated_at=?, deleted_at=NULL WHERE key=?").run(val, nowIso, key);
+          else db.prepare("INSERT INTO install_config_kv (key,value,uuid,created_at,updated_at) VALUES (?,?,?,?,?)").run(key, val, require("crypto").randomUUID(), nowIso, nowIso);
+        } catch (e) { console.warn("[install-from-cloud] preserve " + key + ":", e.message); }
+      };
+      upsertInstall("account_jwt", myAccountJwt);
+      upsertInstall("account_email", myAccountEmail);
+    }
 
     let newCount = 0, stationName = "";
     try { newCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
