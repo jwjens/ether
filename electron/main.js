@@ -1541,50 +1541,79 @@ app.whenReady().then(() => {
       // assuming a license and pushing/pulling data before anyone has signed in. [account-isolation]
       app._syncScheduler = scheduler;
 
-      // ── Member peer-sync bridge — flag-gated (member_sync_enabled), default OFF ──────────────────
-      // Also PULL stations this person is a MEMBER of (granted on ANOTHER account): fetch memberships,
-      // re-mint an account-scoped member token (switch-account), and run a PULL-ONLY SyncEngine per
-      // granted station — member Bearer auth, scoped by station UUID (Tier-2), with its OWN cursor keys.
-      // Pull-only + per-context cursors mean it cannot disturb the owner sync. Off → unchanged.
-      const memberSyncOn = db.prepare("SELECT value FROM station_config_kv WHERE key = 'member_sync_enabled' LIMIT 1").get()?.value === 'true';
-      const _memberTimers = [];
-      const stopMemberSync = () => { for (const t of _memberTimers.splice(0)) clearInterval(t); };
-      const startMemberSync = async () => {
+      // ── Member peer-sync — OPT-IN PER COMPUTER (the operator CHOOSES, nothing is auto-pulled) ──────
+      // Member stations the operator picks on the sync screen are persisted in install_config_kv
+      // 'member_stations' (JSON [{account_id, station_uuid, name}]). We pull-ONLY those — never all
+      // memberships, never on a guess. Each runs a pull-only SyncEngine with member Bearer auth
+      // (switch-account token) + per-context cursor keys, scoped by station UUID (Tier-2). Pull-only +
+      // per-context cursors mean a member sync cannot disturb the owner sync.
+      const _memberTimers = new Map();   // station_uuid -> intervalId
+      const stopMemberSync = () => { for (const t of _memberTimers.values()) clearInterval(t); _memberTimers.clear(); };
+      const getChosenMemberStations = () => { try { return JSON.parse(db.prepare("SELECT value FROM install_config_kv WHERE key = 'member_stations'").get()?.value || '[]'); } catch (_) { return []; } };
+      const saveChosenMemberStations = (list) => {
+        const now = new Date().toISOString();
+        const exists = db.prepare("SELECT 1 FROM install_config_kv WHERE key = 'member_stations'").get();
+        if (exists) db.prepare("UPDATE install_config_kv SET value = ?, updated_at = ? WHERE key = 'member_stations'").run(JSON.stringify(list), now);
+        else db.prepare("INSERT INTO install_config_kv (key, value, uuid, created_at, updated_at) VALUES ('member_stations', ?, ?, ?, ?)").run(JSON.stringify(list), require('crypto').randomUUID(), now, now);
+      };
+      const pullMemberStation = async (accountId, uuid, name) => {
+        if (_memberTimers.has(uuid)) return;
+        const jwt = db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_jwt'").get()?.value;
+        if (!jwt) { console.warn('[SYNC] member-sync: no account_jwt'); return; }
+        let token = null;
+        try { const s = await fetch(`${baseUrl}/api/me/switch-account/${accountId}`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } }); if (s.ok) token = (await s.json())?.token || null; }
+        catch (e) { console.warn('[SYNC] member-sync: switch-account ' + accountId + ': ' + e.message); }
+        if (!token) { console.warn('[SYNC] member-sync: no token for account ' + accountId + ' — skip ' + uuid); return; }
+        const { SyncEngine } = require('./sync/sync-engine');
+        const mt = new HttpTransport(db, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + uuid });
+        const me = new SyncEngine(db, mt, { uuidIdentity: true, pullOnly: true, cursorKey: 'sync_cursor_member_' + uuid,
+          getStationId:   () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(uuid); return r ? String(r.id) : null; },
+          getStationUuid: () => uuid });
+        const tick = () => me.pull().then(r => { if ((r.applied || 0) > 0) console.log('[SYNC] member-sync "' + (name || uuid) + '": applied ' + r.applied); }).catch(e => console.error('[SYNC] member-sync "' + (name || uuid) + '" pull: ' + e.message));
+        tick();
+        _memberTimers.set(uuid, setInterval(tick, 8000));
+        console.log('[SYNC] member-sync STARTED (chosen, pull-only) "' + (name || uuid) + '" (' + uuid + ') acct ' + accountId);
+      };
+      const startChosenMemberSync = () => { for (const c of getChosenMemberStations()) pullMemberStation(c.account_id, c.station_uuid, c.name).catch(e => console.error('[SYNC] member-sync start: ' + e.message)); };
+
+      // List membership-accessible stations for the sync screen so it can offer them as CHOICES.
+      ipcMain.handle('member-sync:available', async () => {
         try {
           const jwt = db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_jwt'").get()?.value;
-          if (!jwt) { console.log('[SYNC] member-sync: no account_jwt'); return; }
-          const mres = await fetch(`${baseUrl}/api/me/memberships`, { headers: { Authorization: `Bearer ${jwt}` } });
-          if (!mres.ok) { console.warn('[SYNC] member-sync: memberships HTTP ' + mres.status); return; }
-          const memberships = (await mres.json())?.memberships || [];
+          if (!jwt) return { ok: true, stations: [], chosen: [] };
+          const res = await fetch(`${baseUrl}/api/me/memberships`, { headers: { Authorization: `Bearer ${jwt}` } });
+          if (!res.ok) return { ok: false, error: 'memberships HTTP ' + res.status, stations: [], chosen: [] };
+          const memberships = (await res.json())?.memberships || [];
           const seated = String(db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_email'").get()?.value || '').toLowerCase();
-          const others = memberships.filter(m => m.status === 'active' && (m.account_email || '').toLowerCase() !== seated && (m.stations && m.stations.length));
-          if (!others.length) { console.log('[SYNC] member-sync: no cross-account memberships'); return; }
-          const { SyncEngine } = require('./sync/sync-engine');
-          for (const m of others) {
-            let token = null;
-            try { const s = await fetch(`${baseUrl}/api/me/switch-account/${m.account_id}`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } }); if (s.ok) token = (await s.json())?.token || null; }
-            catch (e) { console.warn('[SYNC] member-sync: switch-account ' + m.account_id + ': ' + e.message); }
-            if (!token) { console.warn('[SYNC] member-sync: no token for account ' + m.account_id + ' — skip'); continue; }
-            for (const st of m.stations) {
-              // Don't require the station to exist locally first: the pull delivers the install-scope
-              // station row (created by the merge) before its programming, so getStationId resolves on
-              // the next tick. Re-query each pull so it picks up the freshly-created local id.
-              const mt = new HttpTransport(db, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + st.uuid });
-              const me = new SyncEngine(db, mt, { uuidIdentity: true, pullOnly: true, cursorKey: 'sync_cursor_member_' + st.uuid,
-                getStationId:   () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(st.uuid); return r ? String(r.id) : null; },
-                getStationUuid: () => st.uuid });
-              const tick = () => me.pull().then(r => { if ((r.applied || 0) > 0) console.log('[SYNC] member-sync "' + st.name + '": applied ' + r.applied); }).catch(e => console.error('[SYNC] member-sync "' + st.name + '" pull: ' + e.message));
-              tick();
-              _memberTimers.push(setInterval(tick, 8000));
-              console.log('[SYNC] member-sync STARTED (pull-only) "' + st.name + '" (' + st.uuid + ') acct ' + m.account_id + ' -> local ' + local.id);
-            }
+          const stations = [];
+          for (const m of memberships) {
+            if (m.status !== 'active' || (m.account_email || '').toLowerCase() === seated) continue;
+            for (const st of (m.stations || [])) stations.push({ account_id: m.account_id, account_name: m.account_name || m.account_email, position: m.position, station_uuid: st.uuid, name: st.name, can_edit: st.can_edit });
           }
-        } catch (e) { console.error('[SYNC] member-sync start: ' + e.message); }
-      };
+          return { ok: true, stations, chosen: getChosenMemberStations().map(c => c.station_uuid) };
+        } catch (e) { return { ok: false, error: e.message, stations: [], chosen: [] }; }
+      });
+      // The operator CHOSE a member station for THIS computer → persist + start pulling it.
+      ipcMain.handle('member-sync:choose', async (_e, { account_id, station_uuid, name }) => {
+        try {
+          const list = getChosenMemberStations();
+          if (!list.find(c => c.station_uuid === station_uuid)) { list.push({ account_id, station_uuid, name }); saveChosenMemberStations(list); }
+          await pullMemberStation(account_id, station_uuid, name);
+          return { ok: true };
+        } catch (e) { return { ok: false, error: e.message }; }
+      });
+      // Remove a member station from THIS computer (stops its sync; local data is left in place).
+      ipcMain.handle('member-sync:unchoose', (_e, { station_uuid }) => {
+        try {
+          saveChosenMemberStations(getChosenMemberStations().filter(c => c.station_uuid !== station_uuid));
+          const t = _memberTimers.get(station_uuid); if (t) { clearInterval(t); _memberTimers.delete(station_uuid); }
+          return { ok: true };
+        } catch (e) { return { ok: false, error: e.message }; }
+      });
 
       ipcMain.handle("sync:set-active", (_e, active) => {
         try {
-          if (active) { scheduler.start(); if (memberSyncOn) startMemberSync(); }
+          if (active) { scheduler.start(); startChosenMemberSync(); }   // pull ONLY the stations the operator chose
           else { scheduler.stop(); stopMemberSync(); }
         }
         catch (e) { console.error("[sync:set-active]", e.message); }

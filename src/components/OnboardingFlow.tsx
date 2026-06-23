@@ -166,6 +166,10 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // cloud DB backup before forcing a new profile. syncSel = the uuids the
   // operator chose to keep visible; phase drives the install/progress UI.
   const [syncSel,   setSyncSel]   = useState<Set<string>>(new Set());
+  // Stations the operator can access via membership on ANOTHER account — offered as OPT-IN choices on
+  // the sync screen (separate selection from own stations; only sync to this computer if picked).
+  const [memberStations, setMemberStations] = useState<{ account_id: number; account_name: string; position: string; station_uuid: string; name: string; can_edit: boolean }[]>([]);
+  const [memberSel, setMemberSel] = useState<Set<string>>(new Set());
   const [syncPhase, setSyncPhase] = useState<'choose' | 'storage' | 'installing' | 'error'>('choose');
   const [pendingKeep, setPendingKeep] = useState<string[] | null>(null); // selection awaiting the storage step
   const [musicDir, setMusicDir] = useState('');                          // chosen music-library folder
@@ -574,6 +578,37 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     if (next.has(uuid)) next.delete(uuid); else next.add(uuid);
     return next;
   });
+  const toggleMemberSel = (uuid: string) => setMemberSel(prev => {
+    const next = new Set(prev);
+    if (next.has(uuid)) next.delete(uuid); else next.add(uuid);
+    return next;
+  });
+  // Load membership-accessible stations (on OTHER accounts) so the sync screen can offer them as
+  // OPT-IN choices. Pre-selects any already chosen for this computer. Empty if no token / none.
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await (window as any).ether.invoke?.('member-sync:available');
+        if (r?.ok && Array.isArray(r.stations)) { setMemberStations(r.stations); setMemberSel(new Set(r.chosen || [])); }
+      } catch { /* no memberships / sync off — just show own stations */ }
+    })();
+  }, []);
+  // Sync handler covering BOTH own stations (cloud restore) and chosen member stations (peer-pull).
+  const handleSync = async () => {
+    // Member stations the operator picked → persist the choice + start pulling each (pull-only, scoped
+    // to that station). This is the ONLY thing that puts a member station on this computer.
+    for (const uuid of memberSel) {
+      const st = memberStations.find(s => s.station_uuid === uuid);
+      if (!st) continue;
+      try { await (window as any).ether.invoke?.('member-sync:choose', { account_id: st.account_id, station_uuid: st.station_uuid, name: st.name }); }
+      catch (e) { console.error('[member-sync] choose:', e); }
+    }
+    // Own stations selected → existing cloud restore (reloads at the end). If none selected, just finish
+    // onboarding — the chosen member stations are already pulling and resume on sign-in.
+    if (syncSel.size > 0) { goToStorage([...syncSel]); return; }
+    try { await (window as any).ether.stationConfigKv?.upsertByKey?.(stationId, 'first_run_complete', '1'); } catch {}
+    setState('done');
+  };
 
   const doSignUp = async () => {
     if (!authEmail.trim()) { setAuthErr('Enter your email.'); return; }
@@ -1322,13 +1357,29 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   subtitle={s.call_letters || s.nickname || undefined}
                 />
               ))}
+              {memberStations.length > 0 && (
+                <>
+                  <div style={{ marginTop: 10, marginBottom: 2, fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary, rgba(255,255,255,0.45))", textAlign: "left" }}>
+                    AVAILABLE TO YOU — pick to put on this computer
+                  </div>
+                  {memberStations.map(st => (
+                    <StationRadioCard
+                      key={st.station_uuid}
+                      selected={memberSel.has(st.station_uuid)}
+                      onClick={() => toggleMemberSel(st.station_uuid)}
+                      title={st.name}
+                      subtitle={`${st.account_name} · ${st.position}`}
+                    />
+                  ))}
+                </>
+              )}
             </div>
 
             <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", flexDirection: "column", gap: 12 }}>
               <PrimaryButton
-                label={allSelected ? `Sync all ${connectStations.length > 1 ? connectStations.length + ' stations' : 'stations'}` : `Sync ${syncSel.size} selected`}
-                onClick={allSelected ? syncAllStations : syncSelectedStations}
-                disabled={syncSel.size === 0}
+                label={(syncSel.size + memberSel.size) === 0 ? 'Sync' : `Sync ${syncSel.size + memberSel.size} selected`}
+                onClick={handleSync}
+                disabled={syncSel.size + memberSel.size === 0}
               />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <button
