@@ -1281,9 +1281,15 @@ export default function App() {
     // know about it until we sync here.
     engine.autoAdvance = autoAdv;
     if (autoAdv) engine.continuous = true;
-    // If AUTO was ON when last closed, fill queue and start playing after crash_recovery (2s grace)
+    // Startup auto-resume — ACCOUNT-IS-ROOT GATE: only auto-start playout once a valid account session
+    // exists (accountSignedIn). That flag is set true ONLY by a resumed session, a completed sign-in,
+    // or the watchdog on-air exception (account:was-on-air → _wasOnAir in main.js) — so this fires in
+    // exactly the legitimate cases and NEVER before the sign-in screen. The effect re-runs when the gate
+    // opens ([accountSignedIn] dep) so a fresh sign-in resumes AUTO. (If AUTO was on when last closed,
+    // fill + play after a 2s crash-recovery grace.) engine.init() above is idempotent, so re-running is
+    // a no-op; toggling AUTO has its own handler (automation_on), so it is intentionally NOT a dep here.
     let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
-    if (autoAdv) {
+    if (autoAdv && accountSignedIn) {
       autoStartTimer = setTimeout(async () => {
         // Item 10 Phase 2: wait for the daemon-vs-in-process decision before choosing how to
         // start, so a slow daemon connect can't race us into the local path (and dead air).
@@ -1401,7 +1407,7 @@ export default function App() {
       lastLoggedStatus.current[id] = st.status;
     });
     return () => { if (autoStartTimer) clearTimeout(autoStartTimer); unsub(); };
-  }, []);
+  }, [accountSignedIn]);   // re-run when the account gate opens so a fresh sign-in resumes AUTO (account-is-root)
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
