@@ -337,6 +337,25 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
       }),
     });
     const data = await res.json().catch(() => ({}));
+
+    // Keep the local plan tier in step with the account's PLATFORM assignment — read from the SAME
+    // /account/connect the platform drives. Without this, plan_tier only updates on a full sign-in, so a
+    // running install (or one provisioned via cloud restore) can be stuck on a stale/free tier even though
+    // the account is paid. Honors a dev override (never clobber it). Best-effort; failures retry next tick.
+    if (data.plan && typeof data.plan === "string") {
+      try {
+        const rows = (await ether.stationConfigKv.list(1))?.rows || [];
+        const hasOverride = rows.some((r: any) => r.key === "plan_tier_dev_override" && r.value);
+        const cur = rows.find((r: any) => r.key === "plan_tier")?.value;
+        if (!hasOverride && cur !== data.plan) {
+          await ether.stationConfigKv.upsertByKey(1, "plan_tier", data.plan);
+          const { setPlanGlobally } = await import("../hooks/usePlan");
+          setPlanGlobally(data.plan as any);
+          console.log("[reconcile] plan tier synced from account →", data.plan);
+        }
+      } catch (e) { console.warn("[reconcile] plan sync failed:", (e as any)?.message ?? e); }
+    }
+
     const cloud: any[] = Array.isArray(data.stations) ? data.stations : [];
     if (cloud.length === 0) return 0;
 
