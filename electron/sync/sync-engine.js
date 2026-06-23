@@ -53,6 +53,12 @@ class SyncEngine {
     this._db           = db;
     this._transport    = transport;
     this._localSV      = opts.localSchemaVersion ?? this._readSchemaVersion();
+    // Per-context HLC cursor key + pull-only mode (desktop member-sync bridge). A member sync (another
+    // account's station) MUST use its own cursor key so it doesn't clobber the owner sync's 'sync_cursor',
+    // and runs PULL-ONLY so it never reads the shared pending-mutations queue and pushes the owner's
+    // edits to the wrong account. Owner install defaults: legacy cursor key, push enabled.
+    this._cursorKey    = opts.cursorKey || CURSOR_KEY;
+    this._pullOnly     = opts.pullOnly ?? false;
     this._cursor       = this._loadCursor();
     this._getStationId = opts.getStationId ?? (() => null);
     this._onProgress   = opts.onProgress   ?? null;
@@ -77,6 +83,10 @@ class SyncEngine {
   // ── Push [§17] ────────────────────────────────────────────────────────────
 
   async push() {
+    // Member sync runs pull-only: it must never read the shared pending-mutations queue and push the
+    // owner's (or another station's) edits to this account's backend. Bidirectional member push is a
+    // separate, station-scoped step (not built yet).
+    if (this._pullOnly) return { sent: 0, accepted: 0, rejected: 0 };
     const pending = this._loadPendingMutations();
     if (pending.length === 0) return { sent: 0, accepted: 0, rejected: 0 };
 
@@ -457,7 +467,7 @@ class SyncEngine {
   }
 
   _loadCursor() {
-    const row = this._db.prepare(`SELECT value FROM system_state WHERE key = '${CURSOR_KEY}'`).get();
+    const row = this._db.prepare(`SELECT value FROM system_state WHERE key = ?`).get(this._cursorKey);
     if (!row?.value) return {};
     try { return JSON.parse(row.value) ?? {}; }
     catch (_) { return {}; }
@@ -468,7 +478,7 @@ class SyncEngine {
     this._db.prepare(
       `INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
-    ).run(CURSOR_KEY, json, new Date().toISOString());
+    ).run(this._cursorKey, json, new Date().toISOString());
   }
 
   _readSchemaVersion() {

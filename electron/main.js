@@ -1540,8 +1540,53 @@ app.whenReady().then(() => {
       // "sync:set-active" with true on sign-in and false on sign-out. This is what stops Ether from
       // assuming a license and pushing/pulling data before anyone has signed in. [account-isolation]
       app._syncScheduler = scheduler;
+
+      // ── Member peer-sync bridge — flag-gated (member_sync_enabled), default OFF ──────────────────
+      // Also PULL stations this person is a MEMBER of (granted on ANOTHER account): fetch memberships,
+      // re-mint an account-scoped member token (switch-account), and run a PULL-ONLY SyncEngine per
+      // granted station — member Bearer auth, scoped by station UUID (Tier-2), with its OWN cursor keys.
+      // Pull-only + per-context cursors mean it cannot disturb the owner sync. Off → unchanged.
+      const memberSyncOn = db.prepare("SELECT value FROM station_config_kv WHERE key = 'member_sync_enabled' LIMIT 1").get()?.value === 'true';
+      const _memberTimers = [];
+      const stopMemberSync = () => { for (const t of _memberTimers.splice(0)) clearInterval(t); };
+      const startMemberSync = async () => {
+        try {
+          const jwt = db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_jwt'").get()?.value;
+          if (!jwt) { console.log('[SYNC] member-sync: no account_jwt'); return; }
+          const mres = await fetch(`${baseUrl}/api/me/memberships`, { headers: { Authorization: `Bearer ${jwt}` } });
+          if (!mres.ok) { console.warn('[SYNC] member-sync: memberships HTTP ' + mres.status); return; }
+          const memberships = (await mres.json())?.memberships || [];
+          const seated = String(db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_email'").get()?.value || '').toLowerCase();
+          const others = memberships.filter(m => m.status === 'active' && (m.account_email || '').toLowerCase() !== seated && (m.stations && m.stations.length));
+          if (!others.length) { console.log('[SYNC] member-sync: no cross-account memberships'); return; }
+          const { SyncEngine } = require('./sync/sync-engine');
+          for (const m of others) {
+            let token = null;
+            try { const s = await fetch(`${baseUrl}/api/me/switch-account/${m.account_id}`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } }); if (s.ok) token = (await s.json())?.token || null; }
+            catch (e) { console.warn('[SYNC] member-sync: switch-account ' + m.account_id + ': ' + e.message); }
+            if (!token) { console.warn('[SYNC] member-sync: no token for account ' + m.account_id + ' — skip'); continue; }
+            for (const st of m.stations) {
+              // Don't require the station to exist locally first: the pull delivers the install-scope
+              // station row (created by the merge) before its programming, so getStationId resolves on
+              // the next tick. Re-query each pull so it picks up the freshly-created local id.
+              const mt = new HttpTransport(db, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + st.uuid });
+              const me = new SyncEngine(db, mt, { uuidIdentity: true, pullOnly: true, cursorKey: 'sync_cursor_member_' + st.uuid,
+                getStationId:   () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(st.uuid); return r ? String(r.id) : null; },
+                getStationUuid: () => st.uuid });
+              const tick = () => me.pull().then(r => { if ((r.applied || 0) > 0) console.log('[SYNC] member-sync "' + st.name + '": applied ' + r.applied); }).catch(e => console.error('[SYNC] member-sync "' + st.name + '" pull: ' + e.message));
+              tick();
+              _memberTimers.push(setInterval(tick, 8000));
+              console.log('[SYNC] member-sync STARTED (pull-only) "' + st.name + '" (' + st.uuid + ') acct ' + m.account_id + ' -> local ' + local.id);
+            }
+          }
+        } catch (e) { console.error('[SYNC] member-sync start: ' + e.message); }
+      };
+
       ipcMain.handle("sync:set-active", (_e, active) => {
-        try { if (active) scheduler.start(); else scheduler.stop(); }
+        try {
+          if (active) { scheduler.start(); if (memberSyncOn) startMemberSync(); }
+          else { scheduler.stop(); stopMemberSync(); }
+        }
         catch (e) { console.error("[sync:set-active]", e.message); }
         return { ok: true };
       });

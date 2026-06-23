@@ -37,6 +37,13 @@ class HttpTransport extends EtherTransport {
       );
     }
     this._licenseKey = opts.licenseKey ?? null;
+    // Member peer-sync (desktop member-sync bridge): when set, authorize as a MEMBER of ANOTHER
+    // account with a Bearer token instead of this install's x-license-key. Default null → owner
+    // install, byte-for-byte unchanged. The backend gate (RBAC_MEMBERSHIP_SYNC) accepts this token.
+    this._memberToken = opts.memberToken ?? null;
+    // Per-context pull cursor key. A member sync must NOT share the owner sync's 'sync_server_seq'
+    // (they would clobber each other's high-water mark). Owner install defaults to the legacy key.
+    this._serverSeqKey = opts.cursorKey || SERVER_SEQ_KEY;
     this._serverSeq  = this._loadServerSeq();
   }
 
@@ -119,24 +126,24 @@ class HttpTransport extends EtherTransport {
 
   _loadServerSeq() {
     const row = this._db
-      .prepare(`SELECT value FROM system_state WHERE key = '${SERVER_SEQ_KEY}'`)
-      .get();
+      .prepare(`SELECT value FROM system_state WHERE key = ?`)
+      .get(this._serverSeqKey);
     return parseInt(row?.value ?? '0', 10) || 0;
   }
 
   _saveServerSeq(seq) {
     const val    = String(seq);
     const exists = this._db
-      .prepare(`SELECT 1 FROM system_state WHERE key = '${SERVER_SEQ_KEY}'`)
-      .get();
+      .prepare(`SELECT 1 FROM system_state WHERE key = ?`)
+      .get(this._serverSeqKey);
     if (exists) {
       this._db
-        .prepare(`UPDATE system_state SET value = ?, updated_at = ? WHERE key = '${SERVER_SEQ_KEY}'`)
-        .run(val, new Date().toISOString());
+        .prepare(`UPDATE system_state SET value = ?, updated_at = ? WHERE key = ?`)
+        .run(val, new Date().toISOString(), this._serverSeqKey);
     } else {
       this._db
-        .prepare(`INSERT INTO system_state (key, value, updated_at) VALUES ('${SERVER_SEQ_KEY}', ?, ?)`)
-        .run(val, new Date().toISOString());
+        .prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, ?)`)
+        .run(this._serverSeqKey, val, new Date().toISOString());
     }
     this._serverSeq = seq;
   }
@@ -146,9 +153,12 @@ class HttpTransport extends EtherTransport {
    * Throws immediately on 4xx (client errors are not retried).
    */
   async _fetchWithRetry(method, path, body = null) {
-    const key  = this._getLicenseKey();
     const url  = this._baseUrl + path;
-    const hdrs = { 'x-license-key': key, 'Content-Type': 'application/json' };
+    // Member peer-sync uses a Bearer token (no license key); owner installs use x-license-key as
+    // before. Only one of the two is ever sent — the default path is unchanged.
+    const hdrs = { 'Content-Type': 'application/json' };
+    if (this._memberToken) hdrs['Authorization'] = 'Bearer ' + this._memberToken;
+    else hdrs['x-license-key'] = this._getLicenseKey();
 
     let lastErr;
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
