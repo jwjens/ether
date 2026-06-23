@@ -65,9 +65,15 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  // Multi-station switching/creation is a Network+ feature — hide the badge entirely on
-  // Solo/Studio. (All hooks run above this so the rule-of-hooks order stays stable.)
-  if (!isStation) return null;
+  // Accounts (other than the one seated here) this person can access via membership. The OWNER account
+  // is already Network to have granted access, so the membership ITSELF is the authority — these must
+  // show regardless of the MEMBER's own tier. (All hooks run above this so rule-of-hooks order stays stable.)
+  const otherAccounts = memberships.filter(
+    (m) => (m.account_email || "").trim().toLowerCase() !== accountEmail && (m.stations?.length || 0) > 0
+  );
+  // The OWN-station switcher/creation is a Network+ feature; the accessible-via-membership list is NOT.
+  // Hide the badge only when neither applies (Solo with no grants).
+  if (!isStation && otherAccounts.length === 0) return null;
 
   const label = active
     ? (active.callsign || active.name.slice(0, 12).toUpperCase())
@@ -78,12 +84,6 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
     const ok = await onSwitch(s.id, s.name);
     if (ok) loadStations();
   };
-
-  // Accounts other than the one seated on this install that this person can access. Listed read-only
-  // for now (operating them — syncing their data — is the separate flagged sync bridge, Plan A).
-  const otherAccounts = memberships.filter(
-    (m) => (m.account_email || "").trim().toLowerCase() !== accountEmail && (m.stations?.length || 0) > 0
-  );
 
   return (
     <div ref={dropRef} style={{ position: "relative", flexShrink: 0 }}>
@@ -172,7 +172,9 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
           {/* Divider */}
           <div style={{ height: 1, background: "var(--border-primary)", margin: "4px 0" }} />
 
-          {/* New Station */}
+          {/* New Station — creating your OWN stations is a Network+ feature; a member viewing granted
+              stations on a lower tier must not see it. */}
+          {isStation && (
           <button
             onClick={() => { setOpen(false); setShowNew(true); }}
             style={{
@@ -186,6 +188,7 @@ export default function ActiveStationBadge({ onManage, onSwitch }: Props) {
             <span style={{ width: 14, textAlign: "center" }}>+</span>
             New Station…
           </button>
+          )}
 
           {/* Manage Stations */}
           <button
