@@ -2972,6 +2972,12 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
       upsertInstall("account_email", myAccountEmail);
     }
 
+    // Carry the signed-in session across the restore's re-gate / relaunch. THE LOGIN GATE READS THE
+    // .ether-keep-session MARKER (account:resume-session), not account_jwt — without it the app
+    // bounces to the sign-in screen right after a cloud install → the persistent sign-in loop. Every
+    // other continuation path (reload @2829, relaunch @3186, update @3369) writes it; this one didn't.
+    try { markKeepSession(); } catch (e) { console.warn("[install-from-cloud] markKeepSession:", e.message); }
+
     let newCount = 0, stationName = "";
     try { newCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
     try { stationName = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name' LIMIT 1").get()?.value || ""; } catch {}
