@@ -17,8 +17,10 @@ const fs   = require('fs');
 
 // ── DB path ───────────────────────────────────────────────────
 
-const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-const dbPath  = path.join(appData, 'com.ether.radio', 'openair.db');
+// DB lives in LocalAppData\Ether (NOT Roaming — Roaming is redirected to a network share on managed
+// boxes like OV, where SQLite WAL fails). Resolve the same way the main app + engine do. [CLAUDE.md]
+const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+const dbPath  = path.join(localAppData, 'Ether', 'com.ether.radio', 'openair.db');
 const scriptsDir = path.join(__dirname);
 
 // ── Test harness ──────────────────────────────────────────────

@@ -22,14 +22,23 @@ async function getFetch() {
   return mod ? mod.default : null;
 }
 
-function licenseHeaders() {
-  const key = getConfigValue("license_key");
+function licenseHeaders(uuid) {
+  // Send the license that OWNS the station being published — NOT whatever license_key happens to be
+  // first in station_config_kv. Publishing is ownership-checked on the backend (stations.uuid +
+  // license_key_id), so sending the install-level (or another station's) license gets rejected as
+  // not-owned → "This station isn't linked to your account." Resolve from stations.owner_license_key;
+  // fall back to the install license only when the station has no owner recorded.
+  let key = null;
+  try {
+    if (uuid) key = db.prepare("SELECT owner_license_key FROM stations WHERE uuid = ? AND deleted_at IS NULL").get(uuid)?.owner_license_key || null;
+  } catch { /* fall through to install license */ }
+  if (!key) key = getConfigValue("license_key");
   return key ? { "x-license-key": key } : null;
 }
 
 // GET /api/station/:uuid/metadata → { ok, metadata } | { ok:false, error }
 async function getMetadata(uuid) {
-  const headers = licenseHeaders();
+  const headers = licenseHeaders(uuid);
   if (!headers) return { ok: false, error: "no_license" };
   const fetch = await getFetch();
   try {
@@ -42,7 +51,7 @@ async function getMetadata(uuid) {
 
 // POST /api/station/:uuid/metadata → { ok, metadata } | { ok:false, error }
 async function saveMetadata(uuid, metadata) {
-  const headers = licenseHeaders();
+  const headers = licenseHeaders(uuid);
   if (!headers) return { ok: false, error: "no_license" };
   const fetch = await getFetch();
   try {
@@ -59,7 +68,7 @@ async function saveMetadata(uuid, metadata) {
 
 // GET /api/slugs/check?slug=&uuid= → { ok, available, reason } | { ok:false, error }
 async function checkSlug(slug, uuid) {
-  const headers = licenseHeaders();
+  const headers = licenseHeaders(uuid);
   if (!headers) return { ok: false, error: "no_license" };
   const fetch = await getFetch();
   try {
@@ -74,7 +83,7 @@ async function checkSlug(slug, uuid) {
 
 // Sign + PUT a (renderer-resized) logo to R2. `bytes` is a Uint8Array/Buffer.
 async function uploadLogo(uuid, bytes, ext) {
-  const headers = licenseHeaders();
+  const headers = licenseHeaders(uuid);
   if (!headers) return { ok: false, error: "no_license" };
   const fetch = await getFetch();
   const cleanExt = String(ext || "").toLowerCase().replace(/[^a-z0-9]/g, "");
