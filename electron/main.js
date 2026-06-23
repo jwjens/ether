@@ -1526,6 +1526,21 @@ app.whenReady().then(() => {
       const uuidIdentity = db.prepare(
         "SELECT value FROM station_config_kv WHERE key = 'sync_uuid_identity' LIMIT 1"
       ).get()?.value === 'true';
+      // member-operate (default off): when on, a member-accessed station (e.g. OV) is operated as a
+      // FULL switchable station and its edits push BACK under the member token (bidirectional). When
+      // off, member stations stay pull-only (v4.4.7 behavior) — safe until the harness proof is green.
+      const memberOperate = db.prepare(
+        "SELECT value FROM station_config_kv WHERE key = 'member_operate' LIMIT 1"
+      ).get()?.value === 'true';
+      // The local ids of member stations the operator chose — the owner sync must NOT push their edits
+      // under THIS install's license key (each member station pushes its own edits under its member
+      // token, per-context isolation). Resolved live so newly-chosen stations are picked up.
+      const memberStationLocalIds = () => {
+        try {
+          const chosen = JSON.parse(db.prepare("SELECT value FROM install_config_kv WHERE key = 'member_stations'").get()?.value || '[]');
+          return chosen.map(c => db.prepare('SELECT id FROM stations WHERE uuid = ?').get(c.station_uuid)?.id).filter(v => v != null).map(String);
+        } catch (_) { return []; }
+      };
       const scheduler = new SyncScheduler(db, transport, {
         // Read active station on every pull so mid-session station switches are handled
         // correctly. main.js owns getActiveStationId(); SyncEngine stores only the getter.
@@ -1533,6 +1548,8 @@ app.whenReady().then(() => {
         // The active station's stable UUID — used for UUID-identity scoping when enabled.
         getStationUuid: () => db.prepare('SELECT uuid FROM stations WHERE id = ?').get(getActiveStationId())?.uuid ?? null,
         uuidIdentity,
+        // Owner push excludes member stations (their edits go up under the member token, not the license).
+        getPushExcludeStationIds: () => memberOperate ? memberStationLocalIds() : [],
       });
       if (uuidIdentity) console.log('[SYNC] UUID-identity scoping ENABLED (station programming syncs by station UUID)');
       // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
@@ -1566,13 +1583,26 @@ app.whenReady().then(() => {
         if (!token) { console.warn('[SYNC] member-sync: no token for account ' + accountId + ' — skip ' + uuid); return; }
         const { SyncEngine } = require('./sync/sync-engine');
         const mt = new HttpTransport(db, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + uuid });
-        const me = new SyncEngine(db, mt, { uuidIdentity: true, pullOnly: true, cursorKey: 'sync_cursor_member_' + uuid,
-          getStationId:   () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(uuid); return r ? String(r.id) : null; },
-          getStationUuid: () => uuid });
-        const tick = () => me.pull().then(r => { if ((r.applied || 0) > 0) console.log('[SYNC] member-sync "' + (name || uuid) + '": applied ' + r.applied); }).catch(e => console.error('[SYNC] member-sync "' + (name || uuid) + '" pull: ' + e.message));
+        // Resolve OV's LOCAL station id on THIS install (created at provision time). Used both to pull
+        // OV's programming into the right local rows and to push ONLY OV's edits back (push isolation).
+        const localId = () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(uuid); return r ? String(r.id) : null; };
+        const me = new SyncEngine(db, mt, {
+          uuidIdentity: true,
+          // Bidirectional when member-operate is on; pull-only otherwise (safe default).
+          pullOnly: !memberOperate,
+          cursorKey: 'sync_cursor_member_' + uuid,
+          getStationId:   localId,
+          getStationUuid: () => uuid,
+          // Push ONLY OV's mutations, under the member token — never the owner's or another station's.
+          getPushOnlyStationId: localId,
+        });
+        // push (if bidirectional) + pull each tick.
+        const tick = () => me.syncCycle()
+          .then(r => { const ap = r.pull?.applied || 0, ps = r.push?.accepted || 0; if (ap > 0 || ps > 0) console.log('[SYNC] member "' + (name || uuid) + '": pulled-applied ' + ap + ', pushed ' + ps); })
+          .catch(e => console.error('[SYNC] member "' + (name || uuid) + '" sync: ' + e.message));
         tick();
         _memberTimers.set(uuid, setInterval(tick, 8000));
-        console.log('[SYNC] member-sync STARTED (chosen, pull-only) "' + (name || uuid) + '" (' + uuid + ') acct ' + accountId);
+        console.log('[SYNC] member-sync STARTED (chosen, ' + (memberOperate ? 'BIDIRECTIONAL' : 'pull-only') + ') "' + (name || uuid) + '" (' + uuid + ') acct ' + accountId);
       };
       const startChosenMemberSync = () => { for (const c of getChosenMemberStations()) pullMemberStation(c.account_id, c.station_uuid, c.name).catch(e => console.error('[SYNC] member-sync start: ' + e.message)); };
 

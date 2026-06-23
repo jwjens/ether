@@ -67,6 +67,15 @@ class SyncEngine {
     this._uuidIdentity   = opts.uuidIdentity   ?? false;
     this._getStationUuid = opts.getStationUuid ?? (() => null);
     this._uuidStmts      = {};
+    // Per-context push isolation (member-operate). Each station you can operate runs its OWN sync
+    // context; push must never send another account's edits under the wrong credential:
+    //  • member context  → getPushOnlyStationId() returns that station's LOCAL id → push ONLY its
+    //    mutations, under the member Bearer token.
+    //  • owner context    → getPushExcludeStationIds() returns the member stations' local ids → push
+    //    everything EXCEPT those (install-scoped station_id IS NULL still goes with the owner).
+    // Defaults (null / []) → owner behavior unchanged: push all pending (minus EXCLUDED_TABLES).
+    this._getPushOnlyStationId     = opts.getPushOnlyStationId     ?? (() => null);
+    this._getPushExcludeStationIds = opts.getPushExcludeStationIds ?? (() => []);
 
     this._causalQueue = new CausalOrderQueue();
     this._mergeEngine = new MergeEngine(db, {
@@ -438,15 +447,34 @@ class SyncEngine {
   }
 
   _loadPendingMutations() {
-    if (EXCLUDED_TABLES.size === 0) {
-      return this._db.prepare(
-        "SELECT * FROM mutations WHERE sync_status = 'pending' ORDER BY hlc ASC"
-      ).all();
+    const clauses = ["sync_status = 'pending'"];
+    const params  = [];
+
+    // Per-context push isolation. station_id is stamped on every mutation row by the writer
+    // (null = install-scoped). A member context pushes ONLY its station's rows; the owner context
+    // pushes everything except the member stations (install-scoped NULL stays with the owner).
+    const onlyId = this._getPushOnlyStationId();
+    if (onlyId != null) {
+      clauses.push('station_id = ?');
+      params.push(String(onlyId));
+    } else {
+      const exclude = (this._getPushExcludeStationIds() || []).map(String);
+      if (exclude.length > 0) {
+        const ph = exclude.map(() => '?').join(', ');
+        clauses.push(`(station_id IS NULL OR station_id NOT IN (${ph}))`);
+        params.push(...exclude);
+      }
     }
-    const placeholders = Array.from(EXCLUDED_TABLES).map(() => '?').join(', ');
+
+    if (EXCLUDED_TABLES.size > 0) {
+      const ph = Array.from(EXCLUDED_TABLES).map(() => '?').join(', ');
+      clauses.push(`table_name NOT IN (${ph})`);
+      params.push(...EXCLUDED_TABLES);
+    }
+
     return this._db.prepare(
-      `SELECT * FROM mutations WHERE sync_status = 'pending' AND table_name NOT IN (${placeholders}) ORDER BY hlc ASC`
-    ).all(...EXCLUDED_TABLES);
+      `SELECT * FROM mutations WHERE ${clauses.join(' AND ')} ORDER BY hlc ASC`
+    ).all(...params);
   }
 
   _retryCausalQueue(parentId) {
