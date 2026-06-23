@@ -194,6 +194,72 @@ class SyncEngine {
     return { pulled: mutations.length, byTable, ...outcomes };
   }
 
+  // ── Re-baseline (Tier-2 UUID-identity) ──────────────────────────────────────
+  //
+  // One-shot corrective re-pull for an install that may hold a legacy gap: under the old
+  // local-integer scoping a divergent machine silently missed another machine's station programming
+  // (the rows were filtered out and their server_seq is now below the cursor, so a normal incremental
+  // pull will never re-fetch them). Re-baseline resets the cursor to 0 and drains pulls under the
+  // current UUID-identity scoping, so those rows are delivered and applied now. Correctness:
+  //   - resolve-to-existing-local-ids / NO renumber: re-apply goes through the same Tier-2 merge,
+  //     which resolves each incoming uuid to THIS install's existing local id and never writes a
+  //     row's own integer id (rows are matched by uuid). Existing local rows are corrected/augmented
+  //     in place, never renumbered.
+  //   - idempotent: mutations already applied are skipped by mutation id (merge Step 1).
+  // No on-air gating here (callers gate if needed). One-shot, guarded by system_state.rebaseline_done.
+
+  // Read-only consistency probe: count station-scoped rows whose declared reference columns do NOT
+  // resolve to a live local row of the referenced table (dangling = a sign of legacy mis-scoping /
+  // a still-missing parent). Used to report divergence before/after a re-baseline.
+  rebaselineScan() {
+    const dangling = [];
+    let scanned = 0;
+    for (const [name, entry] of Object.entries(REGISTRY)) {
+      if (entry.scope !== 'station') continue;
+      const refs = entry.refs || { station_id: 'stations' };
+      let rows;
+      try { rows = this._db.prepare(`SELECT * FROM ${name} WHERE deleted_at IS NULL`).all(); }
+      catch (_) { continue; }   // table not present in this DB
+      for (const row of rows) {
+        scanned++;
+        for (const [col, refTable] of Object.entries(refs)) {
+          const v = row[col];
+          if (v == null) continue;
+          let ok;
+          try { ok = !!this._db.prepare(`SELECT 1 FROM ${refTable} WHERE id = ?`).get(v); }
+          catch (_) { ok = true; }   // referenced table absent locally → not counted as dangling here
+          if (!ok) dangling.push(`${name}.${col}=${v} (uuid=${row.uuid})`);
+        }
+      }
+    }
+    return { scanned, dangling };
+  }
+
+  async rebaseline({ force = false } = {}) {
+    if (!this._uuidIdentity) return { skipped: 'uuid-identity off' };
+    const done = this._db.prepare("SELECT value FROM system_state WHERE key = 'rebaseline_done'").get();
+    if (done?.value === '1' && !force) return { skipped: 'already done' };
+
+    const before = this.rebaselineScan();
+    if (typeof this._transport.resetCursor === 'function') this._transport.resetCursor();
+
+    let applied = 0, rounds = 0;
+    while (rounds++ < 1000) {                 // 1000 = backstop; each round drains up to 500 mutations
+      const r = await this.pull();
+      applied += r.applied ?? 0;
+      if ((r.pulled ?? 0) === 0) break;       // drained
+    }
+    const after = this.rebaselineScan();
+
+    this._db.prepare(
+      `INSERT INTO system_state (key, value, updated_at) VALUES ('rebaseline_done', '1', ?)
+       ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at`
+    ).run(new Date().toISOString());
+
+    console.log(`[sync-engine] rebaseline complete: applied=${applied} dangling ${before.dangling.length}→${after.dangling.length}`);
+    return { applied, danglingBefore: before.dangling.length, danglingAfter: after.dangling.length };
+  }
+
   // ── Sync cycle ────────────────────────────────────────────────────────────
 
   async syncCycle() {

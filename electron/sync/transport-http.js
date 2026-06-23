@@ -111,6 +111,12 @@ class HttpTransport extends EtherTransport {
     );
   }
 
+  // Re-baseline (Tier-2): reset the pull high-water mark to 0 so the next pulls re-fetch the full
+  // history under the current (UUID-identity) scoping — delivering station rows a divergent install
+  // previously missed under legacy local-integer scoping. Already-applied mutations are idempotent on
+  // re-apply (merge Step 1), so this corrects/augments without disturbing existing rows.
+  resetCursor() { this._saveServerSeq(0); }
+
   _loadServerSeq() {
     const row = this._db
       .prepare(`SELECT value FROM system_state WHERE key = '${SERVER_SEQ_KEY}'`)

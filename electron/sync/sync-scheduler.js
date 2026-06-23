@@ -107,6 +107,13 @@ class SyncScheduler {
     } catch (err) {
       console.error('[SYNC] quarantine drain failed: ' + err.message);
     }
+    // Tier-2 one-shot re-baseline: corrective re-pull under UUID-identity scoping so a divergent
+    // install gets station programming it missed under legacy local-integer scoping. Self-skips when
+    // uuid-identity is off or already done. Fire-and-log — must not block the sync schedule from
+    // starting (no on-air gating; resolve-to-existing-local-ids / no renumber is enforced by merge).
+    this._engine.rebaseline()
+      .then(r => { if (!r.skipped) console.log(`[SYNC] re-baseline: applied=${r.applied} dangling ${r.danglingBefore}→${r.danglingAfter}`); })
+      .catch(err => console.error('[SYNC] re-baseline failed: ' + err.message));
     this._schedule();
   }
 
