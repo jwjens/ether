@@ -16,9 +16,17 @@ export default function TrialGate() {
         const result = await kv.list(1);
         const rows: { key: string; value: string }[] = result?.ok ? result.rows : [];
         const get = (k: string) => rows.find((r) => r.key === k)?.value;
-        const ends = get("trial_ends_at");
         const plan = get("plan_tier") || "free";
-        if (!ends || plan === "free") return;                  // no live trial to gate
+        const ends = get("trial_ends_at");
+        if (plan === "free") return;                            // free has nothing to lose
+        // Lifetime / enterprise plans NEVER trial. A leftover trial_ends_at from a prior trial
+        // (e.g. before the account was upgraded to a lifetime plan) must not lock out a paid
+        // customer. Clear the stale date so it can't fire on a later launch, then bail.
+        if (/_lifetime$/.test(plan) || plan === "operator") {
+          if (ends) { try { await kv.upsertByKey(1, "trial_ends_at", ""); } catch {} }
+          return;
+        }
+        if (!ends) return;                                      // no live trial to gate
         if (Date.now() <= new Date(ends).getTime()) return;     // trial still active
         // Trial has ended → lock to Solo and invite the customer to choose.
         await kv.upsertByKey(1, "plan_tier", "free");

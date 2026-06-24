@@ -163,6 +163,7 @@ export class AudioEngine {
     // daemon's per-entry qid so the mirror can address an exact entry (Stage 2 intent commands).
     if (a.onQueue) {
       const h = a.onQueue((m: any) => {
+        if (m && m.stationId != null && m.stationId !== this.stationId) return; // only THIS station's queue — never another station's
         if (Array.isArray(m?.items)) {
           this.queue = m.items.map((it: any) => ({
             filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
@@ -180,6 +181,7 @@ export class AudioEngine {
     // from our own native poll. poll() now only ticks positionSec for a smooth countdown.
     if (a.onDeck) {
       const h = a.onDeck((m: any) => {
+        if (m && m.stationId != null && m.stationId !== this.stationId) return; // only THIS station's decks — OV's on-air deck must not bleed into another station's view
         const id = m?.deck as DeckId;
         if (id !== "A" && id !== "B" && id !== "C") return;
         const st = makeState(id, m.state || {});
@@ -196,7 +198,7 @@ export class AudioEngine {
     // The daemon advances + starts tracks; relay its playstart so the renderer's now-playing
     // push + play log (App.tsx onPlayStart) keep firing without the renderer driving playback.
     if (a.onPlayStart) {
-      const h = a.onPlayStart((m: any) => { if (m?.deck) this.notifyPlayStart(m.deck as DeckId, m.title || "", m.artist || "", m.filePath || ""); });
+      const h = a.onPlayStart((m: any) => { if (m && m.stationId != null && m.stationId !== this.stationId) return; if (m?.deck) this.notifyPlayStart(m.deck as DeckId, m.title || "", m.artist || "", m.filePath || ""); });
       this.daemonUnsub.push(() => a.offPlayStart?.(h));
     }
     // The daemon only pushes queue events on *change*. A freshly-attached renderer (first

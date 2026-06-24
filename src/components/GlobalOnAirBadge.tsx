@@ -1,24 +1,29 @@
 import { useStreamStatus } from "../contexts/StreamStatusContext";
 
 interface Props {
+  stationId:  number;
   onGoLive:   () => void;
   onStopLive: () => void;
   style?:     React.CSSProperties;
 }
 
-// The On-Air badge reflects the REAL Icecast stream status only — never playback — so
-// the light never lies: OFF AIR (idle) → GOING LIVE… (connecting) → ON AIR (streaming).
-// Clicking it starts or stops the actual stream.
-export default function GlobalOnAirBadge({ onGoLive, onStopLive, style }: Props) {
-  const { dests, global } = useStreamStatus();
-  const live = global.anyLive;
-  const connecting = !live && Object.values(dests).some((d) => d.state === "connecting");
+// The On-Air badge reflects the REAL Icecast stream status of THE ACTIVE STATION only — never
+// playback, and never another station's stream — so the light never lies: OFF AIR (idle) →
+// GOING LIVE… (connecting) → ON AIR (streaming). Per-station so viewing a non-airing station
+// (e.g. one you're building) shows OFF AIR even while another station is on air. The stream dest
+// is keyed `icecast:<stationId>` (main.js — both daemon and in-process paths). Clicking it
+// starts or stops THIS station's stream.
+export default function GlobalOnAirBadge({ stationId, onGoLive, onStopLive, style }: Props) {
+  const { dests } = useStreamStatus();
+  const st = dests[`icecast:${stationId}`];
+  const live = st?.state === "live";
+  const connecting = !live && st?.state === "connecting";
   const active = live || connecting;
 
   const label = connecting
     ? "GOING LIVE…"
     : live
-      ? `ON AIR${global.liveCount > 1 ? ` (${global.liveCount})` : ""}`
+      ? "ON AIR"
       : "OFF AIR";
 
   const bg      = live ? "#ef4444" : connecting ? "rgba(245,158,11,0.18)" : "var(--bg-tertiary)";

@@ -26,7 +26,7 @@ const readDir = (path: string) =>
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
 import { queryScoped } from "./db/stationScoped";
-import { useActiveStation } from "./hooks/useActiveStation";
+import { useActiveStation, getActiveStationIdSync } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
 import { DeckState, rotLog } from "./audio/engine-rodio";
 import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor, getFormatCategoryIds, getActiveShowClock } from "./audio/loggen";
@@ -459,6 +459,21 @@ function buildNowPlayingPayload(
   };
 }
 
+// AUTO (automation) is PER-STATION — each station remembers its own automation state so switching
+// the viewed station never carries one station's AUTO (or its on-air playout) onto another. Keyed
+// by station id; the legacy single key `ether_autoAdv` migrates to the primary station (OV, id 1).
+function readAutoAdv(stationId: number): boolean {
+  try {
+    const v = localStorage.getItem(`ether_autoAdv_${stationId}`);
+    if (v !== null) return v === "1";
+    if (stationId === 1) return localStorage.getItem("ether_autoAdv") === "1"; // migrate legacy → primary
+    return false;
+  } catch { return false; }
+}
+function writeAutoAdv(stationId: number, on: boolean): void {
+  try { localStorage.setItem(`ether_autoAdv_${stationId}`, on ? "1" : "0"); } catch {}
+}
+
 export default function App() {
   const { stationId, stationUuid, isReady: stationReady } = useActiveStation();
   // IMPORTANT: App() renders <AudioEngineProvider> in its JSX return, so App()
@@ -536,9 +551,10 @@ export default function App() {
   // AUTO state persists across restarts — broadcasters expect their automation
   // to remain in whatever state they left it in, especially after a power cycle
   // or app restart. Default false on first install.
-  const [autoAdv, setAutoAdv] = useState<boolean>(() => {
-    try { return localStorage.getItem("ether_autoAdv") === "1"; } catch { return false; }
-  });
+  const [autoAdv, setAutoAdv] = useState<boolean>(() => readAutoAdv(getActiveStationIdSync()));
+  // Reflect the active station's OWN AUTO state whenever the viewed station changes, so the AUTO
+  // button shows this station's automation — never the previously-viewed station's.
+  useEffect(() => { setAutoAdv(readAutoAdv(stationId)); }, [stationId]);
   const [shuffle, setShuffle] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
@@ -977,13 +993,13 @@ export default function App() {
           case "automation_on":
             setAutoAdv(true);
             engine.autoAdvance = true;
-            try { localStorage.setItem("ether_autoAdv", "1"); } catch {}
+            writeAutoAdv(stationId, true);
             if (engine.isDaemonDriven) engine.startDaemonAutomation();
             break;
           case "automation_off":
             setAutoAdv(false);
             engine.autoAdvance = false;
-            try { localStorage.setItem("ether_autoAdv", "0"); } catch {}
+            writeAutoAdv(stationId, false);
             if (engine.isDaemonDriven) engine.stopDaemonAutomation();
             break;
           case "play_emergency_cart":
@@ -1279,8 +1295,8 @@ export default function App() {
     // Restore persisted AUTO state on boot — autoAdv was hydrated from
     // localStorage in useState init, but engine is a singleton that doesn't
     // know about it until we sync here.
-    engine.autoAdvance = autoAdv;
-    if (autoAdv) engine.continuous = true;
+    engine.autoAdvance = readAutoAdv(stationId);
+    if (readAutoAdv(stationId)) engine.continuous = true;
     // Startup auto-resume — ACCOUNT-IS-ROOT GATE: only auto-start playout once a valid account session
     // exists (accountSignedIn). That flag is set true ONLY by a resumed session, a completed sign-in,
     // or the watchdog on-air exception (account:was-on-air → _wasOnAir in main.js) — so this fires in
@@ -1289,7 +1305,7 @@ export default function App() {
     // fill + play after a 2s crash-recovery grace.) engine.init() above is idempotent, so re-running is
     // a no-op; toggling AUTO has its own handler (automation_on), so it is intentionally NOT a dep here.
     let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
-    if (autoAdv && accountSignedIn) {
+    if (readAutoAdv(stationId) && accountSignedIn) {
       autoStartTimer = setTimeout(async () => {
         // Item 10 Phase 2: wait for the daemon-vs-in-process decision before choosing how to
         // start, so a slow daemon connect can't race us into the local path (and dead air).
@@ -1539,7 +1555,7 @@ export default function App() {
     const n = !autoAdv;
     setAutoAdv(n);
     engine.autoAdvance = n;
-    try { localStorage.setItem("ether_autoAdv", n ? "1" : "0"); } catch {}
+    writeAutoAdv(stationId, n);
     if (n) {
       engine.init(); engine.continuous = true; setContinuous(true); engine.shuffle = false; setShuffle(false);
       await engine.awaitDaemonReady?.();  // settle daemon-vs-local before starting (avoid the race)
@@ -1552,7 +1568,7 @@ export default function App() {
           const populate = window.confirm("Nothing is scheduled to play right now.\n\nAuto-populate the queue with rotation-eligible songs?\n\nOK = Yes    ·    Cancel = No (open the Scheduler and generate a schedule)");
           if (!populate) {
             setAutoAdv(false); engine.autoAdvance = false;
-            try { localStorage.setItem("ether_autoAdv", "0"); } catch {}
+            writeAutoAdv(stationId, false);
             setPanel("calendar");   // send them to the Scheduler to build it
             return;
           }
@@ -1913,6 +1929,7 @@ export default function App() {
           </button>
 
           <GlobalOnAirBadge
+            stationId={stationId}
             onGoLive={() => { goLive(stationId); }}
             onStopLive={() => { stopLive(stationId); }}
             style={{ height: 44, padding: "0 20px", fontSize: 16, fontWeight: 800, letterSpacing: "0.08em" }}
