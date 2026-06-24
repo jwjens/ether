@@ -1334,7 +1334,7 @@ export default function App() {
           const catClause = fmt.length ? `AND s.category_id IN (${fmt.map(() => "?").join(",")})` : "";
           const rows = await queryScoped<SongRow>(
             `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+             WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
                AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
              ORDER BY RANDOM() LIMIT 100`,
             fmt.length ? [suHour, ...fmt] : [suHour], stationId, { skipScoping: true });
@@ -1528,7 +1528,7 @@ export default function App() {
             const catClause = fmt.length ? `AND s.category_id IN (${fmt.map(() => "?").join(",")})` : "";
             const rows = await queryScoped<SongRow>(
               `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-               WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+               WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
                  AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
                ORDER BY RANDOM() LIMIT 100`,
               fmt.length ? [drHour, ...fmt] : [drHour], stationId, { skipScoping: true });
@@ -1592,7 +1592,7 @@ export default function App() {
           const catClause = fmt.length ? `AND s.category_id IN (${fmt.map(() => "?").join(",")})` : "";
           const rows = await queryScoped<SongRow>(
             `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.file_path IS NOT NULL AND s.rotation_status != 'inactive'
+             WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
                AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
              ORDER BY RANDOM() LIMIT 100`,
             fmt.length ? [seedHour, ...fmt] : [seedHour], stationId, { skipScoping: true });

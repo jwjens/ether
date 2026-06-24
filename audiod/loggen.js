@@ -19,7 +19,7 @@
 // its live-pick path errors in production and falls through to generated_schedule; the
 // daemon uses correct SQL.) `stationId` is unused here but kept for signature parity.
 function baseConditions(hour, artistSepSec, params, stationId) {
-  let c = "s.file_path IS NOT NULL AND s.rotation_status != 'inactive'";
+  let c = "s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";
   c += " AND ((s.daypart_mask >> ?) & 1) = 1";
   params.push(hour);
   c += " AND (s.last_played_at IS NULL OR s.last_played_at < (unixepoch() - s.no_repeat_hours * 3600))";

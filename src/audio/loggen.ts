@@ -147,7 +147,7 @@ function buildBaseConditions(
   let cond = "s.file_path IS NOT NULL";
 
   // Never auto-play songs marked inactive in rotation
-  cond += " AND s.rotation_status != 'inactive'";
+  cond += " AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";
 
   // Daypart mask: bit N of daypart_mask must be 1 for the current hour N.
   // Default mask is 16777215 (all 24 bits set = unrestricted).
