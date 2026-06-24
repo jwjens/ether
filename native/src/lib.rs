@@ -105,6 +105,16 @@ pub fn audio_set_volume(deck: String, volume: f64, station_id: Option<u32>) -> b
     audio.sender.send(AudioCmd::SetVolume { deck, volume: volume as f32 }).is_ok()
 }
 
+/// Local studio-monitor (speaker) gain for one station — 0.0 = silent speakers, 1.0 = unity.
+/// Affects ONLY the local device output; the program bus → Icecast stream is untouched, so an
+/// operator can mute/blend what they HEAR without changing what any station BROADCASTS.
+#[napi]
+pub fn audio_set_monitor_volume(station_id: u32, volume: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetMonitorVolume(volume as f32)).is_ok()
+}
+
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);

@@ -8,7 +8,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import MasterEQRack from "./MasterEQRack";
 import { EQ_DEFAULT } from "./GraphicEQ";
-import { AudioRoutingPicker, CurrentRoutingSummary } from "./AudioRoutingPanel";
+import StationMonitorMixer from "./StationMonitorMixer";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { vuSmooth, vuPeak } from "../lib/vuMeter";
 
@@ -509,7 +509,6 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   const [stationInfoOpen, setStationInfoOpen] = useState<boolean>(() => {
     try { return localStorage.getItem("ether_station_info_collapsed") !== "1"; } catch { return true; }
   });
-  const [routingRefreshKey, setRoutingRefreshKey] = useState(0);
   const [nowPlayingOpen, setNowPlayingOpen] = useState<boolean>(() => {
     try { return localStorage.getItem("ether_now_playing_collapsed") !== "1"; } catch { return true; }
   });
@@ -842,9 +841,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
         )}
       </div>
 
-      {/* Audio routing */}
-      <AudioRoutingPicker onApplied={() => setRoutingRefreshKey(k => k + 1)} />
-      <CurrentRoutingSummary refreshKey={routingRefreshKey} />
+      {/* Per-station monitor mixer — each station's local speaker level (broadcasts unaffected) */}
+      <StationMonitorMixer />
 
       {/* ── Expanded sections — only when cart wall is hidden ── */}
       {expanded && (

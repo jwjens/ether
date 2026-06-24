@@ -180,6 +180,9 @@ pub enum AudioCmd {
     UpdateMetadata { title: String, artist: String },
     SwitchDevice(String),
     SetEq(Vec<f32>),
+    /// Local studio-monitor output gain (0..4). Affects ONLY the speakers tap — the program
+    /// bus → Icecast stream is untouched, so muting the monitor never changes what airs.
+    SetMonitorVolume(f32),
 }
 
 pub struct AudioState {
@@ -258,6 +261,9 @@ pub struct BusState {
     /// 10-band post-EQ master spectrum snapshot, written by mixer_callback from the
     /// EQ analyzer each buffer; read by GetLevel into AudioLevels.spectrum.
     pub spectrum:    [f32; 10],
+    /// Local studio-monitor gain applied to the DEVICE (speaker) output only — never the
+    /// program bus. 1.0 = unity; 0.0 = silent speakers while the station keeps broadcasting.
+    pub monitor_vol: f32,
 }
 
 impl BusState {
@@ -274,6 +280,7 @@ impl BusState {
             peaks:       [0.0; 7],
             master_peak: 0.0,
             spectrum:    [0.0; 10],
+            monitor_vol: 1.0,
         }
     }
 }
@@ -468,6 +475,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                                 break;
                             }
                             AudioCmd::SetEq(_) => {}
+                            AudioCmd::SetMonitorVolume(_) => {}
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -728,6 +736,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     }
                                 }
                             }
+                            AudioCmd::SetMonitorVolume(v) => {
+                                if let Ok(mut bus) = bus_cmd.lock() { bus.monitor_vol = v.clamp(0.0, 4.0); }
+                            }
                             AudioCmd::Ping
                             | AudioCmd::StartStream { .. }
                             | AudioCmd::StopStream
@@ -966,14 +977,17 @@ fn mixer_callback(
         }
     }
 
-    // Studio Monitor Bus: resample 44100 Hz → device rate if they differ
+    // Studio Monitor Bus: resample 44100 Hz → device rate if they differ. The monitor gain
+    // (local speaker level) is applied HERE only — the program bus above already pushed full
+    // level to Icecast, so turning the monitor down never changes what airs.
+    let mvol = bus.monitor_vol;
     if device_sr == PROGRAM_RATE || prog_frames <= 1 {
         for f in 0..device_frames {
             if ch == 2 {
-                data[f * 2]     = out_l[f];
-                data[f * 2 + 1] = out_r[f];
+                data[f * 2]     = out_l[f] * mvol;
+                data[f * 2 + 1] = out_r[f] * mvol;
             } else {
-                data[f] = (out_l[f] + out_r[f]) * 0.5;
+                data[f] = (out_l[f] + out_r[f]) * 0.5 * mvol;
             }
         }
     } else {
@@ -990,10 +1004,10 @@ fn mixer_callback(
             let l = l0 + (l1 - l0) * frac;
             let r = r0 + (r1 - r0) * frac;
             if ch == 2 {
-                data[f * 2]     = l;
-                data[f * 2 + 1] = r;
+                data[f * 2]     = l * mvol;
+                data[f * 2 + 1] = r * mvol;
             } else {
-                data[f] = (l + r) * 0.5;
+                data[f] = (l + r) * 0.5 * mvol;
             }
         }
     }

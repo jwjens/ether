@@ -743,6 +743,22 @@ function runMigrations() {
         )
     `);
   } catch (e) { console.error("[account] station owner backfill:", e.message); }
+  // Fallback self-heal: any station STILL without an owner (created off the "+ Add Station" path
+  // that seeds a per-station license_key — e.g. an early import like HalloVeen was) adopts THIS
+  // install's account license, so it is owned + publishable instead of an invisible orphan. Single
+  // tenant per install, so the install's one account license is the correct owner. Only NULLs are
+  // touched (member/cross-account stations already carry their own owner), and nothing is deleted.
+  try {
+    const installLk = db.prepare(
+      "SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' ORDER BY station_id LIMIT 1"
+    ).get()?.value;
+    if (installLk) {
+      const healed = db.prepare(
+        "UPDATE stations SET owner_license_key = ? WHERE owner_license_key IS NULL AND deleted_at IS NULL"
+      ).run(installLk).changes;
+      if (healed) console.log(`[account] self-healed ${healed} orphan station(s) → install license ${String(installLk).slice(0, 12)}…`);
+    }
+  } catch (e) { console.error("[account] orphan self-heal:", e.message); }
 
   // Ensure station 1 Icecast columns are filled if they were just added and are empty
   {
@@ -2455,6 +2471,16 @@ ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
   try {
     if (typeof audio.audioSetOutputDevice !== "function") return false;
     return audio.audioSetOutputDevice(stationId, deviceName);
+  } catch { return false; }
+});
+
+// Per-station LOCAL monitor (speaker) gain — never touches the Icecast broadcast. Lets the
+// operator blend/mute what they HEAR across stations while every station keeps airing.
+ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
+  if (AUDIO_DAEMON) return audiodClient.cmd("setMonitorVolume", { stationId, volume });
+  try {
+    if (typeof audio.audioSetMonitorVolume !== "function") return false;
+    return audio.audioSetMonitorVolume(stationId, volume);
   } catch { return false; }
 });
 

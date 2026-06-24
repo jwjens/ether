@@ -109,6 +109,7 @@ const handlers = {
   getFileDuration:    (m) => A.getFileDuration(m.filePath),
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
   setOutputDevice:    (m) => A.audioSetOutputDevice(m.stationId, m.device),
+  setMonitorVolume:   (m) => A.audioSetMonitorVolume(m.stationId, m.volume),
   getProgramBusPort:  (m) => A.audioGetProgramBusPort(m.stationId),
   setBroadcastDelay:  (m) => A.audioSetBroadcastDelay(m.seconds, m.stationId),
   dump:               (m) => A.audioDump(m.stationId),
