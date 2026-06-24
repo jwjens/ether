@@ -743,22 +743,12 @@ function runMigrations() {
         )
     `);
   } catch (e) { console.error("[account] station owner backfill:", e.message); }
-  // Fallback self-heal: any station STILL without an owner (created off the "+ Add Station" path
-  // that seeds a per-station license_key — e.g. an early import like HalloVeen was) adopts THIS
-  // install's account license, so it is owned + publishable instead of an invisible orphan. Single
-  // tenant per install, so the install's one account license is the correct owner. Only NULLs are
-  // touched (member/cross-account stations already carry their own owner), and nothing is deleted.
-  try {
-    const installLk = db.prepare(
-      "SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' ORDER BY station_id LIMIT 1"
-    ).get()?.value;
-    if (installLk) {
-      const healed = db.prepare(
-        "UPDATE stations SET owner_license_key = ? WHERE owner_license_key IS NULL AND deleted_at IS NULL"
-      ).run(installLk).changes;
-      if (healed) console.log(`[account] self-healed ${healed} orphan station(s) → install license ${String(installLk).slice(0, 12)}…`);
-    }
-  } catch (e) { console.error("[account] orphan self-heal:", e.message); }
+  // NOTE: orphan owner self-heal moved to the renderer reconcile (src/lib/ccData.ts) which has the
+  // AUTHORITATIVE signed-in account license. An earlier version here picked the lowest station's
+  // per-station license_key KV (ORDER BY station_id LIMIT 1) — which on a build carrying a stale
+  // license (e.g. djdeniro's) mis-tagged new stations to the WRONG account. The reconcile owns this
+  // now: it stamps every station with the account's real license and registers any unregistered
+  // station with the cloud (POST /account/register-station).
 
   // Ensure station 1 Icecast columns are filled if they were just added and are empty
   {
@@ -1268,7 +1258,7 @@ function buildMenu() {
       { label: "Toggle DevTools", accelerator: "F12", click: () => mainWindow?.webContents.toggleDevTools() },
     ]},
     { label: "Library", submenu: [
-      { label: "Song Library", click: () => send("nav:library") },
+      { label: "Library", click: () => send("nav:library") },
       { label: "Spots & Promos", click: () => send("nav:spots") },
       { label: "Voice Tracker", click: () => send("nav:voicetrack") },
       { type: "separator" },
@@ -5592,6 +5582,18 @@ ipcMain.handle('stations:create', (_, data) => {
       is_active: 0,
     });
     return { ok: true, id: row.id };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Stamp a station's account owner. Used by the reconcile self-heal to put every local station
+// under the AUTHORITATIVE signed-in account license (owner_license_key drives publish/backup
+// scope). Direct column write — owner_license_key is intentionally NOT in stations:update's
+// patchable allow-list, so it can't be changed by ordinary station edits.
+ipcMain.handle('stations:set-owner-license', (_, id, licenseKey) => {
+  try {
+    if (!id || !licenseKey) return { ok: false, error: 'id and licenseKey required' };
+    db.prepare("UPDATE stations SET owner_license_key = ? WHERE id = ?").run(String(licenseKey), Number(id));
+    return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

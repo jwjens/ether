@@ -357,11 +357,12 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     }
 
     const cloud: any[] = Array.isArray(data.stations) ? data.stations : [];
-    if (cloud.length === 0) return 0;
-
     const local = await ether.stations.list();
-    const haveUuids = new Set((Array.isArray(local) ? local : (local?.rows || [])).map((s: any) => s.uuid));
+    const localList = (Array.isArray(local) ? local : (local?.rows || [])) as any[];
+    const haveUuids  = new Set(localList.map((s: any) => s.uuid));
+    const cloudUuids = new Set(cloud.map((s: any) => s.uuid));
 
+    // ── Cloud → local: materialize any account station this install doesn't have yet. ──
     let created = 0;
     for (const s of cloud) {
       if (!s?.uuid || haveUuids.has(s.uuid)) continue;
@@ -375,8 +376,41 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
       if (r?.ok) { created++; console.log(`[reconcile] materialized cloud station ${s.name} (${s.uuid})`); }
       else console.warn("[reconcile] local station insert failed:", r?.error);
     }
-    if (created > 0) window.dispatchEvent(new Event("station-switched")); // nudge the switcher/badge to refresh
-    return created;
+
+    // ── Local → cloud self-heal — the universal fix for "new station can't publish". Stamp every
+    // station of THIS account with the account's REAL license, and register any local station the
+    // cloud doesn't know yet, so a station created ANY way at all (not just + Add Station) becomes
+    // owned + publishable on its own — no manual backfill. Ownership rule: a uuid present in the
+    // account's cloud list is definitively ours (even if its local owner is stale/wrong from an old
+    // build — this is what corrects a station mis-tagged to another license); a NULL owner is a
+    // fresh local station; a non-null owner that is neither this license nor in the cloud is a
+    // member / cross-account station the operator runs — left untouched. register-station is
+    // idempotent by uuid and consumes no seat.
+    let registered = 0;
+    for (const s of localList) {
+      if (!s?.uuid) continue;
+      const owner = s.owner_license_key;
+      const inCloud = cloudUuids.has(s.uuid);
+      const isOurs = owner == null || owner === "" || owner === licenseKey || inCloud;
+      if (!isOurs) continue;
+      if (owner !== licenseKey) {
+        try { await ether.stations.setOwnerLicense(s.id, licenseKey); console.log(`[reconcile] owner → account for ${s.name} (${s.uuid})`); }
+        catch (e) { /* retry next tick */ }
+      }
+      if (!inCloud) {
+        try {
+          const rr = await fetch(`${ETHER_BACKEND_URL}/account/register-station`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ license_key: licenseKey, uuid: s.uuid, name: s.name || "Station", call_letters: s.callsign || null }),
+          });
+          if (rr.ok) { registered++; console.log(`[reconcile] registered local station ${s.name} (${s.uuid}) with the account`); }
+          else console.warn("[reconcile] register-station failed:", rr.status);
+        } catch (e) { /* retry next tick */ }
+      }
+    }
+
+    if (created > 0 || registered > 0) window.dispatchEvent(new Event("station-switched")); // nudge switcher/badge
+    return created + registered;
   } catch (e) {
     console.warn("[reconcile] account stations reconcile failed:", (e as any)?.message ?? e);
     return 0;

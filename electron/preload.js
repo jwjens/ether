@@ -248,6 +248,7 @@ contextBridge.exposeInMainWorld("ether", {
     create:    (data)     => ipcRenderer.invoke("stations:create", data),
     update:    (id, data) => ipcRenderer.invoke("stations:update", id, data),
     delete:    (id)       => ipcRenderer.invoke("stations:delete", id),
+    setOwnerLicense: (id, licenseKey) => ipcRenderer.invoke("stations:set-owner-license", id, licenseKey),
   },
   // ── Machine identity (for /account/* endpoints + Manage Devices) ─
   identity: {
