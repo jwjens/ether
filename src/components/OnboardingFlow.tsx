@@ -219,6 +219,33 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
           return;
         }
 
+        // ── 1b. Already-synced guard: don't re-prompt to sync stations that are ALREADY here. ──
+        // Even if first_run_complete didn't persist through a prior flow, if every station on the
+        // account is already present locally there is nothing to sync — go straight in (and re-mark
+        // first_run_complete so it sticks next time). Best-effort: any failure falls through to the
+        // normal flow, so a genuinely fresh install (no local stations yet) still sees the sync screen.
+        if (lkSaved) {
+          try {
+            const idResp = await (window as any).ether.identity.get().catch(() => null);
+            const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ license_key: lkSaved, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '' }),
+            });
+            const data = await res.json().catch(() => ({}));
+            const cloudUuids: string[] = (Array.isArray(data.stations) ? data.stations : []).map((s: any) => s.uuid).filter(Boolean);
+            if (cloudUuids.length > 0) {
+              const local = await (window as any).ether.stations.list();
+              const localUuids = new Set((Array.isArray(local) ? local : (local?.rows || [])).map((s: any) => s.uuid));
+              if (cloudUuids.every((u) => localUuids.has(u))) {
+                try { await (window as any).ether.stationConfigKv.upsertByKey(1, 'first_run_complete', '1'); } catch {}
+                setState('done');
+                setResumeChecking(false);
+                return;
+              }
+            }
+          } catch { /* best-effort — fall through to the normal onboarding flow */ }
+        }
+
         // ── 2. Account joined → land on first unfinished step ──
         // Order: bolted screens → pickAudioLocation → pulling. The audio-source
         // check (B.3) sits between bolted screens and pulling; a customer who
