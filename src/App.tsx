@@ -2237,7 +2237,7 @@ export default function App() {
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
-              {panel === "settings" && <SettingsPanel xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} />}
+              {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}

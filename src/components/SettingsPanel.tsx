@@ -276,10 +276,10 @@ function ExperienceModeSelector() {
   const prevMode = useRef<string>("");
 
   useEffect(() => {
-    query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'")
+    query<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode' AND station_id = ?", [stationId])
       .then(rows => { const v = rows[0]?.value ?? "live_radio"; setMode(v); prevMode.current = v; })
       .catch(() => {});
-  }, []);
+  }, [stationId]);
 
   const save = async (next: string) => {
     if (prevMode.current === "standard" && next === "live_radio") setShowUpgrade(true);

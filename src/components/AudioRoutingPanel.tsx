@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { query } from "../db/client";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 const TEAL = "#00c8a8";
 
@@ -73,6 +74,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
   const [selectedDevice,  setSelectedDevice]  = useState("");
   const [applying,   setApplying]   = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
+  const { stationId: activeStationId } = useActiveStation();
 
   useEffect(() => {
     try { localStorage.setItem("ether_routing_picker_collapsed", open ? "0" : "1"); } catch {}
@@ -99,7 +101,11 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
           } catch {}
         }));
 
-        if (stns.length > 0) setSelectedStation(stns[0].id);
+        // Open on the station you're currently viewing (so the picker doubles as a
+        // "which station am I monitoring" switch), falling back to the first station.
+        if (stns.length > 0) {
+          setSelectedStation(prev => prev ?? (stns.some(s => s.id === activeStationId) ? activeStationId : stns[0].id));
+        }
 
         const devs = await ether.audio.listOutputDevices();
         setDevices(Array.isArray(devs) ? devs : []);
@@ -109,7 +115,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
     })();
   }, []);
 
-  // Load saved device for the currently selected station
+  // Load saved device for the currently selected station (display only — does not route).
   useEffect(() => {
     if (selectedStation === null) return;
     query<{ value: string }>(
@@ -118,15 +124,12 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
     ).then(rows => setSelectedDevice(rows[0]?.value ?? "")).catch(() => {});
   }, [selectedStation]);
 
-  const handleApply = useCallback(async () => {
-    if (selectedStation === null) return;
-    console.log("[AudioRouting] Apply clicked", { selectedStation, selectedDevice });
+  // Route a station's playout to a device (persist + apply live).
+  const applyRouting = useCallback(async (sid: number, device: string) => {
     setApplying(true);
     try {
-      await (window as any).ether.stationConfigKv.upsertByKey(selectedStation, 'audio_output_device', selectedDevice);
-      console.log("[AudioRouting] DB write OK, calling setOutputDevice");
-      const result = await (window as any).ether.audio.setOutputDevice(selectedStation, selectedDevice);
-      console.log("[AudioRouting] setOutputDevice returned:", result);
+      await (window as any).ether.stationConfigKv.upsertByKey(sid, 'audio_output_device', device);
+      await (window as any).ether.audio.setOutputDevice(sid, device);
       setSuccessMsg("✓ Routing updated");
       setTimeout(() => setSuccessMsg(""), 3000);
       onApplied();
@@ -134,7 +137,30 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
       console.error("[AudioRoutingPicker] apply error:", e);
     }
     setApplying(false);
-  }, [selectedStation, selectedDevice, onApplied]);
+  }, [onApplied]);
+
+  // Pick a station → route ITS feed to the local sound card live, so this dropdown acts as a
+  // monitor switch ("which station am I hearing"), not just a deferred assignment.
+  const handleStationChange = useCallback(async (sid: number) => {
+    setSelectedStation(sid);
+    let dev = "";
+    try {
+      const rows = await query<{ value: string }>(
+        "SELECT value FROM station_config_kv WHERE station_id=? AND key='audio_output_device'", [sid]);
+      dev = rows[0]?.value ?? "";
+    } catch {}
+    setSelectedDevice(dev);
+    await applyRouting(sid, dev);
+  }, [applyRouting]);
+
+  const handleDeviceChange = useCallback(async (device: string) => {
+    setSelectedDevice(device);
+    if (selectedStation !== null) await applyRouting(selectedStation, device);
+  }, [selectedStation, applyRouting]);
+
+  const handleApply = useCallback(() => {
+    if (selectedStation !== null) void applyRouting(selectedStation, selectedDevice);
+  }, [selectedStation, selectedDevice, applyRouting]);
 
   return (
     <div style={{ borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
@@ -147,7 +173,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
             <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const, opacity: 0.7 }}>Station</div>
             <select
               value={selectedStation ?? ""}
-              onChange={e => setSelectedStation(Number(e.target.value))}
+              onChange={e => handleStationChange(Number(e.target.value))}
               style={selectStyle}
             >
               {stations.length === 0 && <option value="">Loading…</option>}
@@ -160,7 +186,7 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
             <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" as const, opacity: 0.7 }}>Output Device</div>
             <select
               value={selectedDevice}
-              onChange={e => setSelectedDevice(e.target.value)}
+              onChange={e => handleDeviceChange(e.target.value)}
               style={selectStyle}
             >
               <option value="">System Default</option>
