@@ -3488,7 +3488,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       {(
         /* ── Console channel strips — the default deck view.
            Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */
-        <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0 }}>
+        <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, overflow: "hidden" }}>
           {activeDeckOrder.map((slot) => {
             const config = deckConfigs?.find(d => d.slot === slot);
             const deckType = config?.type || (slot === "mic" ? "mic" : "music");
