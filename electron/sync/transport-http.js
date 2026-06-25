@@ -104,17 +104,29 @@ class HttpTransport extends EtherTransport {
 
   _getLicenseKey() {
     if (this._licenseKey) return this._licenseKey;
-    // License key is stored in station_config_kv under 'license_key' [N-116]
-    const row = this._db
-      .prepare("SELECT value FROM station_config_kv WHERE key = 'license_key' LIMIT 1")
-      .get();
-    if (row?.value) {
-      this._licenseKey = row.value;
+    // Resolve the ACCOUNT license DETERMINISTICALLY (not an arbitrary `… LIMIT 1` row, which on a
+    // multi-license install pushed programming under the wrong license). Order of trust [N-116]:
+    //   1) install-scope account anchor — the license /account/connect validated for THIS account
+    //      (written in reconcileAccountStations). The account is the root of identity; this is the
+    //      authoritative push license.
+    //   2) the license that OWNS this install's station(s) — stations.owner_license_key, preferring
+    //      the active station. Same source getBackupLicenseKey() already trusts, so sync and backup
+    //      now agree.
+    //   3) legacy station_config_kv 'license_key' — last-resort for old installs with neither anchor
+    //      nor owner_license_key.
+    // On a SINGLE-LICENSE install all three resolve to the same key → byte-for-byte unchanged.
+    const trySql = (sql) => { try { return this._db.prepare(sql).get()?.value || null; } catch (_) { return null; } };
+    const key =
+      trySql("SELECT value FROM install_config_kv WHERE key = 'account_license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1")
+      || trySql("SELECT owner_license_key AS value FROM stations WHERE owner_license_key IS NOT NULL AND owner_license_key != '' AND deleted_at IS NULL ORDER BY is_active DESC, id ASC LIMIT 1")
+      || trySql("SELECT value FROM station_config_kv WHERE key = 'license_key' LIMIT 1");
+    if (key) {
+      this._licenseKey = String(key).trim();
       return this._licenseKey;
     }
     throw new Error(
-      'HttpTransport: license_key not found in station_config_kv [N-116]' +
-      ' — activate a license before syncing'
+      'HttpTransport: license_key not found (no account_license_key anchor, owner_license_key, ' +
+      'or station_config_kv license_key) [N-116] — activate a license before syncing'
     );
   }
 
