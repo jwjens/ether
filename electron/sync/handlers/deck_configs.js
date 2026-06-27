@@ -174,33 +174,34 @@ function deckConfigsClearAll(db, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installDeckConfigs(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('deck_configs:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: deckConfigsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: deckConfigsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: deckConfigsGet(db, uuid) }; }
+    try { return { ok: true, row: deckConfigsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:create', (_, payload) => {
-    try { return { ok: true, row: deckConfigsCreate(db, payload) }; }
+    try { return { ok: true, row: deckConfigsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:update', (_, uuid, patch) => {
-    try { return { ok: true, row: deckConfigsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: deckConfigsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...deckConfigsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...deckConfigsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:update-by-slot', (_, stationId, slot, patch) => {
-    try { return { ok: true, row: deckConfigsUpdateBySlot(db, stationId, slot, patch) }; }
+    try { return { ok: true, row: deckConfigsUpdateBySlot(getDb(), stationId, slot, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

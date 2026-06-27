@@ -156,28 +156,29 @@ function rtmpDestinationsUpdateById(db, intId, patch) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installRtmpDestinations(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('rtmp_destinations:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: rtmpDestinationsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: rtmpDestinationsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('rtmp_destinations:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: rtmpDestinationsGet(db, uuid) }; }
+    try { return { ok: true, row: rtmpDestinationsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('rtmp_destinations:create', (_, payload) => {
-    try { return { ok: true, row: rtmpDestinationsCreate(db, payload) }; }
+    try { return { ok: true, row: rtmpDestinationsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('rtmp_destinations:update', (_, uuid, patch) => {
-    try { return { ok: true, row: rtmpDestinationsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: rtmpDestinationsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('rtmp_destinations:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...rtmpDestinationsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...rtmpDestinationsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

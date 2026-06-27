@@ -28,15 +28,15 @@ const gpoState = new Map(); // "deviceId:pin" -> boolean
 
 // Event callback — set by installGpioEngine
 let onGpiEvent = null;
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 
 function installGpioEngine(ipcMain, database, opts = {}) {
-  db = database;
+  getDb = (typeof database === 'function') ? database : () => database;
   onGpiEvent = opts.onGpiEvent || null;
 
   // Ensure tables exist
   try {
-    db.exec(`
+    getDb().exec(`
       CREATE TABLE IF NOT EXISTS gpio_devices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -66,7 +66,7 @@ function installGpioEngine(ipcMain, database, opts = {}) {
   // ── IPC handlers ──────────────────────────────────────────────
 
   ipcMain.handle("gpio:list-devices", () => {
-    const devices = db.prepare("SELECT * FROM gpio_devices ORDER BY name").all();
+    const devices = getDb().prepare("SELECT * FROM gpio_devices ORDER BY name").all();
     return devices.map(d => ({
       ...d,
       status: connections.has(d.id) ? connections.get(d.id).status : "disconnected",
@@ -75,22 +75,22 @@ function installGpioEngine(ipcMain, database, opts = {}) {
 
   ipcMain.handle("gpio:add-device", (_evt, device) => {
     const { name, protocol, host, port } = device;
-    db.prepare("INSERT INTO gpio_devices (name, protocol, host, port) VALUES (?, ?, ?, ?)")
+    getDb().prepare("INSERT INTO gpio_devices (name, protocol, host, port) VALUES (?, ?, ?, ?)")
       .run(name || "GPIO Device", protocol || "tcp", host || "127.0.0.1", port || 93);
     return true;
   });
 
   ipcMain.handle("gpio:update-device", (_evt, id, device) => {
     const { name, protocol, host, port, is_active, auto_connect } = device;
-    db.prepare("UPDATE gpio_devices SET name=?, protocol=?, host=?, port=?, is_active=?, auto_connect=? WHERE id=?")
+    getDb().prepare("UPDATE gpio_devices SET name=?, protocol=?, host=?, port=?, is_active=?, auto_connect=? WHERE id=?")
       .run(name, protocol, host, port, is_active ?? 1, auto_connect ?? 0, id);
     return true;
   });
 
   ipcMain.handle("gpio:delete-device", (_evt, id) => {
     disconnect(id);
-    db.prepare("DELETE FROM gpio_mappings WHERE device_id = ?").run(id);
-    db.prepare("DELETE FROM gpio_devices WHERE id = ?").run(id);
+    getDb().prepare("DELETE FROM gpio_mappings WHERE device_id = ?").run(id);
+    getDb().prepare("DELETE FROM gpio_devices WHERE id = ?").run(id);
     return true;
   });
 
@@ -98,12 +98,12 @@ function installGpioEngine(ipcMain, database, opts = {}) {
   ipcMain.handle("gpio:disconnect", (_evt, id) => disconnect(id));
 
   ipcMain.handle("gpio:list-mappings", (_evt, deviceId) => {
-    return db.prepare("SELECT * FROM gpio_mappings WHERE device_id = ? ORDER BY direction, pin").all(deviceId);
+    return getDb().prepare("SELECT * FROM gpio_mappings WHERE device_id = ? ORDER BY direction, pin").all(deviceId);
   });
 
   ipcMain.handle("gpio:add-mapping", (_evt, mapping) => {
     const { device_id, direction, pin, action_type, action_value, label } = mapping;
-    db.prepare("INSERT INTO gpio_mappings (device_id, direction, pin, action_type, action_value, label) VALUES (?,?,?,?,?,?)")
+    getDb().prepare("INSERT INTO gpio_mappings (device_id, direction, pin, action_type, action_value, label) VALUES (?,?,?,?,?,?)")
       .run(device_id, direction || "gpi", pin || 1, action_type || "command", action_value || "", label || null);
     loadMappings();
     return true;
@@ -111,14 +111,14 @@ function installGpioEngine(ipcMain, database, opts = {}) {
 
   ipcMain.handle("gpio:update-mapping", (_evt, id, mapping) => {
     const { pin, action_type, action_value, label, is_active } = mapping;
-    db.prepare("UPDATE gpio_mappings SET pin=?, action_type=?, action_value=?, label=?, is_active=? WHERE id=?")
+    getDb().prepare("UPDATE gpio_mappings SET pin=?, action_type=?, action_value=?, label=?, is_active=? WHERE id=?")
       .run(pin, action_type, action_value, label, is_active ?? 1, id);
     loadMappings();
     return true;
   });
 
   ipcMain.handle("gpio:delete-mapping", (_evt, id) => {
-    db.prepare("DELETE FROM gpio_mappings WHERE id = ?").run(id);
+    getDb().prepare("DELETE FROM gpio_mappings WHERE id = ?").run(id);
     loadMappings();
     return true;
   });
@@ -138,9 +138,9 @@ function installGpioEngine(ipcMain, database, opts = {}) {
 
   // Auto-connect devices on startup
   setTimeout(() => {
-    if (!db) return;
+    if (!getDb()) return;
     try {
-      const autoDevices = db.prepare("SELECT * FROM gpio_devices WHERE auto_connect = 1 AND is_active = 1").all();
+      const autoDevices = getDb().prepare("SELECT * FROM gpio_devices WHERE auto_connect = 1 AND is_active = 1").all();
       for (const d of autoDevices) {
         connect(d.id).catch(e => console.warn(`[GPIO] auto-connect ${d.name} failed:`, e));
       }
@@ -153,7 +153,7 @@ function installGpioEngine(ipcMain, database, opts = {}) {
 // ── Connection management ────────────────────────────────────
 
 async function connect(deviceId) {
-  const device = db.prepare("SELECT * FROM gpio_devices WHERE id = ?").get(deviceId);
+  const device = getDb().prepare("SELECT * FROM gpio_devices WHERE id = ?").get(deviceId);
   if (!device) throw new Error(`GPIO device ${deviceId} not found`);
 
   disconnect(deviceId); // clean up any existing connection
@@ -314,7 +314,7 @@ function sendGpo(deviceId, pin, state) {
 
 function loadMappings() {
   try {
-    gpiMappings = db.prepare("SELECT * FROM gpio_mappings WHERE is_active = 1").all();
+    gpiMappings = getDb().prepare("SELECT * FROM gpio_mappings WHERE is_active = 1").all();
   } catch { gpiMappings = []; }
 }
 

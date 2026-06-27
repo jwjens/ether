@@ -165,28 +165,29 @@ function stationsUpdateById(db, intId, patch) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStations(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('stations:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: stationsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: stationsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('stations:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: stationsGet(db, uuid) }; }
+    try { return { ok: true, row: stationsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('stations:create', (_, payload) => {
-    try { return { ok: true, row: stationsCreate(db, payload) }; }
+    try { return { ok: true, row: stationsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('stations:update', (_, uuid, patch) => {
-    try { return { ok: true, row: stationsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: stationsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('stations:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...stationsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...stationsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

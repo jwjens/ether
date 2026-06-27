@@ -165,38 +165,39 @@ function cartSlotsDeleteBySlotNumber(db, stationId, slotNumber) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installCartSlots(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('cart_slots:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: cartSlotsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: cartSlotsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('cart_slots:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: cartSlotsGet(db, uuid) }; }
+    try { return { ok: true, row: cartSlotsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('cart_slots:create', (_, payload) => {
-    try { return { ok: true, row: cartSlotsCreate(db, payload) }; }
+    try { return { ok: true, row: cartSlotsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('cart_slots:update', (_, uuid, patch) => {
-    try { return { ok: true, row: cartSlotsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: cartSlotsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('cart_slots:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...cartSlotsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...cartSlotsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('cart_slots:upsert-by-slot-number', (_, stationId, slotNumber, payload) => {
-    try { return { ok: true, row: cartSlotsUpsertBySlotNumber(db, stationId, slotNumber, payload) }; }
+    try { return { ok: true, row: cartSlotsUpsertBySlotNumber(getDb(), stationId, slotNumber, payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('cart_slots:delete-by-slot-number', (_, stationId, slotNumber) => {
-    try { return { ok: true, ...cartSlotsDeleteBySlotNumber(db, stationId, slotNumber) }; }
+    try { return { ok: true, ...cartSlotsDeleteBySlotNumber(getDb(), stationId, slotNumber) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

@@ -354,43 +354,44 @@ function metadataValuesUpsert(db, { song_id, definition_id, station_id, value_te
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSongMetadataValues(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('song_metadata_values:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: songMetadataValuesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: songMetadataValuesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: songMetadataValuesGet(db, uuid) }; }
+    try { return { ok: true, row: songMetadataValuesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:create', (_, payload) => {
-    try { return { ok: true, row: songMetadataValuesCreate(db, payload) }; }
+    try { return { ok: true, row: songMetadataValuesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:update', (_, uuid, patch) => {
-    try { return { ok: true, row: songMetadataValuesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: songMetadataValuesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...songMetadataValuesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...songMetadataValuesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:bulk-apply', (_, payload) => {
-    try { return metadataValuesBulkApply(db, payload); }
+    try { return metadataValuesBulkApply(getDb(), payload); }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:list-by-song', (_, songIds, stationId) => {
-    try { return { ok: true, rows: metadataValuesListBySong(db, songIds, stationId) }; }
+    try { return { ok: true, rows: metadataValuesListBySong(getDb(), songIds, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('song_metadata_values:upsert', (_, payload) => {
-    try { return metadataValuesUpsert(db, payload); }
+    try { return metadataValuesUpsert(getDb(), payload); }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

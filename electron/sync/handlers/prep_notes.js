@@ -169,38 +169,39 @@ function prepNotesDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPrepNotes(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('prep_notes:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: prepNotesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: prepNotesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('prep_notes:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: prepNotesGet(db, uuid) }; }
+    try { return { ok: true, row: prepNotesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('prep_notes:create', (_, payload) => {
-    try { return { ok: true, row: prepNotesCreate(db, payload) }; }
+    try { return { ok: true, row: prepNotesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('prep_notes:update', (_, uuid, patch) => {
-    try { return { ok: true, row: prepNotesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: prepNotesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('prep_notes:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...prepNotesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...prepNotesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('prep_notes:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: prepNotesUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: prepNotesUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('prep_notes:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...prepNotesDeleteById(db, intId) }; }
+    try { return { ok: true, ...prepNotesDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

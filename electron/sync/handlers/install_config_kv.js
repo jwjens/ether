@@ -63,23 +63,24 @@ function installConfigKvRemoveByKey(db, key) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installInstallConfigKv(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('install-config-kv:list', (_) => {
-    try { return { ok: true, rows: installConfigKvList(db) }; }
+    try { return { ok: true, rows: installConfigKvList(getDb()) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('install-config-kv:get', (_, key) => {
-    try { return { ok: true, row: installConfigKvGet(db, key) }; }
+    try { return { ok: true, row: installConfigKvGet(getDb(), key) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('install-config-kv:upsert-by-key', (_, key, value) => {
-    try { return { ok: true, row: installConfigKvUpsertByKey(db, key, value) }; }
+    try { return { ok: true, row: installConfigKvUpsertByKey(getDb(), key, value) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('install-config-kv:remove-by-key', (_, key) => {
-    try { return { ok: true, ...installConfigKvRemoveByKey(db, key) }; }
+    try { return { ok: true, ...installConfigKvRemoveByKey(getDb(), key) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

@@ -157,33 +157,34 @@ function separationRulesUpdateById(db, intId, patch) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSeparationRules(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('separation_rules:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: separationRulesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: separationRulesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('separation_rules:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: separationRulesGet(db, uuid) }; }
+    try { return { ok: true, row: separationRulesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('separation_rules:create', (_, payload) => {
-    try { return { ok: true, row: separationRulesCreate(db, payload) }; }
+    try { return { ok: true, row: separationRulesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('separation_rules:update', (_, uuid, patch) => {
-    try { return { ok: true, row: separationRulesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: separationRulesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('separation_rules:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...separationRulesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...separationRulesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('separation_rules:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: separationRulesUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: separationRulesUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

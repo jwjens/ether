@@ -20,7 +20,10 @@ const SERVER_SEQ_KEY  = 'sync_server_seq';
 
 class HttpTransport extends EtherTransport {
   /**
-   * @param {import('better-sqlite3').Database} db
+   * @param {import('better-sqlite3').Database|(() => import('better-sqlite3').Database)} db
+   *   A live connection OR a getter that returns it. Passing the getter (main.js getDb) lets the
+   *   transport resolve the CURRENT handle after a self-heal/restore reopen instead of holding a
+   *   stale closed one. The transport caches no prepared statements, so this is transparent.
    * @param {object} [opts]
    * @param {string} [opts.baseUrl]     backend root URL (no trailing slash)
    *                                    defaults to process.env.ETHER_SYNC_URL
@@ -29,7 +32,8 @@ class HttpTransport extends EtherTransport {
    */
   constructor(db, opts = {}) {
     super();
-    this._db = db;
+    // Accept a Database OR a () => Database getter; everything reads via the _db getter below.
+    this._getDb = (typeof db === 'function') ? db : () => db;
     this._baseUrl = (opts.baseUrl || process.env.ETHER_SYNC_URL || '').replace(/\/$/, '');
     if (!this._baseUrl) {
       throw new Error(
@@ -46,6 +50,9 @@ class HttpTransport extends EtherTransport {
     this._serverSeqKey = opts.cursorKey || SERVER_SEQ_KEY;
     this._serverSeq  = this._loadServerSeq();
   }
+
+  // Live connection, resolved through the injected getter every access (self-heal-aware).
+  get _db() { return this._getDb(); }
 
   // ── EtherTransport interface ───────────────────────────────────────────────
 

@@ -67,6 +67,10 @@ class SyncEngine {
     this._uuidIdentity   = opts.uuidIdentity   ?? false;
     this._getStationUuid = opts.getStationUuid ?? (() => null);
     this._uuidStmts      = {};
+    // On-air predicate (Tier-2 re-baseline safety): () => boolean. The ONLY thing it gates is the heavy
+    // one-shot corrective re-pull in rebaseline() — never the normal incremental push/pull. Defaults to
+    // () => false (never on-air) so non-Electron callers (proof scripts) behave exactly as before.
+    this._isOnAir        = opts.isOnAir ?? (() => false);
     // Per-context push isolation (member-operate). Each station you can operate runs its OWN sync
     // context; push must never send another account's edits under the wrong credential:
     //  • member context  → getPushOnlyStationId() returns that station's LOCAL id → push ONLY its
@@ -254,16 +258,46 @@ class SyncEngine {
     return { scanned, dangling };
   }
 
+  // Is a one-shot Tier-2 re-baseline still owed on this install? True only when UUID-identity is on and
+  // the re-baseline has not yet completed. Cheap (single system_state read) — safe to call every tick.
+  rebaselinePending() {
+    if (!this._uuidIdentity) return false;
+    const done = this._db.prepare("SELECT value FROM system_state WHERE key = 'rebaseline_done'").get();
+    return done?.value !== '1';
+  }
+
   async rebaseline({ force = false } = {}) {
     if (!this._uuidIdentity) return { skipped: 'uuid-identity off' };
     const done = this._db.prepare("SELECT value FROM system_state WHERE key = 'rebaseline_done'").get();
     if (done?.value === '1' && !force) return { skipped: 'already done' };
 
-    const before = this.rebaselineScan();
-    if (typeof this._transport.resetCursor === 'function') this._transport.resetCursor();
+    // On-air gate (constraint a): NEVER start the heavy corrective re-pull while the station is streaming —
+    // a full-history re-pull burst would contend with the daemon's song-boundary reads on the shared WAL
+    // DB (busy_timeout 5s → risk of a late transition / dead air). The normal incremental sync is NOT
+    // gated; only this re-pull defers to a quiet (off-air) window. The scheduler resumes it off air.
+    if (this._isOnAir()) return { skipped: 'on-air (deferred)' };
+
+    // Reset the pull high-water mark exactly ONCE, then persist 'rebaseline_started'. A resume after an
+    // on-air suspension (or app restart) must continue from the persisted server_seq, NOT restart at 0 —
+    // re-pulling from 0 each resume would never finish if the station is on air often. resetCursor()
+    // persists server_seq=0, and every pull() persists its advance, so the cursor survives suspend/resume.
+    const startedRow = this._db.prepare("SELECT value FROM system_state WHERE key = 'rebaseline_started'").get();
+    let before = null;
+    if (startedRow?.value !== '1' || force) {
+      before = this.rebaselineScan();
+      if (typeof this._transport.resetCursor === 'function') this._transport.resetCursor();
+      this._db.prepare(
+        `INSERT INTO system_state (key, value, updated_at) VALUES ('rebaseline_started', '1', ?)
+         ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at`
+      ).run(new Date().toISOString());
+    }
 
     let applied = 0, rounds = 0;
     while (rounds++ < 1000) {                 // 1000 = backstop; each round drains up to 500 mutations
+      // Re-check on-air BETWEEN pages (constraint a): if the station went live mid-run, suspend cleanly.
+      // The last pull() already persisted server_seq, so a later off-air call resumes with no double-pull
+      // and no re-reset (idempotent merge makes any overlap harmless anyway). rebaseline_done is NOT set.
+      if (this._isOnAir()) return { suspended: true, applied };
       const r = await this.pull();
       applied += r.applied ?? 0;
       if ((r.pulled ?? 0) === 0) break;       // drained
@@ -275,8 +309,9 @@ class SyncEngine {
        ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = excluded.updated_at`
     ).run(new Date().toISOString());
 
-    console.log(`[sync-engine] rebaseline complete: applied=${applied} dangling ${before.dangling.length}→${after.dangling.length}`);
-    return { applied, danglingBefore: before.dangling.length, danglingAfter: after.dangling.length };
+    const beforeN = before ? before.dangling.length : null;
+    console.log(`[sync-engine] rebaseline complete: applied=${applied} dangling ${beforeN ?? '?'}→${after.dangling.length}`);
+    return { applied, danglingBefore: beforeN, danglingAfter: after.dangling.length };
   }
 
   // ── Sync cycle ────────────────────────────────────────────────────────────

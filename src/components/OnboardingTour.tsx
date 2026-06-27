@@ -401,32 +401,30 @@ export default function OnboardingTour({ onDone }: Props) {
 export function useTour() {
   const [showTour, setShowTour] = useState(false);
   const [checked, setChecked] = useState(false);
-  const { stationId, isReady } = useActiveStation();
 
+  // The tour is a FIRST-RUN-EVER thing → its "done" flag lives at the INSTALL level, not per station.
+  // It used to read/write tour_done_version on the ACTIVE station's config, so switching to any station
+  // that hadn't been marked replayed the whole tour. install_config_kv is install-scoped → mark once,
+  // never re-trigger on a station switch.
   useEffect(() => {
-    if (!isReady || stationId == null) return;
     (async () => {
       try {
-        const result = await (window as any).ether.stationConfigKv.list(stationId);
-        const rows = result.ok ? result.rows : [];
-        const donVersion = rows.find((r: { key: string }) => r.key === 'tour_done_version')?.value;
-        if (donVersion !== TOUR_VERSION) setShowTour(true);
+        const result = await (window as any).ether.installConfigKv.list();
+        const rows = Array.isArray(result) ? result : (result?.rows || []);
+        const doneVersion = rows.find((r: { key: string }) => r.key === 'tour_done_version')?.value;
+        if (doneVersion !== TOUR_VERSION) setShowTour(true);
       } catch {
         setShowTour(true);
       }
       setChecked(true);
     })();
-  }, [stationId, isReady]);
+  }, []);   // once on mount — NOT keyed on the active station
 
   const dismissTour = async () => {
     setShowTour(false);
-    if (stationId != null) {
-      try {
-        await (window as any).ether.stationConfigKv.upsertByKey(
-          stationId, 'tour_done_version', TOUR_VERSION
-        );
-      } catch {}
-    }
+    try {
+      await (window as any).ether.installConfigKv.upsertByKey('tour_done_version', TOUR_VERSION);
+    } catch {}
   };
 
   return { showTour, checked, dismissTour };

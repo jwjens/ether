@@ -136,28 +136,34 @@ function {{CAMEL_NAME}}Delete(db, uuid) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function {{INSTALL_FN}}(ipcMain, db) {
+  // Resolve the LIVE connection at call time. `db` may be a Database OR a () => Database getter
+  // (main.js passes getDb). After a restore/self-heal reopen the handle changes, so capturing it by
+  // value would orphan these handlers on a dead connection ("database connection is not open"). The
+  // business-logic fns still take a raw db param (the proofs call them directly) — only the resolution
+  // site changes.
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('{{TABLE_NAME}}:list', (_, opts) => {
-    try { return { ok: true, rows: {{CAMEL_NAME}}List(db, opts) }; }
+    try { return { ok: true, rows: {{CAMEL_NAME}}List(getDb(), opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('{{TABLE_NAME}}:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: {{CAMEL_NAME}}Get(db, uuid) }; }
+    try { return { ok: true, row: {{CAMEL_NAME}}Get(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('{{TABLE_NAME}}:create', (_, payload) => {
-    try { return { ok: true, row: {{CAMEL_NAME}}Create(db, payload) }; }
+    try { return { ok: true, row: {{CAMEL_NAME}}Create(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('{{TABLE_NAME}}:update', (_, uuid, patch) => {
-    try { return { ok: true, row: {{CAMEL_NAME}}Update(db, uuid, patch) }; }
+    try { return { ok: true, row: {{CAMEL_NAME}}Update(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('{{TABLE_NAME}}:delete', (_, uuid) => {
-    try { return { ok: true, ...{{CAMEL_NAME}}Delete(db, uuid) }; }
+    try { return { ok: true, ...{{CAMEL_NAME}}Delete(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

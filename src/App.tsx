@@ -498,6 +498,11 @@ export default function App() {
   // screen and stays "signed out" until you sign in THIS session, so it can never drop you into a
   // previous account's profile picker. Flipped true by handleWizardComplete (onboarding/sign-in done).
   const [accountSignedIn, setAccountSignedIn] = useState(false);
+  // DURABLE signed-in marker: account_jwt present in install_config_kv. Unlike accountSignedIn (which
+  // resets every launch and only flips via on-air/resume/sign-in), this persists across launches and
+  // survives a cloud-restored install — so the account/tier reconcile fires on a restored install too,
+  // not just after a fresh sign-in this session. Loaded once in the init effect below.
+  const [hasAccountJwt, setHasAccountJwt] = useState(false);
   // True when a live Icecast stream was active at launch (crash / reboot / watchdog recovery): the
   // gate then SKIPS sign-in so the broadcast resumes unattended. null = not yet checked.
   const [wasOnAir, setWasOnAir] = useState<boolean | null>(null);
@@ -758,18 +763,22 @@ export default function App() {
         if (get('onboarding_account_joined') === "1") setAccountJoined(true);
         const name = get('station_name');
         if (name) setStationName(name);
-        // plan_tier is install-level — only propagate from station 1. Resolve through
-        // resolveEffectivePlan so the dev tier override is honored here too (otherwise this
-        // raw read clobbers the override back to the real plan on load). Switching to a
-        // non-1 station must not overwrite the global plan cache (would hide the badge).
-        if (stationId === 1) {
-          const effective = resolveEffectivePlan(rows);
-          setCurrentPlan(effective);
-          setPlanGlobally(effective);
-        } else {
-          const p = get('plan_tier') as PlanTier | undefined;
-          if (p) setCurrentPlan(p);
-        }
+        // THE TIER IS ACCOUNT-LEVEL — read it from install_config_kv (install/account scope), NEVER from
+        // a station. The account/license grants the tier (you can't make a station without it), so it
+        // must not depend on which station is active or its local id. The owner/dev override (station 1)
+        // still wins for testing.
+        try {
+          const _inst = await (window as any).ether.installConfigKv.list().catch(() => null);
+          const _instRows: { key: string; value: string }[] = Array.isArray(_inst) ? _inst : (_inst?.rows || []);
+          // Durable signed-in marker (reuses the rows we already have — no extra IPC). Flipping this
+          // true re-runs the account/tier reconcile effect (it's in that effect's deps).
+          setHasAccountJwt(!!_instRows.find(r => r.key === 'account_jwt')?.value);
+          const _override  = resolveEffectivePlan(rows);                                   // override for owner/dev, else station plan
+          const _instPlan  = _instRows.find(r => r.key === 'plan_tier')?.value as PlanTier | undefined;
+          const _effective = get('plan_tier_dev_override') ? _override : (_instPlan ?? _override);
+          setCurrentPlan(_effective);
+          setPlanGlobally(_effective);
+        } catch {}
         const apiKey = get('license_key');
         // Remember the license for later, but DO NOT push/sync here — a license sitting in the DB
         // proves nothing. Sync only runs once an operator signs in (see the currentUser effect below).
@@ -828,7 +837,11 @@ export default function App() {
   // account station missing locally (add-only; never switches/deletes), so a station created in
   // the dashboard appears without a sign-out/in. Gated post-sign-in with a license present.
   useEffect(() => {
-    if (!firstRunChecked || !accountSignedIn || !apiKeyRef.current) return;
+    // Fire on EITHER a fresh sign-in this session (accountSignedIn) OR a durable signed-in account
+    // (account_jwt present) — the latter is what makes a cloud-restored install reconcile its tier.
+    // Still gated on app-init + a license present; reconcileAccountStations only WRITES on a /account/connect
+    // 200 with a plan, so this never syncs off an unauthenticated/empty state.
+    if (!firstRunChecked || (!accountSignedIn && !hasAccountJwt) || !apiKeyRef.current) return;
     let alive = true;
     // Continuously keep this install in sync with the cloud: materialize any new account stations,
     // then import any cloud-staged programming (categories/clocks/slots/shows authored in the
@@ -843,7 +856,7 @@ export default function App() {
     syncCloud();
     const id = setInterval(syncCloud, 20 * 1000); // ~every 20s
     return () => { alive = false; clearInterval(id); };
-  }, [firstRunChecked, accountSignedIn]);
+  }, [firstRunChecked, accountSignedIn, hasAccountJwt]);
 
   // When a cloud→local download finishes (materialize writes file_path), re-push the
   // library view so the dashboard's local/cloud status reflects the new local files.

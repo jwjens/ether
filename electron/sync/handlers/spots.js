@@ -166,38 +166,39 @@ function spotsDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSpots(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('spots:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: spotsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: spotsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('spots:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: spotsGet(db, uuid) }; }
+    try { return { ok: true, row: spotsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('spots:create', (_, payload) => {
-    try { return { ok: true, row: spotsCreate(db, payload) }; }
+    try { return { ok: true, row: spotsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('spots:update', (_, uuid, patch) => {
-    try { return { ok: true, row: spotsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: spotsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('spots:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...spotsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...spotsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('spots:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: spotsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: spotsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('spots:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...spotsDeleteById(db, intId) }; }
+    try { return { ok: true, ...spotsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

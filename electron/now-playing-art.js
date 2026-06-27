@@ -10,9 +10,9 @@
 const crypto = require("crypto");
 const { ETHER_BACKEND_URL } = require("./lib/etherBackend");
 
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 function licenseKey() {
-  try { return db.prepare("SELECT value FROM station_config_kv WHERE key = ?").get("license_key")?.value || null; }
+  try { return getDb().prepare("SELECT value FROM station_config_kv WHERE key = ?").get("license_key")?.value || null; }
   catch { return null; }
 }
 async function getFetch() {
@@ -86,7 +86,7 @@ function ensureNowPlayingArt(uuid, filePath) {
 }
 
 function installNowPlayingArt(ipcMain, database) {
-  db = database;
+  getDb = (typeof database === 'function') ? database : () => database;
   ipcMain.handle("nowPlayingArt:ensure", (_, uuid, filePath) => ensureNowPlayingArt(uuid, filePath));
 }
 

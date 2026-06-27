@@ -173,43 +173,44 @@ function clockSlotsClearByClockId(db, clockId, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installClockSlots(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('clock_slots:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: clockSlotsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: clockSlotsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: clockSlotsGet(db, uuid) }; }
+    try { return { ok: true, row: clockSlotsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:create', (_, payload) => {
-    try { return { ok: true, row: clockSlotsCreate(db, payload) }; }
+    try { return { ok: true, row: clockSlotsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:update', (_, uuid, patch) => {
-    try { return { ok: true, row: clockSlotsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: clockSlotsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...clockSlotsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...clockSlotsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: clockSlotsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: clockSlotsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...clockSlotsDeleteById(db, intId) }; }
+    try { return { ok: true, ...clockSlotsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clock_slots:clear-by-clock-id', (_, clockId, stationId) => {
-    try { return { ok: true, ...clockSlotsClearByClockId(db, clockId, stationId) }; }
+    try { return { ok: true, ...clockSlotsClearByClockId(getDb(), clockId, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

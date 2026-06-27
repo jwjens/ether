@@ -160,28 +160,29 @@ function operatorNotesUpsertByOperatorId(db, operatorId, stationId, note) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installOperatorNotes(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('operator_notes:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: operatorNotesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: operatorNotesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operator_notes:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: operatorNotesGet(db, uuid) }; }
+    try { return { ok: true, row: operatorNotesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operator_notes:create', (_, payload) => {
-    try { return { ok: true, row: operatorNotesCreate(db, payload) }; }
+    try { return { ok: true, row: operatorNotesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operator_notes:update', (_, uuid, patch) => {
-    try { return { ok: true, row: operatorNotesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: operatorNotesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operator_notes:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...operatorNotesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...operatorNotesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

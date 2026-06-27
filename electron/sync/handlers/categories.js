@@ -166,33 +166,34 @@ function categoriesDelete(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installCategories(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('categories:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: categoriesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: categoriesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('categories:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: categoriesGet(db, uuid) }; }
+    try { return { ok: true, row: categoriesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('categories:create', (_, payload) => {
-    try { return { ok: true, row: categoriesCreate(db, payload) }; }
+    try { return { ok: true, row: categoriesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('categories:update', (_, uuid, patch) => {
-    try { return { ok: true, row: categoriesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: categoriesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('categories:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...categoriesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...categoriesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('categories:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: categoriesUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: categoriesUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

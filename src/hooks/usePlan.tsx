@@ -64,9 +64,26 @@ export function resolveEffectivePlan(rows: { key: string; value: string }[]): Pl
 function loadFromStation1() {
   (async () => {
     try {
-      const result = await (window as any).ether.stationConfigKv.list(1);
-      const rows: { key: string; value: string }[] = result.ok ? result.rows : [];
-      notifyAll(resolveEffectivePlan(rows));
+      const ether = (window as any).ether;
+      // THE TIER IS ACCOUNT-LEVEL. The account/license grants the tier — you can't create a station
+      // without it — so the tier must NOT be read from any station. Read it from install_config_kv
+      // (install/account scope). It does not matter which stations exist, their ids, or which machine.
+      const inst = await ether.installConfigKv.list().catch(() => null);
+      const instRows: { key: string; value: string }[] = Array.isArray(inst) ? inst : (inst?.rows || []);
+      const instPlan = instRows.find((r) => r.key === 'plan_tier')?.value;
+
+      // Dev/owner tier override still wins (testing only; it lives in station 1's config).
+      let s1Rows: { key: string; value: string }[] = [];
+      try { const s1 = await ether.stationConfigKv.list(1); s1Rows = s1?.ok ? s1.rows : []; } catch {}
+      const ownerKey = s1Rows.find((r) => r.key === 'license_key')?.value?.trim() === OWNER_LICENSE_KEY;
+      if (import.meta.env.DEV || ownerKey) {
+        const override = s1Rows.find((r) => r.key === 'plan_tier_dev_override')?.value;
+        if (override && override in DEV_TIER_BY_LABEL) { notifyAll(DEV_TIER_BY_LABEL[override]); return; }
+      }
+
+      if (instPlan) { notifyAll(instPlan as PlanTier); return; }
+      // Legacy fallback: installs from before account-level plan still hold it under station 1.
+      notifyAll(resolveEffectivePlan(s1Rows));
     } catch {
       notifyAll("free");
     }

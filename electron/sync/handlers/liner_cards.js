@@ -166,38 +166,39 @@ function linerCardsDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installLinerCards(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('liner_cards:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: linerCardsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: linerCardsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('liner_cards:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: linerCardsGet(db, uuid) }; }
+    try { return { ok: true, row: linerCardsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('liner_cards:create', (_, payload) => {
-    try { return { ok: true, row: linerCardsCreate(db, payload) }; }
+    try { return { ok: true, row: linerCardsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('liner_cards:update', (_, uuid, patch) => {
-    try { return { ok: true, row: linerCardsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: linerCardsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('liner_cards:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...linerCardsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...linerCardsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('liner_cards:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: linerCardsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: linerCardsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('liner_cards:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...linerCardsDeleteById(db, intId) }; }
+    try { return { ok: true, ...linerCardsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

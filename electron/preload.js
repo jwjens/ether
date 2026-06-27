@@ -95,7 +95,7 @@ contextBridge.exposeInMainWorld("ether", {
   // Phase B.1-B.2. subscribe-returns-unsubscribe pattern matches `sync:` below.
   // The returned function from on*Progress / on*Done is the useEffect cleanup.
   libraryR2: {
-    upload:             ()    => ipcRenderer.invoke("library:sync-r2:upload"),
+    upload:             (opts)=> ipcRenderer.invoke("library:sync-r2:upload", opts || {}),
     uploadCancel:       ()    => ipcRenderer.invoke("library:sync-r2:upload:cancel"),
     download:           ()    => ipcRenderer.invoke("library:sync-r2:download"),
     downloadCancel:     ()    => ipcRenderer.invoke("library:sync-r2:download:cancel"),

@@ -187,43 +187,44 @@ function voiceTracksClearClockSlotId(db, slotId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installVoiceTracks(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('voice_tracks:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: voiceTracksList(db, stationId, opts) }; }
+    try { return { ok: true, rows: voiceTracksList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: voiceTracksGet(db, uuid) }; }
+    try { return { ok: true, row: voiceTracksGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:create', (_, payload) => {
-    try { return { ok: true, row: voiceTracksCreate(db, payload) }; }
+    try { return { ok: true, row: voiceTracksCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:update', (_, uuid, patch) => {
-    try { return { ok: true, row: voiceTracksUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: voiceTracksUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...voiceTracksDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...voiceTracksDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: voiceTracksUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: voiceTracksUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...voiceTracksDeleteById(db, intId) }; }
+    try { return { ok: true, ...voiceTracksDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('voice_tracks:clear-clock-slot-id', (_, slotId) => {
-    try { return { ok: true, ...voiceTracksClearClockSlotId(db, slotId) }; }
+    try { return { ok: true, ...voiceTracksClearClockSlotId(getDb(), slotId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

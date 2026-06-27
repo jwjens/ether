@@ -22,18 +22,18 @@ const http  = require("http");
 const https = require("https");
 const { URL } = require("url");
 
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 let ipcMain = null;
 let serialPortModule = null; // lazy-loaded if any RDS target is configured
 
 // ── DB helpers ────────────────────────────────────────────────
 function listTargets(enabledOnly = true) {
-  if (!db) return [];
+  if (!getDb()) return [];
   try {
     const sql = enabledOnly
       ? "SELECT * FROM stream_metadata_targets WHERE enabled = 1 ORDER BY id"
       : "SELECT * FROM stream_metadata_targets ORDER BY id";
-    return db.prepare(sql).all();
+    return getDb().prepare(sql).all();
   } catch (e) {
     console.error("[METADATA] listTargets failed:", e.message);
     return [];
@@ -41,9 +41,9 @@ function listTargets(enabledOnly = true) {
 }
 
 function recordResult(id, status, errorMsg = "") {
-  if (!db) return;
+  if (!getDb()) return;
   try {
-    db.prepare(
+    getDb().prepare(
       "UPDATE stream_metadata_targets SET last_status = ?, last_error = ?, last_pushed_at = ?, push_count = push_count + 1 WHERE id = ?"
     ).run(status, errorMsg, Math.floor(Date.now() / 1000), id);
   } catch (e) {
@@ -229,9 +229,9 @@ async function dispatch(payload) {
 
 // ── Test push — manually fire a target with sample data, used by Settings ──
 async function testPush(targetId) {
-  if (!db) return { ok: false, error: "no db" };
+  if (!getDb()) return { ok: false, error: "no db" };
   try {
-    const t = db.prepare("SELECT * FROM stream_metadata_targets WHERE id = ?").get(targetId);
+    const t = getDb().prepare("SELECT * FROM stream_metadata_targets WHERE id = ?").get(targetId);
     if (!t) return { ok: false, error: "target not found" };
     let cfg = {};
     try { cfg = JSON.parse(t.config_json || "{}"); } catch {}
@@ -255,22 +255,22 @@ async function testPush(targetId) {
 
 // ── Install — wire IPC handlers and a now-playing listener ────
 function installMetadataDispatcher(_ipcMain, database) {
-  db = database;
+  getDb = (typeof database === "function") ? database : () => database;
   ipcMain = _ipcMain;
 
   ipcMain.handle("metadata:list-targets", () => listTargets(false));
   ipcMain.handle("metadata:add-target", (_, { name, type, enabled = 1, config }) => {
-    db.prepare("INSERT INTO stream_metadata_targets (name, type, enabled, config_json) VALUES (?, ?, ?, ?)")
+    getDb().prepare("INSERT INTO stream_metadata_targets (name, type, enabled, config_json) VALUES (?, ?, ?, ?)")
       .run(name, type, enabled ? 1 : 0, JSON.stringify(config || {}));
     return { ok: true };
   });
   ipcMain.handle("metadata:update-target", (_, { id, name, type, enabled, config }) => {
-    db.prepare("UPDATE stream_metadata_targets SET name = ?, type = ?, enabled = ?, config_json = ? WHERE id = ?")
+    getDb().prepare("UPDATE stream_metadata_targets SET name = ?, type = ?, enabled = ?, config_json = ? WHERE id = ?")
       .run(name, type, enabled ? 1 : 0, JSON.stringify(config || {}), id);
     return { ok: true };
   });
   ipcMain.handle("metadata:delete-target", (_, { id }) => {
-    db.prepare("DELETE FROM stream_metadata_targets WHERE id = ?").run(id);
+    getDb().prepare("DELETE FROM stream_metadata_targets WHERE id = ?").run(id);
     return { ok: true };
   });
   ipcMain.handle("metadata:test-target", (_, { id }) => testPush(id));
@@ -288,11 +288,11 @@ function installMetadataDispatcher(_ipcMain, database) {
   // configured, seed it as the first metadata target so the existing
   // Icecast push keeps working after upgrade.
   try {
-    const count = db.prepare("SELECT COUNT(*) as n FROM stream_metadata_targets").get().n;
+    const count = getDb().prepare("SELECT COUNT(*) as n FROM stream_metadata_targets").get().n;
     if (count === 0) {
-      const old = db.prepare("SELECT * FROM stream_settings WHERE id = 1").get();
+      const old = getDb().prepare("SELECT * FROM stream_settings WHERE id = 1").get();
       if (old && old.host) {
-        db.prepare("INSERT INTO stream_metadata_targets (name, type, enabled, config_json) VALUES (?, ?, ?, ?)")
+        getDb().prepare("INSERT INTO stream_metadata_targets (name, type, enabled, config_json) VALUES (?, ?, ?, ?)")
           .run("Main Icecast (migrated)", "icecast", old.is_active ? 1 : 0, JSON.stringify({
             host: old.host, port: old.port || 8000, mount: old.mount || "/stream",
             adminUser: old.username || "admin", adminPass: old.password || "",

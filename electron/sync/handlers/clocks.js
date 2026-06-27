@@ -155,33 +155,34 @@ function clocksDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installClocks(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('clocks:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: clocksList(db, stationId, opts) }; }
+    try { return { ok: true, rows: clocksList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clocks:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: clocksGet(db, uuid) }; }
+    try { return { ok: true, row: clocksGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clocks:create', (_, payload) => {
-    try { return { ok: true, row: clocksCreate(db, payload) }; }
+    try { return { ok: true, row: clocksCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clocks:update', (_, uuid, patch) => {
-    try { return { ok: true, row: clocksUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: clocksUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clocks:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...clocksDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...clocksDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('clocks:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...clocksDeleteById(db, intId) }; }
+    try { return { ok: true, ...clocksDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

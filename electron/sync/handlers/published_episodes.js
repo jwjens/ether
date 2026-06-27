@@ -145,28 +145,29 @@ function publishedEpisodesDelete(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPublishedEpisodes(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('published_episodes:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: publishedEpisodesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: publishedEpisodesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('published_episodes:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: publishedEpisodesGet(db, uuid) }; }
+    try { return { ok: true, row: publishedEpisodesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('published_episodes:create', (_, payload) => {
-    try { return { ok: true, row: publishedEpisodesCreate(db, payload) }; }
+    try { return { ok: true, row: publishedEpisodesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('published_episodes:update', (_, uuid, patch) => {
-    try { return { ok: true, row: publishedEpisodesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: publishedEpisodesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('published_episodes:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...publishedEpisodesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...publishedEpisodesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

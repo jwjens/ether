@@ -166,38 +166,39 @@ function macrosDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMacros(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('macros:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: macrosList(db, stationId, opts) }; }
+    try { return { ok: true, rows: macrosList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('macros:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: macrosGet(db, uuid) }; }
+    try { return { ok: true, row: macrosGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('macros:create', (_, payload) => {
-    try { return { ok: true, row: macrosCreate(db, payload) }; }
+    try { return { ok: true, row: macrosCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('macros:update', (_, uuid, patch) => {
-    try { return { ok: true, row: macrosUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: macrosUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('macros:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...macrosDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...macrosDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('macros:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: macrosUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: macrosUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('macros:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...macrosDeleteById(db, intId) }; }
+    try { return { ok: true, ...macrosDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

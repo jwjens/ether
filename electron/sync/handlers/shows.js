@@ -176,43 +176,44 @@ function showsClearClockReference(db, clockId, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installShows(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('shows:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: showsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: showsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: showsGet(db, uuid) }; }
+    try { return { ok: true, row: showsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:create', (_, payload) => {
-    try { return { ok: true, row: showsCreate(db, payload) }; }
+    try { return { ok: true, row: showsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:update', (_, uuid, patch) => {
-    try { return { ok: true, row: showsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: showsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...showsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...showsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: showsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: showsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...showsDeleteById(db, intId) }; }
+    try { return { ok: true, ...showsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('shows:clear-clock-reference', (_, clockId, stationId) => {
-    try { return { ok: true, ...showsClearClockReference(db, clockId, stationId) }; }
+    try { return { ok: true, ...showsClearClockReference(getDb(), clockId, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

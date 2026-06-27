@@ -584,21 +584,113 @@ function getDbPath() {
   return localDb;
 }
 
+// ── DB connection lifecycle ────────────────────────────────────────────────────────────────────
+// Single shared better-sqlite3 handle (`let db`). Opening is resilient to a TRANSIENT lock (AV /
+// Search-indexer touching the freshly-written file): openDb() retries with backoff before throwing
+// a real error. getDb() self-heals a closed handle on demand so a one-off failure can't brick every
+// later call forever. Distinction baked in per the guardrails:
+//   • initDb()  = open + MIGRATE + SEED — used at startup and after a restore (a restored file may be
+//                 an older schema). runMigrations()/seedDeckConfigs() are schema_version-gated/
+//                 idempotent, so re-running them is safe.
+//   • getDb()   = REOPEN ONLY (via openDb) — no migrations, no seeds, NO sidecar drop. Mid-session the
+//                 schema is already current and the file healthy; we only lost the handle.
+//   • swapDatabaseFile() = the ONLY path that drops -wal/-shm (the swapped-in file is self-contained).
+
+function sleepSync(ms) {
+  // Synchronous backoff for the open-retry loop (better-sqlite3 + initDb are synchronous). The app
+  // can do nothing useful without the DB, so briefly blocking the main thread here is acceptable.
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+  catch { const end = Date.now() + ms; while (Date.now() < end) { /* busy-wait fallback */ } }
+}
+
+// Open (or reopen) the shared connection ONLY — pragmas, no migrations/seeds. Retries a transient lock.
+function openDb() {
+  const dbPath = getDbPath();
+  // Defensive: guarantee the parent folder exists (covers an ETHER_DB_PATH override + fresh install;
+  // SQLite throws SQLITE_CANTOPEN on a missing parent dir).
+  try { fs.mkdirSync(path.dirname(dbPath), { recursive: true }); } catch {}
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try { db = new Database(dbPath); break; }
+    catch (e) {
+      const txt = `${e && e.code ? e.code + " " : ""}${e && e.message ? e.message : e}`;
+      const transient = /SQLITE_BUSY|SQLITE_CANTOPEN|EBUSY|EPERM|EACCES|database is locked|locked/i.test(txt);
+      if (attempt < MAX_ATTEMPTS && transient) {
+        const wait = 100 * Math.pow(2, attempt - 1); // 100, 200, 400, 800 ms
+        console.warn(`[DB] open attempt ${attempt}/${MAX_ATTEMPTS} failed (${txt}); retrying in ${wait}ms`);
+        sleepSync(wait);
+        continue;
+      }
+      throw new Error(`Cannot open database ${dbPath} after ${attempt} attempt(s): ${txt}`);
+    }
+  }
+  db.pragma("journal_mode = WAL");   // WAL is safe now that the DB is guaranteed local disk
+  db.pragma("foreign_keys = ON");
+  return db;
+}
+
+// Full startup/restore init: open (with retry) + migrate + seed.
 function initDb() {
   const dbPath = getDbPath();
   console.log("[DB] Path:", dbPath);
-  // Defensive: guarantee the parent folder exists at the open site too. getDbPath()/_etherDir()
-  // already creates it, but this also covers an ETHER_DB_PATH override pointing elsewhere. SQLite
-  // throws SQLITE_CANTOPEN if the directory is missing (fresh-install crash).
-  try { fs.mkdirSync(path.dirname(dbPath), { recursive: true }); } catch {}
-  try { db = new Database(dbPath); }
-  catch (e) { throw new Error(`Cannot open database ${dbPath}: ${e.message}`); }
-  db.pragma("journal_mode = WAL");   // WAL is safe now that the DB is guaranteed local disk
-  db.pragma("foreign_keys = ON");
+  openDb();
   console.log("[DB] Connected:", dbPath);
   runMigrations();
   seedDeckConfigs();
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
+}
+
+// Closed-handle guard / self-heal. Returns the live connection, REOPENING it (open-only) if it was
+// left closed — e.g. a transient failure during a restore reopen — so a one-off failure recovers on
+// the next call instead of throwing "database connection is not open" forever. All db-holding
+// sub-modules resolve through this so the heal holds app-wide.
+function getDb() {
+  if (!db || !db.open) {
+    console.warn("[DB] connection not open — reopening (self-heal)");
+    openDb();
+  }
+  return db;
+}
+
+// Atomically swap the live DB file with `srcPath` (restore / cloud-install). Backs up the current DB
+// FIRST so a failed reopen ROLLS BACK instead of leaving the app bricked; verifies the new handle
+// with a trivial read before declaring success; NEVER swallows — throws a real error to the caller.
+// This is the only path that drops WAL sidecars (the swapped-in file is a fresh, self-contained DB).
+function swapDatabaseFile(srcPath) {
+  const dbPath = getDbPath();
+  const preRestore = dbPath + ".pre-restore";
+  if (!fs.existsSync(srcPath)) throw new Error(`swapDatabaseFile: source not found: ${srcPath}`);
+  // 1. Back up the current live DB BEFORE closing — the rollback point. Abort untouched if this fails.
+  try { if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, preRestore); }
+  catch (e) { throw new Error(`pre-restore backup failed (aborted, live DB untouched): ${e.message}`); }
+  const dropSidecars = () => { for (const s of ["-wal", "-shm", "-journal"]) { try { fs.rmSync(dbPath + s, { force: true }); } catch {} } };
+  try { db.close(); } catch {}
+  try {
+    // 2. copy fresh file in + drop its (now-stale) sidecars, then 3. reopen with full init.
+    fs.copyFileSync(srcPath, dbPath);
+    dropSidecars();
+    initDb();
+    // 4. verify the new handle with a trivial read before declaring success.
+    getDb().prepare("SELECT COUNT(*) AS n FROM system_state").get();
+    if (!db.open) throw new Error("handle reports not-open after reopen");
+  } catch (swapErr) {
+    // 5. roll back to the pre-restore DB and re-init; surface a real error either way.
+    console.error("[DB] restore reopen failed — rolling back:", swapErr.message);
+    try {
+      try { if (db && db.open) db.close(); } catch {}
+      if (fs.existsSync(preRestore)) fs.copyFileSync(preRestore, dbPath);
+      dropSidecars();
+      initDb();
+      getDb().prepare("SELECT COUNT(*) AS n FROM system_state").get();
+    } catch (rollbackErr) {
+      // Rollback ALSO failed — KEEP .pre-restore as the only good copy for manual recovery.
+      throw new Error(`restore failed AND rollback failed — DB may need manual recovery (kept ${preRestore}): ${swapErr.message} | rollback: ${rollbackErr.message}`);
+    }
+    // Rollback succeeded → live DB is good again; the .pre-restore copy is now redundant.
+    try { fs.rmSync(preRestore, { force: true }); } catch {}
+    throw new Error(`restore failed; rolled back to the previous database: ${swapErr.message}`);
+  }
+  try { fs.rmSync(preRestore, { force: true }); } catch {}   // success — drop the rollback copy
 }
 
 function runMigrationChain(db) {
@@ -958,7 +1050,7 @@ function seedFreshInstall() {
 // ── Active station helper ─────────────────────────────────────
 function getActiveStationId() {
   try {
-    const row = db.prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get();
+    const row = getDb().prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get();
     return row?.id ?? 1;
   } catch { return 1; }
 }
@@ -1429,7 +1521,7 @@ app.whenReady().then(() => {
   // Cloud backup must init AFTER initDb() so db is not undefined
   try {
     const { installCloudBackup, triggerUpload, getR2Config } = require("./cloud-backup.js");
-    installCloudBackup(ipcMain, db, { dbPath: getDbPath() });
+    installCloudBackup(ipcMain, getDb, { dbPath: getDbPath() });   // getDb (function) so backups always use the live handle after a reopen
     cloudBackupTrigger = triggerUpload;
     app._getR2Config = getR2Config;
 
@@ -1470,9 +1562,9 @@ app.whenReady().then(() => {
   // Station metadata (public listener page config — Phase 2). After initDb().
   try {
     const { installStationMetadata } = require("./station-metadata.js");
-    installStationMetadata(ipcMain, db);
+    installStationMetadata(ipcMain, getDb);   // getDb (function) → resolves the live handle after a reopen
     const { installNowPlayingArt } = require("./now-playing-art.js");
-    installNowPlayingArt(ipcMain, db);
+    installNowPlayingArt(ipcMain, getDb);   // getDb (function) → resolves the live handle after a reopen
   } catch (e) {
     console.warn("[STATION-METADATA] install failed:", e.message);
   }
@@ -1482,7 +1574,7 @@ app.whenReady().then(() => {
   // The onGpiEvent callback's mainWindow use is guarded; GPI events only arrive after the window exists.
   try {
     const { installGpioEngine } = require("./gpio-engine.js");
-    installGpioEngine(ipcMain, db, {
+    installGpioEngine(ipcMain, getDb, {   // getDb (function) → resolves the live handle after a reopen
       onGpiEvent: (actionType, actionValue, info) => {
         console.log(`[GPIO] action: ${actionType} = ${actionValue}`, info);
         if (mainWindow) mainWindow.webContents.send("gpio:event", { actionType, actionValue, ...info });
@@ -1495,7 +1587,7 @@ app.whenReady().then(() => {
   // Site Replication (multi-station sync) — also db-dependent; same reason it lives here now.
   try {
     const { installSiteReplication } = require("./site-replication.js");
-    installSiteReplication(ipcMain, db);
+    installSiteReplication(ipcMain, getDb);   // getDb (function) → resolves the live handle after a reopen
   } catch (e) {
     console.warn("[REPL] installSiteReplication failed:", e.message);
   }
@@ -1505,7 +1597,7 @@ app.whenReady().then(() => {
   console.log('[sync/handlers] ▶ installAll starting (phase-3.5)');
   try {
     const { installAll } = require('./sync/handlers/index');
-    installAll(ipcMain, db);
+    installAll(ipcMain, getDb);   // getDb (function) → every typed handler resolves the live handle after a reopen
     console.log('[sync/handlers] ✓ installAll complete');
   } catch (e) {
     console.error("[sync/handlers] ✗ install failed:", e.message);
@@ -1525,10 +1617,12 @@ app.whenReady().then(() => {
       const { SyncScheduler }   = require('./sync/sync-scheduler');
       const urlRow  = db.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
       const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || '';
-      const transport = new HttpTransport(db, { baseUrl });
+      const transport = new HttpTransport(getDb, { baseUrl });   // getDb (function) → resolves the live handle after a reopen
       // UUID-identity (Tier-2): scope/route station programming by stable station UUID instead of the
       // per-machine local integer, so edits sync both ways across machines whose local ids differ.
-      // Off by default (shadow-first); set sync_uuid_identity=true in station_config_kv to enable.
+      // OFF by default (shadow-first); set sync_uuid_identity='true' in station_config_kv to enable.
+      // NOT enabled for v4.4.24 — cross-machine uuid sync is proven in the harness but not yet
+      // validated on the real two machines, so this build ships it disabled.
       const uuidIdentity = db.prepare(
         "SELECT value FROM station_config_kv WHERE key = 'sync_uuid_identity' LIMIT 1"
       ).get()?.value === 'true';
@@ -1547,7 +1641,7 @@ app.whenReady().then(() => {
           return chosen.map(c => db.prepare('SELECT id FROM stations WHERE uuid = ?').get(c.station_uuid)?.id).filter(v => v != null).map(String);
         } catch (_) { return []; }
       };
-      const scheduler = new SyncScheduler(db, transport, {
+      const scheduler = new SyncScheduler(getDb, transport, {   // getDb (function) → rebuilds its engine if the connection reopens
         // Read active station on every pull so mid-session station switches are handled
         // correctly. main.js owns getActiveStationId(); SyncEngine stores only the getter.
         getStationId:   () => String(getActiveStationId()),
@@ -1556,6 +1650,10 @@ app.whenReady().then(() => {
         uuidIdentity,
         // Owner push excludes member stations (their edits go up under the member token, not the license).
         getPushExcludeStationIds: () => memberOperate ? memberStationLocalIds() : [],
+        // On-air predicate (Tier-2 re-baseline safety): gates ONLY the heavy one-shot corrective re-pull,
+        // never the normal incremental sync. _wasOnAir() reads the HA marker file (Icecast liveCount>0),
+        // so the full-history re-pull burst defers to a quiet window and never fights the audio daemon.
+        isOnAir: () => { try { return _wasOnAir(); } catch (_) { return false; } },
       });
       if (uuidIdentity) console.log('[SYNC] UUID-identity scoping ENABLED (station programming syncs by station UUID)');
       // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
@@ -1592,7 +1690,7 @@ app.whenReady().then(() => {
         app._memberTokens = app._memberTokens || new Map();
         app._memberTokens.set(uuid, token);
         const { SyncEngine } = require('./sync/sync-engine');
-        const mt = new HttpTransport(db, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + uuid });
+        const mt = new HttpTransport(getDb, { baseUrl, memberToken: token, cursorKey: 'sync_server_seq_member_' + uuid });
         // Resolve OV's LOCAL station id on THIS install (created at provision time). Used both to pull
         // OV's programming into the right local rows and to push ONLY OV's edits back (push isolation).
         const localId = () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(uuid); return r ? String(r.id) : null; };
@@ -2500,7 +2598,7 @@ ipcMain.handle("audio:daemon", async (_, cmd, args) => {
 // Database
 ipcMain.handle("db:query", (_, sql, params) => {
   try {
-    const stmt = db.prepare(sql);
+    const stmt = getDb().prepare(sql);   // getDb() self-heals a closed handle (renderer data-layer seam)
     return { data: stmt.all(...(params || [])), error: null };
   } catch (e) {
     return { data: null, error: e.message };
@@ -2564,7 +2662,7 @@ ipcMain.handle("db:execute", (_, sql, params) => {
       }
     }
 
-    const stmt = db.prepare(sql);
+    const stmt = getDb().prepare(sql);   // getDb() self-heals a closed handle (renderer data-layer seam)
     const result = stmt.run(...(params || []));
     return { data: result, error: null };
   } catch (e) {
@@ -2804,12 +2902,9 @@ ipcMain.handle("db:listBackups", () => {
 ipcMain.handle("db:restore", (_, backupName) => {
   try {
     const backupPath = path.join(app.getPath("userData"), "backups", backupName);
-    const dbPath = getDbPath();
     if (!fs.existsSync(backupPath)) return { error: "Backup not found" };
-    // Close DB before restore
-    db.close();
-    fs.copyFileSync(backupPath, dbPath);
-    initDb(); // Reopen
+    // close → copy → reopen(retry) → verify → rollback-on-failure; throws a real error (never bricks).
+    swapDatabaseFile(backupPath);
     return { data: "Restored successfully", error: null };
   } catch (e) { return { data: null, error: e.message }; }
 });
@@ -2906,9 +3001,7 @@ ipcMain.handle("restore_db", (_, { backupName } = {}) => {
     if (!backupName) throw new Error("backupName is required");
     const backupPath = path.join(app.getPath("userData"), "backups", backupName);
     if (!fs.existsSync(backupPath)) throw new Error("Backup not found: " + backupName);
-    db.close();
-    fs.copyFileSync(backupPath, getDbPath());
-    initDb();
+    swapDatabaseFile(backupPath);   // close → copy → reopen(retry) → verify → rollback-on-failure
     return "Restored from " + backupName + ". Restart Ether for all changes to take effect.";
   } catch (e) { throw new Error(e.message); }
 });
@@ -2920,14 +3013,38 @@ ipcMain.handle("restore_db", (_, { backupName } = {}) => {
 // if the local DB already has songs unless force=true.
 ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
   try {
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
-    const licenseKey = lic?.value?.trim();
+    const licenseKey = accountLicenseKey();
     if (!licenseKey) return { ok: false, error: "No license key — sign in first." };
+
+    // Resolve the latest cloud backup FIRST — we need its timestamp to warn the operator how old it
+    // is BEFORE they agree to overwrite. A stale backup silently replacing NEWER local work was the
+    // data-loss vector; surfacing the backup date (so they can cancel) is the guard.
+    const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+    const urlRes = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ license_key: licenseKey }),
+    });
+    if (!urlRes.ok) {
+      if (urlRes.status === 404) return { ok: false, error: "No cloud backup found for this account yet. Back up from the original machine first." };
+      const t = await urlRes.text().catch(() => "");
+      return { ok: false, error: `Couldn't get download URL (${urlRes.status}): ${t.slice(0, 160)}` };
+    }
+    const { db_signed_url } = await urlRes.json();
+    if (!db_signed_url) return { ok: false, error: "Backend returned no download URL." };
+
+    // Pull the backup timestamp out of the signed R2 key (…/backups/<ts>.db.gz, ts like
+    // 2026-06-23T12-10-45Z) and rehydrate it to ISO so the UI can show the backup's age before
+    // overwriting. No extra round-trip, no backend change.
+    let backupTimestamp = null;
+    try {
+      const m = String(db_signed_url).match(/(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})Z?\.db\.gz/i);
+      if (m) backupTimestamp = `${m[1]}T${m[2]}:${m[3]}:${m[4]}Z`;
+    } catch {}
 
     let songCount = 0;
     try { songCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
     if (songCount > 0 && !force) {
-      return { ok: false, error: `This install already has ${songCount} songs. Installing from cloud replaces the local database.`, hasData: true, songs: songCount };
+      return { ok: false, error: `This install already has ${songCount} songs. Installing from cloud replaces the local database.`, hasData: true, songs: songCount, backupTimestamp };
     }
 
     // Preserve this machine's identity (also its sync seat / machine_id) across the DB swap.
@@ -2942,36 +3059,21 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     try { myAccountJwt   = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
     try { myAccountEmail = db.prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get()?.value || null; } catch {}
 
-    const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
-    const urlRes = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ license_key: licenseKey }),
-    });
-    if (!urlRes.ok) {
-      if (urlRes.status === 404) return { ok: false, error: "No cloud backup found for this account yet. Back up from the original machine first." };
-      const t = await urlRes.text().catch(() => "");
-      return { ok: false, error: `Couldn't get download URL (${urlRes.status}): ${t.slice(0, 160)}` };
-    }
-    const { db_signed_url } = await urlRes.json();
-    if (!db_signed_url) return { ok: false, error: "Backend returned no download URL." };
-
     const dbRes = await fetchFn(db_signed_url);
     if (!dbRes.ok) return { ok: false, error: `Backup download failed (${dbRes.status}).` };
     const raw = require("zlib").gunzipSync(Buffer.from(await dbRes.arrayBuffer()));
 
-    // Swap in (close → copy → reopen), like db:restore. Drop WAL sidecars so the fresh file is clean.
+    // Swap in via the shared helper: backs up the current DB first, close → copy → drop sidecars →
+    // reopen (with retry) → verify → ROLL BACK on failure, and throws a real error (never bricks).
     const tmp = path.join(app.getPath("userData"), "cloud-restore.db");
     fs.writeFileSync(tmp, raw);
-    db.close();
-    fs.copyFileSync(tmp, getDbPath());
+    swapDatabaseFile(tmp);
     try { fs.rmSync(tmp, { force: true }); } catch {}
-    for (const suffix of ["-wal", "-shm", "-journal"]) { try { fs.rmSync(getDbPath() + suffix, { force: true }); } catch {} }
-    initDb();
 
     // Re-stamp this machine's identity so it isn't the source machine's clone, and keep the
-    // license key the operator signed in with.
-    if (myClientId) { try { db.prepare("UPDATE client_identity SET client_id = ?").run(myClientId); } catch (e) { console.warn("[install-from-cloud] client_id restore:", e.message); } }
-    try { db.prepare("UPDATE station_config_kv SET value = ? WHERE key = 'license_key'").run(licenseKey); } catch {}
+    // license key the operator signed in with. (getDb() = the live post-swap handle.)
+    if (myClientId) { try { getDb().prepare("UPDATE client_identity SET client_id = ?").run(myClientId); } catch (e) { console.warn("[install-from-cloud] client_id restore:", e.message); } }
+    try { getDb().prepare("UPDATE station_config_kv SET value = ? WHERE key = 'license_key'").run(licenseKey); } catch {}
 
     // Re-stamp the signed-in account session so the restore does NOT sign the operator out → no loop.
     {
@@ -2997,8 +3099,8 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     let newCount = 0, stationName = "";
     try { newCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
     try { stationName = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name' LIMIT 1").get()?.value || ""; } catch {}
-    console.log(`[station:install-from-cloud] restored DB — ${newCount} songs, station="${stationName}"`);
-    return { ok: true, songs: newCount, stationName };
+    console.log(`[station:install-from-cloud] restored DB — ${newCount} songs, station="${stationName}" (backup ${backupTimestamp || "?"})`);
+    return { ok: true, songs: newCount, stationName, backupTimestamp };
   } catch (e) {
     console.error("[station:install-from-cloud]", e);
     return { ok: false, error: e.message };
@@ -3012,8 +3114,7 @@ ipcMain.handle("station:cloud-install-available", async () => {
     let songCount = 0;
     try { songCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
     if (songCount > 0) return { available: false, reason: "has_library" };
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
-    const licenseKey = lic?.value?.trim();
+    const licenseKey = accountLicenseKey();
     if (!licenseKey) return { available: false, reason: "no_license" };
     const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
     const res = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, {
@@ -3568,7 +3669,7 @@ try {
 // ── AI Voice Studio (TTS generation + segment library) ──────────────────────
 try {
   const { installAIVoice } = require("./ai-voice.js");
-  installAIVoice(ipcMain, db, { userDataPath: app.getPath("userData") });
+  installAIVoice(ipcMain, getDb, { userDataPath: app.getPath("userData") });   // getDb (function) → resolves the live handle after a reopen
 } catch (e) {
   console.warn("[AI-VOICE] installAIVoice failed:", e.message);
 }
@@ -4690,10 +4791,18 @@ ipcMain.handle('captions:get-loopback-source', async () => {
 // Where the music library is stored. Default = <userData>/r2-cache, but the operator can pick a
 // folder during cloud sync (e.g. a big drive). Persisted in a FILE (not the DB) so it survives the
 // install-from-cloud DB swap. getMusicDir() always returns an existing dir.
-const R2_CACHE_DIR    = path.join(app.getPath('userData'), 'r2-cache'); // default / fallback
+const R2_CACHE_DIR    = path.join(app.getPath('userData'), 'r2-cache'); // hard fallback only
 const MUSIC_DIR_FILE  = path.join(app.getPath('userData'), 'music-dir.txt');
+// The designated library folder. Default = <user's Music>\ether music library (per-user, so it's
+// the same relative location on every machine without hardcoding a username) — this is where cloud
+// downloads materialize AND where the uploader consolidates, so the folder is the single source of
+// truth. An operator-chosen folder (music-dir.txt) overrides it; R2_CACHE_DIR is the last resort.
+function defaultLibraryDir() {
+  try { const m = app.getPath('music'); if (m) return path.join(m, 'ether music library'); } catch {}
+  return R2_CACHE_DIR;
+}
 function getMusicDir() {
-  let dir = R2_CACHE_DIR;
+  let dir = defaultLibraryDir();
   try { const p = fs.readFileSync(MUSIC_DIR_FILE, 'utf8').trim(); if (p) dir = p; } catch {}
   try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = R2_CACHE_DIR; try { fs.mkdirSync(dir, { recursive: true }); } catch {} }
   return dir;
@@ -4707,6 +4816,25 @@ function setMusicDir(dir) {
 fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
 ipcMain.handle('music:get-dir', () => ({ ok: true, dir: getMusicDir(), default: R2_CACHE_DIR }));
 ipcMain.handle('music:set-dir', (_, dir) => setMusicDir(dir));
+
+// Resolve the license key for the signed-in ACCOUNT's cloud operations (DB backup/restore + audio
+// up/download + device management). station_config_kv.license_key is keyed by (station_id, key), so a
+// bare lookup grabs an ARBITRARY station's license — on a multi-license install that addresses the
+// WRONG R2 prefix (backup lands under one license, restore reads another → they never meet). Prefer the
+// ACTIVE station's owner license (the account context the operator is in); fall back to any non-deleted
+// license_key (a clean single-account install has exactly one). UNIVERSAL — no IDs or paths baked in;
+// it just reads whatever account/station this install actually has.
+function accountLicenseKey() {
+  try {
+    const a = db.prepare("SELECT owner_license_key AS k FROM stations WHERE is_active = 1 AND deleted_at IS NULL AND owner_license_key IS NOT NULL AND owner_license_key != '' LIMIT 1").get();
+    if (a?.k) return String(a.k).trim();
+  } catch {}
+  try {
+    const b = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get();
+    if (b?.value) return String(b.value).trim();
+  } catch {}
+  return null;
+}
 
 // Fetch a track from R2 via the backend-signed flow. Returns the same shape
 // as the ipcMain.handle('r2:fetch-track') IPC contract — extracted as a
@@ -4745,7 +4873,7 @@ async function fetchR2Track(fileKey) {
       return { ok: false, error: `Audio fetch from cloud requires Network (station) tier or higher — current: ${planTier}` };
     }
     // License key required
-    licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
+    licenseKey = accountLicenseKey();
     if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
   }
 
@@ -5531,19 +5659,19 @@ ipcMain.handle('stream:get-all-status', () => {
 
 // ── Stations CRUD ─────────────────────────────────────────────
 ipcMain.handle('stations:list', () =>
-  db.prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all()
+  getDb().prepare("SELECT * FROM stations WHERE deleted_at IS NULL ORDER BY id").all()
 );
 
 ipcMain.handle('stations:get-active', () =>
-  db.prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null
+  getDb().prepare("SELECT * FROM stations WHERE is_active=1 AND deleted_at IS NULL LIMIT 1").get() ?? null
 );
 
 ipcMain.handle('stations:switch', (_, id) => {
   try {
     const { stationsUpdateById } = require('./sync/handlers/stations');
-    const others = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL AND id != ?").all(id);
-    for (const s of others) stationsUpdateById(db, s.id, { is_active: 0 });
-    stationsUpdateById(db, id, { is_active: 1 });
+    const others = getDb().prepare("SELECT id FROM stations WHERE deleted_at IS NULL AND id != ?").all(id);
+    for (const s of others) stationsUpdateById(getDb(), s.id, { is_active: 0 });
+    stationsUpdateById(getDb(), id, { is_active: 1 });
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
@@ -5612,10 +5740,29 @@ ipcMain.handle('stations:update', (_, id, data) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('stations:delete', (_, id) => {
+ipcMain.handle('stations:delete', async (_, id) => {
   try {
+    const station = db.prepare("SELECT uuid FROM stations WHERE id=?").get(id);
     const { stationsDeleteById } = require('./sync/handlers/stations');
-    stationsDeleteById(db, id);
+    stationsDeleteById(db, id);   // local soft-delete (deleted_at) + mutation = the tombstone
+
+    // Propagate the delete to the CLOUD so the account reconcile can't resurrect it. Without this the
+    // backend still holds the station and re-materializes it on every sync (the "delete that won't
+    // stick" bug). License-scoped endpoint — only ever deletes a station THIS account owns.
+    if (station?.uuid) {
+      const licenseKey = accountLicenseKey();
+      if (licenseKey) {
+        try {
+          const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+          const r = await fetchFn(`${ETHER_BACKEND_URL}/account/delete-station`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ license_key: licenseKey, uuid: station.uuid }),
+          });
+          if (!r.ok) console.warn(`[stations:delete] cloud delete failed (${r.status}) — local tombstone still blocks resurrection on this machine`);
+          else console.log(`[stations:delete] cloud delete ok for ${station.uuid}`);
+        } catch (e) { console.warn("[stations:delete] cloud delete error:", e.message); }
+      }
+    }
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
@@ -5663,8 +5810,7 @@ ipcMain.handle('identity:get', () => {
 // row is THIS machine (machine_id = our client_id). Powers the Multi-Device Sync clarity panel.
 ipcMain.handle('sync:devices', async () => {
   try {
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
-    const licenseKey = lic?.value?.trim();
+    const licenseKey = accountLicenseKey();
     if (!licenseKey) return { ok: false, error: 'No license key — sign in first.' };
     const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
     const res = await fetchFn(`${ETHER_BACKEND_URL}/account/devices`, {
@@ -5687,8 +5833,7 @@ ipcMain.handle('sync:removeDevice', async (_evt, machineId) => {
     if (!mid) return { ok: false, error: 'No device specified.' };
     const me = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get()?.client_id || null;
     if (mid === me) return { ok: false, error: "Can't remove the device you're currently on." };
-    const lic = db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL").get();
-    const licenseKey = lic?.value?.trim();
+    const licenseKey = accountLicenseKey();
     if (!licenseKey) return { ok: false, error: 'No license key — sign in first.' };
     const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
     const res = await fetchFn(`${ETHER_BACKEND_URL}/account/deauthorize-seat`, {
@@ -5736,7 +5881,8 @@ let _libDownloadState = {
 // Event contract preserved exactly from the legacy handler: per-file progress
 // on 'library:sync-r2:upload:progress', terminal 'library:sync-r2:upload:done'. Cancellation
 // via _libSyncAbort flag (still set by 'library:sync-r2:upload:cancel' below).
-ipcMain.handle('library:sync-r2:upload', async () => {
+ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
+  const force = !!(opts && opts.force);   // re-upload everything, ignoring the resume markers
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
   // Tier gate — Network+ only
@@ -5746,30 +5892,30 @@ ipcMain.handle('library:sync-r2:upload', async () => {
   }
 
   // License key required — set during onboarding / SubscriptionPanel validate
-  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
+  const licenseKey = accountLicenseKey();
   if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
-  // Resume-aware SELECT: skip songs already uploaded on this machine.
-  // r2_uploaded_at is local-only (1.1), so each machine tracks its own
-  // upload state independently — two operators can upload different subsets.
+  // Every song that names a file. We DON'T trust the stored file_path blindly — after a library
+  // reorg or a cloud restore it can point at a path that no longer exists (the file moved into a
+  // genre subfolder, came from another machine, etc.). The DESIGNATED LIBRARY FOLDER is the source
+  // of truth: we resolve each song to a real file on disk, consolidate it INTO that folder, then
+  // upload. Universal — no machine-specific paths; works for any customer's library location.
   const songs = db.prepare(
-    `SELECT id, file_path FROM songs
-     WHERE file_path IS NOT NULL AND file_path != ''
-       AND r2_uploaded_at IS NULL`
+    `SELECT id, file_path, file_key FROM songs
+     WHERE (file_path IS NOT NULL AND file_path != '') OR (file_key IS NOT NULL AND file_key != '')`
   ).all();
+  if (!songs.length) return { ok: false, error: 'No songs in the library yet.' };
 
-  if (!songs.length) {
-    return { ok: false, error: 'No songs to upload (all already synced from this machine, or no local audio files)' };
-  }
+  const libDir     = getMusicDir();             // the designated library folder (per-user, configurable)
+  const searchRoot = path.dirname(libDir);      // its parent — covers the genre subfolders files were imported from
+  try { fs.mkdirSync(libDir, { recursive: true }); } catch {}
 
   _libSyncAbort = false;
 
   // Fire-and-forget — returns immediately so the renderer isn't blocked
   (async () => {
     const { songsUpdateById } = require('./sync/handlers/songs');
-    const CONCURRENCY = 3;
-    let done = 0;
-    let errors = 0;
+    const AUDIO = new Set(['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg']);
 
     function contentType(fp) {
       const ext = path.extname(fp).toLowerCase();
@@ -5778,72 +5924,143 @@ ipcMain.handle('library:sync-r2:upload', async () => {
         || 'application/octet-stream';
     }
 
-    async function uploadOne(song) {
-      if (_libSyncAbort) return;
-      const fileKey = path.basename(song.file_path);
-      try {
-        // 1. Request signed PUT URL from backend
-        const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/upload-url`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
-        });
-        const urlData = await urlRes.json().catch(() => ({}));
-        if (!urlRes.ok || !urlData.signed_url) {
-          throw new Error(urlData.error || urlData.detail || `signing failed (HTTP ${urlRes.status})`);
+    // Build a basename → [fullpaths] index of the library tree ONCE, so resolving a stale path is a
+    // map lookup rather than a filesystem walk per song.
+    const index = new Map();
+    (function walk(dir, depth) {
+      if (depth > 8) return;
+      let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full, depth + 1);
+        else if (AUDIO.has(path.extname(e.name).toLowerCase())) {
+          const k = e.name.toLowerCase();
+          if (!index.has(k)) index.set(k, []);
+          index.get(k).push(full);
         }
-
-        // 2. PUT audio bytes to the signed URL
-        const data = fs.readFileSync(song.file_path);
-        const putRes = await fetch(urlData.signed_url, {
-          method:  'PUT',
-          headers: {
-            'Content-Type':   contentType(song.file_path),
-            'Content-Length': String(data.length),
-          },
-          body: data,
-        });
-        if (!putRes.ok) {
-          const text = await putRes.text().catch(() => '');
-          throw new Error(`R2 PUT failed: HTTP ${putRes.status} — ${text.slice(0, 200)}`);
-        }
-
-        // 3. Mark success in DB:
-        //    - file_key via songsUpdateById → mutation-logged, syncs to other clients
-        //    - r2_uploaded_at via raw UPDATE → local-only marker (1.1 design)
-        songsUpdateById(db, song.id, { file_key: fileKey });
-        db.prepare('UPDATE songs SET r2_uploaded_at = ? WHERE id = ?')
-          .run(new Date().toISOString(), song.id);
-      } catch (e) {
-        errors++;
-        console.warn(`[library:sync-r2] SKIP ${fileKey}: ${e.message}`);
       }
-      done++;
+    })(searchRoot, 0);
+
+    const libLower = libDir.toLowerCase();
+    function resolveFile(song) {
+      if (song.file_path && fs.existsSync(song.file_path)) return song.file_path;     // stored path still valid
+      const base = path.basename(song.file_path || song.file_key || '');
+      if (!base) return null;
+      const inLib = path.join(libDir, base);
+      if (fs.existsSync(inLib)) return inLib;                                          // already in the library folder
+      const cands = index.get(base.toLowerCase()) || [];
+      const libCand = cands.find(p => p.toLowerCase().startsWith(libLower));           // prefer the copy in the library folder (disambiguates same-named files across genre folders)
+      return libCand || cands[0] || null;
+    }
+
+    // ── Phase 1: CONSOLIDATE — copy every resolved file into the library folder and re-point
+    //    file_path, so "everything lives in the library folder" becomes literally true. ──
+    let consolidated = 0, notFound = 0, cdone = 0;
+    const missing = [];
+    for (const song of songs) {
+      if (_libSyncAbort) break;
+      cdone++;
+      const label = path.basename(song.file_path || song.file_key || `song#${song.id}`);
+      const src = resolveFile(song);
+      if (!src) { notFound++; if (missing.length < 200) missing.push(label); continue; }
+      const base = path.basename(src);
+      const dest = path.join(libDir, base);
+      try {
+        if (path.resolve(src).toLowerCase() !== path.resolve(dest).toLowerCase() && !fs.existsSync(dest)) {
+          fs.copyFileSync(src, dest);
+          consolidated++;
+        }
+      } catch (e) { console.warn(`[library:sync-r2] consolidate copy failed ${base}: ${e.message}`); }
+      const finalPath = fs.existsSync(dest) ? dest : src;
+      if (song.file_key !== base) { try { songsUpdateById(db, song.id, { file_key: base }); } catch {} }
+      try { db.prepare('UPDATE songs SET file_path = ? WHERE id = ?').run(finalPath, song.id); } catch {}
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:upload:progress', {
-          done, total: songs.length, errors, current: fileKey,
+          phase: 'consolidate', done: cdone, total: songs.length, errors: notFound, current: base,
         });
       }
     }
 
-    // Upload in batches of CONCURRENCY
-    for (let i = 0; i < songs.length; i += CONCURRENCY) {
+    // ── Phase 2: UPLOAD — push files not yet in the cloud (or all, when force). ──
+    const toUpload = db.prepare(
+      `SELECT id, file_path FROM songs
+       WHERE file_path IS NOT NULL AND file_path != ''
+         ${force ? '' : 'AND r2_uploaded_at IS NULL'}`
+    ).all().filter(s => { try { return fs.existsSync(s.file_path); } catch { return false; } });
+
+    const CONCURRENCY = 3;
+    let done = 0, uploaded = 0, errors = 0;
+    const failures = [];
+
+    async function uploadOne(song) {
+      if (_libSyncAbort) return;
+      const fileKey = path.basename(song.file_path);
+      // Retry transient signing/PUT failures so a single run never leaves stragglers — rapid-fire
+      // concurrent uploads occasionally drop one to a network/rate-limit blip; the file is fine.
+      const MAX_TRIES = 3;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= MAX_TRIES && !_libSyncAbort; attempt++) {
+        try {
+          const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/upload-url`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
+          });
+          const urlData = await urlRes.json().catch(() => ({}));
+          if (!urlRes.ok || !urlData.signed_url) {
+            throw new Error(urlData.error || urlData.detail || `signing failed (HTTP ${urlRes.status})`);
+          }
+          const data = fs.readFileSync(song.file_path);
+          const putRes = await fetch(urlData.signed_url, {
+            method:  'PUT',
+            headers: { 'Content-Type': contentType(song.file_path), 'Content-Length': String(data.length) },
+            body: data,
+          });
+          if (!putRes.ok) {
+            const text = await putRes.text().catch(() => '');
+            throw new Error(`R2 PUT failed: HTTP ${putRes.status} — ${text.slice(0, 200)}`);
+          }
+          songsUpdateById(db, song.id, { file_key: fileKey });
+          db.prepare('UPDATE songs SET r2_uploaded_at = ? WHERE id = ?').run(new Date().toISOString(), song.id);
+          uploaded++;
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          if (attempt < MAX_TRIES && !_libSyncAbort) await new Promise(r => setTimeout(r, 500 * attempt));
+        }
+      }
+      if (lastErr) {
+        errors++;
+        if (failures.length < 200) failures.push({ name: fileKey, reason: lastErr.message });
+        console.warn(`[library:sync-r2] FAIL ${fileKey} after ${MAX_TRIES} tries: ${lastErr.message}`);
+      }
+      done++;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('library:sync-r2:upload:progress', {
+          phase: 'upload', done, total: toUpload.length, errors, current: fileKey,
+        });
+      }
+    }
+
+    for (let i = 0; i < toUpload.length; i += CONCURRENCY) {
       if (_libSyncAbort) break;
-      await Promise.all(songs.slice(i, i + CONCURRENCY).map(uploadOne));
+      await Promise.all(toUpload.slice(i, i + CONCURRENCY).map(uploadOne));
     }
 
     const aborted = _libSyncAbort;
     _libSyncAbort = false;
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('library:sync-r2:upload:done', {
-        done, total: songs.length, errors, aborted,
+        uploaded, total: toUpload.length, errors, aborted,
+        consolidated, notFound, missing: missing.slice(0, 50), failures: failures.slice(0, 50), libDir,
       });
     }
-    console.log(`[library:sync-r2] ${aborted ? 'Cancelled' : 'Done'} — ${done}/${songs.length} uploaded, ${errors} errors`);
+    console.log(`[library:sync-r2] ${aborted ? 'Cancelled' : 'Done'} — consolidated ${consolidated}, uploaded ${uploaded}/${toUpload.length}, ${errors} upload errors, ${notFound} not found. libDir=${libDir}`);
   })().catch(e => {
     console.error('[library:sync-r2] fatal:', e.message);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('library:sync-r2:upload:done', { done: 0, total: songs.length, errors: 1, aborted: false });
+      mainWindow.webContents.send('library:sync-r2:upload:done', { uploaded: 0, total: 0, errors: 1, aborted: false, fatal: e.message });
     }
   });
 
@@ -5897,7 +6114,7 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
   }
 
   // License key required
-  const licenseKey = (db.prepare("SELECT value FROM station_config_kv WHERE key='license_key' AND value IS NOT NULL AND value != '' AND deleted_at IS NULL LIMIT 1").get())?.value;
+  const licenseKey = accountLicenseKey();
   if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
 
   const candidates = db.prepare(

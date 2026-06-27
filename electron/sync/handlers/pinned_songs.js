@@ -167,38 +167,39 @@ function pinnedSongsDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPinnedSongs(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('pinned_songs:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: pinnedSongsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: pinnedSongsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('pinned_songs:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: pinnedSongsGet(db, uuid) }; }
+    try { return { ok: true, row: pinnedSongsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('pinned_songs:create', (_, payload) => {
-    try { return { ok: true, row: pinnedSongsCreate(db, payload) }; }
+    try { return { ok: true, row: pinnedSongsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('pinned_songs:update', (_, uuid, patch) => {
-    try { return { ok: true, row: pinnedSongsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: pinnedSongsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('pinned_songs:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...pinnedSongsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...pinnedSongsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('pinned_songs:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: pinnedSongsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: pinnedSongsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('pinned_songs:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...pinnedSongsDeleteById(db, intId) }; }
+    try { return { ok: true, ...pinnedSongsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

@@ -153,28 +153,29 @@ function operatorsEnsureByName(db, stationId, name, initials) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installOperators(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('operators:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: operatorsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: operatorsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operators:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: operatorsGet(db, uuid) }; }
+    try { return { ok: true, row: operatorsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operators:create', (_, payload) => {
-    try { return { ok: true, row: operatorsCreate(db, payload) }; }
+    try { return { ok: true, row: operatorsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operators:update', (_, uuid, patch) => {
-    try { return { ok: true, row: operatorsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: operatorsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('operators:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...operatorsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...operatorsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

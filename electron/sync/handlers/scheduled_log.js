@@ -306,53 +306,54 @@ function scheduledLogBatchUpdatePosition(db, items) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installScheduledLog(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('scheduled_log:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: scheduledLogList(db, stationId, opts) }; }
+    try { return { ok: true, rows: scheduledLogList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: scheduledLogGet(db, uuid) }; }
+    try { return { ok: true, row: scheduledLogGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:create', (_, payload) => {
-    try { return { ok: true, row: scheduledLogCreate(db, payload) }; }
+    try { return { ok: true, row: scheduledLogCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:update', (_, uuid, patch) => {
-    try { return { ok: true, row: scheduledLogUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: scheduledLogUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...scheduledLogDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...scheduledLogDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:get-by-date', (_, stationId, logDate) => {
-    try { return { ok: true, rows: scheduledLogGetByDate(db, stationId, logDate) }; }
+    try { return { ok: true, rows: scheduledLogGetByDate(getDb(), stationId, logDate) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:batch-insert', (_, stationId, rows) => {
-    try { return { ok: true, ...scheduledLogBatchInsert(db, stationId, rows) }; }
+    try { return { ok: true, ...scheduledLogBatchInsert(getDb(), stationId, rows) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:clear-by-date', (_, stationId, logDate) => {
-    try { return { ok: true, ...scheduledLogClearByDate(db, stationId, logDate) }; }
+    try { return { ok: true, ...scheduledLogClearByDate(getDb(), stationId, logDate) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:clear-by-hour', (_, stationId, logDate, hour) => {
-    try { return { ok: true, ...scheduledLogClearByHour(db, stationId, logDate, hour) }; }
+    try { return { ok: true, ...scheduledLogClearByHour(getDb(), stationId, logDate, hour) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('scheduled_log:batch-update-position', (_, items) => {
-    try { return { ok: true, ...scheduledLogBatchUpdatePosition(db, items) }; }
+    try { return { ok: true, ...scheduledLogBatchUpdatePosition(getDb(), items) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

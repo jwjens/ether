@@ -169,39 +169,40 @@ function announcementsDeleteById(db, intId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installAnnouncements(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('announcements:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: announcementsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: announcementsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('announcements:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: announcementsGet(db, uuid) }; }
+    try { return { ok: true, row: announcementsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('announcements:create', (_, payload) => {
-    try { return { ok: true, row: announcementsCreate(db, payload) }; }
+    try { return { ok: true, row: announcementsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('announcements:update', (_, uuid, patch) => {
-    try { return { ok: true, row: announcementsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: announcementsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('announcements:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...announcementsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...announcementsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
 
   ipcMain.handle('announcements:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: announcementsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: announcementsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('announcements:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...announcementsDeleteById(db, intId) }; }
+    try { return { ok: true, ...announcementsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

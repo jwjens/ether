@@ -23,7 +23,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 let voiceTracksDir = null;
 
 // ── Helpers ─────────────────────────────────────────────────
@@ -48,9 +48,9 @@ function authPairing(req) {
   const token = getTokenFromReq(req);
   if (!token) return null;
   try {
-    const row = db.prepare("SELECT * FROM mobile_pairings WHERE token = ? AND revoked = 0").get(token);
+    const row = getDb().prepare("SELECT * FROM mobile_pairings WHERE token = ? AND revoked = 0").get(token);
     if (!row) return null;
-    db.prepare("UPDATE mobile_pairings SET last_seen = ? WHERE id = ?").run(Math.floor(Date.now()/1000), row.id);
+    getDb().prepare("UPDATE mobile_pairings SET last_seen = ? WHERE id = ?").run(Math.floor(Date.now()/1000), row.id);
     return row;
   } catch { return null; }
 }
@@ -524,11 +524,11 @@ function handleMobileRequest(req, res) {
           res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: "invalid code" })); return;
         }
         const now = Math.floor(Date.now() / 1000);
-        const row = db.prepare("SELECT * FROM mobile_pairings WHERE short_code = ? AND short_code_expires > ? AND paired_at = 0").get(code, now);
+        const row = getDb().prepare("SELECT * FROM mobile_pairings WHERE short_code = ? AND short_code_expires > ? AND paired_at = 0").get(code, now);
         if (!row) {
           res.statusCode = 401; res.end(JSON.stringify({ ok: false, error: "code expired or invalid" })); return;
         }
-        db.prepare("UPDATE mobile_pairings SET paired_at = ?, last_seen = ?, device_label = ?, short_code = NULL, short_code_expires = 0 WHERE id = ?")
+        getDb().prepare("UPDATE mobile_pairings SET paired_at = ?, last_seen = ?, device_label = ?, short_code = NULL, short_code_expires = 0 WHERE id = ?")
           .run(now, now, deviceLabel || "", row.id);
         res.end(JSON.stringify({ ok: true, token: row.token, deviceLabel }));
       } catch (e) {
@@ -566,7 +566,7 @@ function handleMobileRequest(req, res) {
         const filePath = path.join(voiceTracksDir, filename);
         fs.writeFileSync(filePath, audioPart.data);
         const stat = fs.statSync(filePath);
-        const result = db.prepare(
+        const result = getDb().prepare(
           "INSERT INTO mobile_voice_tracks (pairing_id, file_path, mime_type, duration_ms, size_bytes, title, notes) VALUES (?, ?, ?, ?, ?, ?, ?)"
         ).run(pairing.id, filePath, audioPart.mime || "audio/webm", duration, stat.size, title, notes);
         res.end(JSON.stringify({ ok: true, id: result.lastInsertRowid, size: stat.size }));
@@ -582,7 +582,7 @@ function handleMobileRequest(req, res) {
     const pairing = authPairing(req);
     if (!pairing) { res.statusCode = 401; res.end(JSON.stringify({ ok: false, error: "unauthorized" })); return true; }
     try {
-      const rows = db.prepare("SELECT id, title, notes, duration_ms, size_bytes, status, uploaded_at, played_at FROM mobile_voice_tracks WHERE pairing_id = ? ORDER BY uploaded_at DESC LIMIT 50").all(pairing.id);
+      const rows = getDb().prepare("SELECT id, title, notes, duration_ms, size_bytes, status, uploaded_at, played_at FROM mobile_voice_tracks WHERE pairing_id = ? ORDER BY uploaded_at DESC LIMIT 50").all(pairing.id);
       res.end(JSON.stringify({ ok: true, tracks: rows }));
     } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
     return true;
@@ -593,7 +593,7 @@ function handleMobileRequest(req, res) {
 
 // ── IPC for the studio side (Settings → Pair Mobile App) ────────
 function installMobileApp(ipcMain, database, opts = {}) {
-  db = database;
+  getDb = (typeof database === "function") ? database : () => database;
   voiceTracksDir = opts.voiceTracksDir || path.join(opts.userDataPath || ".", "voice-tracks");
 
   // Create a new pending pairing — returns the 6-digit code to display
@@ -602,7 +602,7 @@ function installMobileApp(ipcMain, database, opts = {}) {
       const code = genShortCode();
       const token = genToken();
       const expires = Math.floor(Date.now() / 1000) + 600; // 10 min
-      db.prepare("INSERT INTO mobile_pairings (token, short_code, short_code_expires) VALUES (?, ?, ?)")
+      getDb().prepare("INSERT INTO mobile_pairings (token, short_code, short_code_expires) VALUES (?, ?, ?)")
         .run(token, code, expires);
       return { ok: true, code, expiresIn: 600 };
     } catch (e) { return { ok: false, error: e.message }; }
@@ -611,7 +611,7 @@ function installMobileApp(ipcMain, database, opts = {}) {
   // List paired devices for the studio side
   ipcMain.handle("v2g:list-devices", () => {
     try {
-      const rows = db.prepare("SELECT id, device_label, operator_name, paired_at, last_seen, revoked FROM mobile_pairings WHERE paired_at > 0 ORDER BY paired_at DESC").all();
+      const rows = getDb().prepare("SELECT id, device_label, operator_name, paired_at, last_seen, revoked FROM mobile_pairings WHERE paired_at > 0 ORDER BY paired_at DESC").all();
       return rows;
     } catch { return []; }
   });
@@ -619,7 +619,7 @@ function installMobileApp(ipcMain, database, opts = {}) {
   // Revoke a pairing
   ipcMain.handle("v2g:revoke", (_, { id }) => {
     try {
-      db.prepare("UPDATE mobile_pairings SET revoked = 1 WHERE id = ?").run(id);
+      getDb().prepare("UPDATE mobile_pairings SET revoked = 1 WHERE id = ?").run(id);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -630,16 +630,16 @@ function installMobileApp(ipcMain, database, opts = {}) {
       const sql = status
         ? "SELECT vt.*, mp.device_label, mp.operator_name FROM mobile_voice_tracks vt LEFT JOIN mobile_pairings mp ON mp.id = vt.pairing_id WHERE vt.status = ? ORDER BY vt.uploaded_at DESC LIMIT 200"
         : "SELECT vt.*, mp.device_label, mp.operator_name FROM mobile_voice_tracks vt LEFT JOIN mobile_pairings mp ON mp.id = vt.pairing_id ORDER BY vt.uploaded_at DESC LIMIT 200";
-      return status ? db.prepare(sql).all(status) : db.prepare(sql).all();
+      return status ? getDb().prepare(sql).all(status) : getDb().prepare(sql).all();
     } catch { return []; }
   });
 
   // Update track status (queued / played / archived)
   ipcMain.handle("v2g:update-track", (_, { id, status, title, notes }) => {
     try {
-      if (status) db.prepare("UPDATE mobile_voice_tracks SET status = ?, played_at = CASE WHEN ? = 'played' THEN unixepoch() ELSE played_at END WHERE id = ?").run(status, status, id);
-      if (title !== undefined) db.prepare("UPDATE mobile_voice_tracks SET title = ? WHERE id = ?").run(title, id);
-      if (notes !== undefined) db.prepare("UPDATE mobile_voice_tracks SET notes = ? WHERE id = ?").run(notes, id);
+      if (status) getDb().prepare("UPDATE mobile_voice_tracks SET status = ?, played_at = CASE WHEN ? = 'played' THEN unixepoch() ELSE played_at END WHERE id = ?").run(status, status, id);
+      if (title !== undefined) getDb().prepare("UPDATE mobile_voice_tracks SET title = ? WHERE id = ?").run(title, id);
+      if (notes !== undefined) getDb().prepare("UPDATE mobile_voice_tracks SET notes = ? WHERE id = ?").run(notes, id);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -647,11 +647,11 @@ function installMobileApp(ipcMain, database, opts = {}) {
   // Delete an uploaded voice track (file + row)
   ipcMain.handle("v2g:delete-track", (_, { id }) => {
     try {
-      const row = db.prepare("SELECT file_path FROM mobile_voice_tracks WHERE id = ?").get(id);
+      const row = getDb().prepare("SELECT file_path FROM mobile_voice_tracks WHERE id = ?").get(id);
       if (row?.file_path && fs.existsSync(row.file_path)) {
         try { fs.unlinkSync(row.file_path); } catch {}
       }
-      db.prepare("DELETE FROM mobile_voice_tracks WHERE id = ?").run(id);
+      getDb().prepare("DELETE FROM mobile_voice_tracks WHERE id = ?").run(id);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -659,7 +659,7 @@ function installMobileApp(ipcMain, database, opts = {}) {
   // Get audio file path (renderer needs this to load the file via file:// URL)
   ipcMain.handle("v2g:get-track-path", (_, { id }) => {
     try {
-      const row = db.prepare("SELECT file_path FROM mobile_voice_tracks WHERE id = ?").get(id);
+      const row = getDb().prepare("SELECT file_path FROM mobile_voice_tracks WHERE id = ?").get(id);
       return { ok: true, path: row?.file_path || null };
     } catch (e) { return { ok: false, error: e.message }; }
   });

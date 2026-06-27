@@ -32,7 +32,11 @@ class SyncScheduler {
    *                         sync:progress to all renderer windows).
    */
   constructor(db, transport, opts = {}) {
-    this._db        = db;
+    // Accept a Database OR a () => Database getter. The scheduler resolves the live connection via
+    // _getDb and REBUILDS its engine (_ensureEngine) if the connection is reopened (restore/self-heal),
+    // so the sync stack never runs on a dead handle. Engine/MergeEngine internals are unchanged — they
+    // bind to whatever Database they're constructed with, and get a fresh instance on rebuild.
+    this._getDb     = (typeof db === 'function') ? db : () => db;
     this._transport = transport;
 
     // ── Progress tracking (for sync:get-state + sync:initial-complete) ──
@@ -62,11 +66,19 @@ class SyncScheduler {
       },
     };
 
-    this._engine   = new SyncEngine(db, transport, engineOpts);
+    this._engineOpts = engineOpts;                          // kept so _ensureEngine can rebuild
+    this._engineConn = this._getDb();                       // the Database the engine is bound to
+    this._engine     = new SyncEngine(this._engineConn, transport, engineOpts);
     this._timer    = null;
     this._running  = false;
     this._paused   = false;
     this._failures = 0;
+
+    // On-air predicate (Tier-2 re-baseline safety). Gates ONLY the heavy one-shot corrective re-pull;
+    // normal incremental sync always flows. Defaults to never-on-air. _rebaselineInFlight prevents two
+    // re-baseline drains from overlapping when start() and a tick both try to drive it.
+    this._isOnAir            = opts.isOnAir ?? (() => false);
+    this._rebaselineInFlight = false;
 
     this._stats = {
       pushedToday: 0,
@@ -90,9 +102,26 @@ class SyncScheduler {
     };
   }
 
+  // Live connection, resolved through the injected getter every access (self-heal-aware).
+  get _db() { return this._getDb(); }
+
+  // Rebuild the engine if the underlying connection was reopened (restore / self-heal). better-sqlite3
+  // prepared statements (cached in the engine + merge engine) are bound to a specific Database, so on a
+  // reopen we must construct a fresh engine against the new handle. Cheap pointer compare each call.
+  _ensureEngine() {
+    const cur = this._getDb();
+    if (cur !== this._engineConn) {
+      console.warn('[SYNC] db connection changed — rebuilding sync engine against the new handle');
+      this._engineConn = cur;
+      this._engine = new SyncEngine(cur, this._transport, this._engineOpts);
+    }
+    return this._engine;
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   start() {
+    this._ensureEngine();
     if (this._running) return;
     this._running = true;
     console.log('[SYNC] scheduler started (interval=' + this._getInterval() + 'ms)');
@@ -109,11 +138,10 @@ class SyncScheduler {
     }
     // Tier-2 one-shot re-baseline: corrective re-pull under UUID-identity scoping so a divergent
     // install gets station programming it missed under legacy local-integer scoping. Self-skips when
-    // uuid-identity is off or already done. Fire-and-log — must not block the sync schedule from
-    // starting (no on-air gating; resolve-to-existing-local-ids / no renumber is enforced by merge).
-    this._engine.rebaseline()
-      .then(r => { if (!r.skipped) console.log(`[SYNC] re-baseline: applied=${r.applied} dangling ${r.danglingBefore}→${r.danglingAfter}`); })
-      .catch(err => console.error('[SYNC] re-baseline failed: ' + err.message));
+    // uuid-identity is off or already done. Now OFF-AIR-GATED + resumable: it only runs/continues while
+    // the station is off air (driven here and re-driven from _tick), so the full-history re-pull burst
+    // never fights the audio daemon. Resolve-to-existing-local-ids / no renumber is enforced by merge.
+    this._driveRebaseline();
     this._schedule();
   }
 
@@ -170,6 +198,7 @@ class SyncScheduler {
 
   async _tick() {
     if (!this._running || this._paused) return;
+    this._ensureEngine();   // rebuild against the live handle if the connection was reopened
 
     // Reset daily stats at midnight
     const today = new Date().toDateString();
@@ -212,7 +241,29 @@ class SyncScheduler {
       console.warn(`[SYNC] tick error (attempt ${this._failures}, backoff ${delay}ms): ${e.message}`);
     }
 
+    // Resume a pending re-baseline if (and only if) we're now off air. Cheap no-op once done / on air /
+    // already running. This is what lets a re-baseline that suspended on-air finish during a quiet window.
+    this._driveRebaseline();
+
     this._schedule();
+  }
+
+  // Drive the one-shot Tier-2 re-baseline, off-air-gated and non-overlapping. Fire-and-forget so it never
+  // blocks the tick cadence; the engine re-checks on-air between pages and suspends cleanly if the station
+  // goes live mid-drain (resuming from the persisted cursor on a later off-air tick).
+  _driveRebaseline() {
+    if (this._rebaselineInFlight) return;
+    if (!this._engine.rebaselinePending()) return;   // uuid-identity off, or already complete
+    if (this._isOnAir()) return;                      // stay deferred; normal incremental sync still flows
+    this._rebaselineInFlight = true;
+    this._engine.rebaseline()
+      .then(r => {
+        if (!r || r.skipped) return;
+        if (r.suspended) console.log(`[SYNC] re-baseline suspended (station went on air) — will resume off air (applied so far=${r.applied})`);
+        else console.log(`[SYNC] re-baseline complete: applied=${r.applied} dangling ${r.danglingBefore}→${r.danglingAfter}`);
+      })
+      .catch(err => console.error('[SYNC] re-baseline failed: ' + err.message))
+      .finally(() => { this._rebaselineInFlight = false; });
   }
 
   // ── Persistence + broadcast helpers ───────────────────────────────────────

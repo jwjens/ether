@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { query, execute } from "../db/client";
+import { execute } from "../db/client";
 import { usePlan } from "../hooks/usePlan";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
@@ -222,7 +222,17 @@ export default function CloudBackup() {
     try {
       let r = await (window as any).ether.invoke("station:install-from-cloud", {});
       if (!r?.ok && r?.hasData) {
-        if (!confirm(`${r.error}\n\nReplace the local database anyway?`)) { setInstalling(false); setInstallMsg(""); return; }
+        // Show how OLD the cloud backup is before overwriting — a stale backup silently replacing
+        // newer local programming is the data-loss path this guards against.
+        const when = r.backupTimestamp ? new Date(r.backupTimestamp).toLocaleString() : "an unknown date";
+        const ok = confirm(
+          `This install already has ${r.songs} songs and its own programming.\n\n` +
+          `The latest cloud backup is from:\n    ${when}\n\n` +
+          `Restoring REPLACES everything on this machine with that backup. If anything you built ` +
+          `locally is NEWER than ${when}, it will be LOST.\n\n` +
+          `Replace the local database with the ${when} backup anyway?`
+        );
+        if (!ok) { setInstalling(false); setInstallMsg(""); return; }
         r = await (window as any).ether.invoke("station:install-from-cloud", { force: true });
       }
       if (!r?.ok) { setInstalling(false); setInstallMsg("✗ " + (r?.error || "Install failed")); return; }
@@ -256,58 +266,27 @@ export default function CloudBackup() {
   // ── Create backup ──────────────────────────────────────────
 
   const createBackup = async () => {
-    if (!licenseKey || !stationId) {
-      setStatus({ msg: "Enter your license key and station ID first.", type: "err" });
+    if (!licenseKey) {
+      setStatus({ msg: "Connect your account in Subscription first.", type: "err" });
       return;
     }
     setBacking(true);
-    setStatus({ msg: "Collecting data...", type: "info" });
-
+    // FULL-station backup: uploads the ENTIRE openair.db (stations, categories, clocks, clock_slots,
+    // shows, programming AND library metadata) to R2 via cloud-backup:run-now — this is the backup that
+    // install-from-cloud restores, so a station built on one machine reaches another intact. (The old
+    // path here backed up only play_log + scheduled_log + song metadata — none of the programming — which
+    // is why stations built on one box never carried over.)
+    setStatus({ msg: "Backing up your full station to the cloud…", type: "info" });
     try {
-      // Gather all data
-      const [plays, scheduled, songs, artists] = await Promise.all([
-        query("SELECT * FROM play_log ORDER BY played_at DESC LIMIT 10000"),
-        query("SELECT * FROM scheduled_log ORDER BY log_date DESC, hour, position LIMIT 50000"),
-        query("SELECT id,title,artist_id,file_path,duration_ms,bpm,energy,lufs_measured,peak_db,gain_db,cue_in,cue_out,intro_end,outro_start,last_played_at FROM songs"),
-        query("SELECT * FROM artists"),
-      ]);
-
-      const payload = {
-        version: "1.5.2",
-        exported_at: new Date().toISOString(),
-        station_id: stationId,
-        tables: { play_log: plays, scheduled_log: scheduled, songs, artists },
-      };
-
-      setStatus({ msg: "Compressing...", type: "info" });
-      const json       = JSON.stringify(payload);
-      const compressed = await gzipString(json);
-      const filename   = `ether_backup_${stationId.replace(/[^a-z0-9]/gi, "_")}_${new Date().toISOString().slice(0, 10)}.json.gz`;
-
-      setStatus({ msg: "Uploading...", type: "info" });
-      const formData = new FormData();
-      formData.append("backup", new Blob([compressed as Uint8Array<ArrayBuffer>], { type: "application/gzip" }), filename);
-      formData.append("station_id", stationId);
-      formData.append("filename", filename);
-      if (description.trim()) formData.append("description", description.trim());
-
-      const res = await fetch(`${ETHER_BACKEND_URL}/backup/upload`, {
-        method: "POST",
-        headers: { "x-license-key": licenseKey },
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Upload failed");
+      const r = await (window as any).ether.invoke("cloud-backup:run-now");
+      if (!r?.ok) {
+        throw new Error(r?.tier_insufficient ? "Cloud backup requires the Network plan." : (r?.error || "Backup failed"));
       }
-
       const now = new Date().toISOString();
       await (window as any).ether.stationConfigKv.upsertByKey(activeStationId, 'cloud_last_backup', now);
       setLastBackupAt(now);
       setDescription("");
-      setStatus({ msg: `✓ Backup uploaded (${fmtBytes(compressed.length)})`, type: "ok" });
-      loadBackups();
+      setStatus({ msg: `✓ Full station backed up to the cloud${r.size ? ` (${fmtBytes(r.size)})` : ""}`, type: "ok" });
     } catch (e: any) {
       setStatus({ msg: "Backup failed: " + e.message, type: "err" });
     }

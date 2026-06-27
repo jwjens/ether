@@ -195,28 +195,29 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installGeneratedSchedule(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('generated_schedule:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: generatedScheduleList(db, stationId, opts) }; }
+    try { return { ok: true, rows: generatedScheduleList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('generated_schedule:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: generatedScheduleGet(db, uuid) }; }
+    try { return { ok: true, row: generatedScheduleGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('generated_schedule:create', (_, payload) => {
-    try { return { ok: true, row: generatedScheduleCreate(db, payload) }; }
+    try { return { ok: true, row: generatedScheduleCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('generated_schedule:update', (_, uuid, patch) => {
-    try { return { ok: true, row: generatedScheduleUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: generatedScheduleUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('generated_schedule:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...generatedScheduleDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...generatedScheduleDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

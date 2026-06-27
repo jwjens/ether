@@ -184,33 +184,34 @@ function playLogClearByStation(db, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installPlayLog(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('play_log:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: playLogList(db, stationId, opts) }; }
+    try { return { ok: true, rows: playLogList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('play_log:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: playLogGet(db, uuid) }; }
+    try { return { ok: true, row: playLogGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('play_log:create', (_, payload) => {
-    try { return { ok: true, row: playLogCreate(db, payload) }; }
+    try { return { ok: true, row: playLogCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('play_log:update', (_, uuid, patch) => {
-    try { return { ok: true, row: playLogUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: playLogUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('play_log:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...playLogDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...playLogDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('play_log:clear-by-station', (_, stationId) => {
-    try { return playLogClearByStation(db, stationId); }
+    try { return playLogClearByStation(getDb(), stationId); }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

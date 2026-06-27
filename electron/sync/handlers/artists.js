@@ -146,33 +146,34 @@ function artistsDelete(db, uuid) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installArtists(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('artists:list', (_, opts) => {
-    try { return { ok: true, rows: artistsList(db, opts) }; }
+    try { return { ok: true, rows: artistsList(getDb(), opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('artists:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: artistsGet(db, uuid) }; }
+    try { return { ok: true, row: artistsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('artists:create', (_, payload) => {
-    try { return { ok: true, row: artistsCreate(db, payload) }; }
+    try { return { ok: true, row: artistsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('artists:update', (_, uuid, patch) => {
-    try { return { ok: true, row: artistsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: artistsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('artists:delete', (_, uuid) => {
-    try { return { ok: true, ...artistsDelete(db, uuid) }; }
+    try { return { ok: true, ...artistsDelete(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('artists:find-or-create-by-name', (_, name) => {
-    try { return { ok: true, row: artistsFindOrCreateByName(db, name) }; }
+    try { return { ok: true, row: artistsFindOrCreateByName(getDb(), name) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

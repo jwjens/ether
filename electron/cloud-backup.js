@@ -26,7 +26,10 @@ const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
 // electron-main; keep in sync if PlanTier ever changes.
 const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
-let db = null;
+// Resolves the LIVE db connection on every use. main.js passes its getDb() function, so a self-heal/
+// restore reopen is picked up automatically (this module caches no prepared statements). Accepts a
+// raw Database too (back-compat) by wrapping it.
+let getDb = () => { throw new Error("[CLOUD-BACKUP] getDb not initialized"); };
 let backupInterval = null;
 let config = { endpoint: "", method: "PUT", intervalHours: 6, enabled: false, lastBackup: 0, lastStatus: "never" };
 
@@ -39,7 +42,7 @@ let r2Config = { accountId: "", endpoint: "", bucket: "ether-backups", accessKey
 // credentials; this version trusts the backend with R2 access.
 function r2Ready() {
   if (!r2Config.enabled) return false;
-  const licenseKey = getConfigValue("license_key");
+  const licenseKey = getBackupLicenseKey();
   if (!licenseKey) return false;
   const planTier = getConfigValue("plan_tier") || "free";
   return (TIER_RANK_LOCAL[planTier] || 0) >= TIER_RANK_LOCAL.pro;
@@ -84,14 +87,14 @@ async function uploadToSignedUrl(url, body, contentType) {
 }
 
 function installCloudBackup(ipcMain, database, opts = {}) {
-  db = database;
-  console.log("[CLOUD-BACKUP] db type:", typeof db, !!db);
+  getDb = (typeof database === 'function') ? database : () => database;
+  console.log("[CLOUD-BACKUP] db resolver type:", typeof database);
   const dbPath = opts.dbPath || "";
   _dbPath = dbPath;
 
   // Ensure config table entry
   try {
-    const existing = db.prepare("SELECT value FROM station_config_kv WHERE key = 'cloud_backup_config'").get();
+    const existing = getDb().prepare("SELECT value FROM station_config_kv WHERE key = 'cloud_backup_config'").get();
     if (existing) config = { ...config, ...JSON.parse(existing.value) };
   } catch {}
 
@@ -145,7 +148,7 @@ function installCloudBackup(ipcMain, database, opts = {}) {
   // + return shape so SettingsPanel's "Test connection" button still works.
   // The returned signed URLs are discarded — this is a reachability check only.
   ipcMain.handle("cloud-backup:test-r2", async () => {
-    const licenseKey = getConfigValue("license_key");
+    const licenseKey = getBackupLicenseKey();
     if (!licenseKey) return { ok: false, error: "No license_key in station_config_kv — validate your license in Subscription first." };
     const planTier = getConfigValue("plan_tier") || "free";
     if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.pro) {
@@ -165,7 +168,7 @@ function installCloudBackup(ipcMain, database, opts = {}) {
   ipcMain.handle("cloud-backup:set-config", (_evt, newConfig) => {
     config = { ...config, ...newConfig };
     try {
-      db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_config', ?)").run(JSON.stringify(config));
+      getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_config', ?)").run(JSON.stringify(config));
     } catch {}
     if (config.enabled) startAutoBackup(dbPath);
     else stopAutoBackup();
@@ -178,14 +181,14 @@ function installCloudBackup(ipcMain, database, opts = {}) {
 
   ipcMain.handle("cloud-backup:get-history", () => {
     try {
-      const rows = db.prepare("SELECT * FROM cloud_backup_history ORDER BY backed_up_at DESC LIMIT 20").all();
+      const rows = getDb().prepare("SELECT * FROM cloud_backup_history ORDER BY backed_up_at DESC LIMIT 20").all();
       return rows;
     } catch { return []; }
   });
 
   // Ensure history table
   try {
-    db.exec(`
+    getDb().exec(`
       CREATE TABLE IF NOT EXISTS cloud_backup_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         endpoint TEXT,
@@ -222,7 +225,7 @@ async function runBackup(dbPath) {
     }
 
     // 2. License key required (set during onboarding / SubscriptionPanel validate)
-    const licenseKey = getConfigValue("license_key");
+    const licenseKey = getBackupLicenseKey();
     if (!licenseKey) {
       const msg = "no license_key in station_config_kv";
       config.lastStatus = "skipped: " + msg;
@@ -283,7 +286,7 @@ async function runBackup(dbPath) {
       config.lastStatus = "error: " + status;
       saveConfig();
       try {
-        db.prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
+        getDb().prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
           .run("r2 (backend-signed)", gzippedDb.length, checksum, status, durationMs);
       } catch {}
       console.error(`[CLOUD-BACKUP] ${status}`);
@@ -298,7 +301,7 @@ async function runBackup(dbPath) {
     saveConfig();
     saveR2Config();
     try {
-      db.prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
+      getDb().prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
         .run("r2 (backend-signed)", gzippedDb.length, checksum, "success", durationMs);
     } catch {}
     console.log(`[CLOUD-BACKUP] Success: ${(gzippedDb.length / 1024).toFixed(1)}KB + meta in ${durationMs}ms (ts=${timestamp}, ${checksum})`);
@@ -307,7 +310,7 @@ async function runBackup(dbPath) {
     config.lastStatus = "error: " + e.message;
     saveConfig();
     try {
-      db.prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
+      getDb().prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
         .run("r2 (backend-signed)", 0, "", "error: " + e.message, Date.now() - startTime);
     } catch {}
     console.error("[CLOUD-BACKUP] Failed:", e.message);
@@ -319,9 +322,27 @@ async function runBackup(dbPath) {
 
 function getConfigValue(key) {
   try {
-    const row = db.prepare("SELECT value FROM station_config_kv WHERE key = ?").get(key);
+    const row = getDb().prepare("SELECT value FROM station_config_kv WHERE key = ?").get(key);
     return row?.value || null;
   } catch { return null; }
+}
+
+// The cloud backup is the whole DB, but it BELONGS to the signed-in ACCOUNT. station_config_kv is
+// keyed by (station_id, key), so a bare `SELECT value ... WHERE key='license_key'` grabs an ARBITRARY
+// station's license — on a multi-license install that can be the wrong one, and the backup then lands
+// under an R2 prefix the operator never restores from (this is exactly what happened: backups went to
+// license 2 while the account restores under license 19). Resolve the ACTIVE station's owner license —
+// the account context the operator is actually working in — so backup and restore share one license.
+// Universal: on a clean single-account install every station shares the same owner license, so this is
+// identical to the old behavior; it only DISAMBIGUATES the multi-license case.
+function getBackupLicenseKey() {
+  try {
+    const row = getDb().prepare(
+      "SELECT owner_license_key AS k FROM stations WHERE is_active = 1 AND deleted_at IS NULL AND owner_license_key IS NOT NULL AND owner_license_key != '' LIMIT 1"
+    ).get();
+    if (row?.k) return String(row.k).trim();
+  } catch {}
+  return getConfigValue('license_key');   // single-quoted on purpose — see replace note below
 }
 
 function getTableStats() {
@@ -329,7 +350,7 @@ function getTableStats() {
   const stats = {};
   for (const t of tables) {
     try {
-      const row = db.prepare(`SELECT COUNT(*) as c FROM ${t}`).get();
+      const row = getDb().prepare(`SELECT COUNT(*) as c FROM ${t}`).get();
       stats[t] = row?.c || 0;
     } catch { stats[t] = 0; }
   }
@@ -338,18 +359,20 @@ function getTableStats() {
 
 function saveConfig() {
   try {
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_config', ?)").run(JSON.stringify(config));
+    getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_config', ?)").run(JSON.stringify(config));
   } catch {}
 }
 
 function saveR2Config() {
-  if (!db) {
+  let _db = null;
+  try { _db = getDb(); } catch { _db = null; }
+  if (!_db || !_db.open) {
     console.warn("[CLOUD-BACKUP] db not ready, skipping save — will retry in 2s");
     setTimeout(() => saveR2Config(), 2000);
     return;
   }
   try {
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_r2', ?)").run(JSON.stringify(r2Config));
+    getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_r2', ?)").run(JSON.stringify(r2Config));
     console.log("[CLOUD-BACKUP] saveR2Config — wrote to DB OK, bucket:", r2Config.bucket);
   } catch (e) {
     console.error("[CLOUD-BACKUP] saveR2Config FAILED to write DB:", e.message);

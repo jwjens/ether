@@ -203,39 +203,40 @@ function stationConfigKvRemoveByKey(db, stationId, key) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStationConfigKv(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('station_config_kv:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: stationConfigKvList(db, stationId, opts) }; }
+    try { return { ok: true, rows: stationConfigKvList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_config_kv:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: stationConfigKvGet(db, uuid) }; }
+    try { return { ok: true, row: stationConfigKvGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_config_kv:create', (_, payload) => {
-    try { return { ok: true, row: stationConfigKvCreate(db, payload) }; }
+    try { return { ok: true, row: stationConfigKvCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_config_kv:update', (_, uuid, patch) => {
-    try { return { ok: true, row: stationConfigKvUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: stationConfigKvUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_config_kv:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...stationConfigKvDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...stationConfigKvDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
 
   ipcMain.handle('station_config_kv:upsert-by-key', (_, stationId, key, value) => {
-    try { return { ok: true, row: stationConfigKvUpsertByKey(db, stationId, key, value) }; }
+    try { return { ok: true, row: stationConfigKvUpsertByKey(getDb(), stationId, key, value) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_config_kv:remove-by-key', (_, stationId, key) => {
-    try { return { ok: true, ...stationConfigKvRemoveByKey(db, stationId, key) }; }
+    try { return { ok: true, ...stationConfigKvRemoveByKey(getDb(), stationId, key) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

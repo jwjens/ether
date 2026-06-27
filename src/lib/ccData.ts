@@ -338,20 +338,33 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     });
     const data = await res.json().catch(() => ({}));
 
+    // Pin the ACCOUNT license at INSTALL scope so the sync transport resolves the push license
+    // DETERMINISTICALLY (this anchor is branch 1 of transport._getLicenseKey), not via an arbitrary
+    // station_config_kv `… LIMIT 1` row. The backend just validated this key for THIS account (res.ok),
+    // so it is authoritative — this is what stops programming being misfiled under a stale/owner license
+    // on a multi-license install. On a single-license install it equals the only license (no change).
+    if (res.ok && licenseKey) {
+      try { await ether.installConfigKv.upsertByKey("account_license_key", String(licenseKey).trim()); }
+      catch (e) { console.warn("[reconcile] account_license_key pin failed:", (e as any)?.message ?? e); }
+    }
+
     // Keep the local plan tier in step with the account's PLATFORM assignment — read from the SAME
     // /account/connect the platform drives. Without this, plan_tier only updates on a full sign-in, so a
     // running install (or one provisioned via cloud restore) can be stuck on a stale/free tier even though
     // the account is paid. Honors a dev override (never clobber it). Best-effort; failures retry next tick.
     if (data.plan && typeof data.plan === "string") {
       try {
-        const rows = (await ether.stationConfigKv.list(1))?.rows || [];
-        const hasOverride = rows.some((r: any) => r.key === "plan_tier_dev_override" && r.value);
-        const cur = rows.find((r: any) => r.key === "plan_tier")?.value;
-        if (!hasOverride && cur !== data.plan) {
-          await ether.stationConfigKv.upsertByKey(1, "plan_tier", data.plan);
+        // TIER IS ACCOUNT-LEVEL: persist the account's plan at INSTALL scope (install_config_kv), NOT on
+        // a station — usePlan reads it independent of any station. data.plan from /account/connect is the
+        // authoritative source. Owner/dev override (station 1) still wins, so don't clobber it. Always
+        // apply to the live UI (the account is the truth), not only on a change.
+        const s1 = (await ether.stationConfigKv.list(1))?.rows || [];
+        const hasOverride = s1.some((r: any) => r.key === "plan_tier_dev_override" && r.value);
+        if (!hasOverride) {
+          await ether.installConfigKv.upsertByKey("plan_tier", data.plan);
           const { setPlanGlobally } = await import("../hooks/usePlan");
           setPlanGlobally(data.plan as any);
-          console.log("[reconcile] plan tier synced from account →", data.plan);
+          console.log("[reconcile] account tier →", data.plan, "(install-level)");
         }
       } catch (e) { console.warn("[reconcile] plan sync failed:", (e as any)?.message ?? e); }
     }
@@ -362,10 +375,21 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     const haveUuids  = new Set(localList.map((s: any) => s.uuid));
     const cloudUuids = new Set(cloud.map((s: any) => s.uuid));
 
-    // ── Cloud → local: materialize any account station this install doesn't have yet. ──
+    // Tombstones: stations deliberately DELETED on this machine. The reconcile must NOT re-materialize
+    // these from the cloud — a confirmed delete wins over the multi-device sync (the "delete that won't
+    // stick" bug). Without this, a deleted station comes straight back on the next sync tick.
+    let tombstoned = new Set<string>();
+    try {
+      const del = await query<{ uuid: string }>("SELECT uuid FROM stations WHERE deleted_at IS NOT NULL AND uuid IS NOT NULL", []);
+      tombstoned = new Set((del || []).map(r => r.uuid));
+    } catch { /* best-effort — absence just means no tombstone filtering this tick */ }
+    const norm = (n: any) => String(n || "").trim().toLowerCase();
+
+    // ── Cloud → local: materialize any account station this install doesn't have yet (but never a
+    //    station we tombstoned — that's a resurrection). ──
     let created = 0;
     for (const s of cloud) {
-      if (!s?.uuid || haveUuids.has(s.uuid)) continue;
+      if (!s?.uuid || haveUuids.has(s.uuid) || tombstoned.has(s.uuid)) continue;
       const r = await ether.stations.create({
         uuid:      s.uuid,
         name:      s.name         || "Station",
@@ -398,6 +422,12 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
         catch (e) { /* retry next tick */ }
       }
       if (!inCloud) {
+        // Don't re-register a CHURN DUPLICATE: if the account already has a DIFFERENT station with the
+        // same name in the cloud, this local row is a stale duplicate (e.g. a stub uuid left by an old
+        // build) — registering it would resurrect the dupe across every device. Skip it; the operator
+        // deletes the dupe with the real delete button, which tombstones it.
+        const dupeInCloud = cloud.some((c: any) => c.uuid !== s.uuid && norm(c.name) === norm(s.name));
+        if (dupeInCloud) { console.log(`[reconcile] skip registering duplicate-name station ${s.name} (${s.uuid}) — already in cloud under another uuid`); continue; }
         try {
           const rr = await fetch(`${ETHER_BACKEND_URL}/account/register-station`, {
             method: "POST", headers: { "Content-Type": "application/json" },

@@ -108,7 +108,9 @@ export default function SubscriptionPanel() {
     if (ADMIN_KEYS[trimmedKey]) {
       const tier = ADMIN_KEYS[trimmedKey];
       setLoading(true);
-      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', tier);
+      // TIER IS ACCOUNT-LEVEL: persist at INSTALL scope (install_config_kv) so usePlan reads it
+      // independent of any station/local id. License key/email stay station-scoped (license binding).
+      await (window as any).ether.installConfigKv.upsertByKey('plan_tier', tier);
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', trimmedKey);
       window.dispatchEvent(new CustomEvent('ether:license-changed'));
       if (licenseEmail.trim()) {
@@ -146,7 +148,7 @@ export default function SubscriptionPanel() {
         setLoading(false);
         return;
       }
-      await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', data.plan);
+      await (window as any).ether.installConfigKv.upsertByKey('plan_tier', data.plan);   // account-level tier (install scope)
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_key', licenseKey.trim());
       window.dispatchEvent(new CustomEvent('ether:license-changed'));
       await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'license_email', licenseEmail.trim());
@@ -186,7 +188,7 @@ export default function SubscriptionPanel() {
         return;
       }
       const kv = (window as any).ether.stationConfigKv;
-      await kv.upsertByKey(stationId, 'plan_tier', data.plan);
+      await (window as any).ether.installConfigKv.upsertByKey('plan_tier', data.plan);   // account-level tier (install scope)
       if (data.license_key) await kv.upsertByKey(stationId, 'license_key', data.license_key);
       await kv.upsertByKey(stationId, 'license_email', data.email);
       // Store/clear the trial end date so TrialGate can run the end-of-trial choice.
@@ -206,7 +208,7 @@ export default function SubscriptionPanel() {
 
   const cancelPlan = async () => {
     if (!confirm("Downgrade to Free? You'll keep access until the end of your billing period.")) return;
-    await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'plan_tier', 'free');
+    await (window as any).ether.installConfigKv.upsertByKey('plan_tier', 'free');   // account-level tier (install scope)
     await (window as any).ether.stationConfigKv.removeByKey(stationId, 'license_key');
     setPlanGlobally("free");
   };

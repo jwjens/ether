@@ -193,28 +193,29 @@ function metadataVocabularyDelete(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMetadataVocabulary(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('metadata_vocabulary:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: metadataVocabularyList(db, stationId, opts) }; }
+    try { return { ok: true, rows: metadataVocabularyList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_vocabulary:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: metadataVocabularyGet(db, uuid) }; }
+    try { return { ok: true, row: metadataVocabularyGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_vocabulary:create', (_, payload) => {
-    try { return { ok: true, row: metadataVocabularyCreate(db, payload) }; }
+    try { return { ok: true, row: metadataVocabularyCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_vocabulary:update', (_, uuid, patch) => {
-    try { return { ok: true, row: metadataVocabularyUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: metadataVocabularyUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_vocabulary:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...metadataVocabularyDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...metadataVocabularyDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

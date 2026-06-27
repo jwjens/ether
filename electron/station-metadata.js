@@ -7,11 +7,11 @@
 
 const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
 
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 
 function getConfigValue(key) {
   try {
-    const row = db.prepare("SELECT value FROM station_config_kv WHERE key = ?").get(key);
+    const row = getDb().prepare("SELECT value FROM station_config_kv WHERE key = ?").get(key);
     return row?.value || null;
   } catch { return null; }
 }
@@ -30,7 +30,7 @@ function licenseHeaders(uuid) {
   // fall back to the install license only when the station has no owner recorded.
   let key = null;
   try {
-    if (uuid) key = db.prepare("SELECT owner_license_key FROM stations WHERE uuid = ? AND deleted_at IS NULL").get(uuid)?.owner_license_key || null;
+    if (uuid) key = getDb().prepare("SELECT owner_license_key FROM stations WHERE uuid = ? AND deleted_at IS NULL").get(uuid)?.owner_license_key || null;
   } catch { /* fall through to install license */ }
   if (!key) key = getConfigValue("license_key");
   return key ? { "x-license-key": key } : null;
@@ -105,7 +105,7 @@ async function uploadLogo(uuid, bytes, ext) {
 }
 
 function installStationMetadata(ipcMain, database) {
-  db = database;
+  getDb = (typeof database === 'function') ? database : () => database;
   ipcMain.handle("station:metadata:get",        (_, uuid)             => getMetadata(uuid));
   ipcMain.handle("station:metadata:save",       (_, uuid, m)          => saveMetadata(uuid, m));
   ipcMain.handle("station:metadata:check-slug", (_, slug, uuid)       => checkSlug(slug, uuid));

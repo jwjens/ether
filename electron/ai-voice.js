@@ -17,20 +17,20 @@ const path = require("path");
 const https = require("https");
 const { URL } = require("url");
 
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 let voiceSegmentsDir = null;
 
 // ── Config helpers ──────────────────────────────────────────
 function getConfig() {
   try {
-    const row = db.prepare("SELECT value FROM station_config_kv WHERE key = 'ai_voice_config'").get();
+    const row = getDb().prepare("SELECT value FROM station_config_kv WHERE key = 'ai_voice_config'").get();
     if (row?.value) return JSON.parse(row.value);
   } catch {}
   return { provider: "elevenlabs", apiKey: "", voiceId: "", model: "eleven_turbo_v2_5", stability: 0.5, similarity: 0.75 };
 }
 function setConfig(cfg) {
   try {
-    db.prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ai_voice_config', ?)").run(JSON.stringify(cfg));
+    getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ai_voice_config', ?)").run(JSON.stringify(cfg));
     return true;
   } catch { return false; }
 }
@@ -160,7 +160,7 @@ async function generateAudio(provider, cfg, text) {
 
 // ── IPC install ─────────────────────────────────────────────
 function installAIVoice(ipcMain, database, opts = {}) {
-  db = database;
+  getDb = (typeof database === 'function') ? database : () => database;
   voiceSegmentsDir = opts.voiceSegmentsDir || path.join(opts.userDataPath || ".", "ai-voice");
   if (!fs.existsSync(voiceSegmentsDir)) fs.mkdirSync(voiceSegmentsDir, { recursive: true });
 
@@ -193,7 +193,7 @@ function installAIVoice(ipcMain, database, opts = {}) {
 
     let segmentId;
     try {
-      const r = db.prepare(
+      const r = getDb().prepare(
         "INSERT INTO ai_voice_segments (template_id, title, script, provider, voice_id, status, station_id) VALUES (?, ?, ?, ?, ?, 'generating', ?)"
       ).run(templateId, title || "Untitled", script, provider, voiceId, stationId);
       segmentId = r.lastInsertRowid;
@@ -209,14 +209,14 @@ function installAIVoice(ipcMain, database, opts = {}) {
       fs.writeFileSync(filePath, result.data);
       const stat = fs.statSync(filePath);
 
-      db.prepare(
+      getDb().prepare(
         "UPDATE ai_voice_segments SET status='ready', file_path=?, size_bytes=?, generated_at=? WHERE id=? AND station_id=?"
       ).run(filePath, stat.size, Math.floor(Date.now() / 1000), segmentId, stationId);
 
-      const row = db.prepare("SELECT * FROM ai_voice_segments WHERE id=? AND station_id=?").get(segmentId, stationId);
+      const row = getDb().prepare("SELECT * FROM ai_voice_segments WHERE id=? AND station_id=?").get(segmentId, stationId);
       return { ok: true, segment: row };
     } catch (e) {
-      db.prepare("UPDATE ai_voice_segments SET status='error', error_msg=? WHERE id=? AND station_id=?")
+      getDb().prepare("UPDATE ai_voice_segments SET status='error', error_msg=? WHERE id=? AND station_id=?")
         .run(e.message || String(e), segmentId, stationId);
       return { ok: false, error: e.message || String(e), segmentId };
     }
@@ -228,7 +228,7 @@ function installAIVoice(ipcMain, database, opts = {}) {
       const sql = status
         ? "SELECT * FROM ai_voice_segments WHERE station_id=? AND status=? ORDER BY created_at DESC LIMIT ?"
         : "SELECT * FROM ai_voice_segments WHERE station_id=? ORDER BY created_at DESC LIMIT ?";
-      return status ? db.prepare(sql).all(stationId, status, limit) : db.prepare(sql).all(stationId, limit);
+      return status ? getDb().prepare(sql).all(stationId, status, limit) : getDb().prepare(sql).all(stationId, limit);
     } catch { return []; }
   });
 
@@ -236,22 +236,22 @@ function installAIVoice(ipcMain, database, opts = {}) {
   ipcMain.handle("ai-voice:update-segment", (_, { id, status, title, stationId = 1 }) => {
     try {
       if (status) {
-        db.prepare(
+        getDb().prepare(
           "UPDATE ai_voice_segments SET status=?, played_at=CASE WHEN ?='played' THEN unixepoch() ELSE played_at END WHERE id=? AND station_id=?"
         ).run(status, status, id, stationId);
       }
-      if (title !== undefined) db.prepare("UPDATE ai_voice_segments SET title=? WHERE id=? AND station_id=?").run(title, id, stationId);
+      if (title !== undefined) getDb().prepare("UPDATE ai_voice_segments SET title=? WHERE id=? AND station_id=?").run(title, id, stationId);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle("ai-voice:delete-segment", (_, { id, stationId = 1 }) => {
     try {
-      const row = db.prepare("SELECT file_path FROM ai_voice_segments WHERE id=? AND station_id=?").get(id, stationId);
+      const row = getDb().prepare("SELECT file_path FROM ai_voice_segments WHERE id=? AND station_id=?").get(id, stationId);
       if (row?.file_path && fs.existsSync(row.file_path)) {
         try { fs.unlinkSync(row.file_path); } catch {}
       }
-      db.prepare("DELETE FROM ai_voice_segments WHERE id=? AND station_id=?").run(id, stationId);
+      getDb().prepare("DELETE FROM ai_voice_segments WHERE id=? AND station_id=?").run(id, stationId);
       return { ok: true };
     } catch (e) { return { ok: false, error: e.message }; }
   });
@@ -259,7 +259,7 @@ function installAIVoice(ipcMain, database, opts = {}) {
   // ── Templates ──
   ipcMain.handle("ai-voice:list-templates", () => {
     try {
-      const rows = db.prepare("SELECT * FROM ai_voice_templates ORDER BY name").all();
+      const rows = getDb().prepare("SELECT * FROM ai_voice_templates ORDER BY name").all();
       // First-time seed: drop in some sensible defaults if empty
       if (rows.length === 0) {
         const seeds = [
@@ -271,9 +271,9 @@ function installAIVoice(ipcMain, database, opts = {}) {
           { name: "Top of hour",      kind: "recurring", prompt: "It's {{hour}} o'clock at {{stationName}}. Here's what's coming up this hour." },
         ];
         for (const s of seeds) {
-          db.prepare("INSERT INTO ai_voice_templates (name, kind, prompt_template) VALUES (?, ?, ?)").run(s.name, s.kind, s.prompt);
+          getDb().prepare("INSERT INTO ai_voice_templates (name, kind, prompt_template) VALUES (?, ?, ?)").run(s.name, s.kind, s.prompt);
         }
-        return db.prepare("SELECT * FROM ai_voice_templates ORDER BY name").all();
+        return getDb().prepare("SELECT * FROM ai_voice_templates ORDER BY name").all();
       }
       return rows;
     } catch { return []; }
@@ -282,10 +282,10 @@ function installAIVoice(ipcMain, database, opts = {}) {
   ipcMain.handle("ai-voice:save-template", (_, { id, name, kind, prompt_template, voice_id, provider }) => {
     try {
       if (id) {
-        db.prepare("UPDATE ai_voice_templates SET name=?, kind=?, prompt_template=?, voice_id=?, provider=? WHERE id=?")
+        getDb().prepare("UPDATE ai_voice_templates SET name=?, kind=?, prompt_template=?, voice_id=?, provider=? WHERE id=?")
           .run(name, kind || "evergreen", prompt_template, voice_id || "", provider || "", id);
       } else {
-        const r = db.prepare("INSERT INTO ai_voice_templates (name, kind, prompt_template, voice_id, provider) VALUES (?, ?, ?, ?, ?)")
+        const r = getDb().prepare("INSERT INTO ai_voice_templates (name, kind, prompt_template, voice_id, provider) VALUES (?, ?, ?, ?, ?)")
           .run(name, kind || "evergreen", prompt_template, voice_id || "", provider || "");
         return { ok: true, id: r.lastInsertRowid };
       }
@@ -294,7 +294,7 @@ function installAIVoice(ipcMain, database, opts = {}) {
   });
 
   ipcMain.handle("ai-voice:delete-template", (_, { id }) => {
-    try { db.prepare("DELETE FROM ai_voice_templates WHERE id = ?").run(id); return { ok: true }; }
+    try { getDb().prepare("DELETE FROM ai_voice_templates WHERE id = ?").run(id); return { ok: true }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

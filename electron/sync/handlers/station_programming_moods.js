@@ -145,28 +145,29 @@ function stationProgrammingMoodsDelete(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStationProgrammingMoods(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('station_programming_moods:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: stationProgrammingMoodsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: stationProgrammingMoodsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming_moods:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: stationProgrammingMoodsGet(db, uuid) }; }
+    try { return { ok: true, row: stationProgrammingMoodsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming_moods:create', (_, payload) => {
-    try { return { ok: true, row: stationProgrammingMoodsCreate(db, payload) }; }
+    try { return { ok: true, row: stationProgrammingMoodsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming_moods:update', (_, uuid, patch) => {
-    try { return { ok: true, row: stationProgrammingMoodsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: stationProgrammingMoodsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming_moods:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...stationProgrammingMoodsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...stationProgrammingMoodsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

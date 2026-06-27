@@ -155,28 +155,29 @@ function albumsFindOrCreate(db, { title, artistId, year }) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installAlbums(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('albums:list', (_, opts) => {
-    try { return { ok: true, rows: albumsList(db, opts) }; }
+    try { return { ok: true, rows: albumsList(getDb(), opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('albums:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: albumsGet(db, uuid) }; }
+    try { return { ok: true, row: albumsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('albums:create', (_, payload) => {
-    try { return { ok: true, row: albumsCreate(db, payload) }; }
+    try { return { ok: true, row: albumsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('albums:update', (_, uuid, patch) => {
-    try { return { ok: true, row: albumsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: albumsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('albums:delete', (_, uuid) => {
-    try { return { ok: true, ...albumsDelete(db, uuid) }; }
+    try { return { ok: true, ...albumsDelete(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

@@ -145,28 +145,29 @@ function smartScheduleRulesDelete(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSmartScheduleRules(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('smart_schedule_rules:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: smartScheduleRulesList(db, stationId, opts) }; }
+    try { return { ok: true, rows: smartScheduleRulesList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('smart_schedule_rules:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: smartScheduleRulesGet(db, uuid) }; }
+    try { return { ok: true, row: smartScheduleRulesGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('smart_schedule_rules:create', (_, payload) => {
-    try { return { ok: true, row: smartScheduleRulesCreate(db, payload) }; }
+    try { return { ok: true, row: smartScheduleRulesCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('smart_schedule_rules:update', (_, uuid, patch) => {
-    try { return { ok: true, row: smartScheduleRulesUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: smartScheduleRulesUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('smart_schedule_rules:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...smartScheduleRulesDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...smartScheduleRulesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

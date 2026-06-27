@@ -155,33 +155,34 @@ function formatClocksUpdateById(db, intId, patch) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installFormatClocks(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('format_clocks:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: formatClocksList(db, stationId, opts) }; }
+    try { return { ok: true, rows: formatClocksList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('format_clocks:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: formatClocksGet(db, uuid) }; }
+    try { return { ok: true, row: formatClocksGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('format_clocks:create', (_, payload) => {
-    try { return { ok: true, row: formatClocksCreate(db, payload) }; }
+    try { return { ok: true, row: formatClocksCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('format_clocks:update', (_, uuid, patch) => {
-    try { return { ok: true, row: formatClocksUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: formatClocksUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('format_clocks:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...formatClocksDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...formatClocksDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('format_clocks:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: formatClocksUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: formatClocksUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

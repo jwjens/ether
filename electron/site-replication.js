@@ -18,16 +18,16 @@ const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
 
-let db = null;
+let getDb = () => null;   // resolves the LIVE connection (set in install); survives a reopen
 let siteId = null;
 let syncInterval = null;
 let peers = []; // { host, port, name, lastSync }
 
 function installSiteReplication(ipcMain, database) {
-  db = database;
+  getDb = (typeof database === 'function') ? database : () => database;
 
   // Ensure replication tables exist
-  db.exec(`
+  getDb().exec(`
     CREATE TABLE IF NOT EXISTS replication_config (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -54,12 +54,12 @@ function installSiteReplication(ipcMain, database) {
   `);
 
   // Generate or load site ID
-  const existing = db.prepare("SELECT value FROM replication_config WHERE key = 'site_id'").get();
+  const existing = getDb().prepare("SELECT value FROM replication_config WHERE key = 'site_id'").get();
   if (existing) {
     siteId = existing.value;
   } else {
     siteId = crypto.randomUUID();
-    db.prepare("INSERT INTO replication_config (key, value) VALUES ('site_id', ?)").run(siteId);
+    getDb().prepare("INSERT INTO replication_config (key, value) VALUES ('site_id', ?)").run(siteId);
   }
   console.log(`[REPL] Site ID: ${siteId}`);
 
@@ -76,32 +76,32 @@ function installSiteReplication(ipcMain, database) {
   ipcMain.handle("repl:get-config", () => ({
     siteId,
     syncEnabled: !!syncInterval,
-    peers: db.prepare("SELECT * FROM replication_peers ORDER BY name").all(),
-    lastLogs: db.prepare("SELECT * FROM replication_log ORDER BY synced_at DESC LIMIT 20").all(),
+    peers: getDb().prepare("SELECT * FROM replication_peers ORDER BY name").all(),
+    lastLogs: getDb().prepare("SELECT * FROM replication_log ORDER BY synced_at DESC LIMIT 20").all(),
   }));
 
   ipcMain.handle("repl:add-peer", (_evt, peer) => {
-    db.prepare("INSERT INTO replication_peers (name, host, port) VALUES (?, ?, ?)")
+    getDb().prepare("INSERT INTO replication_peers (name, host, port) VALUES (?, ?, ?)")
       .run(peer.name || "Station", peer.host || "127.0.0.1", peer.port || 3400);
     loadPeers();
     return true;
   });
 
   ipcMain.handle("repl:remove-peer", (_evt, id) => {
-    db.prepare("DELETE FROM replication_peers WHERE id = ?").run(id);
+    getDb().prepare("DELETE FROM replication_peers WHERE id = ?").run(id);
     loadPeers();
     return true;
   });
 
   ipcMain.handle("repl:update-peer", (_evt, id, data) => {
-    db.prepare("UPDATE replication_peers SET name=?, host=?, port=?, is_active=? WHERE id=?")
+    getDb().prepare("UPDATE replication_peers SET name=?, host=?, port=?, is_active=? WHERE id=?")
       .run(data.name, data.host, data.port, data.is_active ?? 1, id);
     loadPeers();
     return true;
   });
 
   ipcMain.handle("repl:sync-now", async (_evt, peerId) => {
-    const peer = db.prepare("SELECT * FROM replication_peers WHERE id = ?").get(peerId);
+    const peer = getDb().prepare("SELECT * FROM replication_peers WHERE id = ?").get(peerId);
     if (!peer) return { ok: false, error: "Peer not found" };
     return await syncWithPeer(peer);
   });
@@ -143,9 +143,9 @@ function getChanges(tableName, sinceEpoch) {
     const tsCol = table.tsCol || "rowid"; // fallback to rowid ordering
     let rows;
     if (table.tsCol) {
-      rows = db.prepare(`SELECT * FROM ${tableName} WHERE ${tsCol} > ? ORDER BY ${tsCol} LIMIT 500`).all(sinceEpoch);
+      rows = getDb().prepare(`SELECT * FROM ${tableName} WHERE ${tsCol} > ? ORDER BY ${tsCol} LIMIT 500`).all(sinceEpoch);
     } else {
-      rows = db.prepare(`SELECT * FROM ${tableName} LIMIT 500`).all();
+      rows = getDb().prepare(`SELECT * FROM ${tableName} LIMIT 500`).all();
     }
 
     // Strip excluded columns (like file_path — don't share local paths)
@@ -182,7 +182,7 @@ async function syncWithPeer(peer) {
           const vals = cols.map(c => row[c]);
           // Try insert first
           const placeholders = cols.map(() => "?").join(",");
-          db.prepare(`INSERT OR REPLACE INTO ${table.name} (${cols.join(",")}) VALUES (${placeholders})`).run(...vals);
+          getDb().prepare(`INSERT OR REPLACE INTO ${table.name} (${cols.join(",")}) VALUES (${placeholders})`).run(...vals);
           synced++;
         } catch (e) {
           // Ignore individual row errors
@@ -200,11 +200,11 @@ async function syncWithPeer(peer) {
 
   // Update peer last sync time
   const now = Math.floor(Date.now() / 1000);
-  db.prepare("UPDATE replication_peers SET last_sync_at = ?, last_status = ? WHERE id = ?")
+  getDb().prepare("UPDATE replication_peers SET last_sync_at = ?, last_status = ? WHERE id = ?")
     .run(now, totalSynced > 0 ? `${totalSynced} records` : "up to date", peer.id);
 
   // Log
-  db.prepare("INSERT INTO replication_log (peer_id, direction, table_name, records_synced, status) VALUES (?,?,?,?,?)")
+  getDb().prepare("INSERT INTO replication_log (peer_id, direction, table_name, records_synced, status) VALUES (?,?,?,?,?)")
     .run(peer.id, "pull", "all", totalSynced, totalSynced > 0 ? "success" : "no changes");
 
   return { ok: true, results, totalSynced };
@@ -230,7 +230,7 @@ function fetchFromPeer(peer, path) {
 
 function loadPeers() {
   try {
-    peers = db.prepare("SELECT * FROM replication_peers WHERE is_active = 1").all();
+    peers = getDb().prepare("SELECT * FROM replication_peers WHERE is_active = 1").all();
   } catch { peers = []; }
 }
 

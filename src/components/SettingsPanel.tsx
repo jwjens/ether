@@ -18,15 +18,31 @@ import { fetchMyMemberships, type Membership } from "../lib/memberships";
 // ── Settings categories ──────────────────────────────────────
 // 6 buckets that cover all 18 Section components without any one category
 // getting overcrowded. Shown in the sidebar in this order.
-export type SettingsCategory = "station" | "audio" | "programming" | "broadcast" | "integrations" | "system";
+export type SettingsCategory = "station" | "audio" | "programming" | "broadcast" | "integrations" | "backup" | "system";
 const CATEGORIES: { id: SettingsCategory; label: string; icon: React.ReactNode }[] = [
   { id: "station",      label: "Station",      icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg> },
   { id: "audio",        label: "Audio",        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> },
   { id: "programming",  label: "Programming",  icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
   { id: "broadcast",    label: "Broadcast",    icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg> },
   { id: "integrations", label: "Integrations", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
+  { id: "backup",       label: "Backup & Restore", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/><polyline points="9 13 12 16 15 13"/><line x1="12" y1="16" x2="12" y2="9"/></svg> },
   { id: "system",       label: "System",       icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
 ];
+
+// Friendly "5 minutes ago" relative time for backup status — plain language beats a raw timestamp.
+function timeAgo(unixSec: number): string {
+  if (!unixSec) return "";
+  const s = Math.max(0, Math.floor(Date.now() / 1000) - unixSec);
+  if (s < 45) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  if (d === 1) return "yesterday";
+  if (d < 7) return `${d} days ago`;
+  return new Date(unixSec * 1000).toLocaleDateString();
+}
 
 // ── Settings visual layer ─────────────────────────────────────
 // Scoped stylesheet for the Preferences shell + cards. Inline styles can't
@@ -1694,13 +1710,42 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   const [r2TestStatus,   setR2TestStatus]   = useState("");
   const [r2Testing,      setR2Testing]      = useState(false);
   const [r2Saving,       setR2Saving]       = useState(false);
+  const [r2BackingNow,   setR2BackingNow]   = useState(false);
+  const [r2BackupNowStatus, setR2BackupNowStatus] = useState("");
+  // Manual full-DB cloud backup — same backend-signed R2 upload as the auto-timer, on demand.
+  const runCloudBackupNow = async () => {
+    setR2BackingNow(true); setR2BackupNowStatus("Backing up your full station…");
+    try {
+      const r: any = await (window as any).ether.invoke("cloud-backup:run-now");
+      if (!r?.ok) throw new Error(r?.tier_insufficient ? "Cloud backup requires the Network plan." : (r?.error || "Backup failed"));
+      setR2LastBackup(Math.floor(Date.now() / 1000));
+      setR2LastStatus("success");
+      setR2BackupNowStatus("✓ Full station backed up to the cloud");
+    } catch (e: any) {
+      setR2BackupNowStatus("✗ " + String(e?.message || e));
+    }
+    setR2BackingNow(false);
+  };
 
   // Music Library → Cloud (manual audio upload). The cloud backup above covers
   // the database only; this pushes the actual audio files via the existing
   // library:sync-r2:upload handler so a fresh install can pull them down.
   const [libUploading, setLibUploading] = useState(false);
-  const [libProgress,  setLibProgress]  = useState<{ done: number; total: number; errors: number } | null>(null);
+  const [libProgress,  setLibProgress]  = useState<{ phase: string; done: number; total: number; errors: number } | null>(null);
   const [libUploadMsg, setLibUploadMsg] = useState("");
+  const [libForce,     setLibForce]     = useState(false);   // re-upload everything, ignoring resume markers
+  // Designated library folder — where cloud downloads land AND the uploader consolidates everything.
+  const [musicDir,     setMusicDir]     = useState("");
+  useEffect(() => { (async () => { try { const r = await (window as any).ether.music?.getDir?.(); if (r?.dir) setMusicDir(r.dir); } catch {} })(); }, []);
+  const chooseLibraryFolder = async () => {
+    try {
+      const picked = await (window as any).ether.dialog?.openDirectory?.();
+      const dir = Array.isArray(picked) ? picked[0] : (picked?.filePaths?.[0] ?? picked);
+      if (!dir) return;
+      const r = await (window as any).ether.music?.setDir?.(dir);
+      if (r?.ok) setMusicDir(r.dir);
+    } catch (e) { console.error("[library] choose folder:", e); }
+  };
 
   // AI / Voice Assistant (legacy)
   const [anthropicKey, setAnthropicKey] = useState("");
@@ -1927,7 +1972,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
     const ether = (window as any).ether;
     setLibUploadMsg(""); setLibProgress(null); setLibUploading(true);
     try {
-      const r: any = await ether.libraryR2.upload();
+      const r: any = await ether.libraryR2.upload({ force: libForce });
       if (!r?.ok) {
         setLibUploading(false);
         setLibUploadMsg(r?.error || "Couldn't start the upload.");
@@ -1943,16 +1988,21 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
   useEffect(() => {
     const ether = (window as any).ether;
     const offP = ether.libraryR2.onUploadProgress?.((v: any) => {
-      setLibProgress({ done: v?.done ?? 0, total: v?.total ?? 0, errors: v?.errors ?? 0 });
+      setLibProgress({ phase: v?.phase ?? "upload", done: v?.done ?? 0, total: v?.total ?? 0, errors: v?.errors ?? 0 });
     });
     const offD = ether.libraryR2.onUploadDone?.((v: any) => {
-      const done = v?.done ?? 0, total = v?.total ?? 0, errors = v?.errors ?? 0;
+      const uploaded = v?.uploaded ?? 0, total = v?.total ?? 0, errors = v?.errors ?? 0;
+      const consolidated = v?.consolidated ?? 0, notFound = v?.notFound ?? 0;
       setLibUploading(false);
-      setLibProgress({ done, total, errors });
+      setLibProgress({ phase: "done", done: uploaded, total, errors });
+      const consPart = consolidated > 0 ? ` · ${consolidated.toLocaleString()} moved into your library folder` : "";
+      const missPart = notFound > 0 ? ` · ${notFound.toLocaleString()} file${notFound === 1 ? "" : "s"} not found on disk` : "";
       setLibUploadMsg(
-        v?.aborted   ? `Cancelled — ${done.toLocaleString()} of ${total.toLocaleString()} uploaded`
-        : errors > 0 ? `Uploaded ${(done - errors).toLocaleString()} of ${total.toLocaleString()} — ${errors} failed`
-        :              `✓ All ${done.toLocaleString()} files uploaded to the cloud`
+        v?.fatal     ? `Upload failed: ${v.fatal}`
+        : v?.aborted ? `Cancelled — ${uploaded.toLocaleString()} uploaded${consPart}${missPart}`
+        : errors > 0 ? `Uploaded ${uploaded.toLocaleString()} of ${total.toLocaleString()} — ${errors} failed${consPart}${missPart}`
+        : total === 0 ? `✓ Library already in the cloud${consPart}${missPart}`
+        :              `✓ All ${uploaded.toLocaleString()} files uploaded to the cloud${consPart}${missPart}`
       );
     });
     return () => { offP?.(); offD?.(); };
@@ -2521,30 +2571,110 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       <AccessibleAccountsSection />
 
       {/* ── Backup ── */}
-      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>} title="Local Backup (this PC)" description="Save a snapshot of your database — library list, schedule, and settings — to this computer. Audio files are not included.">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
-          <button onClick={backup} disabled={backupLoading} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
-            {backupLoading ? "Saving..." : "Back up now"}
-          </button>
-          {backupStatus && <span style={{ fontSize: 12, color: backupStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{backupStatus}</span>}
-        </div>
-        {backups.length > 0 && (
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.08em", textTransform: "uppercase" as any, marginBottom: 8 }}>Saved backups</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {backups.map(name => (
-                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-tertiary)", borderRadius: 0, padding: "9px 12px", border: "1px solid var(--border-primary)" }}>
-                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{formatBackupName(name)}</span>
-                  <button onClick={() => restore(name)} style={{ padding: "4px 12px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
-                    Restore
-                  </button>
-                </div>
-              ))}
+      {/* ── Cloud Backup — the everyday safety net (leads the tab) ── */}
+      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="An always-current copy of your whole station, kept safe online — every station, your schedule, and your settings. If a computer dies or you move to a new one, it all comes back.">
+
+        {/* Status hero + primary action */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as any, padding: "16px 18px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, background: (r2LastBackup > 0 && r2LastStatus === "success") ? "rgba(34,197,94,0.15)" : "var(--bg-secondary)", color: (r2LastBackup > 0 && r2LastStatus === "success") ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+              {(r2LastBackup > 0 && r2LastStatus === "success" && !r2BackingNow) ? "✓" : "☁"}
             </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Backups older than 7 days are automatically deleted</div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
+                {r2BackingNow ? "Backing up…" : (r2LastBackup > 0 && r2LastStatus === "success") ? "Your station is backed up" : "Not backed up yet"}
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 2 }}>
+                {r2BackingNow ? "Sending your latest changes to the cloud" : r2LastBackup > 0 ? `Last backed up ${timeAgo(r2LastBackup)}` : "Send your first backup whenever you're ready"}
+              </div>
+            </div>
           </div>
+          <button onClick={runCloudBackupNow} disabled={r2BackingNow}
+            style={{ padding: "11px 22px", fontSize: 13.5, fontWeight: 700, background: "var(--accent-green)", color: "#000", border: "none", cursor: r2BackingNow ? "default" : "pointer", borderRadius: 0, opacity: r2BackingNow ? 0.6 : 1 }}>
+            {r2BackingNow ? "Backing up…" : "Back up now"}
+          </button>
+        </div>
+        {!r2BackingNow && r2BackupNowStatus && (
+          <div style={{ fontSize: 12.5, marginTop: -10, marginBottom: 18, color: r2BackupNowStatus.startsWith("✓") ? "var(--accent-green)" : r2BackupNowStatus.startsWith("✗") ? "var(--accent-red)" : "var(--text-secondary)" }}>{r2BackupNowStatus}</div>
         )}
-        {backups.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>No backups yet — click "Back up now" to create your first one</div>}
+
+        {/* Automatic backup */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, paddingBottom: 18, borderBottom: "1px solid var(--border-primary)", marginBottom: 18 }}>
+          <div style={{ minWidth: 220 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>Back up automatically</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Keeps your cloud copy current while ether is open.</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <select value={r2Interval} onChange={e => setR2Interval(Number(e.target.value))} disabled={!r2Enabled}
+              style={{ padding: "8px 10px", fontSize: 12.5, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, cursor: r2Enabled ? "pointer" : "default", outline: "none", opacity: r2Enabled ? 1 : 0.45 }}>
+              <option value={1}>Every hour</option>
+              <option value={6}>Every 6 hours</option>
+              <option value={12}>Every 12 hours</option>
+              <option value={24}>Once a day</option>
+            </select>
+            <button onClick={() => setR2Enabled(e => !e)} aria-label="Toggle automatic backup"
+              style={{ position: "relative", width: 46, height: 26, borderRadius: 999, border: "none", flexShrink: 0, cursor: "pointer", background: r2Enabled ? "var(--accent-green)" : "var(--bg-tertiary)", boxShadow: r2Enabled ? "none" : "inset 0 0 0 1px var(--border-primary)" }}>
+              <span style={{ position: "absolute", top: 3, left: r2Enabled ? 23 : 3, width: 20, height: 20, borderRadius: 999, background: "#fff", transition: "left 0.15s ease" }} />
+            </button>
+            <button onClick={saveR2Config} disabled={r2Saving}
+              style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
+              {r2Saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+        {(r2SaveStatus || r2TestStatus) && (
+          <div style={{ fontSize: 12, marginTop: -10, marginBottom: 18, color: (r2SaveStatus || r2TestStatus).startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{r2SaveStatus || r2TestStatus}</div>
+        )}
+
+        {/* Music files */}
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>Your music files</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 14, lineHeight: 1.55 }}>
+            Backups above save your station's setup — not the audio itself. Send your songs to the cloud once, and any computer signed into your account can pull your whole library down into the same folder.
+          </div>
+
+          <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "12px 14px", marginBottom: 14 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", marginBottom: 6 }}>WHERE YOUR SONGS LIVE</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any }}>
+              <span style={{ flex: 1, minWidth: 200, fontSize: 12.5, color: "var(--text-secondary)", wordBreak: "break-all" }}>{musicDir || "Default folder"}</span>
+              <button onClick={chooseLibraryFolder} disabled={libUploading}
+                style={{ padding: "6px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: libUploading ? "default" : "pointer", borderRadius: 0, opacity: libUploading ? 0.5 : 1 }}>
+                Change folder
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any }}>
+            <button onClick={uploadLibrary} disabled={libUploading}
+              style={{ padding: "10px 20px", fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: libUploading ? "default" : "pointer", borderRadius: 0, opacity: libUploading ? 0.6 : 1 }}>
+              {libUploading ? "Working…" : "Send my music to the cloud"}
+            </button>
+            {libUploading && (
+              <button onClick={cancelLibraryUpload}
+                style={{ padding: "10px 16px", fontSize: 12.5, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", borderRadius: 0 }}>
+                Stop
+              </button>
+            )}
+            {libUploading && libProgress && (
+              <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
+                {libProgress.phase === "consolidate" ? "Gathering your songs" : "Uploading"}: {libProgress.done.toLocaleString()} / {libProgress.total.toLocaleString()}{libProgress.errors > 0 ? ` · ${libProgress.errors} skipped` : ""}
+              </span>
+            )}
+            {!libUploading && libUploadMsg && (
+              <span style={{ fontSize: 12.5, color: libUploadMsg.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{libUploadMsg}</span>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" as any, marginTop: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary)", cursor: libUploading ? "default" : "pointer" }}>
+              <input type="checkbox" checked={libForce} disabled={libUploading} onChange={(e) => setLibForce(e.target.checked)} />
+              Re-send every song, even ones already uploaded
+            </label>
+            <button onClick={testR2Connection} disabled={r2Testing}
+              style={{ padding: 0, fontSize: 11.5, fontWeight: 600, background: "transparent", color: "var(--text-tertiary)", border: "none", textDecoration: "underline", cursor: r2Testing ? "default" : "pointer", opacity: r2Testing ? 0.5 : 1 }}>
+              {r2Testing ? "Checking connection…" : "Having trouble? Check connection"}
+            </button>
+          </div>
+        </div>
       </Section>
 
       {/* ── Danger zone — factory reset ── */}
@@ -2578,124 +2708,31 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
         </div>
       )}
 
-      {/* ── Cloud Backup ── */}
-      <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="Automatic encrypted off-site backup of your station database (your library list, schedule, and settings) — included with your Ether subscription">
-
-        {/* Enable toggle */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+      {/* ── Save a copy on this computer (secondary, manual snapshot) ── */}
+      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>} title="Save a copy on this computer" description="A manual snapshot kept on this PC only — handy right before a big change so you can roll back. Audio files aren't included.">
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
+          <button onClick={backup} disabled={backupLoading} style={{ padding: "10px 20px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
+            {backupLoading ? "Saving…" : "Save a snapshot"}
+          </button>
+          {backupStatus && <span style={{ fontSize: 12.5, color: backupStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{backupStatus}</span>}
+        </div>
+        {backups.length > 0 && (
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable automatic cloud backup</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Runs on the schedule below whenever Ether is open</div>
-          </div>
-          <button
-            onClick={() => setR2Enabled(e => !e)}
-            style={{ padding: "5px 14px", fontSize: 12, fontWeight: 700, borderRadius: 0, border: "1px solid", cursor: "pointer", letterSpacing: "0.05em",
-              background: r2Enabled ? "rgba(99,102,241,0.15)" : "var(--bg-tertiary)",
-              borderColor: r2Enabled ? "var(--accent-blue)" : "var(--border-primary)",
-              color: r2Enabled ? "var(--accent-blue)" : "var(--text-tertiary)" }}>
-            {r2Enabled ? "ON" : "OFF"}
-          </button>
-        </div>
-
-        {/* Explainer — replaces the legacy R2-credential form removed in Phase 1.3h.
-            Customer no longer holds R2 credentials; backend signs all backup uploads. */}
-        <div style={{
-          marginBottom: 20, padding: "10px 12px",
-          background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-          fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5,
-        }}>
-          Cloud backup is handled by your Ether subscription — no R2 account
-          or credentials required. Backups are encrypted in transit, signed by
-          the Ether backend, and stored under your license-scoped prefix.
-          Requires Studio plan or higher.
-        </div>
-
-        {/* Backup interval */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)", marginBottom: 5, letterSpacing: "0.05em", textTransform: "uppercase" as any }}>Backup Interval</div>
-          <select
-            value={r2Interval}
-            onChange={e => setR2Interval(Number(e.target.value))}
-            style={{ padding: "8px 10px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, cursor: "pointer", outline: "none" }}>
-            <option value={1}>Every hour</option>
-            <option value={6}>Every 6 hours</option>
-            <option value={12}>Every 12 hours</option>
-            <option value={24}>Daily</option>
-          </select>
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any, marginBottom: 12 }}>
-          <button
-            onClick={saveR2Config}
-            disabled={r2Saving}
-            style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
-            {r2Saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            onClick={testR2Connection}
-            disabled={r2Testing}
-            style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", borderRadius: 0, opacity: r2Testing ? 0.6 : 1 }}>
-            {r2Testing ? "Testing…" : "Test Connection"}
-          </button>
-          {r2SaveStatus && <span style={{ fontSize: 12, color: r2SaveStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{r2SaveStatus}</span>}
-        </div>
-        {r2TestStatus && (
-          <div style={{ fontSize: 12, padding: "8px 12px", marginBottom: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: r2TestStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>
-            {r2TestStatus}
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.06em", textTransform: "uppercase" as any, marginBottom: 8 }}>Your saved snapshots</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {backups.map(name => (
+                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-tertiary)", borderRadius: 0, padding: "10px 14px", border: "1px solid var(--border-primary)" }}>
+                  <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{formatBackupName(name)}</span>
+                  <button onClick={() => restore(name)} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 12.5, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Snapshots older than 7 days are removed automatically.</div>
           </div>
         )}
-
-        {/* Last backup status */}
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", borderTop: "1px solid var(--border-primary)", paddingTop: 12 }}>
-          {r2LastBackup > 0 ? (
-            <>
-              <span style={{ color: r2LastStatus === "success" ? "var(--accent-green)" : "var(--accent-red)", fontWeight: 600 }}>
-                {r2LastStatus === "success" ? "✓" : "✗"}
-              </span>
-              {" "}Last backup: {new Date(r2LastBackup * 1000).toLocaleString()}
-              {r2LastStatus !== "success" && <span style={{ color: "var(--accent-red)", marginLeft: 8 }}>{r2LastStatus}</span>}
-            </>
-          ) : (
-            <span>No R2 backup has run yet</span>
-          )}
-        </div>
-
-        {/* ── Music Library (manual audio upload) ──
-            The automatic backup above is database-only. Audio files are large,
-            so they're pushed on demand here via library:sync-r2:upload. */}
-        <div style={{ marginTop: 16, borderTop: "1px solid var(--border-primary)", paddingTop: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>Music Library</div>
-          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
-            The automatic backup above saves your database only. Upload your actual
-            audio files to the cloud so a new install can pull your whole library down.
-            Only files not already in the cloud are sent. Requires Network plan.
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any }}>
-            <button
-              onClick={uploadLibrary}
-              disabled={libUploading}
-              style={{ padding: "8px 18px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: libUploading ? "default" : "pointer", borderRadius: 0, opacity: libUploading ? 0.6 : 1 }}>
-              {libUploading ? "Uploading…" : "Upload library to cloud"}
-            </button>
-            {libUploading && (
-              <button
-                onClick={cancelLibraryUpload}
-                style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", borderRadius: 0 }}>
-                Cancel
-              </button>
-            )}
-            {libUploading && libProgress && (
-              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                {libProgress.done.toLocaleString()} / {libProgress.total.toLocaleString()} files{libProgress.errors > 0 ? `, ${libProgress.errors} error${libProgress.errors === 1 ? "" : "s"}` : ""}
-              </span>
-            )}
-            {!libUploading && libUploadMsg && (
-              <span style={{ fontSize: 12, color: libUploadMsg.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{libUploadMsg}</span>
-            )}
-          </div>
-        </div>
-
+        {backups.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 8 }}>No snapshots yet.</div>}
       </Section>
 
       {/* Experience Mode removed — deck visibility is now controlled

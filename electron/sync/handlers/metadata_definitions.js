@@ -230,28 +230,29 @@ function metadataDefinitionsDelete(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMetadataDefinitions(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('metadata_definitions:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: metadataDefinitionsList(db, stationId, opts) }; }
+    try { return { ok: true, rows: metadataDefinitionsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_definitions:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: metadataDefinitionsGet(db, uuid) }; }
+    try { return { ok: true, row: metadataDefinitionsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_definitions:create', (_, payload) => {
-    try { return { ok: true, row: metadataDefinitionsCreate(db, payload) }; }
+    try { return { ok: true, row: metadataDefinitionsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_definitions:update', (_, uuid, patch) => {
-    try { return { ok: true, row: metadataDefinitionsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: metadataDefinitionsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('metadata_definitions:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...metadataDefinitionsDelete(db, uuid, stationId) }; }
+    try { return { ok: true, ...metadataDefinitionsDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

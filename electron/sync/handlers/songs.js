@@ -220,53 +220,54 @@ function songsResetLoudnessByStation(db, _stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installSongs(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('songs:list', (_, opts) => {
-    try { return { ok: true, rows: songsList(db, opts) }; }
+    try { return { ok: true, rows: songsList(getDb(), opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: songsGet(db, uuid) }; }
+    try { return { ok: true, row: songsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:create', (_, payload) => {
-    try { return { ok: true, row: songsCreate(db, payload) }; }
+    try { return { ok: true, row: songsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:update', (_, uuid, patch) => {
-    try { return { ok: true, row: songsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: songsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:delete', (_, uuid) => {
-    try { return { ok: true, ...songsDelete(db, uuid) }; }
+    try { return { ok: true, ...songsDelete(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:get-by-int-id', (_, intId) => {
-    try { return { ok: true, row: songsGetByIntId(db, intId) }; }
+    try { return { ok: true, row: songsGetByIntId(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: songsUpdateById(db, intId, patch) }; }
+    try { return { ok: true, row: songsUpdateById(getDb(), intId, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:delete-by-id', (_, intId) => {
-    try { return { ok: true, ...songsDeleteById(db, intId) }; }
+    try { return { ok: true, ...songsDeleteById(getDb(), intId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:delete-by-station', (_, stationId) => {
-    try { return { ok: true, ...songsDeleteByStation(db, stationId) }; }
+    try { return { ok: true, ...songsDeleteByStation(getDb(), stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('songs:reset-loudness-by-station', (_, stationId) => {
-    try { return { ok: true, ...songsResetLoudnessByStation(db, stationId) }; }
+    try { return { ok: true, ...songsResetLoudnessByStation(getDb(), stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

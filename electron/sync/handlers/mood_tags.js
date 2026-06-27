@@ -136,28 +136,29 @@ function moodTagsDelete(db, uuid) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installMoodTags(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('mood_tags:list', (_, opts) => {
-    try { return { ok: true, rows: moodTagsList(db, opts) }; }
+    try { return { ok: true, rows: moodTagsList(getDb(), opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('mood_tags:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: moodTagsGet(db, uuid) }; }
+    try { return { ok: true, row: moodTagsGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('mood_tags:create', (_, payload) => {
-    try { return { ok: true, row: moodTagsCreate(db, payload) }; }
+    try { return { ok: true, row: moodTagsCreate(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('mood_tags:update', (_, uuid, patch) => {
-    try { return { ok: true, row: moodTagsUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: moodTagsUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('mood_tags:delete', (_, uuid) => {
-    try { return { ok: true, ...moodTagsDelete(db, uuid) }; }
+    try { return { ok: true, ...moodTagsDelete(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

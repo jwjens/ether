@@ -164,28 +164,29 @@ function spRemove(db, uuid, stationId) {
 // ── IPC installation ──────────────────────────────────────────────────────────
 
 function installStationProgramming(ipcMain, db) {
+  const getDb = (typeof db === 'function') ? db : () => db;
   ipcMain.handle('station_programming:list', (_, stationId, opts) => {
-    try { return { ok: true, rows: spList(db, stationId, opts) }; }
+    try { return { ok: true, rows: spList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming:get-by-id', (_, uuid) => {
-    try { return { ok: true, row: spGet(db, uuid) }; }
+    try { return { ok: true, row: spGet(getDb(), uuid) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming:create', (_, payload) => {
-    try { return { ok: true, row: spAdd(db, payload) }; }
+    try { return { ok: true, row: spAdd(getDb(), payload) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming:update', (_, uuid, patch) => {
-    try { return { ok: true, row: spUpdate(db, uuid, patch) }; }
+    try { return { ok: true, row: spUpdate(getDb(), uuid, patch) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('station_programming:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...spRemove(db, uuid, stationId) }; }
+    try { return { ok: true, ...spRemove(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
