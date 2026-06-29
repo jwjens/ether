@@ -1052,6 +1052,13 @@ export default function App() {
             if (useDaemon) await dcmd("skip");
             else if (isActive) activeEngine.skip();
             break;
+          case "play_now":
+            // PLAY NOW — manual stall escape: put audio on air immediately. Daemon's deck:playNow plays
+            // a cued deck if one's ready, else loads+plays the next queued track. In-process fallback ≈
+            // skip (force-advance, which also plays the next track when nothing is on air).
+            if (useDaemon) await dcmd("deck:playNow");
+            else if (isActive) await activeEngine.skip();
+            break;
           case "automation_on":
             if (isActive) { setAutoAdv(true); activeEngine.autoAdvance = true; } // UI + local flag only for the active view
             writeAutoAdv(targetId, true);                                        // persist for the TARGET station

@@ -278,42 +278,50 @@ class DaemonEngine {
   // cued/loaded-idle), PLAY that deck rather than loading a different track over it; only when nothing
   // is loaded anywhere do we pull the next track from the queue onto deck A.
   _recoverStall() {
-    this._advance("watchdog-recover", async () => {
-      const order = ["A", "B", "C"];
-      if (order.some(d => this._deckState(d).status === "playing")) return;  // someone started in the meantime
-      // Prefer a cued standby deck (manual cue first → operator intent, then any ready/loaded-idle deck).
-      const cued = order.find(d => this.manualCue.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
-                || order.find(d => this.deckReady.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
-                || order.find(d => this._deckState(d).status === "idle" && this._deckState(d).title);
-      if (cued) {
-        this._play(cued);
-        this._setDeck(cued, { status: "playing", positionSec: 0 });
-        this.endTriggered.delete(cued);
-        this.deckReady.delete(cued);
-        if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
-        else if (this.queue.length > 0) this.dequeue();
-        this._fireStart(cued);
-        this._log("watchdog-recover: deck " + cued + " LIVE — " + (this._deckState(cued).title || "(untitled)"));
-        return;
+    this._advance("watchdog-recover", () => this._resumePlayout());
+  }
+
+  // Shared "get audio flowing NOW" primitive — used by the stall watchdog (_recoverStall) AND the
+  // manual PLAY NOW command (intentPlayNow). Prefer a cued standby deck (manual cue = operator intent
+  // first), else load + play the next PLAYABLE queued track on deck A (refilling). Returns true if it
+  // started a deck, false if nothing was available or a deck is already playing. MUST run inside an
+  // _advance() chain (callers wrap it) so it can't race a rotate.
+  async _resumePlayout() {
+    const order = ["A", "B", "C"];
+    if (order.some(d => this._deckState(d).status === "playing")) return false;  // someone's already playing
+    // Prefer a cued standby deck (manual cue first → operator intent, then any ready/loaded-idle deck).
+    const cued = order.find(d => this.manualCue.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
+              || order.find(d => this.deckReady.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
+              || order.find(d => this._deckState(d).status === "idle" && this._deckState(d).title);
+    if (cued) {
+      this._play(cued);
+      this._setDeck(cued, { status: "playing", positionSec: 0 });
+      this.endTriggered.delete(cued);
+      this.deckReady.delete(cued);
+      if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
+      else if (this.queue.length > 0) this.dequeue();
+      this._fireStart(cued);
+      this._log("resume-playout: deck " + cued + " LIVE — " + (this._deckState(cued).title || "(untitled)"));
+      return true;
+    }
+    // Nothing cued anywhere — load + play the next PLAYABLE track from the queue onto deck A.
+    await this.refillIfNeeded();
+    let guard = 0;
+    while (this.queue.length > 0 && guard++ < 100) {
+      const next = this.dequeue();
+      if (this.loadToDeck("A", next)) {
+        this.deckChainType.A = next.chainType || "segue";
+        this._play("A");
+        this._setDeck("A", { status: "playing", positionSec: 0 });
+        this.endTriggered.delete("A");
+        this._fireStart("A");
+        this._log("resume-playout: deck A LIVE — " + (this.stateA.title || "(untitled)"));
+        return true;
       }
-      // Nothing cued anywhere — load + play the next PLAYABLE track from the queue onto deck A.
-      await this.refillIfNeeded();
-      let guard = 0;
-      while (this.queue.length > 0 && guard++ < 100) {
-        const next = this.dequeue();
-        if (this.loadToDeck("A", next)) {
-          this.deckChainType.A = next.chainType || "segue";
-          this._play("A");
-          this._setDeck("A", { status: "playing", positionSec: 0 });
-          this.endTriggered.delete("A");
-          this._fireStart("A");
-          this._log("watchdog-recover: deck A LIVE — " + (this.stateA.title || "(untitled)"));
-          return;
-        }
-        this.emit("error", { stationId: this.stationId, where: "watchdog-recover", error: "skipped unplayable: " + (next.filePath || "") });
-        if (this.queue.length === 0) await this.refillIfNeeded();
-      }
-    });
+      this.emit("error", { stationId: this.stationId, where: "resume-playout", error: "skipped unplayable: " + (next.filePath || "") });
+      if (this.queue.length === 0) await this.refillIfNeeded();
+    }
+    return false;
   }
 
   _changed(prev, next) {
@@ -389,7 +397,7 @@ class DaemonEngine {
     this.advanceP = this.advanceP.then(async () => {
       this._advanceStartedAt = Date.now();
       this._log("advance →", where, "(queue=" + this.queue.length + ")");
-      try { await fn(); }
+      try { return await fn(); }   // propagate the closure's result (e.g. intentPlayNow true/false); existing callers ignore it
       catch (e) { this._log("advance ✗", where, String(e)); this.emit("error", { stationId: this.stationId, where, error: String(e) }); }
       finally { const ms = Date.now() - this._advanceStartedAt; this._advanceStartedAt = 0; this._log("advance done", where, ms + "ms"); }
     });
@@ -647,6 +655,32 @@ class DaemonEngine {
     if (!target || target === playing || !this.deckReady.has(target)) return false;
     this.handleRotate(playing, target);
     return true;
+  }
+
+  // PLAY NOW — the manual stall escape: get audio on air immediately, bypassing the picker. With a
+  // songRef, load + play THAT song now on a free deck (stopping any other playing deck). Without one,
+  // run the SAME recovery the watchdog uses (_resumePlayout): play a cued deck if one's ready, else
+  // load + play the next queued track. Honest interaction with automation: after the song plays, normal
+  // rotation resumes via end-detection IF automation is engaged (_started); if automation is off it
+  // plays the one song and stops. Distinct from skip (which always advances the queue, ignoring a
+  // hand-cued deck) and from deck:cue (which only cues, never plays).
+  intentPlayNow(songRef) {
+    return this._advance("play-now", async () => {
+      const order = ["A", "B", "C"];
+      if (songRef && songRef.filePath) {
+        const deck = order.find(d => this._deckState(d).status !== "playing") || "A";
+        if (!this.loadToDeck(deck, songRef)) return false;
+        this.deckChainType[deck] = songRef.chainType || "segue";
+        for (const d of order) if (d !== deck && this._deckState(d).status === "playing") this._stop(d);
+        this.deckReady.delete(deck); this.manualCue.delete(deck); this.endTriggered.delete(deck);
+        this._play(deck);
+        this._setDeck(deck, { status: "playing", positionSec: 0 });
+        this._fireStart(deck);
+        this._log("play-now: deck " + deck + " LIVE — " + (this._deckState(deck).title || "(untitled)"));
+        return true;
+      }
+      return this._resumePlayout();
+    });
   }
 
   // Fill (if empty), load deck A, play, and preload B/C — the unattended start.

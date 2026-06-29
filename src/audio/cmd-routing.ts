@@ -23,7 +23,7 @@ export interface LocalStation {
 // station_uuid. Everything NOT in this set (e.g. db:apply, library:addSong, library:syncDownload) is
 // LICENSE-scoped — it acts on the whole install and must NEVER be gated by station_uuid.
 const STATION_SCOPED: ReadonlySet<string> = new Set([
-  "skip", "automation_on", "automation_off", "stop_all", "play", "pause",
+  "skip", "automation_on", "automation_off", "stop_all", "play", "pause", "play_now",
   "set_volume", "play_emergency_cart", "mic_on",
   "deck:load", "deck:cue", "deck:crossfade",
   "queue:enqueue", "queue:reorder", "queue:remove", "queue:move", "queue:clear",

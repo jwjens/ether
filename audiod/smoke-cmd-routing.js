@@ -71,6 +71,14 @@ function cmd(sock, c, args = {}) {
   const q92b = await cmd(sock, "getQueue", { stationId: 92 });
   check("stopAll on 91 left 92 untouched (queue 92 still 1)", Array.isArray(q92b) && q92b.length === 1);
 
+  // deck:playNow (PLAY NOW) is wired + station-scoped. On an empty station (continuous off, nothing
+  // cued/queued) it finds nothing to play and returns false — proving the command surface with NO audio.
+  await cmd(sock, "setContinuous", { stationId: 93, value: false });
+  const pnEmpty = await cmd(sock, "deck:playNow", { stationId: 93 });
+  check("deck:playNow wired + returns false on an empty station (no audio produced)", pnEmpty === false);
+  const q91c = await cmd(sock, "getQueue", { stationId: 91 });
+  check("deck:playNow on 93 left 91 untouched", Array.isArray(q91c) && q91c.length === 2);
+
   // An unknown command is rejected per station — never cross-applied.
   const unknown = await cmd(sock, "no_such_cmd", { stationId: 91 }).then(() => "ok").catch(() => "rejected");
   check("unknown command rejected (not silently cross-applied)", unknown === "rejected");

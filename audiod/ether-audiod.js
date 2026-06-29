@@ -156,6 +156,9 @@ const handlers = {
   "queue:clear":      (m) => getEngine(m.stationId).intentClearPending(),
   "deck:cue":         (m) => getEngine(m.stationId).intentCueDeck(m.deck, m.songRef || {}),
   "deck:crossfade":   (m) => getEngine(m.stationId).intentCrossfade(m.from, m.to),
+  // PLAY NOW (Slice 4) — manual stall escape: load+play a song now (with songRef), else play the next
+  // cued/queued track. Returns true if it put a deck on air.
+  "deck:playNow":     (m) => getEngine(m.stationId).intentPlayNow(m.songRef || null),
   setAutoAdvance:     (m) => { getEngine(m.stationId).autoAdvance = !!m.value; return true; },
   setContinuous:      (m) => { getEngine(m.stationId).continuous = !!m.value; return true; },
   setShuffle:         (m) => { getEngine(m.stationId).shuffle = !!m.value; return true; },
