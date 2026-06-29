@@ -813,7 +813,7 @@ const REGISTRY = {
       state:               'scalar',
       country:             'scalar',
       website:             'scalar',
-      is_active:           'scalar',
+      is_active:           'local-only',  // which station THIS machine operates is per-install local state — syncing it clobbers each machine's manual switch (the "switching doesn't stick" bug). Excluded from payloads BOTH directions per [N-24], so a local switch never propagates and a remote mutation (incl. legacy ones already carrying is_active) never overwrites it.
       created_at:          'scalar',
       icecast_server_url:  'scalar',
       icecast_mount:       'scalar',

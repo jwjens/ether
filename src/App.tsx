@@ -2384,7 +2384,7 @@ export default function App() {
               )}
               {panel === "stationmanager" && (
                 <PlanGate requires="station" feature="Multi-Station Console">
-                  <StationManager onStationSwitch={(id, name) => setStationName(name)} />
+                  <StationManager onStationSwitch={handleStationSwitch} />
                 </PlanGate>
               )}
               {panel === "managedevices" && (
