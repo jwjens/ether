@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveCommandTarget, isStationScopedCommand, type LocalStation } from "./cmd-routing";
+import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine, type LocalStation } from "./cmd-routing";
 
 // The three live stations are the real-world hazard this guards: a per-license command must reach
 // ONLY the machine that runs the targeted station, and act on THAT station — never fan out to all.
@@ -42,6 +42,26 @@ describe("resolveCommandTarget", () => {
 
   it("exact-match only — a uuid is an opaque identity, no case-folding", () => {
     expect(resolveCommandTarget("UUID-OV", 1, STATIONS)).toEqual({ kind: "ignore" });
+  });
+});
+
+describe("commandTargetsThisMachine (guided handoff per-machine gate)", () => {
+  it("no target_machine_id → applies to this machine (back-compat)", () => {
+    expect(commandTargetsThisMachine(undefined, "mid-jensj")).toBe(true);
+    expect(commandTargetsThisMachine(null, "mid-jensj")).toBe(true);
+    expect(commandTargetsThisMachine("", "mid-jensj")).toBe(true);
+    expect(commandTargetsThisMachine("   ", "mid-jensj")).toBe(true);
+  });
+  it("target matches this machine → applies", () => {
+    expect(commandTargetsThisMachine("mid-jensj", "mid-jensj")).toBe(true);
+    expect(commandTargetsThisMachine("  mid-jensj  ", "mid-jensj")).toBe(true);
+  });
+  it("target is a DIFFERENT machine → does NOT apply (only the named machine acts)", () => {
+    expect(commandTargetsThisMachine("mid-studioD", "mid-jensj")).toBe(false);
+  });
+  it("target set but this machine's id unknown → does not apply (never act on an unknown identity)", () => {
+    expect(commandTargetsThisMachine("mid-studioD", null)).toBe(false);
+    expect(commandTargetsThisMachine("mid-studioD", "")).toBe(false);
   });
 });
 

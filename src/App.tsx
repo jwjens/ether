@@ -47,7 +47,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine } from "./audio/engine-registry";
-import { resolveCommandTarget, isStationScopedCommand } from "./audio/cmd-routing";
+import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine } from "./audio/cmd-routing";
 import { computeDeckRole } from "./lib/deckRole";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
@@ -1024,6 +1024,13 @@ export default function App() {
           const t = resolveCommandTarget(data?.station_uuid, activeId, localStations);
           if (t.kind === "ignore") { console.log(`[RemoteCmd] ${cmd} ignored — station ${data?.station_uuid} not run on this machine`); return; }
           targetId = t.stationId;
+          // Guided handoff (move-broadcast): a command may also target a SPECIFIC machine. Only that
+          // machine acts — so "release on jensj" / "grab on studio-D" hit exactly one machine, not every
+          // machine that runs the station. No target_machine_id → unchanged.
+          if (!commandTargetsThisMachine(data?.target_machine_id, machineIdRef.current)) {
+            console.log(`[RemoteCmd] ${cmd} ignored — targets machine ${data?.target_machine_id}, not this one`);
+            return;
+          }
         }
         const isActive = targetId === activeId;
         const activeEngine = getEngine(activeId);             // fresh active engine (replaces the stale closure `engine`)

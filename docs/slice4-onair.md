@@ -56,3 +56,43 @@ Expect ~1–5 s of silence to listeners; their players keep the connection (Icec
 or a daemon `startStream` retry-on-403 flag, behind a "Take over" button gated on `source_machine_name`
 being a *different* machine. Test on a throwaway 2-machine setup against a throwaway Icecast — never the
 live mounts.
+
+---
+
+## (B) Guided manual handoff — BUILT (the operator is the orchestrator)
+Shipped as the safe interim: the dashboard walks the operator through the handoff; each step is explicit,
+confirmed, and reflected against the live source attribution. No auto-orchestration, no rollback timer —
+the safety is the human in the loop.
+- New: `target_machine_id` on `stream:start`/`stream:stop` + a per-machine gate in `execCmd`
+  (`commandTargetsThisMachine`, reusing `machineIdRef`) so a command hits exactly ONE machine.
+- New: `GET /api/account/devices` (JWT) — the machine roster for the target picker.
+- New: `HandoffModal` — pick target → "Take off air on <source>" (confirm) → watch the source clear →
+  "Go on air on <target>" (confirm) → watch it go live → manual "Put <original> back on" if it doesn't.
+- Honest UI: a clear ~1–3 s dead-air notice; targets marked "● online (on air)" only when currently
+  sourcing a station, else "last seen … · may be offline" (no presence system is pretended).
+
+## (A) Full auto-orchestrated takeover — FUTURE (not built; needs the infra below)
+One-click "Take over" with no operator babysitting. Requires three new pieces + a test rig:
+
+1. **Per-machine presence heartbeat.** Today there is NO live per-machine presence — `license_activations.
+   last_seen` is set on activation/login (not continuous), and `now_playing` is per-station (only the
+   current source's id, fresh). Need each machine to periodically post "online, running stations [X,Y],
+   sourcing: …" so the backend can offer *verified-online, station-capable* takeover targets (incl. idle
+   standby machines, which B can't see).
+2. **Fast cross-machine ack.** The orchestrator must learn "new source went live / failed" in ~1–2 s to
+   drive a rollback. The Slice-2 source attribution is too slow (≤20 s keepalive + dashboard poll). Need
+   the grabbing machine to report stream live/failed immediately (an accelerated now-playing post on
+   stream-live, or a dedicated takeover-status endpoint the orchestrator polls every ~1 s).
+3. **Orchestrator + rollback timer.** Release old → retry-grab new (bounded retry-on-403 to absorb the
+   release latency) → await the fast ack within a timeout → on failure, **re-grab old** (planned-handoff
+   rollback; a dead old machine has nothing to roll back to — that's failover, not handoff). Never end
+   with nobody sourcing while the old machine is alive.
+
+**Test rig (mandatory before A ships):** two throwaway desktop instances (distinct `ETHER_DB_PATH` +
+`ETHER_AUDIOD_PIPE` + station ids) pointed at a **throwaway Icecast** (never the live mounts), driven by
+a mock/throwaway-license command source. The non-negotiable test: **force the new machine to fail the
+grab and assert the orchestrator re-grabs the old** (station never left silent). Also measure the real
+dead-air gap on the throwaway mount to confirm the ~1–3 s estimate.
+
+**Reminder:** ~1–3 s of dead air is intrinsic to single-mount Icecast; only a server-side `<fallback-mount>`
+/ relay (infrastructure) eliminates it — out of scope for both A and B.
