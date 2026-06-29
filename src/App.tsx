@@ -431,6 +431,9 @@ function buildNowPlayingPayload(
   engine: ReturnType<typeof getEngine>,
   stationName: string,
   stationUuid: string,
+  // Slice 2: source-machine attribution + last error for the active station. machineId = this install's
+  // id; live = whether THIS machine's stream is on air (only the live source claims the mount).
+  source?: { machineId: string | null; live: boolean; lastError: string | null; lastErrorAt: number | null },
 ) {
   const sA = engine.getDeck("A")?.getState?.() ?? null;
   const sB = engine.getDeck("B")?.getState?.() ?? null;
@@ -457,6 +460,12 @@ function buildNowPlayingPayload(
     // (daemon-authoritative). The backend derives the operator-facing live/stalled/off/offline from
     // this + heartbeat freshness — a stalled/silent station can never read "live".
     engine_state: engine.engineState(),
+    // Slice 2: source-machine attribution + last error. source_machine_id is set ONLY when this machine
+    // is the live source of this station's mount (one source per mount); last_error is the most recent
+    // stream error for the station + when (ISO; sent stickily so the backend keeps the last failure).
+    source_machine_id: source && source.live && source.machineId ? source.machineId : null,
+    last_error:        source?.lastError ?? null,
+    last_error_at:     (source?.lastError && source?.lastErrorAt) ? new Date(source.lastErrorAt).toISOString() : null,
     decks: { A: mkDeck(sA), B: mkDeck(sB), C: mkDeck(sC) },
     // Full upcoming order incl. the two cued standby-deck songs (queue[0]/[1]).
     queue: engine.getQueue().slice(0, 12).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
@@ -554,6 +563,10 @@ export default function App() {
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
   const lastNowPlaySig = useRef<string>(""); // dedupe backend now-playing POSTs on the heartbeat
   const lastNowPlayPostAt = useRef<number>(0); // Slice 1: last actual POST time → silent keepalive (defeats dedupe)
+  // Slice 2: source-machine attribution + last error. This machine's id (= client_identity.client_id),
+  // and per-station stream live/last-error from the existing stream:status events (keyed by stationId).
+  const machineIdRef = useRef<string | null>(null);
+  const streamStatusRef = useRef<Map<number, { live: boolean; lastError: string | null; lastErrorAt: number | null }>>(new Map());
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
@@ -1719,6 +1732,30 @@ export default function App() {
     return true;
   };
 
+  // Slice 2: this machine's identity (machine_id = client_identity.client_id), fetched once. Tags the
+  // now-playing report so the backend knows WHICH machine is sourcing each mount.
+  useEffect(() => {
+    (window as any).ether?.identity?.get?.()
+      .then((r: any) => { if (r?.ok && r.machine_id) machineIdRef.current = r.machine_id; })
+      .catch(() => { /* not in electron / not seeded — source attribution stays null */ });
+  }, []);
+
+  // Slice 2: mirror the existing per-station stream:status events (the same ones the on-air badge uses)
+  // into a per-station live + last-error cache. live drives source-machine attribution (this machine is
+  // the source only while its stream is live); error captures the last stream failure (e.g. a 403) + when.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.on) return;
+    const h = ether.on("stream:status", (s: any) => {
+      if (!s || s.stationId == null) return;
+      const cur = streamStatusRef.current.get(s.stationId) || { live: false, lastError: null, lastErrorAt: null };
+      const next = { ...cur, live: !!s.live };
+      if (s.error) { next.lastError = String(s.error); next.lastErrorAt = Date.now(); } // sticky: kept until a newer error
+      streamStatusRef.current.set(s.stationId, next);
+    });
+    return () => { try { ether.off?.("stream:status", h); } catch { /* ignore */ } };
+  }, []);
+
   // Public listener page: POST live now-playing to the backend on a heartbeat.
   // Reads LIVE engine state (not React deck snapshots) so playing/title can't
   // latch a stale handoff-gap value, and any transient self-corrects within one
@@ -1729,7 +1766,11 @@ export default function App() {
   // Icecast/Shoutcast pushes aren't re-fired every tick.
   useEffect(() => {
     const push = async () => {
-      const payload = buildNowPlayingPayload(engine, stationName, stationUuid);
+      // Slice 2: attribute the report to this machine when it is the live source of this station's
+      // mount, and carry the station's last stream error. stationId keys the stream:status cache.
+      const ss = streamStatusRef.current.get(stationId) || { live: false, lastError: null, lastErrorAt: null };
+      const payload = buildNowPlayingPayload(engine, stationName, stationUuid,
+        { machineId: machineIdRef.current, live: ss.live, lastError: ss.lastError, lastErrorAt: ss.lastErrorAt });
       // Iris live wire (L1): push consolidated state to main every heartbeat so the
       // assistant producer has fresh now-playing + back-time + up-next. Fires every
       // tick (position is excluded from the backend dedup signature below), so Iris's
@@ -1754,6 +1795,7 @@ export default function App() {
       try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(stationUuid, payload.filePath)) || null; } catch { /* ignore */ }
       const sig = [
         payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url, payload.engine_state,
+        payload.source_machine_id, payload.last_error,
         payload.queue.map(q => q.title).join(""),
       ].join("");
       // Slice 1 — heartbeat-even-when-silent: the dedupe alone makes a stalled/idle station stop
