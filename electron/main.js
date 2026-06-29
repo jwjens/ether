@@ -362,6 +362,11 @@ if (AUDIO_DAEMON_DESIRED) {
         sendToAllWindows("audio:daemon-deck", { stationId: m.stationId, deck: m.deck, state: m.state, ready: m.ready });
       } else if (m.event === "queue") {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
+      } else if (m.event === "enginestate") {
+        // Honest engine-state truth layer (Slice 1): live | stalled | off from the daemon → renderer,
+        // which folds it into the now-playing payload + silent keepalive so a stalled station reports
+        // its real state instead of going quiet (→ "offline").
+        sendToAllWindows("audio:daemon-enginestate", { stationId: m.stationId, state: m.state });
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song

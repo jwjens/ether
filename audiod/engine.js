@@ -23,6 +23,11 @@ const playlog = require("./playlog");
 // One play-log session id per daemon process (mirrors the renderer's getSessionId()).
 const SESSION = crypto.randomUUID();
 
+// Sustained no-playing window before "nobody playing" is treated as a real stall (rides out a
+// crossfade / load-next handoff). Shared by the stall-recovery watchdog AND the honest engine-state
+// truth layer (Slice 1) so both judge "stalled" by the SAME criterion — no second, divergent detector.
+const STALL_MS = 1000;
+
 function makeState(id, s = {}) {
   return {
     id, status: s.status || "idle", title: s.title || "", artist: s.artist || "",
@@ -74,6 +79,11 @@ class DaemonEngine {
     this._lastRecoverAt = 0;             // last watchdog recovery attempt — bounded retry if a recovery can't find content
     this._started = false;               // automation engaged (start() called, not stopped). The watchdog only
                                          // recovers while on air — it must never auto-start playout on a fresh daemon.
+    // Honest engine-state truth layer (Slice 1): live | stalled | off, derived ONLY from existing
+    // state (_started + deck "playing" + the watchdog's _lastPlayingAt/STALL_MS). Emitted on change
+    // so the renderer can report it to the backend. Seeds "off" (automation not engaged on a fresh
+    // daemon); the never-false-LIVE bias lives in _computeEngineState.
+    this._engineState = "off";
     this._lastHourCut = new Date().getHours();  // top-of-hour hard cut: hour we last fired for. Seeded to the
                                          // current hour so a mid-hour daemon start never fires until the next :00.
     this.pollTimer = null;
@@ -144,6 +154,37 @@ class DaemonEngine {
     this._maintain();
     this._checkTopOfHour();
     this._watchdog();
+    this._emitEngineState();
+  }
+
+  // Honest engine state (Slice 1). The ONE invariant: a stalled or silent station can NEVER report
+  // "live". Derived purely from state that already exists — no new detection:
+  //   off     = automation not engaged (!_started)
+  //   live    = a deck is actually playing audio
+  //   stalled = automation engaged but no deck is playing (empty/failed refill, wedge, dead air) —
+  //             same criterion the watchdog uses (_lastPlayingAt / STALL_MS), so a sub-STALL_MS
+  //             crossfade/load-next handoff from a LIVE state holds "live" and doesn't flap, but any
+  //             sustained silence (or a non-live origin) reads "stalled", never "live".
+  _computeEngineState() {
+    if (!this._started) return "off";
+    const order = ["A", "B", "C"];
+    if (order.some(d => this._deckState(d).status === "playing")) return "live";
+    // Nobody playing under automation. Ride out only a brief handoff out of a live state; anything
+    // longer than the watchdog's stall window — or any non-live origin — is an honest stall.
+    if (this._engineState === "live" && (Date.now() - this._lastPlayingAt) < STALL_MS) return "live";
+    return "stalled";
+  }
+
+  // Current honest state (also the daemon's authoritative answer to the getEngineState command).
+  engineState() { return this._engineState; }
+
+  // Emit on change so the renderer mirrors it (→ now-playing payload + keepalive). Cheap: poll() only.
+  _emitEngineState() {
+    const next = this._computeEngineState();
+    if (next === this._engineState) return;
+    this._engineState = next;
+    this.emit("enginestate", { stationId: this.stationId, state: next });
+    this._log("engine-state → " + next);
   }
 
   // ── Top-of-hour hard cut ──────────────────────────────────────────────────────────────────────
@@ -199,7 +240,6 @@ class DaemonEngine {
   // "content present + nobody playing ⇒ somebody playing within ~1s" — the backstop that makes a
   // permanent stall impossible, regardless of any race in the rotate logic (3a tightens those).
   _watchdog() {
-    const STALL_MS = 1000;       // sustained no-playing window before we call it a stall (rides out a crossfade)
     const WEDGE_MS = 3000;       // an advance op in-flight longer than this = a wedged advanceP chain
     const RETRY_MS = 2000;       // if a recovery couldn't find content, retry at most this often (no tight spin)
     if (!this._started) return;  // only recover while automation is engaged — never auto-start a fresh daemon

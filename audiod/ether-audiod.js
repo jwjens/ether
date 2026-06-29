@@ -135,6 +135,10 @@ const handlers = {
 
   fill:               (m) => { const e = getEngine(m.stationId); return e.refillIfNeeded().then(() => e.getQueue()); },
   getQueue:           (m) => { const e = engines.get(m.stationId); return e ? e.getQueue() : []; },
+  // Honest engine state (Slice 1): live | stalled | off. Authoritative pull so a freshly-attached
+  // renderer (launch / reload / daemon respawn) gets the current value without waiting for the next
+  // change event. No engine yet (never started) = "off". The live value is pushed via `enginestate`.
+  getEngineState:     (m) => { const e = engines.get(m.stationId); return e ? e.engineState() : "off"; },
   enqueue:            (m) => { getEngine(m.stationId).addToQueue(m.items || []); return true; },
   replaceQueue:       (m) => { getEngine(m.stationId).replaceQueue(m.items || []); return true; },
   clearQueue:         (m) => { const e = engines.get(m.stationId); if (e) e.clearQueue(); return true; },

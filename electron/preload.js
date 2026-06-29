@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld("ether", {
     offQueue:     (h)  => ipcRenderer.removeListener("audio:daemon-queue", h),
     onPlayStart:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-playstart", h); return h; },
     offPlayStart: (h)  => ipcRenderer.removeListener("audio:daemon-playstart", h),
+    // Honest engine-state truth layer (Slice 1): the daemon's live | stalled | off → renderer.
+    onEngineState:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-enginestate", h); return h; },
+    offEngineState: (h)  => ipcRenderer.removeListener("audio:daemon-enginestate", h),
   },
   theme: {
     export: (presetId, vars, font) => ipcRenderer.invoke("theme:export", { presetId, vars, font }),

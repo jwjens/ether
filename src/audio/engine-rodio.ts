@@ -46,6 +46,9 @@ export interface DeckState {
 
 type Listener = (id: DeckId, state: DeckState) => void;
 
+// Honest engine-state truth layer (Slice 1). Mirrors the backend contract's engine_state enum exactly.
+export type EngineState = "live" | "stalled" | "off";
+
 function makeState(id: DeckId, s: any): DeckState {
   return {
     id,
@@ -127,6 +130,10 @@ export class AudioEngine {
   private daemonUnsub: Array<() => void> = [];
   private daemonDetectStarted = false;
   private daemonQueuePollN = 0; // low-frequency Up-Next resync counter (daemon mode)
+  // Honest engine-state truth layer (Slice 1): the daemon's live | stalled | off, mirrored from its
+  // `enginestate` events (+ a one-shot resync pull on attach). In daemon mode this cached value is the
+  // authoritative answer engineState() returns; in-process mode derives it live. Seeds "off".
+  private _daemonEngineState: EngineState = "off";
   // Resolves once the daemon-vs-local decision is known (main confirms the daemon connected, or
   // falls back to the in-process engine). Go-on-air awaits this so it can't race the decision
   // and accidentally start the local engine while the daemon is also taking over.
@@ -201,10 +208,32 @@ export class AudioEngine {
       const h = a.onPlayStart((m: any) => { if (m && m.stationId != null && m.stationId !== this.stationId) return; if (m?.deck) this.notifyPlayStart(m.deck as DeckId, m.title || "", m.artist || "", m.filePath || ""); });
       this.daemonUnsub.push(() => a.offPlayStart?.(h));
     }
-    // The daemon only pushes queue events on *change*. A freshly-attached renderer (first
-    // launch, Ctrl+R reload, or daemon respawn) would otherwise show a stale/empty Up Next
-    // until the next mutation. Pull the current queue once now; poll() keeps it converged.
+    // Honest engine-state truth layer (Slice 1): mirror the daemon's live|stalled|off so the now-
+    // playing payload + keepalive report the real state. Only THIS station's events.
+    if (a.onEngineState) {
+      const h = a.onEngineState((m: any) => {
+        if (m && m.stationId != null && m.stationId !== this.stationId) return;
+        if (m?.state === "live" || m?.state === "stalled" || m?.state === "off") this._daemonEngineState = m.state;
+      });
+      this.daemonUnsub.push(() => a.offEngineState?.(h));
+    }
+    // The daemon only pushes queue/enginestate on *change*. A freshly-attached renderer (first
+    // launch, Ctrl+R reload, or daemon respawn) would otherwise show a stale/empty Up Next and the
+    // "off" engine-state seed until the next mutation. Pull both once now; poll()/events converge.
     void this.resyncDaemonQueue();
+    void this.resyncDaemonEngineState();
+  }
+
+  /** One-shot pull of the daemon's current engine state (live|stalled|off) so a freshly-attached
+   *  renderer reports the real state immediately, not the "off" seed, until the next change event. */
+  private async resyncDaemonEngineState(): Promise<void> {
+    const a = (window as any).ether?.audio;
+    if (!a?.daemon) return;
+    try {
+      const r = await a.daemon("getEngineState", { stationId: this.stationId });
+      const s = (r && typeof r === "object" && "result" in r) ? (r as any).result : r;
+      if (s === "live" || s === "stalled" || s === "off") this._daemonEngineState = s;
+    } catch { /* daemon not answering yet — the next enginestate event will set it */ }
   }
 
   /** One-shot fetch of the daemon's authoritative queue → mirror into this.queue + fire
@@ -249,6 +278,18 @@ export class AudioEngine {
 
   /** True when the out-of-process daemon owns playout (renderer is a display/control proxy). */
   get isDaemonDriven(): boolean { return this.daemonDriven; }
+
+  /** Honest engine state for reporting: live | stalled | off (Slice 1). Daemon-driven → the daemon's
+   *  authoritative value (mirrored via enginestate). In-process → derived locally from the SAME honest
+   *  criterion: live iff a deck is actually playing; off iff automation disengaged; otherwise stalled.
+   *  NEVER returns "live" for a silent/stalled engine — that invariant is the whole point of the slice. */
+  engineState(): EngineState {
+    if (this.daemonDriven) return this._daemonEngineState;
+    const playing = this.stateA.status === "playing" || this.stateB.status === "playing" || this.stateC.status === "playing";
+    if (playing) return "live";
+    if (!this._autoAdvance) return "off";
+    return "stalled";
+  }
 
   // ── Stage 1: typed wrappers for the daemon's explicit-intent commands (queue:* / deck:*). Added
   // so Stage 2 is a wiring change, not new logic — NOTHING in the UI calls these yet. Each forwards

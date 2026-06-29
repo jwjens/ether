@@ -453,6 +453,10 @@ function buildNowPlayingPayload(
     art_url:      null as string | null,         // resolved from embedded cover art before POST
     station_name: stationName,
     station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
+    // Honest engine-state truth layer (Slice 1): live | stalled | off, straight from the engine
+    // (daemon-authoritative). The backend derives the operator-facing live/stalled/off/offline from
+    // this + heartbeat freshness — a stalled/silent station can never read "live".
+    engine_state: engine.engineState(),
     decks: { A: mkDeck(sA), B: mkDeck(sB), C: mkDeck(sC) },
     // Full upcoming order incl. the two cued standby-deck songs (queue[0]/[1]).
     queue: engine.getQueue().slice(0, 12).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
@@ -549,6 +553,7 @@ export default function App() {
   const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
   const lastNowPlaySig = useRef<string>(""); // dedupe backend now-playing POSTs on the heartbeat
+  const lastNowPlayPostAt = useRef<number>(0); // Slice 1: last actual POST time → silent keepalive (defeats dedupe)
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
@@ -1748,12 +1753,21 @@ export default function App() {
       // of the signature so the next heartbeat re-POSTs once the art is ready.
       try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(stationUuid, payload.filePath)) || null; } catch { /* ignore */ }
       const sig = [
-        payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url,
+        payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url, payload.engine_state,
         payload.queue.map(q => q.title).join(""),
       ].join("");
-      if (sig === lastNowPlaySig.current) return;
+      // Slice 1 — heartbeat-even-when-silent: the dedupe alone makes a stalled/idle station stop
+      // POSTing (unchanged sig) → heartbeat goes stale → backend reads it "offline", hiding a real
+      // stall. So skip ONLY when content is unchanged AND we POSTed within the keepalive window; past
+      // that, re-POST the same payload to keep engine_heartbeat_at fresh (backend stamps it NOW() each
+      // report). 20s ≈ 4 beats inside the backend's 90s stale window — healthy stations still POST on
+      // every real change exactly as before (engine_state is in the sig, so a stall POSTs at once).
+      const KEEPALIVE_MS = 20_000;
+      const nowMs = Date.now();
+      if (sig === lastNowPlaySig.current && (nowMs - lastNowPlayPostAt.current) < KEEPALIVE_MS) return;
       lastNowPlaySig.current = sig;
-      console.log(`[NOWPLAY] POST playing=${payload.playing} title=${JSON.stringify(payload.title)} deck=${payload.deck ?? "null"} q=${payload.queue.length}`);
+      lastNowPlayPostAt.current = nowMs;
+      console.log(`[NOWPLAY] POST playing=${payload.playing} state=${payload.engine_state} title=${JSON.stringify(payload.title)} deck=${payload.deck ?? "null"} q=${payload.queue.length}`);
       fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
         method: "POST",
         headers: {
