@@ -27,6 +27,7 @@ const STATION_SCOPED: ReadonlySet<string> = new Set([
   "set_volume", "play_emergency_cart", "mic_on",
   "deck:load", "deck:cue", "deck:crossfade",
   "queue:enqueue", "queue:reorder", "queue:remove", "queue:move", "queue:clear",
+  "stream:start", "stream:stop",   // on-air: start/stop THIS machine as the station's Icecast source
 ]);
 
 /** True if `cmd` acts on a single station (→ route by station_uuid). False for license-scoped commands

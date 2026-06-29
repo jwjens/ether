@@ -1063,6 +1063,20 @@ export default function App() {
             if (useDaemon) await dcmd("automationStop");
             break;
 
+          // ── On-air (Slice 4): start/stop THIS machine as the target station's Icecast source.
+          //    Reuses the desktop's OWN on-air lifecycle (stream:go-live/stop-live → daemon startStream/
+          //    stopStream, config from the station row) — the same path the local on-air button uses, not
+          //    a parallel one. Keyed by stationId in main, so it works for any station this machine runs.
+          //    stop releases the mount cleanly (ffmpeg SIGTERM → Icecast source disconnects) so another
+          //    machine can then source it. Going on-air while the mount is held elsewhere fails at the
+          //    Icecast layer (403) — the dashboard pre-empts that with the source-attribution check.
+          case "stream:start":
+            await (window as any).ether?.invoke?.("stream:go-live", { stationId: targetId });
+            break;
+          case "stream:stop":
+            await (window as any).ether?.invoke?.("stream:stop-live", { stationId: targetId });
+            break;
+
           // ── Other station-scoped commands — ACTIVE station only (existing behavior, now fan-out-
           //    protected by the ignore-gate). Routing to a non-active station needs that station's
           //    renderer/queue state; deferred (see docs/slice4-desktop-station-routing.md). ──
