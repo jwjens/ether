@@ -122,7 +122,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         startMs = mon.getTime();
         endMs   = mon.getTime() + 7 * 86_400_000;
       }
-      const result = await (window as any).ether.invoke("schedule:get", Math.floor(startMs / 1000), Math.floor(endMs / 1000));
+      const result = await (window as any).ether.invoke("schedule:get", Math.floor(startMs / 1000), Math.floor(endMs / 1000), stationId);
       if (!result?.data) return;
       const counts: TrackCounts = new Map();
       const byDay = new Map<string, { scheduled_at: number; title: string; artist: string; song_id: number | null }[]>();
@@ -187,7 +187,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     setDayLoading(true); setDayRows([]);
     try {
       const start = Math.floor(new Date(d).setHours(0, 0, 0, 0) / 1000), end = start + 86_400;
-      const res = await (window as any).ether.invoke("schedule:get", start, end);
+      const res = await (window as any).ether.invoke("schedule:get", start, end, stationId);
       setDayRows(Array.isArray(res?.data) ? res.data : []);
     } catch { /* ignore */ } finally { setDayLoading(false); }
   };
@@ -227,7 +227,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     loadTrackCounts();
     const refresh = setInterval(() => loadTrackCounts(), 60_000);
     return () => clearInterval(refresh);
-  }, [weekOffset, viewMode]);
+  }, [weekOffset, viewMode, stationId]);   // re-query on station switch (matches the [stationId] reactive pattern)
 
   // ── Day view render ──
   if (selectedDay) {

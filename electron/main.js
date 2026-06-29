@@ -5329,14 +5329,18 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
   } catch (e) { console.error('[schedule:generateDay]', e.message); return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('schedule:get', (_, fromTs, toTs) => {
+ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
   try {
+    // generated_schedule is per-station; without a station filter this returned EVERY station's rows
+    // in the time range (Magical Forest's calendar showing another station's songs). Scope by station —
+    // default to the ACTIVE station so a caller that passes no id still gets one station, not all.
+    const sid = stationId ?? getActiveStationId();
     const rows = db.prepare(
       `SELECT id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id
        FROM generated_schedule
-       WHERE scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL
+       WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL
        ORDER BY scheduled_at`
-    ).all(fromTs ?? 0, toTs ?? 9999999999);
+    ).all(sid, fromTs ?? 0, toTs ?? 9999999999);
     return { data: rows, error: null };
   } catch (e) {
     return { data: null, error: e.message };
