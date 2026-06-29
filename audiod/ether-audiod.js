@@ -127,6 +127,9 @@ const handlers = {
   // Additive — the live app does not drive these yet (Phase-2 cutover does).
   automationStart:    (m) => getEngine(m.stationId).start(),                  // fill (if empty) + play + preload
   automationStop:     (m) => { const e = engines.get(m.stationId); if (e) e.stop(); return true; },
+  // Slice 4 — STOP: silence a station and keep it silent. Stop automation (e.stop() disables the stall
+  // watchdog so it can't auto-recover) AND stop all three decks. Idempotent; no-op if never started.
+  stopAll:            (m) => { const e = engines.get(m.stationId); if (e) e.stop(); for (const d of ["A", "B", "C"]) { try { A.audioStop(d, m.stationId); } catch {} } return true; },
   skip:               (m) => getEngine(m.stationId).skip(),                    // force-advance to next track
   // Step 5 — streaming (ffmpeg → Icecast) inside the daemon, off the daemon's program bus.
   startStream:        (m) => getStream(m.stationId).start(m.config || {}),

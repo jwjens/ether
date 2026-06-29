@@ -47,6 +47,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine } from "./audio/engine-registry";
+import { resolveCommandTarget, isStationScopedCommand } from "./audio/cmd-routing";
 import { computeDeckRole } from "./lib/deckRole";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
@@ -550,6 +551,8 @@ export default function App() {
   const [panel, setPanel] = useState<Panel>("live");
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const apiKeyRef = useRef<string>("");
+  // Slice 4: the CURRENT active station id (the SSE command handler reads this, not its captured stationId).
+  const activeStationIdRef = useRef<number>(getActiveStationIdSync());
   const panelRef = useRef<Panel>("live");
   useEffect(() => {
     panelRef.current = panel;
@@ -578,6 +581,9 @@ export default function App() {
   // Reflect the active station's OWN AUTO state whenever the viewed station changes, so the AUTO
   // button shows this station's automation — never the previously-viewed station's.
   useEffect(() => { setAutoAdv(readAutoAdv(stationId)); }, [stationId]);
+  // Slice 4: keep the active-station id fresh for the []-deps SSE command handler (its closure would
+  // otherwise pin the mount-time station — the stale-closure bug the routing fix depends on closing).
+  useEffect(() => { activeStationIdRef.current = stationId; }, [stationId]);
   const [shuffle, setShuffle] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
@@ -1005,106 +1011,127 @@ export default function App() {
 
     const execCmd = async (cmd: string, data: any) => {
       try {
+        // ── Slice 4: station-route the command ──────────────────────────────────────────────────
+        // The bus is per-license (fans to every desktop on the license). A station-scoped command must
+        // act on the RIGHT station and be ignored by machines that don't run it — otherwise one click
+        // hits every station. License-scoped commands (db:apply, library:*) bypass routing. The active
+        // station is read from a ref, NOT this []-deps closure (which pinned the mount-time station).
+        const activeId = activeStationIdRef.current;
+        let targetId = activeId;
+        if (isStationScopedCommand(cmd)) {
+          let localStations: { id: number; uuid: string | null }[] = [];
+          try { localStations = await query<{ id: number; uuid: string | null }>("SELECT id, uuid FROM stations"); } catch { /* no rows → resolver falls back to active */ }
+          const t = resolveCommandTarget(data?.station_uuid, activeId, localStations);
+          if (t.kind === "ignore") { console.log(`[RemoteCmd] ${cmd} ignored — station ${data?.station_uuid} not run on this machine`); return; }
+          targetId = t.stationId;
+        }
+        const isActive = targetId === activeId;
+        const activeEngine = getEngine(activeId);             // fresh active engine (replaces the stale closure `engine`)
+        const useDaemon = activeEngine.isDaemonDriven;         // install-level mode — all stations share it
+        // Daemon-direct: act on the TARGET station by id, independent of which station is the active
+        // view. We never call getEngine(targetId).* for a non-active station — those engines are created
+        // but never init()-ed, so their daemonDriven is false and they'd misfire (the doc's gotcha).
+        const dcmd = (c: string, args: Record<string, unknown> = {}) =>
+          (window as any).ether?.audio?.daemon?.(c, { stationId: targetId, ...args });
+
         switch (cmd) {
+          // ── Control set (Slice 4) — routed daemon-direct to the target station ──
           case "stop_all":
-            engine.getDeck("A")?.stop(); engine.getDeck("B")?.stop(); engine.getDeck("C")?.stop();
+            if (useDaemon) await dcmd("stopAll");
+            else if (isActive) { activeEngine.getDeck("A")?.stop(); activeEngine.getDeck("B")?.stop(); activeEngine.getDeck("C")?.stop(); }
             break;
           case "play":
-            engine.getDeck("A")?.play();
+            if (useDaemon) await dcmd("play", { deck: "A" });
+            else if (isActive) activeEngine.getDeck("A")?.play();
             break;
           case "pause":
-            engine.getDeck("A")?.pause();
+            if (useDaemon) await dcmd("pause", { deck: "A" });
+            else if (isActive) activeEngine.getDeck("A")?.pause();
             break;
           case "skip":
-            engine.skip();  // daemon-driven → force-advance in the daemon; else local preload
-            break;
-          case "set_volume":
-            if (data.volume !== undefined) (engine as any).setMasterVolume?.(data.volume);
+            if (useDaemon) await dcmd("skip");
+            else if (isActive) activeEngine.skip();
             break;
           case "automation_on":
-            setAutoAdv(true);
-            engine.autoAdvance = true;
-            writeAutoAdv(stationId, true);
-            if (engine.isDaemonDriven) engine.startDaemonAutomation();
+            if (isActive) { setAutoAdv(true); activeEngine.autoAdvance = true; } // UI + local flag only for the active view
+            writeAutoAdv(targetId, true);                                        // persist for the TARGET station
+            if (useDaemon) await dcmd("automationStart");
             break;
           case "automation_off":
-            setAutoAdv(false);
-            engine.autoAdvance = false;
-            writeAutoAdv(stationId, false);
-            if (engine.isDaemonDriven) engine.stopDaemonAutomation();
+            if (isActive) { setAutoAdv(false); activeEngine.autoAdvance = false; }
+            writeAutoAdv(targetId, false);
+            if (useDaemon) await dcmd("automationStop");
+            break;
+
+          // ── Other station-scoped commands — ACTIVE station only (existing behavior, now fan-out-
+          //    protected by the ignore-gate). Routing to a non-active station needs that station's
+          //    renderer/queue state; deferred (see docs/slice4-desktop-station-routing.md). ──
+          case "set_volume":
+            if (isActive && data.volume !== undefined) (activeEngine as any).setMasterVolume?.(data.volume);
             break;
           case "play_emergency_cart":
-            (engine as any).playEmergencyCart?.();
+            if (isActive) (activeEngine as any).playEmergencyCart?.();
             break;
           case "mic_on":
-            (engine as any).openMic?.();
-            break;
-          case "db:apply":
-            // Control Center remote edit → apply via local sync handlers, then re-push.
-            await applyDbMutation(apiKeyRef.current, data);
-            break;
-          case "library:addSong":
-            // Control Center remote upload → create the song (artist + record + station
-            // rotation) for the R2-uploaded file_key, then re-push the library view.
-            await addLibrarySong(apiKeyRef.current, data);
-            break;
-          case "library:syncDownload":
-            // Control Center "Pull from cloud" → download cloud-only songs to local and
-            // set file_path (materialize) so they enter automation rotation.
-            try { await (window as any).ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
+            if (isActive) (activeEngine as any).openMic?.();
             break;
           case "deck:load": {
-            // Dashboard "A/B/C" — CUE a library song onto a deck in a READY (not playing) state so it
-            // waits its turn in rotation. Loading a deck must NEVER start audio — this matches the
-            // desktop JockStrip/library A/B/C buttons, which cue without playing. (Use Q / transport to play.)
+            // Dashboard "A/B/C" — CUE a library song onto a deck (READY, never playing).
             const deck = String(data.deck || "A").toUpperCase() as "A" | "B" | "C";
             if (!["A", "B", "C"].includes(deck)) break;
+            if (!isActive) { console.log("[RemoteCmd] deck:load skipped — non-active station (deferred)"); break; }
             const song = await resolveSong(data.song_id, data.file_key);
             if (song) {
-              // Stage 2a: daemon mode → deck:cue intent; in-process → local load. Either path leaves the
-              // deck CUED/ready, NOT playing — no .play() here (the stray play() was the auto-play bug).
-              if (engine.isDaemonDriven) {
-                await engine.deckCue(deck, { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs });
+              if (useDaemon) {
+                await activeEngine.deckCue(deck, { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs });
               } else {
-                await engine.loadToDeck(deck, song.filePath, song.title, song.artist, undefined, song.durationMs);
+                await activeEngine.loadToDeck(deck, song.filePath, song.title, song.artist, undefined, song.durationMs);
               }
               window.dispatchEvent(new CustomEvent("ether:queue-changed"));
             }
             break;
           }
           case "queue:enqueue": {
-            // Dashboard "Q" — add a library song to the end of the queue.
+            if (!isActive) { console.log("[RemoteCmd] queue:enqueue skipped — non-active station (deferred)"); break; }
             const song = await resolveSong(data.song_id, data.file_key);
             if (song) {
               const item = { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs };
-              if (engine.isDaemonDriven) engine.queueEnqueue([item]); else engine.addToQueue([item]);  // Stage 2a
+              if (useDaemon) activeEngine.queueEnqueue([item]); else activeEngine.addToQueue([item]);
               window.dispatchEvent(new CustomEvent("ether:queue-changed"));
             }
             break;
           }
           case "queue:reorder": {
-            // Dashboard drag-and-drop — reorder the first N queue items by the given index
-            // permutation; anything beyond the visible window is preserved untouched.
+            if (!isActive) { console.log("[RemoteCmd] queue:reorder skipped — non-active station (deferred)"); break; }
             const order: number[] = Array.isArray(data.order) ? data.order : [];
             if (order.length) {
-              const q = engine.getQueue();
+              const q = activeEngine.getQueue();
               if (order.length <= q.length && order.every(i => Number.isInteger(i) && i >= 0 && i < q.length)) {
-                if (engine.isDaemonDriven) {
-                  // Stage 2a: snapshot the desired head order to stable qids, then place each by id
-                  // at its target index. Cued/bound entries no-op (protected); the daemon clamps the
-                  // rest into the pending region. Never pushes a whole-queue array.
+                if (useDaemon) {
                   const qids = order.map(i => q[i]?.qid).filter(Boolean) as string[];
-                  for (let k = 0; k < qids.length; k++) await engine.queueReorder(qids[k], k);
+                  for (let k = 0; k < qids.length; k++) await activeEngine.queueReorder(qids[k], k);
                 } else {
                   const head = order.map(i => q[i]).filter(Boolean);
-                  engine.replaceQueue([...head, ...q.slice(order.length)]);
-                  setTimeout(() => engine.triggerPreload?.(), 100);
+                  activeEngine.replaceQueue([...head, ...q.slice(order.length)]);
+                  setTimeout(() => activeEngine.triggerPreload?.(), 100);
                 }
                 window.dispatchEvent(new CustomEvent("ether:queue-changed"));
               }
             }
             break;
           }
+
+          // ── License-scoped — install-wide, NEVER gated by station_uuid ──
+          case "db:apply":
+            await applyDbMutation(apiKeyRef.current, data);
+            break;
+          case "library:addSong":
+            await addLibrarySong(apiKeyRef.current, data);
+            break;
+          case "library:syncDownload":
+            try { await (window as any).ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
+            break;
+
           default:
             console.log("[RemoteCmd] Unknown command:", cmd);
         }
