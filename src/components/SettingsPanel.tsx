@@ -284,6 +284,97 @@ function StationLogoUploader() {
   );
 }
 
+function SpotBreakGrid() {
+  const { stationId } = useActiveStation();
+  const [enabled, setEnabled] = useState(false);
+  const [minutes, setMinutes] = useState<number[]>([]);
+  const [spotsPerBreak, setSpotsPerBreak] = useState(1);
+  const [newMin, setNewMin] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  // Load this station's grid (absent ⇒ empty/off). No defaults baked in.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await (window as any).ether.stationConfigKv.list(stationId);
+        const row = (res?.rows || []).find((r: any) => r.key === "spot_break_grid");
+        if (row?.value) {
+          const p = JSON.parse(row.value) || {};
+          setEnabled(!!p.enabled);
+          setMinutes(Array.isArray(p.minutes)
+            ? [...new Set<number>(p.minutes.map(Number).filter((m: number) => Number.isInteger(m) && m >= 0 && m <= 59))].sort((a, b) => a - b)
+            : []);
+          setSpotsPerBreak(Math.max(1, Math.min(10, parseInt(p.spotsPerBreak, 10) || 1)));
+        } else {
+          setEnabled(false); setMinutes([]); setSpotsPerBreak(1);
+        }
+      } catch {}
+    })();
+  }, [stationId]);
+
+  // Save on each explicit action (mirrors the rest of SettingsPanel) — avoids load/save races.
+  const persist = async (next: { enabled?: boolean; minutes?: number[]; spotsPerBreak?: number }) => {
+    const grid = {
+      enabled:       next.enabled       ?? enabled,
+      minutes:       next.minutes       ?? minutes,
+      spotType:      null,
+      spotsPerBreak: next.spotsPerBreak ?? spotsPerBreak,
+    };
+    try {
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "spot_break_grid", JSON.stringify(grid));
+      setSaved(true); setTimeout(() => setSaved(false), 1200);
+    } catch {}
+  };
+
+  const toggleEnabled = (v: boolean) => { setEnabled(v); persist({ enabled: v }); };
+  const addMinute = () => {
+    const m = parseInt(newMin, 10);
+    if (!Number.isInteger(m) || m < 0 || m > 59 || minutes.includes(m)) { setNewMin(""); return; }
+    const nm = [...minutes, m].sort((a, b) => a - b);
+    setMinutes(nm); persist({ minutes: nm }); setNewMin("");
+  };
+  const removeMinute = (m: number) => { const nm = minutes.filter(x => x !== m); setMinutes(nm); persist({ minutes: nm }); };
+  const changeSpots = (n: number) => { const v = Math.max(1, Math.min(10, n || 1)); setSpotsPerBreak(v); persist({ spotsPerBreak: v }); };
+
+  return (
+    <Section category="programming"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>}
+      title="Timed Spot Breaks"
+      description="Air spot breaks at set minutes past every hour, on all clocks. A break drops at the next song boundary so a song is never cut off. Leave the list empty for no timed breaks.">
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <Toggle value={enabled} onChange={toggleEnabled} label="Enable timed spot breaks" />
+        <div style={{ opacity: enabled ? 1 : 0.5, pointerEvents: enabled ? "auto" : "none" } as any}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Break times — minutes past the hour</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            {minutes.length === 0 && <span style={{ fontSize: 13, color: "var(--text-tertiary)" }}>No breaks set — the schedule generates with no timed breaks.</span>}
+            {minutes.map(m => (
+              <span key={m} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "var(--text-primary)" }}>
+                :{String(m).padStart(2, "0")}
+                <button onClick={() => removeMinute(m)} title="Remove" style={{ border: "none", background: "none", color: "var(--accent-red)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: 0 }}>×</button>
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="number" min={0} max={59} value={newMin} placeholder="e.g. 20" onChange={e => setNewMin(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addMinute(); }}
+              style={{ width: 90, padding: "6px 10px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", outline: "none" }} />
+            <button onClick={addMinute} style={{ padding: "6px 14px", background: "var(--accent-blue)", color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Add break</button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Spots per break</span>
+            <input type="number" min={1} max={10} value={spotsPerBreak} onChange={e => changeSpots(parseInt(e.target.value, 10))}
+              style={{ width: 64, padding: "6px 10px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, fontFamily: "'JetBrains Mono', ui-monospace, monospace", textAlign: "center" as any, outline: "none" }} />
+            {saved && <span style={{ fontSize: 12, color: "var(--accent-green)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>SAVED</span>}
+          </div>
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+          Per station, applied on every clock. Runs in addition to any spot-break slots already in your clocks.
+          Each break airs the least-recently-used eligible spot from your spots library; if none is available, the break is skipped (no dead air).
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function ExperienceModeSelector() {
   const { stationId } = useActiveStation();
   const [mode, setMode] = useState<string>("");
@@ -2330,6 +2421,8 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           <strong style={{ color: "var(--text-secondary)" }}>SOFT</strong> — rule is preferred but can be broken if no better option exists.
         </div>
       </Section>
+
+      <SpotBreakGrid />
 
       {/* ── Connections ── */}
       <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
