@@ -5335,11 +5335,22 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
     // in the time range (Magical Forest's calendar showing another station's songs). Scope by station —
     // default to the ACTIVE station so a caller that passes no id still gets one station, not all.
     const sid = stationId ?? getActiveStationId();
+    // Durable cross-station guard: a row's station_id says which station OWNS the slot, but the
+    // song it points at can later be re-categorised into ANOTHER station's library (the per-station
+    // category migration did exactly this — Christmas tracks generated under HalloVeen's category
+    // were moved into OV's "Christmas" category, leaving stale rows that made HalloVeen's calendar
+    // show Christmas). Never DISPLAY a row whose song now positively belongs to a different station.
+    // Conservative by design — only drops rows we can prove are foreign: song-less rows (spots/talk),
+    // songs with no category, or categories with no station_id all pass through unchanged.
     const rows = db.prepare(
-      `SELECT id, scheduled_at, song_id, title, artist, file_key, duration_s, category_id
-       FROM generated_schedule
-       WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL
-       ORDER BY scheduled_at`
+      `SELECT g.id, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.duration_s, g.category_id
+       FROM generated_schedule g
+       WHERE g.station_id = ? AND g.scheduled_at >= ? AND g.scheduled_at < ? AND g.deleted_at IS NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM songs s JOIN categories c ON c.id = s.category_id
+           WHERE s.id = g.song_id AND c.station_id IS NOT NULL AND c.station_id <> g.station_id
+         )
+       ORDER BY g.scheduled_at`
     ).all(sid, fromTs ?? 0, toTs ?? 9999999999);
     return { data: rows, error: null };
   } catch (e) {
