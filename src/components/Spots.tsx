@@ -303,8 +303,8 @@ export default function Spots() {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Spots & Promos</h1>
         <div style={{ display: "flex", gap: 8 }}>
+          {iBtn("Add Files", "var(--accent-green)", handleImport)}
           {iBtn("Import Folder", "var(--accent-blue)", handleImportFolder)}
-          {iBtn("Import Files", "", handleImport, true)}
           {iBtn("Import Traffic CSV", "var(--accent-amber)", handleTrafficImport)}
         </div>
       </div>
@@ -511,8 +511,11 @@ export default function Spots() {
         <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
           <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots yet</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners</div>
-          <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Spots Folder</button>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners — pick individual files or a whole folder</div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center" as any }}>
+            <button onClick={handleImport} style={{ padding: "9px 20px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-green)", color: "#fff", border: "none", cursor: "pointer" }}>Add Files</button>
+            <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Folder</button>
+          </div>
         </div>
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
