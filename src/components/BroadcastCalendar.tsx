@@ -209,10 +209,18 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   };
 
   useEffect(() => {
-    load();
     const tick = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(tick);
   }, []);
+
+  // Shows drive each day-cell's label + color and are per-station, so they MUST follow a station
+  // switch — without this they stayed frozen on whichever station was active when the calendar first
+  // mounted (the "every day says Magical Forest in green" bug). Songs already reload via the
+  // stationId-keyed effect below; this keeps the labels/colors in sync the same way.
+  useEffect(() => { load(); }, [stationId]);
+
+  // An open day view is per-station too — reload its hour-by-hour rows when the station changes.
+  useEffect(() => { if (selectedDay) loadDayRows(selectedDay); }, [stationId]);
 
   // Track what the engine is ACTUALLY playing so the day view highlights the real on-air
   // song, not just the clock-scheduled position (broadcast from App as ether:now-playing).
