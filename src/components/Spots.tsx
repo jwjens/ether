@@ -12,7 +12,11 @@ interface Spot {
   max_plays_day: number; play_count: number;
   is_active: number;
   notes: string | null;
+  spot_category_id: number | null;
 }
+
+interface SpotCategory { id: number; name: string; color: string | null; uuid: string; }
+interface BreakRow { minute: number; spotCategoryId: number | null; count: number; }
 
 const SPOT_TYPES = ["promo", "psa", "jingle", "liner", "sweeper", "commercial", "imaging"];
 const AUDIO_EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
@@ -29,17 +33,103 @@ export default function Spots() {
   const { stationId, isReady } = useActiveStation();
   const [spots, setSpots] = useState<Spot[]>([]);
   const [filter, setFilter] = useState<string>("all");
+  const [catFilter, setCatFilter] = useState<"all" | "none" | number>("all");
   const [editing, setEditing] = useState<Partial<Spot> | null>(null);
   const [importing, setImporting] = useState(false);
   const [status, setStatus] = useState("");
 
+  // ── Spot categories (per station) ──────────────────────────────
+  const [cats, setCats] = useState<SpotCategory[]>([]);
+  const [catCounts, setCatCounts] = useState<Record<number, number>>({});
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatColor, setNewCatColor] = useState("#8868D8");
+  const [editCat, setEditCat] = useState<{ id: number; name: string; color: string } | null>(null);
+
+  // ── Timed spot-break grid (per station; the generator reads this) ──
+  const [gridEnabled, setGridEnabled] = useState(false);
+  const [breaks, setBreaks] = useState<BreakRow[]>([]);
+  const [gridSaved, setGridSaved] = useState(false);
+
   const load = async () => {
     if (!isReady) return;
-    // TODO 3b-ii: dynamic WHERE clause — convert when complex filter injection is supported
-    const where = filter === "all" ? "" : " WHERE spot_type = '" + filter + "'";
-    setSpots(await queryScoped<Spot>("SELECT * FROM spots" + where + " ORDER BY title", [], stationId));
+    const conds: string[] = [], params: any[] = [];
+    if (filter !== "all")    { conds.push("spot_type = ?"); params.push(filter); }
+    if (catFilter === "none") conds.push("spot_category_id IS NULL");
+    else if (catFilter !== "all") { conds.push("spot_category_id = ?"); params.push(catFilter); }
+    const where = conds.length ? " WHERE " + conds.join(" AND ") : "";
+    setSpots(await queryScoped<Spot>("SELECT * FROM spots" + where + " ORDER BY title", params, stationId));
   };
-  useEffect(() => { load(); }, [filter, isReady]);
+  useEffect(() => { load(); }, [filter, catFilter, isReady]);
+
+  const catName = (id: number | null) => (id == null ? null : cats.find(c => c.id === id)?.name ?? null);
+  const catColor = (id: number | null) => (id == null ? null : cats.find(c => c.id === id)?.color ?? "var(--accent-blue)");
+
+  const loadCats = async () => {
+    if (!isReady) return;
+    const res = await (window as any).ether.spotCategories.list(stationId);
+    setCats(res?.rows || []);
+    const counts = await queryScoped<{ spot_category_id: number; c: number }>(
+      "SELECT spot_category_id, COUNT(*) c FROM spots WHERE spot_category_id IS NOT NULL GROUP BY spot_category_id", [], stationId);
+    const map: Record<number, number> = {};
+    for (const r of counts) map[r.spot_category_id] = r.c;
+    setCatCounts(map);
+  };
+
+  const loadGrid = async () => {
+    if (!isReady) return;
+    try {
+      const res = await (window as any).ether.stationConfigKv.list(stationId);
+      const row = (res?.rows || []).find((r: any) => r.key === "spot_break_grid");
+      if (row?.value) {
+        const p = JSON.parse(row.value) || {};
+        setGridEnabled(!!p.enabled);
+        setBreaks(Array.isArray(p.breaks)
+          ? p.breaks.map((b: any) => ({
+              minute: Math.max(0, Math.min(59, parseInt(b.minute, 10) || 0)),
+              spotCategoryId: b.spotCategoryId == null ? null : Number(b.spotCategoryId),
+              count: Math.max(1, Math.min(10, parseInt(b.count, 10) || 1)),
+            }))
+          : []);
+      } else { setGridEnabled(false); setBreaks([]); }
+    } catch {}
+  };
+
+  useEffect(() => { loadCats(); loadGrid(); }, [isReady, stationId]);
+
+  // ── Category CRUD ──────────────────────────────────────────────
+  const addCat = async () => {
+    const name = newCatName.trim(); if (!name) return;
+    const res = await (window as any).ether.spotCategories.create({ station_id: stationId, name, color: newCatColor });
+    if (res?.ok === false) { setStatus("Could not add category: " + (res.error || "")); setTimeout(() => setStatus(""), 4000); return; }
+    setNewCatName(""); loadCats();
+  };
+  const saveCat = async () => {
+    if (!editCat || !editCat.name.trim()) return;
+    await (window as any).ether.spotCategories.updateById(editCat.id, { name: editCat.name.trim(), color: editCat.color });
+    setEditCat(null); loadCats();
+  };
+  const removeCat = async (c: SpotCategory) => {
+    if (!confirm(`Delete spot category "${c.name}"?\n\nSpots in it become uncategorized, and any break using it will pull nothing until reassigned.`)) return;
+    await (window as any).ether.spotCategories.delete(c.uuid, stationId);
+    loadCats(); loadGrid(); load();
+  };
+
+  // ── Break grid persistence (per station, in station_config_kv) ──
+  const saveGrid = async (enabled: boolean, br: BreakRow[]) => {
+    const grid = { enabled, breaks: br.map(b => ({ minute: b.minute, spotCategoryId: b.spotCategoryId, count: b.count })) };
+    try {
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "spot_break_grid", JSON.stringify(grid));
+      setGridSaved(true); setTimeout(() => setGridSaved(false), 1200);
+    } catch {}
+  };
+  const toggleGrid = (v: boolean) => { setGridEnabled(v); saveGrid(v, breaks); };
+  const addBreakRow = () => { const nb = [...breaks, { minute: 0, spotCategoryId: cats[0]?.id ?? null, count: 1 }]; setBreaks(nb); saveGrid(gridEnabled, nb); };
+  const removeBreakRow = (i: number) => { const nb = breaks.filter((_, idx) => idx !== i); setBreaks(nb); saveGrid(gridEnabled, nb); };
+  const setBreakField = (i: number, patch: Partial<BreakRow>, persist: boolean) => {
+    const nb = breaks.map((b, idx) => idx === i ? { ...b, ...patch } : b);
+    setBreaks(nb);
+    if (persist) saveGrid(gridEnabled, nb);
+  };
 
   const handleImport = async () => {
     try {
@@ -179,9 +269,9 @@ export default function Spots() {
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
-      await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null });
+      await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null });
     }
-    setEditing(null); load();
+    setEditing(null); load(); loadCats();
   };
 
   const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await (window as any).ether.spots.deleteById(id); load(); };
@@ -242,6 +332,25 @@ export default function Spots() {
         })}
       </div>
 
+      {/* Category filter pills */}
+      {cats.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as any, alignItems: "center" }}>
+          <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginRight: 2 }}>Category</span>
+          {([["all", "All"], ...cats.map(c => [c.id, `${c.name} (${catCounts[c.id] || 0})`] as [number, string]), ["none", "Uncategorized"]] as [string | number, string][]).map(([val, label]) => {
+            const active = catFilter === val;
+            const color = typeof val === "number" ? (catColor(val) || "var(--accent-blue)") : "var(--accent-blue)";
+            return (
+              <button key={String(val)} onClick={() => setCatFilter(val as any)} style={{
+                padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                background: active ? color : "var(--bg-secondary)",
+                color: active ? "#000" : "var(--text-tertiary)",
+                border: active ? "none" : "1px solid var(--border-primary)",
+              }}>{label}</button>
+            );
+          })}
+        </div>
+      )}
+
       {status && <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
 
       {/* Stats */}
@@ -258,6 +367,90 @@ export default function Spots() {
         ))}
       </div>
 
+      {/* ── Manage spot categories (per station) ── */}
+      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>Group your spots — e.g. Top-of-Hour IDs, Local Sponsors, Ad Campaign. Timed breaks pull from these. Per station.</div>
+        {cats.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column" as any, marginBottom: 14 }}>
+            {cats.map((c, i) => (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: i < cats.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
+                {editCat?.id === c.id ? (
+                  <>
+                    <input type="color" value={editCat.color} onChange={e => setEditCat({ ...editCat, color: e.target.value })} style={{ width: 28, height: 28, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0 }} />
+                    <input value={editCat.name} onChange={e => setEditCat({ ...editCat, name: e.target.value })} onKeyDown={e => { if (e.key === "Enter") saveCat(); if (e.key === "Escape") setEditCat(null); }} autoFocus
+                      style={{ flex: 1, padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                    <button onClick={saveCat} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+                    <button onClick={() => setEditCat(null)} style={{ padding: "5px 10px", fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ width: 14, height: 14, borderRadius: 0, background: c.color || "var(--accent-blue)", flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{c.name}</span>
+                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{catCounts[c.id] || 0} spots</span>
+                    <button onClick={() => setEditCat({ id: c.id, name: c.name, color: c.color || "#8868D8" })} style={{ padding: "4px 9px", fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Rename</button>
+                    <button onClick={() => removeCat(c)} title="Delete category" style={{ padding: "4px 9px", fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)} title="Category color" style={{ width: 32, height: 32, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0 }} />
+          <input placeholder="New category name…" value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addCat(); }}
+            style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          <button onClick={addCat} style={{ padding: "8px 16px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Add Category</button>
+        </div>
+      </div>
+
+      {/* ── Timed spot breaks (the core feature — per station) ── */}
+      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {gridSaved && <span style={{ fontSize: 11, color: "var(--accent-green)", fontFamily: "'DM Mono', monospace" }}>SAVED</span>}
+            <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Enabled</span>
+            <div onClick={() => toggleGrid(!gridEnabled)} style={{ width: 36, height: 20, cursor: "pointer", background: gridEnabled ? "var(--accent-green)" : "var(--bg-tertiary)", border: "1px solid " + (gridEnabled ? "var(--accent-green)" : "var(--border-secondary)"), position: "relative", flexShrink: 0 }}>
+              <div style={{ position: "absolute", top: 3, left: gridEnabled ? 18 : 3, width: 12, height: 12, background: "#fff", transition: "left 0.2s" }} />
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>Air breaks at set minutes past every hour, on all clocks for this station. Each break pulls from its category and drops at the next song boundary, so a song is never cut. Empty = no timed breaks.</div>
+        {breaks.length === 0 ? (
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", padding: "4px 0 14px" }}>No breaks yet — add one below.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column" as any, gap: 8, marginBottom: 14, opacity: gridEnabled ? 1 : 0.55 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 110px 36px", gap: 8, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>
+              <span>Minutes past hr</span><span>Spot category</span><span>Spots</span><span></span>
+            </div>
+            {breaks.map((b, i) => (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "130px 1fr 110px 36px", gap: 8, alignItems: "center" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 14, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
+                  <input type="number" min={0} max={59} value={b.minute}
+                    onChange={e => setBreakField(i, { minute: Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0)) }, true)}
+                    style={{ width: 80, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
+                </div>
+                <select value={b.spotCategoryId ?? ""} onChange={e => setBreakField(i, { spotCategoryId: e.target.value === "" ? null : parseInt(e.target.value, 10) }, true)}
+                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: b.spotCategoryId == null ? "var(--accent-amber)" : "var(--text-primary)", outline: "none" }}>
+                  <option value="">— pick a category —</option>
+                  {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <input type="number" min={1} max={10} value={b.count}
+                  onChange={e => setBreakField(i, { count: Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)) }, true)}
+                  style={{ width: 90, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
+                <button onClick={() => removeBreakRow(i)} title="Remove break" style={{ padding: "6px 9px", fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={addBreakRow} style={{ padding: "8px 16px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>+ Add break</button>
+          {cats.length === 0 && <span style={{ fontSize: 12, color: "var(--accent-amber)" }}>Create a spot category above first, so breaks have something to pull.</span>}
+        </div>
+      </div>
+
       {/* Edit panel */}
       {editing && (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
@@ -268,6 +461,14 @@ export default function Spots() {
             <select value={editing.spot_type || "promo"} onChange={e => setEditing({...editing, spot_type: e.target.value})}
               style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
               {SPOT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>Spot category:</span>
+            <select value={editing.spot_category_id ?? ""} onChange={e => setEditing({ ...editing, spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              <option value="">— No category (won't be pulled by a timed break) —</option>
+              {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
@@ -318,7 +519,7 @@ export default function Spots() {
           <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-                {["Title", "Type", "Advertiser", "Plays", "Active", ""].map(h => (
+                {["Title", "Type", "Category", "Advertiser", "Plays", "Active", ""].map(h => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: "left" as any, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
                 ))}
               </tr>
@@ -335,6 +536,11 @@ export default function Spots() {
                     <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title}</td>
                     <td style={{ padding: "10px 14px" }}>
                       <span style={{ fontSize: 9, fontWeight: 700, color: typeColor, background: typeColor + "20", padding: "2px 8px", borderRadius: 0, textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>{s.spot_type}</span>
+                    </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {catName(s.spot_category_id)
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}><span style={{ width: 9, height: 9, background: catColor(s.spot_category_id) || "var(--accent-blue)", flexShrink: 0 }} />{catName(s.spot_category_id)}</span>
+                        : <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>—</span>}
                     </td>
                     <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{s.advertiser || "—"}</td>
                     <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-tertiary)" }}>{s.play_count}</td>

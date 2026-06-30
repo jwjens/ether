@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'spots';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["title","file_path","spot_type","advertiser","start_date","end_date","max_plays_day","play_count","last_played_at","is_active","notes","isci_code","cart_number","agency","length_sec","updated_at"];
+const PATCHABLE          = ["title","file_path","spot_type","advertiser","start_date","end_date","max_plays_day","play_count","last_played_at","is_active","notes","isci_code","cart_number","agency","length_sec","spot_category_id","updated_at"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
