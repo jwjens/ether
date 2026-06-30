@@ -34,6 +34,7 @@ const { installSmartScheduleRules } = require('./smart_schedule_rules');
 const { installSongMetadataValues } = require('./song_metadata_values');
 const { installSongs } = require('./songs');
 const { installSpots } = require('./spots');
+const { installSpotCategories } = require('./spot_categories');
 const { installStationConfigKv } = require('./station_config_kv');
 const { installInstallConfigKv } = require('./install_config_kv');
 const { installStationProgrammingMoods } = require('./station_programming_moods');
@@ -74,6 +75,7 @@ function installAll(ipcMain, db) {
   installSongMetadataValues(ipcMain, db);
   installSongs(ipcMain, db);
   installSpots(ipcMain, db);
+  installSpotCategories(ipcMain, db);
   installStationConfigKv(ipcMain, db);
   installInstallConfigKv(ipcMain, db);
   installStationProgrammingMoods(ipcMain, db);

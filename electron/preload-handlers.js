@@ -56,6 +56,14 @@ module.exports = function buildHandlers(ipcRenderer) {
     updateById: (intId, patch)    => ipcRenderer.invoke('categories:update-by-id', intId, patch),
     delete:     (uuid, stationId) => ipcRenderer.invoke('categories:delete',       uuid, stationId),
   },
+  spotCategories: {
+    list:       (stationId, opts) => ipcRenderer.invoke('spot_categories:list',         stationId, opts),
+    getById:    (uuid)            => ipcRenderer.invoke('spot_categories:get-by-id',    uuid),
+    create:     (payload)         => ipcRenderer.invoke('spot_categories:create',       payload),
+    update:     (uuid, patch)     => ipcRenderer.invoke('spot_categories:update',       uuid, patch),
+    updateById: (intId, patch)    => ipcRenderer.invoke('spot_categories:update-by-id', intId, patch),
+    delete:     (uuid, stationId) => ipcRenderer.invoke('spot_categories:delete',       uuid, stationId),
+  },
   clockSlots: {
     list:           (stationId, opts)       => ipcRenderer.invoke('clock_slots:list',              stationId, opts),
     getById:        (uuid)                  => ipcRenderer.invoke('clock_slots:get-by-id',         uuid),

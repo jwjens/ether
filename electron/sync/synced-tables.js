@@ -146,6 +146,23 @@ const REGISTRY = {
     },
   },
 
+  spot_categories: {
+    tableName: 'spot_categories',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:         'scalar',
+      name:       'scalar',
+      color:      'scalar',
+      sort_order: 'scalar',
+      station_id: 'scalar',
+      uuid:       'scalar',
+      created_at: 'scalar',
+      updated_at: 'scalar',
+      deleted_at: 'scalar',
+    },
+  },
+
   clock_slots: {
     tableName: 'clock_slots',
     primaryKey: ['id'],
@@ -724,12 +741,17 @@ const REGISTRY = {
       isci_code:      'scalar',
       cart_number:    'scalar',
       agency:         'scalar',
-      length_sec:     'scalar',
-      station_id:     'scalar',
-      uuid:           'scalar',
-      updated_at:     'scalar',
-      deleted_at:     'scalar',
+      length_sec:       'scalar',
+      spot_category_id: 'scalar',
+      station_id:       'scalar',
+      uuid:             'scalar',
+      updated_at:       'scalar',
+      deleted_at:       'scalar',
     },
+    // UUID-identity (Tier-2): spot_category_id is a LOCAL integer FK into spot_categories — on push
+    // the sender resolves it to that category's stable uuid, on apply the receiver resolves back to
+    // its own local id, so a spot lands in the right category on every machine (station_id likewise).
+    refs: { station_id: 'stations', spot_category_id: 'spot_categories' },
   },
 
   station_config_kv: {
