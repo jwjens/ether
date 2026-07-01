@@ -24,9 +24,11 @@ interface ClockSlot {
   slot_type: string; category_id: number | null;
   song_id?: number | null;
   spot_type?: string | null;
+  spot_category_id?: number | null;
   label: string | null; duration_min: number;
   chain_type?: string;
   category_code?: string; category_color?: string;
+  spot_category_name?: string | null; spot_category_color?: string | null;
   song_title?: string | null; song_artist?: string | null;
   cart_id?: string | null;
 }
@@ -53,8 +55,6 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
 const HOURS = Array.from({length: 24}, (_, i) => i);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SLOT_TYPES = ["music", "spot_break", "liner", "sweeper", "news", "talkset", "jingle"];
-// Spot-type filter for spot_break slots — which kind of spot the generator pulls (NULL = any active spot).
-const SPOT_FILTER_TYPES = ["promo", "psa", "jingle", "liner", "sweeper", "commercial", "imaging"];
 const CLOCK_SLOT_TYPE_OPTIONS = [
   { value: "music",      label: "Song",    color: "var(--accent-blue)" },
   { value: "spot_break", label: "Spot",    color: "#ef4444" },
@@ -776,6 +776,7 @@ function ClocksTab() {
   const [selected, setSelected]   = useState<number | null>(null);
   const [slots, setSlots]         = useState<ClockSlot[]>([]);
   const [cats, setCats]           = useState<Category[]>([]);
+  const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null }[]>([]);
   const [newName, setNewName]     = useState("");
   const [showPicker, setShowPicker] = useState(false);
   const [showTalkPicker, setShowTalkPicker] = useState(false);
@@ -790,14 +791,18 @@ function ClocksTab() {
     if (!isReady) return;
     setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
     setCats(await queryScoped<Category>("SELECT * FROM categories ORDER BY priority, code", [], stationId));
+    // Spot categories (per station) — the source for a spot_break slot's category picker.
+    setSpotCats(((await (window as any).ether.spotCategories.list(stationId))?.rows) || []);
   };
 
   const loadSlots = async (clockId: number) => {
     // station_id scoping: manual JOIN — clock_slots.station_id filters scope; categories joined by FK
     const raw = await queryScoped<ClockSlot>(
-      `SELECT cs.*, c.code as category_code, c.color as category_color
+      `SELECT cs.*, c.code as category_code, c.color as category_color,
+              sc.name as spot_category_name, sc.color as spot_category_color
        FROM clock_slots cs
        LEFT JOIN categories c ON c.id = cs.category_id
+       LEFT JOIN spot_categories sc ON sc.id = cs.spot_category_id
        WHERE cs.clock_id = ? AND cs.station_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`,
       [clockId, stationId],
       stationId,
@@ -905,7 +910,7 @@ function ClocksTab() {
     if (!selected) return;
     await (window as any).ether.clockSlots.create({
       station_id: stationId, clock_id: selected, position: slots.length,
-      slot_type: s.slot_type, category_id: s.category_id, duration_min: s.duration_min, label: s.label,
+      slot_type: s.slot_type, category_id: s.category_id, spot_category_id: s.spot_category_id ?? null, duration_min: s.duration_min, label: s.label,
     });
     loadSlots(selected);
   };
@@ -916,8 +921,8 @@ function ClocksTab() {
     if (selected) loadSlots(selected);
   };
 
-  const changeSpotType = async (id: number, spotType: string | null) => {
-    await (window as any).ether.clockSlots.updateById(id, { spot_type: spotType });
+  const changeSpotCategory = async (id: number, spotCatId: number | null) => {
+    await (window as any).ether.clockSlots.updateById(id, { spot_category_id: spotCatId });
     setEditCell(null);
     if (selected) loadSlots(selected);
   };
@@ -967,7 +972,7 @@ function ClocksTab() {
         if (copiedSlot && selected) {
           (window as any).ether.clockSlots.create({
             station_id: stationId, clock_id: selected, position: slots.length,
-            slot_type: copiedSlot.slot_type, category_id: copiedSlot.category_id,
+            slot_type: copiedSlot.slot_type, category_id: copiedSlot.category_id, spot_category_id: copiedSlot.spot_category_id ?? null,
             duration_min: copiedSlot.duration_min, label: copiedSlot.label,
           }).then(() => loadSlots(selected));
         }
@@ -1228,25 +1233,25 @@ function ClocksTab() {
                         isEditSpot ? (
                           <select
                             autoFocus
-                            value={s.spot_type ?? ""}
-                            onChange={e => changeSpotType(s.id, e.target.value || null)}
+                            value={s.spot_category_id ?? ""}
+                            onChange={e => changeSpotCategory(s.id, e.target.value ? Number(e.target.value) : null)}
                             onBlur={() => setEditCell(null)}
                             onClick={e => e.stopPropagation()}
                             style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid #ef4444", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
                           >
                             <option value="">Any spot</option>
-                            {SPOT_FILTER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                            {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
                           </select>
                         ) : (
                           <span
                             onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "spot" }); }}
-                            title="Double-click to choose which spots air here"
+                            title="Double-click to choose which spot category airs here"
                             style={{
                               fontSize: 11, fontWeight: 700, cursor: "text", userSelect: "none" as const,
-                              color: s.spot_type ? "#ef4444" : "var(--text-tertiary)",
+                              color: s.spot_category_id ? (s.spot_category_color || "#ef4444") : "var(--text-tertiary)",
                               display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                             }}
-                          >{s.spot_type || "Any spot"}</span>
+                          >{s.spot_category_name || "Any spot"}</span>
                         )
                       ) : (
                         <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>—</span>

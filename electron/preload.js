@@ -317,6 +317,7 @@ contextBridge.exposeInMainWorld("ether", {
     // See electron/main.js handler comment for why this isn't via songs:update.
     setLocalFilePath: (id, fp) => ipcRenderer.invoke("songs:set-local-file-path", id, fp),
   },
+  spotCategories:            handlers.spotCategories,
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
   stationProgramming:        handlers.stationProgramming,
