@@ -785,9 +785,13 @@ function ClocksTab() {
   const [selected, setSelected]   = useState<number | null>(null);
   const [slots, setSlots]         = useState<ClockSlot[]>([]);
   const [cats, setCats]           = useState<Category[]>([]);
-  const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null }[]>([]);
+  const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null; uuid: string }[]>([]);
   const [breaks, setBreaks]       = useState<{ id: number; uuid: string; minute: number; spot_category_id: number | null; count: number }[]>([]);
   const [breaksSaved, setBreaksSaved] = useState(false);
+  const [spotCatCounts, setSpotCatCounts] = useState<Record<number, number>>({});
+  const [editSpotCat, setEditSpotCat] = useState<{ id: number; name: string; color: string } | null>(null);
+  const [newSpotCatName, setNewSpotCatName] = useState("");
+  const [newSpotCatColor, setNewSpotCatColor] = useState("#8868D8");
   const [newName, setNewName]     = useState("");
   const [showPicker, setShowPicker] = useState(false);
   const [showTalkPicker, setShowTalkPicker] = useState(false);
@@ -803,8 +807,33 @@ function ClocksTab() {
     if (!isReady) return;
     setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
     setCats(await queryScoped<Category>("SELECT * FROM categories ORDER BY priority, code", [], stationId));
-    // Spot categories (per station) — the source for a spot_break slot's category picker.
+    loadSpotCats();
+  };
+
+  // Spot categories (per station) — the source a timed break pulls from; managed here on the clock.
+  const loadSpotCats = async () => {
+    if (!isReady) return;
     setSpotCats(((await (window as any).ether.spotCategories.list(stationId))?.rows) || []);
+    const counts = await queryScoped<{ spot_category_id: number; c: number }>(
+      "SELECT spot_category_id, COUNT(*) c FROM spots WHERE spot_category_id IS NOT NULL AND deleted_at IS NULL GROUP BY spot_category_id", [], stationId);
+    const map: Record<number, number> = {};
+    for (const r of counts) map[r.spot_category_id] = r.c;
+    setSpotCatCounts(map);
+  };
+  const addSpotCat = async () => {
+    const name = newSpotCatName.trim(); if (!name) return;
+    await (window as any).ether.spotCategories.create({ station_id: stationId, name, color: newSpotCatColor });
+    setNewSpotCatName(""); loadSpotCats();
+  };
+  const saveSpotCat = async () => {
+    if (!editSpotCat || !editSpotCat.name.trim()) return;
+    await (window as any).ether.spotCategories.updateById(editSpotCat.id, { name: editSpotCat.name.trim(), color: editSpotCat.color });
+    setEditSpotCat(null); loadSpotCats();
+  };
+  const removeSpotCat = async (c: { uuid: string; name: string }) => {
+    if (!confirm(`Delete spot category "${c.name}"?\n\nSpots in it become uncategorized, and any break using it will pull any active spot until reassigned.`)) return;
+    await (window as any).ether.spotCategories.delete(c.uuid, stationId);
+    loadSpotCats();
   };
 
   const loadSlots = async (clockId: number) => {
@@ -1517,8 +1546,48 @@ function ClocksTab() {
               </button>
             </div>
 
-            {/* ── Timed Spot Breaks (per clock) — anchor spots to a minute; music fills around them ── */}
-            <div style={{ marginTop: 16, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
+            {/* ── Spots row: categories + timed breaks, side by side (stack on narrow) ── */}
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 16, marginTop: 16, alignItems: "flex-start" }}>
+
+              {/* Spot Categories (per station) — managed here so categories + breaks work together */}
+              <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>Group your spots (e.g. Local Sponsors, Top-of-Hour IDs) — a timed break pulls from one. Also editable in Spots &amp; Promos.</div>
+                {spotCats.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column" as const, marginBottom: 12 }}>
+                    {spotCats.map((c, i) => (
+                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: i < spotCats.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
+                        {editSpotCat?.id === c.id ? (
+                          <>
+                            <input type="color" value={editSpotCat.color} onChange={e => setEditSpotCat({ ...editSpotCat, color: e.target.value })} style={{ width: 24, height: 24, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0, flexShrink: 0 }} />
+                            <input value={editSpotCat.name} autoFocus onChange={e => setEditSpotCat({ ...editSpotCat, name: e.target.value })} onKeyDown={e => { if (e.key === "Enter") saveSpotCat(); if (e.key === "Escape") setEditSpotCat(null); }}
+                              style={{ flex: 1, minWidth: 0, padding: "5px 8px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                            <button onClick={saveSpotCat} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+                            <button onClick={() => setEditSpotCat(null)} style={{ padding: "4px 8px", fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+                          </>
+                        ) : (
+                          <>
+                            <span style={{ width: 12, height: 12, background: c.color || "var(--accent-blue)", flexShrink: 0 }} />
+                            <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.name}</span>
+                            <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{spotCatCounts[c.id] || 0} spots</span>
+                            <button onClick={() => setEditSpotCat({ id: c.id, name: c.name, color: c.color || "#8868D8" })} style={{ padding: "3px 8px", fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>Rename</button>
+                            <button onClick={() => removeSpotCat(c)} title="Delete category" style={{ padding: "3px 7px", fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer", flexShrink: 0 }}>✕</button>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input type="color" value={newSpotCatColor} onChange={e => setNewSpotCatColor(e.target.value)} title="Category color" style={{ width: 28, height: 28, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0, flexShrink: 0 }} />
+                  <input placeholder="New category…" value={newSpotCatName} onChange={e => setNewSpotCatName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addSpotCat(); }}
+                    style={{ flex: 1, minWidth: 0, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                  <button onClick={addSpotCat} style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0 }}>Add</button>
+                </div>
+              </div>
+
+              {/* Timed Spot Breaks (per clock) — anchor spots to a minute; music fills around them */}
+              <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
                 <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--accent-green)", opacity: breaksSaved ? 1 : 0, transition: "opacity 0.2s" }}>✓ Saved</span>
@@ -1556,8 +1625,10 @@ function ClocksTab() {
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <button onClick={addBreak} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer" }}>+ Add break</button>
-                {spotCats.length === 0 && <span style={{ fontSize: 11, color: "var(--accent-amber)" }}>No spot categories yet — create them in Spots &amp; Promos first.</span>}
+                {spotCats.length === 0 && <span style={{ fontSize: 11, color: "var(--accent-amber)" }}>Add a spot category first (left) — a break needs one to pull from.</span>}
               </div>
+              </div>
+
             </div>
           </div>
         ) : (
