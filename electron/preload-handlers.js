@@ -62,6 +62,7 @@ module.exports = function buildHandlers(ipcRenderer) {
     create:     (payload)         => ipcRenderer.invoke('spot_categories:create',       payload),
     update:     (uuid, patch)     => ipcRenderer.invoke('spot_categories:update',       uuid, patch),
     updateById: (intId, patch)    => ipcRenderer.invoke('spot_categories:update-by-id', intId, patch),
+    refs:       (uuid)            => ipcRenderer.invoke('spot_categories:refs',          uuid),
     delete:     (uuid, stationId) => ipcRenderer.invoke('spot_categories:delete',       uuid, stationId),
   },
   clockBreaks: {

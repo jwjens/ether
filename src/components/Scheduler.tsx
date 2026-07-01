@@ -831,7 +831,12 @@ function ClocksTab() {
     setEditSpotCat(null); loadSpotCats();
   };
   const removeSpotCat = async (c: { uuid: string; name: string }) => {
-    if (!confirm(`Delete spot category "${c.name}"?\n\nSpots in it become uncategorized, and any break using it will pull any active spot until reassigned.`)) return;
+    const refs = await (window as any).ether.spotCategories.refs(c.uuid);
+    const breaks = refs?.breaks || 0, spots = refs?.spots || 0;
+    const msg = (breaks + spots === 0)
+      ? `Delete spot category "${c.name}"?`
+      : `Delete "${c.name}"?\n\nIt's used by ${breaks} timed break(s) and ${spots} spot(s). Deleting will set those breaks to "Any spot" and make those spots uncategorized. This changes what airs on the next Generate.\n\nDelete anyway?`;
+    if (!confirm(msg)) return;
     await (window as any).ether.spotCategories.delete(c.uuid, stationId);
     loadSpotCats();
   };

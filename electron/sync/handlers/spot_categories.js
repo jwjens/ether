@@ -11,6 +11,10 @@
 const crypto = require('crypto');
 const { withMutation, serializePayload } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
+// Sibling per-row update handlers, reused for the delete cascade (null referencing rows).
+// No circular dependency: neither spots.js nor clock_breaks.js requires spot_categories.js.
+const { spotsUpdate } = require('./spots');
+const { clockBreaksUpdate } = require('./clock_breaks');
 
 const TABLE              = 'spot_categories';
 const HAS_STATION_ID_COL = true;
@@ -136,10 +140,33 @@ function spotCategoriesUpdateById(db, intId, patch) {
   return spotCategoriesUpdate(db, existing.uuid, patch);
 }
 
+// Count rows that reference this category (by its integer id), scoped to its station.
+// Read-only — used by the renderer to build an honest delete confirm. Returns { breaks, spots }.
+function spotCategoriesRefs(db, uuid) {
+  const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
+  if (!existing) return { breaks: 0, spots: 0 };
+  const breaks = db.prepare(
+    `SELECT COUNT(*) c FROM clock_breaks WHERE spot_category_id = ? AND deleted_at IS NULL AND station_id = ?`
+  ).get(existing.id, existing.station_id).c;
+  const spots = db.prepare(
+    `SELECT COUNT(*) c FROM spots WHERE spot_category_id = ? AND deleted_at IS NULL AND station_id = ?`
+  ).get(existing.id, existing.station_id).c;
+  return { breaks, spots };
+}
+
 function spotCategoriesDelete(db, uuid, stationId) {
   validateScope();
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
   if (!existing) throw new Error(`[spot_categories] row not found: ${uuid}`);
+
+  // Referencing rows (by integer id, scoped to station) that must be nulled as part of the delete,
+  // so no spot / break is left pointing at a deleted category. Uuids drive the per-row update path.
+  const refBreaks = db.prepare(
+    `SELECT uuid FROM clock_breaks WHERE spot_category_id = ? AND deleted_at IS NULL AND station_id = ?`
+  ).all(existing.id, existing.station_id);
+  const refSpots = db.prepare(
+    `SELECT uuid FROM spots WHERE spot_category_id = ? AND deleted_at IS NULL AND station_id = ?`
+  ).all(existing.id, existing.station_id);
 
   const before = serializePayload(existing, TABLE);
 
@@ -152,12 +179,17 @@ function spotCategoriesDelete(db, uuid, stationId) {
     station_id:     (stationId ?? existing.station_id),
     actor_id:       null,
   }, () => {
+    // Cascade FIRST, inside the delete's transaction. Each call is its own nested withMutation, so
+    // each nulled row logs its own update mutation parented to this delete (context stack), and the
+    // whole thing is atomic locally (nested db.transaction → SAVEPOINT).
+    for (const b of refBreaks) clockBreaksUpdate(db, b.uuid, { spot_category_id: null });
+    for (const s of refSpots)  spotsUpdate(db, s.uuid, { spot_category_id: null });
     const now = new Date().toISOString();
     db.prepare(
       `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
   });
-  return { ok: true };
+  return { ok: true, nulledBreaks: refBreaks.length, nulledSpots: refSpots.length };
 }
 
 // ── IPC installation ──────────────────────────────────────────────────────────
@@ -189,6 +221,11 @@ function installSpotCategories(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('spot_categories:refs', (_, uuid) => {
+    try { return { ok: true, ...spotCategoriesRefs(getDb(), uuid) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   ipcMain.handle('spot_categories:delete', (_, uuid, stationId) => {
     try { return { ok: true, ...spotCategoriesDelete(getDb(), uuid, stationId) }; }
     catch (e) { return { ok: false, error: e.message }; }
@@ -205,5 +242,6 @@ module.exports = {
   spotCategoriesCreate,
   spotCategoriesUpdate,
   spotCategoriesUpdateById,
+  spotCategoriesRefs,
   spotCategoriesDelete,
 };
