@@ -791,7 +791,7 @@ function ClocksTab() {
   const [showTalkPicker, setShowTalkPicker] = useState(false);
   const [showSpotPicker, setShowSpotPicker] = useState(false);
   const [dragIdx, setDragIdx]     = useState<number | null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ idx: number; edge: "top" | "bottom" } | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [copiedSlot, setCopiedSlot] = useState<ClockSlot | null>(null);
   const [editCell, setEditCell] = useState<{ slotId: number; field: "type" | "cat" } | null>(null);
@@ -1001,14 +1001,25 @@ function ClocksTab() {
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
-  const handleDrop = async (toIdx: number) => {
-    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); setDragOverIdx(null); return; }
+  const handleDrop = async () => {
+    const from = dragIdx;
+    const target = dropTarget;
+    setDragIdx(null); setDropTarget(null);
+    if (from === null || !target) return;
+    // Resolve the hovered row + edge into an insertion index, then account for removing
+    // the dragged row first (indices above the removal shift down by one).
+    let to = target.edge === "bottom" ? target.idx + 1 : target.idx;
+    if (from < to) to -= 1;
+    if (to === from) return; // no-op move
     const reordered = [...slots];
-    const [moved] = reordered.splice(dragIdx, 1);
-    reordered.splice(toIdx, 0, moved);
-    await Promise.all(reordered.map((s, i) => (window as any).ether.clockSlots.updateById(s.id, { position: i })));
-    setDragIdx(null); setDragOverIdx(null);
-    if (selected) loadSlots(selected);
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    // Optimistic: reflect the new order (and truthful positions) instantly — no DB re-query,
+    // which would also re-randomize the music-slot song previews. Persist positions in the
+    // background via the existing updateById path; display uses array order, not s.position.
+    setSlots(reordered.map((s, i) => ({ ...s, position: i })));
+    Promise.all(reordered.map((s, i) => (window as any).ether.clockSlots.updateById(s.id, { position: i })))
+      .catch(() => { if (selected) loadSlots(selected); }); // reconcile from DB only if a write failed
   };
 
   // Compute cumulative clock positions
@@ -1141,31 +1152,44 @@ function ClocksTab() {
                   const isEditType  = editCell?.slotId === s.id && editCell.field === "type";
                   const isEditCat   = editCell?.slotId === s.id && editCell.field === "cat";
                   const chainType   = s.chain_type || "segue";
+                  const isDropTop = dropTarget?.idx === i && dropTarget.edge === "top";
+                  const isDropBot = dropTarget?.idx === i && dropTarget.edge === "bottom";
                   return (
                   <div
                     key={s.id}
                     draggable
                     onClick={() => setSelectedSlotId(isSelected ? null : s.id)}
                     onDragStart={e => { e.dataTransfer.effectAllowed = "move"; setDragIdx(i); }}
-                    onDragOver={e => { e.preventDefault(); setDragOverIdx(i); }}
+                    onDragOver={e => {
+                      e.preventDefault();
+                      if (dragIdx === null) return;
+                      const r = e.currentTarget.getBoundingClientRect();
+                      const edge: "top" | "bottom" = (e.clientY - r.top) < r.height / 2 ? "top" : "bottom";
+                      // Guard: only re-render when the drop target actually changes.
+                      setDropTarget(prev => (prev && prev.idx === i && prev.edge === edge) ? prev : { idx: i, edge });
+                    }}
                     onDragEnter={e => e.preventDefault()}
-                    onDrop={e => { e.preventDefault(); handleDrop(i); }}
-                    onDragEnd={() => { setDragIdx(null); setDragOverIdx(null); }}
+                    onDrop={e => { e.preventDefault(); handleDrop(); }}
+                    onDragEnd={() => { setDragIdx(null); setDropTarget(null); }}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "24px 52px 28px 68px 88px 1fr 1fr 60px 52px 52px",
-                      padding: "0 10px",
-                      minHeight: 32,
+                      padding: "6px 10px",
+                      minHeight: 44,
                       alignItems: "center",
                       cursor: "grab",
                       background: isSelected
                         ? "rgba(167,139,250,0.12)"
-                        : dragOverIdx === i
-                        ? "rgb(from var(--accent-blue) r g b / 0.06)"
                         : i % 2 === 0 ? "var(--bg-secondary)" : "rgba(255,255,255,0.01)",
                       borderBottom: "1px solid rgba(255,255,255,0.03)",
                       borderLeft: `3px solid ${isSelected ? "#a78bfa" : slotColor(s)}`,
                       outline: isSelected ? "1px solid rgba(167,139,250,0.3)" : "none",
+                      // Drop-position divider: crisp accent line at the edge the slot will land on.
+                      boxShadow: isDropTop
+                        ? "inset 0 3px 0 0 var(--accent-blue)"
+                        : isDropBot
+                        ? "inset 0 -3px 0 0 var(--accent-blue)"
+                        : "none",
                       opacity: dragIdx === i ? 0.4 : 1,
                       transition: "background 0.1s",
                     }}
