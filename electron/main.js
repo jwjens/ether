@@ -5231,8 +5231,13 @@ function _buildScheduleCtx(stationId) {
   // DB (no spot_category_id column) can't break generation — spot breaks just fall back to any spot.
   let stmtSpotsByCategory = null;
   try { stmtSpotsByCategory = db.prepare(SPOT_SELECT_BY_CATEGORY); } catch {}
+  // Per-clock timed spot breaks (v26). Prepared defensively so a pre-v26 DB (no clock_breaks table)
+  // can't break generation — if it can't prepare, break mode is simply inactive and every clock
+  // generates via the unchanged sequential slot-walk.
+  let stmtClockBreaks = null;
+  try { stmtClockBreaks = db.prepare(`SELECT minute, spot_category_id, count FROM clock_breaks WHERE clock_id = ? AND deleted_at IS NULL ORDER BY minute, sort_order`); } catch {}
   return {
-    activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory,
+    activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
@@ -5244,7 +5249,7 @@ function _buildScheduleCtx(stationId) {
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
-  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
+  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, stmtClockBreaks, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
@@ -5262,6 +5267,102 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
     const usedSongIds = new Set(), usedArtistIds = new Set(), usedTitles = new Set();
     const hourEnd = hourStartTs + 3600;
     let currentTs = hourStartTs;
+
+    // ── BREAK MODE (v26): if this clock has timed spot breaks, anchor the hour by them and fill
+    // music to time around them. A clock with NO breaks falls through to the unchanged sequential
+    // slot-walk below (byte-identical prior behavior — no regression). ──
+    const breaks = stmtClockBreaks ? stmtClockBreaks.all(show.clock_id) : [];
+    if (breaks.length > 0) {
+      const dayStr = _localDayStr(slotDate);
+      const musicSlots = slots.filter(s => s.slot_type === 'music' && s.category_id);
+      let musicIdx = 0;
+      const nextMusicSlot = () => (musicSlots.length ? musicSlots[musicIdx++ % musicSlots.length] : null);
+      // Select a song for a category at the cursor — SAME per-hour dedup + separation as the
+      // sequential path; returns the row or null (does NOT record/push).
+      const selectMusic = (categoryId, cursorTs) => {
+        const candidates = stmtCandidates.all(categoryId, h);
+        let picked = null, softFallback = null;
+        for (const song of candidates) {
+          if (usedSongIds.has(song.id)) continue;
+          const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
+          if (cursorTs - lastSongTs < songRepeatMin * 60) continue;
+          const titleKey = (song.title || '').trim().toLowerCase();
+          if (titleKey) {
+            const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
+            if (usedTitles.has(titleKey) || (cursorTs - lastTitleTs) < titleSepMin * 60) continue;
+          }
+          const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
+          const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (cursorTs - lastArtistTs) < artistSepMin * 60);
+          if (!artistBlocked) { picked = song; break; }
+          if (!softFallback) softFallback = song;
+        }
+        if (!picked) picked = softFallback;
+        if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
+        return picked;
+      };
+      const recordMusic = (picked, categoryId, ts, durationS) => {
+        usedSongIds.add(picked.id);
+        if (picked.artist_id) usedArtistIds.add(picked.artist_id);
+        const pTitleKey = (picked.title || '').trim().toLowerCase();
+        if (pTitleKey) { usedTitles.add(pTitleKey); titleLastTs.set(pTitleKey, ts); }
+        songLastTs.set(picked.id, ts);
+        if (picked.artist_id) artistLastTs.set(picked.artist_id, ts);
+        generatedRows.push({ scheduled_at: ts, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? path.basename(picked.file_path) : '', duration_s: durationS, category_id: categoryId, clock_id: show.clock_id });
+      };
+      // Place a break's `count` spots back-to-back from its category. Shared rotation/caps via
+      // spotLastTs/spotPlaysToday (the run-wide maps) so a spot won't repeat until rotation cycles.
+      // NULL spot_category_id = any active spot. Returns the advanced cursor.
+      const placeBreak = (brk, ts) => {
+        let cur = ts;
+        for (let k = 0; k < (brk.count || 1); k++) {
+          if (cur >= hourEnd) break;
+          const sp = _pickSpot(stmtSpotsByCategory, brk.spot_category_id, activeStationId, dayStr, spotLastTs, spotPlaysToday);
+          if (!sp) break;
+          spotLastTs.set(sp.id, cur);
+          spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
+          const durationS = sp.length_sec || 30;
+          generatedRows.push({ scheduled_at: cur, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
+          cur += durationS;
+        }
+        return cur;
+      };
+      const anchors = breaks.slice().sort((a, b) => (a.minute || 0) - (b.minute || 0));
+      for (const brk of anchors) {
+        const target = hourStartTs + (brk.minute || 0) * 60;
+        if (target >= hourEnd) break; // anchor at/after the top of the next hour never airs this hour
+        let breakPlaced = false;
+        // Fill music until the boundary NEAREST the target (minute 0 => nothing to fill => exact top of hour).
+        while (currentTs < target) {
+          const ms = nextMusicSlot(); if (!ms) break;
+          const picked = selectMusic(ms.category_id, currentTs); if (!picked) break;
+          const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : (ms.duration_min || 4) * 60;
+          if (currentTs + durationS <= target) {
+            recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS;
+            continue;
+          }
+          // This song straddles the target — choose the NEAREST boundary (not forward-only):
+          const gapBefore = target - currentTs;               // drop the break BEFORE this song
+          const gapAfter  = (currentTs + durationS) - target;  // drop the break AFTER this song
+          if (gapAfter < gapBefore) {
+            recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS; // song, then break
+          } else {
+            currentTs = placeBreak(brk, currentTs); breakPlaced = true;                        // break, then song
+            recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS;
+          }
+          break;
+        }
+        if (!breakPlaced && currentTs < hourEnd) currentTs = placeBreak(brk, currentTs);
+      }
+      // Fill the remainder of the hour with music (last song may overrun :00 and is cut, same as sequential).
+      while (currentTs < hourEnd) {
+        const ms = nextMusicSlot(); if (!ms) break;
+        const picked = selectMusic(ms.category_id, currentTs); if (!picked) break;
+        const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : (ms.duration_min || 4) * 60;
+        recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS;
+      }
+      continue; // hour fully built in break mode — skip the sequential slot-walk
+    }
+
     for (const slot of slots) {
       if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
       const slotDurationS = (slot.duration_min || 4) * 60;
