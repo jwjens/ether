@@ -3,6 +3,8 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
+// Path → fetchable URL (Windows backslashes → forward slashes, three-slash file URL). Matches StudioPro.
+const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
 import { useAudioEngine } from "../audio/AudioEngineContext";
 
 interface Spot {
@@ -140,16 +142,8 @@ export default function Spots() {
       const filePath = Array.isArray(files) ? files[0] : files;
       setImporting(true); setStatus("Reading traffic file...");
 
-      // Read file via IPC
-      let content = "";
-      try {
-        const bytes = await (window as any).ether.invoke("read_audio_file", { filePath });
-        content = new TextDecoder().decode(new Uint8Array(bytes));
-      } catch {
-        // Fallback: try fetch (for local file protocol)
-        const resp = await fetch("file://" + filePath);
-        content = await resp.text();
-      }
+      // Read the traffic CSV/TSV as text directly from disk (renderer can fetch file:// URLs).
+      const content = await (await fetch(toFileUrl(filePath))).text();
 
       const lines = content.split(/\r?\n/).filter(l => l.trim());
       if (lines.length < 2) { setStatus("File is empty or has no data rows."); setImporting(false); return; }

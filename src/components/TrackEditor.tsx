@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
+// Path → fetchable URL (Windows backslashes → forward slashes, three-slash file URL). Matches StudioPro.
+const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
 import WaveformGL from "./WaveformGL";
 
 interface Song {
@@ -71,8 +73,7 @@ function ImportPanel({ onImported }: ImportPanelProps) {
 
       // Get duration via Web Audio
       try {
-        const bytes1 = await invoke<number[]>("read_audio_file", { filePath });
-        const buf1 = new Uint8Array(bytes1).buffer;
+        const buf1 = await (await fetch(toFileUrl(filePath))).arrayBuffer();
         const ctx = new AudioContext();
         const decoded = await ctx.decodeAudioData(buf1);
         durationMs = Math.round(decoded.duration * 1000);
@@ -463,8 +464,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           audioCtxRef.current = null;
         }
 
-        const bytes2 = await invoke<number[]>("read_audio_file", { filePath: song.file_path });
-        const arrayBuf = new Uint8Array(bytes2).buffer;
+        const arrayBuf = await (await fetch(toFileUrl(song.file_path))).arrayBuffer();
         const ctx = new AudioContext();
 
         // Route to cue output device if selected
