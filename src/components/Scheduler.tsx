@@ -786,6 +786,7 @@ function ClocksTab() {
   const [slots, setSlots]         = useState<ClockSlot[]>([]);
   const [cats, setCats]           = useState<Category[]>([]);
   const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null }[]>([]);
+  const [breaks, setBreaks]       = useState<{ id: number; uuid: string; minute: number; spot_category_id: number | null; count: number }[]>([]);
   const [newName, setNewName]     = useState("");
   const [showPicker, setShowPicker] = useState(false);
   const [showTalkPicker, setShowTalkPicker] = useState(false);
@@ -867,8 +868,29 @@ function ClocksTab() {
     setSlots(enriched);
   };
 
+  const loadBreaks = async (clockId: number) => {
+    if (!isReady) return;
+    const res = await (window as any).ether.clockBreaks.list(stationId, { clockId });
+    setBreaks(((res?.rows) || []).map((r: any) => ({ id: r.id, uuid: r.uuid, minute: r.minute, spot_category_id: r.spot_category_id, count: r.count })));
+  };
+
   useEffect(() => { loadAll(); }, [isReady, stationId]);
-  useEffect(() => { if (selected) loadSlots(selected); else setSlots([]); }, [selected]);
+  useEffect(() => { if (selected) { loadSlots(selected); loadBreaks(selected); } else { setSlots([]); setBreaks([]); } }, [selected]);
+
+  // ── Timed spot breaks (per clock; the generator reads clock_breaks) ──
+  const addBreak = async () => {
+    if (!selected) return;
+    await (window as any).ether.clockBreaks.create({ station_id: stationId, clock_id: selected, minute: 0, spot_category_id: spotCats[0]?.id ?? null, count: 1 });
+    loadBreaks(selected);
+  };
+  const updateBreak = async (id: number, patch: Partial<{ minute: number; spot_category_id: number | null; count: number }>) => {
+    setBreaks(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b)); // optimistic
+    await (window as any).ether.clockBreaks.updateById(id, patch);
+  };
+  const removeBreak = async (b: { uuid: string }) => {
+    await (window as any).ether.clockBreaks.delete(b.uuid, stationId);
+    if (selected) loadBreaks(selected);
+  };
 
   const createClock = async () => {
     if (!newName.trim()) return;
@@ -1491,6 +1513,44 @@ function ClocksTab() {
               >
                 {showPicker ? "✕ Cancel" : "+ More Options"}
               </button>
+            </div>
+
+            {/* ── Timed Spot Breaks (per clock) — anchor spots to a minute; music fills around them ── */}
+            <div style={{ marginTop: 16, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3, fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
+                Air spots at set minutes past the hour on this clock — music fills around them. :00 = exact top of hour; other minutes land at the nearest song boundary (a song is never cut). Empty = no timed breaks (this clock plays its slots in order).
+              </div>
+              {breaks.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, fontSize: 9, fontWeight: 800, color: "var(--text-tertiary)", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>
+                    <span>Min past hr</span><span>Spot category</span><span>Spots</span><span></span>
+                  </div>
+                  {breaks.map(b => (
+                    <div key={b.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 14, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
+                        <input type="number" min={0} max={59} value={b.minute}
+                          onChange={e => updateBreak(b.id, { minute: Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0)) })}
+                          style={{ width: 66, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
+                      </div>
+                      <select value={b.spot_category_id ?? ""} onChange={e => updateBreak(b.id, { spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
+                        style={{ padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: b.spot_category_id == null ? "var(--text-tertiary)" : "var(--text-primary)", outline: "none", cursor: "pointer" }}>
+                        <option value="">Any spot</option>
+                        {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
+                      </select>
+                      <input type="number" min={1} max={10} value={b.count}
+                        onChange={e => updateBreak(b.id, { count: Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)) })}
+                        style={{ width: 74, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
+                      <button onClick={() => removeBreak(b)} title="Remove break" style={{ padding: "6px 9px", fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <button onClick={addBreak} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer" }}>+ Add break</button>
+                {spotCats.length === 0 && <span style={{ fontSize: 11, color: "var(--accent-amber)" }}>No spot categories yet — create them in Spots &amp; Promos first.</span>}
+              </div>
             </div>
           </div>
         ) : (
