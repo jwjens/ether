@@ -787,6 +787,7 @@ function ClocksTab() {
   const [cats, setCats]           = useState<Category[]>([]);
   const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null }[]>([]);
   const [breaks, setBreaks]       = useState<{ id: number; uuid: string; minute: number; spot_category_id: number | null; count: number }[]>([]);
+  const [breaksSaved, setBreaksSaved] = useState(false);
   const [newName, setNewName]     = useState("");
   const [showPicker, setShowPicker] = useState(false);
   const [showTalkPicker, setShowTalkPicker] = useState(false);
@@ -878,18 +879,19 @@ function ClocksTab() {
   useEffect(() => { if (selected) { loadSlots(selected); loadBreaks(selected); } else { setSlots([]); setBreaks([]); } }, [selected]);
 
   // ── Timed spot breaks (per clock; the generator reads clock_breaks) ──
+  const flashSaved = () => { setBreaksSaved(true); setTimeout(() => setBreaksSaved(false), 1400); };
   const addBreak = async () => {
     if (!selected) return;
     await (window as any).ether.clockBreaks.create({ station_id: stationId, clock_id: selected, minute: 0, spot_category_id: spotCats[0]?.id ?? null, count: 1 });
-    loadBreaks(selected);
+    await loadBreaks(selected); flashSaved();
   };
   const updateBreak = async (id: number, patch: Partial<{ minute: number; spot_category_id: number | null; count: number }>) => {
     setBreaks(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b)); // optimistic
-    await (window as any).ether.clockBreaks.updateById(id, patch);
+    await (window as any).ether.clockBreaks.updateById(id, patch); flashSaved();
   };
   const removeBreak = async (b: { uuid: string }) => {
     await (window as any).ether.clockBreaks.delete(b.uuid, stationId);
-    if (selected) loadBreaks(selected);
+    if (selected) await loadBreaks(selected); flashSaved();
   };
 
   const createClock = async () => {
@@ -1517,9 +1519,12 @@ function ClocksTab() {
 
             {/* ── Timed Spot Breaks (per clock) — anchor spots to a minute; music fills around them ── */}
             <div style={{ marginTop: 16, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3, fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
+                <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--accent-green)", opacity: breaksSaved ? 1 : 0, transition: "opacity 0.2s" }}>✓ Saved</span>
+              </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
-                Air spots at set minutes past the hour on this clock — music fills around them. :00 = exact top of hour; other minutes land at the nearest song boundary (a song is never cut). Empty = no timed breaks (this clock plays its slots in order).
+                Air spots at set minutes past the hour on this clock — music fills around them. :00 = exact top of hour; other minutes land at the nearest song boundary (a song is never cut). Empty = no timed breaks (this clock plays its slots in order). Changes save automatically — <strong style={{ color: "var(--text-secondary)" }}>Generate in the Calendar</strong> to air them.
               </div>
               {breaks.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 12 }}>
@@ -1530,8 +1535,9 @@ function ClocksTab() {
                     <div key={b.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, alignItems: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span style={{ fontSize: 14, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
-                        <input type="number" min={0} max={59} value={b.minute}
-                          onChange={e => updateBreak(b.id, { minute: Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0)) })}
+                        <input type="text" inputMode="numeric" value={String(b.minute)}
+                          onFocus={e => e.currentTarget.select()}
+                          onChange={e => { const n = parseInt(e.target.value.replace(/\D/g, ''), 10); updateBreak(b.id, { minute: isNaN(n) ? 0 : Math.max(0, Math.min(59, n)) }); }}
                           style={{ width: 66, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
                       </div>
                       <select value={b.spot_category_id ?? ""} onChange={e => updateBreak(b.id, { spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
@@ -1539,8 +1545,9 @@ function ClocksTab() {
                         <option value="">Any spot</option>
                         {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
                       </select>
-                      <input type="number" min={1} max={10} value={b.count}
-                        onChange={e => updateBreak(b.id, { count: Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)) })}
+                      <input type="text" inputMode="numeric" value={String(b.count)}
+                        onFocus={e => e.currentTarget.select()}
+                        onChange={e => { const n = parseInt(e.target.value.replace(/\D/g, ''), 10); updateBreak(b.id, { count: isNaN(n) ? 1 : Math.max(1, Math.min(10, n)) }); }}
                         style={{ width: 74, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
                       <button onClick={() => removeBreak(b)} title="Remove break" style={{ padding: "6px 9px", fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
