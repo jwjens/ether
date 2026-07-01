@@ -464,7 +464,17 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           audioCtxRef.current = null;
         }
 
-        const arrayBuf = await (await fetch(toFileUrl(song.file_path))).arrayBuffer();
+        // Resolve the file the SAME way playback does (local-first → R2-by-file_key). song.file_path
+        // may be the source machine's path on a synced/Connect library; the resolver returns the
+        // locally-loadable path (or a cached R2 copy).
+        const r = await invoke<{ ok: boolean; filePath?: string; error?: string }>("audio:resolve-local-path", song.file_path);
+        if (!r?.ok || !r.filePath) {
+          setLoadError("Could not load audio: " + (r?.error || "file not found on this machine"));
+          setLoading(false);
+          return;
+        }
+        const resolvedPath = r.filePath;
+        const arrayBuf = await (await fetch(toFileUrl(resolvedPath))).arrayBuffer();
         const ctx = new AudioContext();
 
         // Route to cue output device if selected
@@ -507,7 +517,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         // FIX #1: Try to upgrade to high-quality Rust mipmap after initial render.
         // waveformData is set either way — the flag that was always false is removed.
         try {
-          const mipmap = await invoke<{ levels: number[][] }>("build_peak_mipmap", { filePath: song.file_path });
+          const mipmap = await invoke<{ levels: number[][] }>("build_peak_mipmap", { filePath: resolvedPath });
           if (mipmap?.levels?.[0]) {
             setWaveformData(new Float32Array(mipmap.levels[0]));
           }

@@ -2455,6 +2455,36 @@ ipcMain.handle('sync:getStats', () => {
 // short-circuit makes subsequent loads fast; writing file_path back would
 // generate sync mutation noise for zero local benefit (each machine would
 // propagate its own cachePath to others, who'd just rewrite to their own).
+// Shared audio-file resolver — the SAME local-first → file_key → R2 sequence audio:load used to do
+// inline (Phase 1.3k). Extracted so playback (audio:load) and the cue editor (audio:resolve-local-path)
+// resolve identically and can never drift. Returns { ok:true, filePath } (a locally-loadable path) or
+// { ok:false, error }. Never throws.
+async function resolveLocalAudioPath(filePath) {
+  // (1) Fast path — file exists locally.
+  if (filePath && fs.existsSync(filePath)) {
+    return { ok: true, filePath };
+  }
+  // (2) Local miss — look up file_key for this exact file_path (matches the synced songs row).
+  let fileKey = null;
+  if (filePath) {
+    try {
+      const row = db.prepare("SELECT file_key FROM songs WHERE file_path = ? LIMIT 1").get(filePath);
+      fileKey = row?.file_key || null;
+    } catch (e) {
+      console.warn("[resolveLocalAudioPath] file_key lookup failed:", e.message);
+    }
+  }
+  if (!fileKey) {
+    return { ok: false, error: 'no local file, no file_key' };
+  }
+  // (3) Have a file_key — R2 fallback. Tier gate enforced inside fetchR2Track; returns { ok, filePath }.
+  console.log(`[resolveLocalAudioPath] local miss, attempting R2 fallback for file_key=${fileKey}`);
+  const fetched = await fetchR2Track(fileKey);
+  if (!fetched.ok) console.warn(`[resolveLocalAudioPath] R2 fallback failed: ${fetched.error}`);
+  else console.log(`[resolveLocalAudioPath] R2 fallback succeeded → ${fetched.filePath}`);
+  return fetched;
+}
+
 ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
   // Item 10 Phase 2 Step 1: the resolved load goes to the daemon when enabled (it owns the
   // engine); otherwise the in-process addon. File resolution (existsSync + R2 fetch) — which
@@ -2462,42 +2492,15 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
   const doLoad = (fp) => AUDIO_DAEMON
     ? audiodClient.cmd("load", { deck, filePath: fp, title, artist, gainDb: gainDb ?? 0, stationId })
     : audio.audioLoad(deck, fp, title, artist, gainDb ?? 0, stationId);
-  // Fast path — file exists locally. Behave exactly as the pre-1.3k handler.
-  if (filePath && fs.existsSync(filePath)) {
-    return doLoad(filePath);
-  }
-
-  // File missing. Look up file_key for this file_path. Exact match on the
-  // synced songs row — the renderer's loadToDeck calls pass next.filePath
-  // straight from songs/queue/cart objects, so the path here matches the
-  // row's file_path exactly.
-  let fileKey = null;
-  if (filePath) {
-    try {
-      const row = db.prepare("SELECT file_key FROM songs WHERE file_path = ? LIMIT 1").get(filePath);
-      fileKey = row?.file_key || null;
-    } catch (e) {
-      console.warn("[audio:load] file_key lookup failed:", e.message);
-    }
-  }
-
-  if (!fileKey) {
-    // No file_key registered. Fall through to legacy — the Rust audio worker
-    // will fail with "File not found" same as before 1.3k.
-    return doLoad(filePath);
-  }
-
-  // Have a file_key — try the R2 fallback. Tier gate enforced inside fetchR2Track.
-  console.log(`[audio:load] local miss, attempting R2 fallback for file_key=${fileKey}`);
-  const fetched = await fetchR2Track(fileKey);
-  if (!fetched.ok) {
-    console.warn(`[audio:load] R2 fallback failed: ${fetched.error} — falling through to legacy path`);
-    return doLoad(filePath);
-  }
-
-  console.log(`[audio:load] R2 fallback succeeded → ${fetched.filePath}`);
-  return doLoad(fetched.filePath);
+  // Resolve exactly as before (local-first → file_key → R2). On any failure, soft-fall to the
+  // original filePath so the Rust worker reports the error exactly as pre-refactor (no regression).
+  const resolved = await resolveLocalAudioPath(filePath);
+  return doLoad(resolved.ok ? resolved.filePath : filePath);
 });
+
+// Resolve a song's stored file_path to a locally-loadable path (used by the cue editor so it reads
+// the SAME file playback does). Returns { ok, filePath, error } — never throws.
+ipcMain.handle("audio:resolve-local-path", async (_, filePath) => resolveLocalAudioPath(filePath));
 
 // Item 10 Phase 2 Step 1: deck control + state + levels route to the daemon when AUDIO_DAEMON
 // (it owns the engine), else the in-process addon. getState/getLevels return parsed objects
