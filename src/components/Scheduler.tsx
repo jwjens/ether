@@ -57,8 +57,8 @@ const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SLOT_TYPES = ["music", "spot_break", "liner", "sweeper", "news", "talkset", "jingle"];
 const CLOCK_SLOT_TYPE_OPTIONS = [
   { value: "music",      label: "Song",    color: "var(--accent-blue)" },
-  { value: "spot_break", label: "Spot",    color: "#ef4444" },
-  { value: "talk_break", label: "Talk",    color: "#a78bfa" },
+  { value: "spot_break", label: "Spots",     color: "#ef4444" },
+  { value: "talk_break", label: "Talk break", color: "#a78bfa" },
   { value: "liner",      label: "Liner",   color: "#34d399" },
   { value: "sweeper",    label: "Sweeper", color: "#f59e0b" },
 ];
@@ -475,8 +475,8 @@ function slotColor(s: ClockSlot): string {
 }
 
 function slotLabel(s: ClockSlot): string {
-  if (s.slot_type === "talk_break") return s.label || "Talk Break";
-  if (s.slot_type === "spot_break") return s.label || "Commercial";
+  if (s.slot_type === "talk_break") return s.label || "Talk break";
+  if (s.slot_type === "spot_break") return s.label || "Spots";
   if (s.slot_type === "liner") return "Liner";
   if (s.slot_type === "sweeper") return "Sweeper";
   return s.category_code || "Song";
@@ -674,12 +674,13 @@ function TalkPicker({ onAdd, onBack }: {
 }
 
 // ── Segment picker — shows ALL categories from DB ────────────
-function SegmentPicker({ cats, onAdd, onClose }: {
+function SegmentPicker({ cats, spotCats, onAdd, onClose }: {
   cats: Category[];
-  onAdd: (type: string, catId: number | null, durationMin: number, label: string) => void;
+  spotCats: { id: number; name: string; color: string | null }[];
+  onAdd: (type: string, catId: number | null, durationMin: number, label: string, spotCatId?: number | null) => void;
   onClose: () => void;
 }) {
-  const [step, setStep] = useState<"type" | "song" | "commercial" | "talk">("type");
+  const [step, setStep] = useState<"type" | "song" | "spots" | "talk">("type");
 
   return (
     <div style={{
@@ -690,7 +691,7 @@ function SegmentPicker({ cats, onAdd, onClose }: {
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
         <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>
-          {step === "type" ? "ADD SEGMENT" : step === "song" ? "PICK CATEGORY" : step === "commercial" ? "COMMERCIAL" : "TALK BREAK"}
+          {step === "type" ? "ADD SEGMENT" : step === "song" ? "PICK CATEGORY" : step === "spots" ? "SPOTS — PICK CATEGORY" : "TALK BREAK"}
         </span>
         <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
       </div>
@@ -699,8 +700,8 @@ function SegmentPicker({ cats, onAdd, onClose }: {
         <div style={{ display: "flex", gap: 6 }}>
           {[
             { label: "Song", color: "var(--accent-blue)", next: "song" as const },
-            { label: "Commercial", color: "#ef4444", next: "commercial" as const },
-            { label: "Talk Break", color: "#a78bfa", next: "talk" as const },
+            { label: "Spots", color: "#ef4444", next: "spots" as const },
+            { label: "Talk break", color: "#a78bfa", next: "talk" as const },
           ].map(b => (
             <button key={b.label} onClick={() => setStep(b.next)} style={{
               flex: 1, padding: "10px 6px", borderRadius: 0, fontSize: 12, fontWeight: 700,
@@ -728,16 +729,24 @@ function SegmentPicker({ cats, onAdd, onClose }: {
         </div>
       )}
 
-      {step === "commercial" && (
+      {step === "spots" && (
         <div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-            {[{l:":30",m:0.5},{l:"1:00",m:1},{l:"2:00",m:2},{l:"3:00",m:3}].map(({l,m}) => (
-              <button key={l} onClick={() => onAdd("spot_break", null, m, l + " break")} style={{
-                flex: 1, padding: "8px 4px", borderRadius: 0, fontSize: 12, fontWeight: 700,
-                cursor: "pointer", background: "rgba(185,28,28,0.2)", border: "1px solid rgba(185,28,28,0.4)", color: "#fca5a5",
-              }}>{l}</button>
-            ))}
-          </div>
+          {spotCats.length === 0 ? (
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>Create a spot category in Spots &amp; Promos first.</div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5, marginBottom: 8 }}>
+              {spotCats.map(sc => (
+                <button key={sc.id} onClick={() => onAdd("spot_break", null, 2, "Spots", sc.id)} style={{
+                  padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  background: (sc.color || "#ef4444") + "22", border: "1px solid " + (sc.color || "#ef4444") + "55", color: sc.color || "#fca5a5",
+                }}>{sc.name}</button>
+              ))}
+              <button onClick={() => onAdd("spot_break", null, 2, "Spots", null)} style={{
+                padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)",
+              }}>Any spot</button>
+            </div>
+          )}
           <button onClick={() => setStep("type")} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
         </div>
       )}
@@ -780,11 +789,12 @@ function ClocksTab() {
   const [newName, setNewName]     = useState("");
   const [showPicker, setShowPicker] = useState(false);
   const [showTalkPicker, setShowTalkPicker] = useState(false);
+  const [showSpotPicker, setShowSpotPicker] = useState(false);
   const [dragIdx, setDragIdx]     = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<number | null>(null);
   const [copiedSlot, setCopiedSlot] = useState<ClockSlot | null>(null);
-  const [editCell, setEditCell] = useState<{ slotId: number; field: "type" | "cat" | "spot" } | null>(null);
+  const [editCell, setEditCell] = useState<{ slotId: number; field: "type" | "cat" } | null>(null);
 
   // ── Fix: reload cats every time the tab is active ────────────
   const loadAll = async () => {
@@ -881,7 +891,7 @@ function ClocksTab() {
     }
   };
 
-  const handleAdd = async (type: string, catId: number | null, durationMin: number, label: string) => {
+  const handleAdd = async (type: string, catId: number | null, durationMin: number, label: string, spotCatId: number | null = null) => {
     if (!selected) return;
     let dur = durationMin;
     if (type === "music" && catId) {
@@ -895,7 +905,7 @@ function ClocksTab() {
     }
     await (window as any).ether.clockSlots.create({
       station_id: stationId, clock_id: selected, position: slots.length,
-      slot_type: type, category_id: catId, duration_min: dur, label,
+      slot_type: type, category_id: catId, spot_category_id: spotCatId, duration_min: dur, label,
     });
     setShowPicker(false);
     loadSlots(selected);
@@ -1130,7 +1140,6 @@ function ClocksTab() {
                   const isSelected  = selectedSlotId === s.id;
                   const isEditType  = editCell?.slotId === s.id && editCell.field === "type";
                   const isEditCat   = editCell?.slotId === s.id && editCell.field === "cat";
-                  const isEditSpot  = editCell?.slotId === s.id && editCell.field === "spot";
                   const chainType   = s.chain_type || "segue";
                   return (
                   <div
@@ -1230,29 +1239,22 @@ function ClocksTab() {
                           >{s.category_code || "—"}</span>
                         )
                       ) : s.slot_type === "spot_break" ? (
-                        isEditSpot ? (
-                          <select
-                            autoFocus
-                            value={s.spot_category_id ?? ""}
-                            onChange={e => changeSpotCategory(s.id, e.target.value ? Number(e.target.value) : null)}
-                            onBlur={() => setEditCell(null)}
-                            onClick={e => e.stopPropagation()}
-                            style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid #ef4444", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
-                          >
-                            <option value="">Any spot</option>
-                            {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
-                          </select>
-                        ) : (
-                          <span
-                            onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "spot" }); }}
-                            title="Double-click to choose which spot category airs here"
-                            style={{
-                              fontSize: 11, fontWeight: 700, cursor: "text", userSelect: "none" as const,
-                              color: s.spot_category_id ? (s.spot_category_color || "#ef4444") : "var(--text-tertiary)",
-                              display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
-                            }}
-                          >{s.spot_category_name || "Any spot"}</span>
-                        )
+                        // Spot slot: category is a permanently-visible dropdown (no double-click needed).
+                        <select
+                          value={s.spot_category_id ?? ""}
+                          onChange={e => changeSpotCategory(s.id, e.target.value ? Number(e.target.value) : null)}
+                          onClick={e => e.stopPropagation()}
+                          title="Choose which spot category airs here"
+                          style={{
+                            fontSize: 11, width: "100%", background: "var(--bg-tertiary)",
+                            border: "1px solid " + (s.spot_category_id ? ((s.spot_category_color || "#ef4444") + "88") : "var(--border-secondary)"),
+                            color: s.spot_category_id ? (s.spot_category_color || "#ef4444") : "var(--text-tertiary)",
+                            outline: "none", padding: "2px 3px", cursor: "pointer", fontWeight: 700,
+                          }}
+                        >
+                          <option value="">Any spot</option>
+                          {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
+                        </select>
                       ) : (
                         <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>—</span>
                       )}
@@ -1400,15 +1402,38 @@ function ClocksTab() {
                     {cat.code}
                   </button>
                 ))}
-                <button
-                  onClick={() => handleAdd("spot_break", null, 2, "2:00 break")}
-                  style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", color: "#ef4444" }}
-                >
-                  BRK
-                </button>
                 <div style={{ position: "relative" as const }}>
                   <button
-                    onClick={() => { setShowTalkPicker(p => !p); setShowPicker(false); }}
+                    onClick={() => { setShowSpotPicker(p => !p); setShowTalkPicker(false); setShowPicker(false); }}
+                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: showSpotPicker ? "rgba(239,68,68,0.3)" : "rgba(239,68,68,0.12)", border: `1px solid ${showSpotPicker ? "rgba(239,68,68,0.6)" : "rgba(239,68,68,0.3)"}`, color: "#ef4444" }}
+                  >
+                    Spots
+                  </button>
+                  {showSpotPicker && (
+                    <div style={{ position: "absolute" as const, bottom: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 240, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>SPOTS — PICK CATEGORY</div>
+                      {spotCats.length === 0 ? (
+                        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Create a spot category in Spots &amp; Promos first.</span>
+                      ) : (
+                        <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5 }}>
+                          {spotCats.map(sc => (
+                            <button key={sc.id} onClick={() => { handleAdd("spot_break", null, 2, "Spots", sc.id); setShowSpotPicker(false); }} style={{
+                              padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                              background: (sc.color || "#ef4444") + "22", border: "1px solid " + (sc.color || "#ef4444") + "55", color: sc.color || "#fca5a5",
+                            }}>{sc.name}</button>
+                          ))}
+                          <button onClick={() => { handleAdd("spot_break", null, 2, "Spots", null); setShowSpotPicker(false); }} style={{
+                            padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                            background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)",
+                          }}>Any spot</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div style={{ position: "relative" as const }}>
+                  <button
+                    onClick={() => { setShowTalkPicker(p => !p); setShowSpotPicker(false); setShowPicker(false); }}
                     style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: showTalkPicker ? "rgba(167,139,250,0.3)" : "rgba(167,139,250,0.12)", border: `1px solid ${showTalkPicker ? "rgba(167,139,250,0.6)" : "rgba(167,139,250,0.3)"}`, color: "#a78bfa" }}
                   >
                     TALK
@@ -1429,7 +1454,7 @@ function ClocksTab() {
             {/* Add segment */}
             <div style={{ position: "relative" as const }}>
               {showPicker && (
-                <SegmentPicker cats={cats} onAdd={handleAdd} onClose={() => setShowPicker(false)} />
+                <SegmentPicker cats={cats} spotCats={spotCats} onAdd={handleAdd} onClose={() => setShowPicker(false)} />
               )}
               <button
                 onClick={() => { setShowPicker(p => !p); if (!showPicker) loadAll(); }}
