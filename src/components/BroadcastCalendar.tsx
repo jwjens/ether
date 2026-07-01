@@ -310,7 +310,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : it.song_id ? "var(--text-primary)" : "var(--accent-green)" }}>
-                        {isNow ? "▶ " : ""}{it.title}{!it.song_id ? "  ·  voice track" : ""}
+                        {isNow ? "▶ " : ""}{it.title}{!it.song_id ? "  ·  spot" : ""}
                       </span>
                       <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
                       <span style={{ flexShrink: 0, width: 40, textAlign: "right" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>

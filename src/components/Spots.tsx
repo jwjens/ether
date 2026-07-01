@@ -16,7 +16,6 @@ interface Spot {
 }
 
 interface SpotCategory { id: number; name: string; color: string | null; uuid: string; }
-interface BreakRow { minute: number; spotCategoryId: number | null; count: number; }
 
 const SPOT_TYPES = ["promo", "psa", "jingle", "liner", "sweeper", "commercial", "imaging"];
 const AUDIO_EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
@@ -45,11 +44,6 @@ export default function Spots() {
   const [newCatColor, setNewCatColor] = useState("#8868D8");
   const [editCat, setEditCat] = useState<{ id: number; name: string; color: string } | null>(null);
 
-  // ── Timed spot-break grid (per station; the generator reads this) ──
-  const [gridEnabled, setGridEnabled] = useState(false);
-  const [breaks, setBreaks] = useState<BreakRow[]>([]);
-  const [gridSaved, setGridSaved] = useState(false);
-
   const load = async () => {
     if (!isReady) return;
     const conds: string[] = [], params: any[] = [];
@@ -75,26 +69,7 @@ export default function Spots() {
     setCatCounts(map);
   };
 
-  const loadGrid = async () => {
-    if (!isReady) return;
-    try {
-      const res = await (window as any).ether.stationConfigKv.list(stationId);
-      const row = (res?.rows || []).find((r: any) => r.key === "spot_break_grid");
-      if (row?.value) {
-        const p = JSON.parse(row.value) || {};
-        setGridEnabled(!!p.enabled);
-        setBreaks(Array.isArray(p.breaks)
-          ? p.breaks.map((b: any) => ({
-              minute: Math.max(0, Math.min(59, parseInt(b.minute, 10) || 0)),
-              spotCategoryId: b.spotCategoryId == null ? null : Number(b.spotCategoryId),
-              count: Math.max(1, Math.min(10, parseInt(b.count, 10) || 1)),
-            }))
-          : []);
-      } else { setGridEnabled(false); setBreaks([]); }
-    } catch {}
-  };
-
-  useEffect(() => { loadCats(); loadGrid(); }, [isReady, stationId]);
+  useEffect(() => { loadCats(); }, [isReady, stationId]);
 
   // ── Category CRUD ──────────────────────────────────────────────
   const addCat = async () => {
@@ -109,26 +84,9 @@ export default function Spots() {
     setEditCat(null); loadCats();
   };
   const removeCat = async (c: SpotCategory) => {
-    if (!confirm(`Delete spot category "${c.name}"?\n\nSpots in it become uncategorized, and any break using it will pull nothing until reassigned.`)) return;
+    if (!confirm(`Delete spot category "${c.name}"?\n\nSpots in it become uncategorized, and any spot-break slot using it will pull any active spot until reassigned.`)) return;
     await (window as any).ether.spotCategories.delete(c.uuid, stationId);
-    loadCats(); loadGrid(); load();
-  };
-
-  // ── Break grid persistence (per station, in station_config_kv) ──
-  const saveGrid = async (enabled: boolean, br: BreakRow[]) => {
-    const grid = { enabled, breaks: br.map(b => ({ minute: b.minute, spotCategoryId: b.spotCategoryId, count: b.count })) };
-    try {
-      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "spot_break_grid", JSON.stringify(grid));
-      setGridSaved(true); setTimeout(() => setGridSaved(false), 1200);
-    } catch {}
-  };
-  const toggleGrid = (v: boolean) => { setGridEnabled(v); saveGrid(v, breaks); };
-  const addBreakRow = () => { const nb = [...breaks, { minute: 0, spotCategoryId: cats[0]?.id ?? null, count: 1 }]; setBreaks(nb); saveGrid(gridEnabled, nb); };
-  const removeBreakRow = (i: number) => { const nb = breaks.filter((_, idx) => idx !== i); setBreaks(nb); saveGrid(gridEnabled, nb); };
-  const setBreakField = (i: number, patch: Partial<BreakRow>, persist: boolean) => {
-    const nb = breaks.map((b, idx) => idx === i ? { ...b, ...patch } : b);
-    setBreaks(nb);
-    if (persist) saveGrid(gridEnabled, nb);
+    loadCats(); load();
   };
 
   const handleImport = async () => {
@@ -370,7 +328,7 @@ export default function Spots() {
       {/* ── Manage spot categories (per station) ── */}
       <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>Group your spots — e.g. Top-of-Hour IDs, Local Sponsors, Ad Campaign. Timed breaks pull from these. Per station.</div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>Group your spots — e.g. Top-of-Hour IDs, Local Sponsors, Ad Campaign. A spot-break slot in your clocks pulls from one of these. Per station.</div>
         {cats.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column" as any, marginBottom: 14 }}>
             {cats.map((c, i) => (
@@ -401,53 +359,6 @@ export default function Spots() {
           <input placeholder="New category name…" value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addCat(); }}
             style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           <button onClick={addCat} style={{ padding: "8px 16px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Add Category</button>
-        </div>
-      </div>
-
-      {/* ── Timed spot breaks (the core feature — per station) ── */}
-      <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            {gridSaved && <span style={{ fontSize: 11, color: "var(--accent-green)", fontFamily: "'DM Mono', monospace" }}>SAVED</span>}
-            <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Enabled</span>
-            <div onClick={() => toggleGrid(!gridEnabled)} style={{ width: 36, height: 20, cursor: "pointer", background: gridEnabled ? "var(--accent-green)" : "var(--bg-tertiary)", border: "1px solid " + (gridEnabled ? "var(--accent-green)" : "var(--border-secondary)"), position: "relative", flexShrink: 0 }}>
-              <div style={{ position: "absolute", top: 3, left: gridEnabled ? 18 : 3, width: 12, height: 12, background: "#fff", transition: "left 0.2s" }} />
-            </div>
-          </div>
-        </div>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>Air breaks at set minutes past every hour, on all clocks for this station. Each break pulls from its category and drops at the next song boundary, so a song is never cut. Empty = no timed breaks.</div>
-        {breaks.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", padding: "4px 0 14px" }}>No breaks yet — add one below.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column" as any, gap: 8, marginBottom: 14, opacity: gridEnabled ? 1 : 0.55 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 110px 36px", gap: 8, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em" }}>
-              <span>Minutes past hr</span><span>Spot category</span><span>Spots</span><span></span>
-            </div>
-            {breaks.map((b, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "130px 1fr 110px 36px", gap: 8, alignItems: "center" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ fontSize: 14, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
-                  <input type="number" min={0} max={59} value={b.minute}
-                    onChange={e => setBreakField(i, { minute: Math.max(0, Math.min(59, parseInt(e.target.value, 10) || 0)) }, true)}
-                    style={{ width: 80, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
-                </div>
-                <select value={b.spotCategoryId ?? ""} onChange={e => setBreakField(i, { spotCategoryId: e.target.value === "" ? null : parseInt(e.target.value, 10) }, true)}
-                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: b.spotCategoryId == null ? "var(--accent-amber)" : "var(--text-primary)", outline: "none" }}>
-                  <option value="">— pick a category —</option>
-                  {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-                <input type="number" min={1} max={10} value={b.count}
-                  onChange={e => setBreakField(i, { count: Math.max(1, Math.min(10, parseInt(e.target.value, 10) || 1)) }, true)}
-                  style={{ width: 90, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
-                <button onClick={() => removeBreakRow(i)} title="Remove break" style={{ padding: "6px 9px", fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
-              </div>
-            ))}
-          </div>
-        )}
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={addBreakRow} style={{ padding: "8px 16px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>+ Add break</button>
-          {cats.length === 0 && <span style={{ fontSize: 12, color: "var(--accent-amber)" }}>Create a spot category above first, so breaks have something to pull.</span>}
         </div>
       </div>
 
