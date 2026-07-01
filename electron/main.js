@@ -5019,11 +5019,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
        END ASC`
     );
     const stmtSlots = db.prepare(
-      `SELECT cs.position, cs.slot_type, cs.category_id, cs.spot_type, cs.duration_min
+      `SELECT cs.position, cs.slot_type, cs.category_id, cs.spot_type, cs.spot_category_id, cs.duration_min
        FROM clock_slots cs
        WHERE cs.clock_id = ? ORDER BY cs.position`
     );
-    const stmtSpots = db.prepare(SPOT_SELECT);
+    const stmtSpotsByCategory = db.prepare(SPOT_SELECT_BY_CATEGORY);
     const stmtCandidates = db.prepare(
       `SELECT s.id, s.title, a.name AS artist_name, s.artist_id,
               s.duration_ms, s.last_played_at, s.file_path
@@ -5081,10 +5081,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
           slotIdx++;
           const slotDurationS = (slot.duration_min || 4) * 60;
 
-          // Spot break: pull the least-recently-aired eligible spot from the spots library.
+          // Spot break: pull the least-recently-aired eligible spot from the slot's SPOT category
+          // (clock is the master). NULL spot_category_id = any active spot.
           if (slot.slot_type === 'spot_break') {
             const dayStr = _localDayStr(slotDate);
-            const sp = _pickSpot(stmtSpots, slot, activeStationId, dayStr, spotLastTs, spotPlaysToday);
+            const sp = _pickSpot(stmtSpotsByCategory, slot.spot_category_id, activeStationId, dayStr, spotLastTs, spotPlaysToday);
             if (sp) {
               spotLastTs.set(sp.id, currentTs);
               spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
@@ -5225,40 +5226,17 @@ function _buildScheduleCtx(stationId) {
     const tr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='title_separation_min' AND is_active=1 LIMIT 1").get();
     if (tr) titleSepMin = tr.value;
   } catch {}
-  // Station-level timed spot-break grid — FULLY user-defined, no baked-in defaults. Stored per
-  // station in station_config_kv as JSON { enabled, breaks: [{ minute, spotCategoryId, count }] }.
-  // Each break pulls/rotates within its assigned spot category. Absent, disabled, or empty `breaks`
-  // ⇒ no grid breaks injected = zero behavior change from before.
-  let breakGrid = { enabled: false, breaks: [] };
-  try {
-    const bg = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'spot_break_grid' AND deleted_at IS NULL").get(stationId);
-    if (bg && bg.value) {
-      const p = JSON.parse(bg.value) || {};
-      const breaks = Array.isArray(p.breaks)
-        ? p.breaks
-            .map(b => ({
-              minute:         Number(b.minute),
-              spotCategoryId: (b.spotCategoryId == null ? null : Number(b.spotCategoryId)),
-              count:          Math.max(1, Math.min(10, parseInt(b.count, 10) || 1)),
-            }))
-            .filter(b => Number.isInteger(b.minute) && b.minute >= 0 && b.minute <= 59)
-            .sort((a, b) => a.minute - b.minute)
-        : [];
-      breakGrid = { enabled: !!p.enabled, breaks };
-    }
-  } catch {}
-  // Category-filtered spot select — prepared defensively: on a pre-v24 DB the spot_category_id
-  // column doesn't exist yet and db.prepare would throw, which must NOT break generation. If it
-  // can't prepare, grid breaks are simply inactive (the column lands when v24 applies at startup).
+  // Clock is the master for spots: a spot_break slot pulls from its assigned SPOT category via
+  // stmtSpotsByCategory (NULL spot_category_id = any active spot). Prepared defensively so a pre-v24
+  // DB (no spot_category_id column) can't break generation — spot breaks just fall back to any spot.
   let stmtSpotsByCategory = null;
   try { stmtSpotsByCategory = db.prepare(SPOT_SELECT_BY_CATEGORY); } catch {}
   return {
-    activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, breakGrid, stmtSpotsByCategory,
+    activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
-    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
-    stmtSpots: db.prepare(SPOT_SELECT),
+    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
     stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
@@ -5266,7 +5244,7 @@ function _buildScheduleCtx(stationId) {
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
-  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpots, stmtSpotsByCategory, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows, breakGrid } = ctx;
+  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
@@ -5284,40 +5262,8 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
     const usedSongIds = new Set(), usedArtistIds = new Set(), usedTitles = new Set();
     const hourEnd = hourStartTs + 3600;
     let currentTs = hourStartTs;
-    // Station timed spot-break grid: inject breaks at the configured minutes past EVERY hour, on
-    // every clock, WITHOUT cutting a song — a break only lands once the cursor has passed its target
-    // minute, i.e. at the next element boundary (the current song finishes first). Each break pulls
-    // `count` spots from its assigned spot CATEGORY. Additive: runs alongside any clock's own
-    // spot_break slots and shares the SAME per-run rotation/caps (spotLastTs/spotPlaysToday), so a
-    // spot can't double-play within the hour across grid breaks and clock slots.
-    const gridActive = !!(breakGrid && breakGrid.enabled && breakGrid.breaks && breakGrid.breaks.length && stmtSpotsByCategory);
-    const firedBreaks = new Set();   // indices of breaks already placed this hour
-    const gridDayStr = _localDayStr(slotDate);
-    const injectDueBreaks = () => {
-      if (!gridActive) return;
-      for (let bi = 0; bi < breakGrid.breaks.length; bi++) {
-        if (firedBreaks.has(bi)) continue;
-        const brk = breakGrid.breaks[bi];
-        const target = hourStartTs + brk.minute * 60;
-        if (currentTs < target) continue;         // cursor hasn't reached this break time yet
-        firedBreaks.add(bi);
-        if (target >= hourEnd) continue;          // target outside this hour — never place
-        for (let k = 0; k < brk.count; k++) {
-          if (currentTs >= hourEnd) break;
-          const sp = _pickSpot(stmtSpotsByCategory, brk.spotCategoryId, activeStationId, gridDayStr, spotLastTs, spotPlaysToday);
-          if (!sp) break;                         // no eligible spot in this category → place nothing (no dead air)
-          spotLastTs.set(sp.id, currentTs);
-          spotPlaysToday.set(gridDayStr + '|' + sp.id, (spotPlaysToday.get(gridDayStr + '|' + sp.id) || 0) + 1);
-          const durationS = sp.length_sec || 60;
-          generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
-          currentTs += durationS;
-        }
-      }
-    };
     for (const slot of slots) {
       if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
-      injectDueBreaks();               // drop any grid breaks due since the previous element (incl. :00 at hour start)
-      if (currentTs >= hourEnd) break; // a break may have filled the rest of the hour
       const slotDurationS = (slot.duration_min || 4) * 60;
       // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the
       // scheduler). Place that exact element regardless of slot_type/category.
@@ -5335,9 +5281,11 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
         continue;
       }
       // Spot break: pull the least-recently-aired eligible spot from the spots library.
+      // Spot break: pull the least-recently-aired eligible spot from the slot's SPOT category
+      // (clock is the master). NULL spot_category_id = any active spot.
       if (slot.slot_type === 'spot_break') {
         const dayStr = _localDayStr(slotDate);
-        const sp = _pickSpot(stmtSpots, slot.spot_type, activeStationId, dayStr, spotLastTs, spotPlaysToday);
+        const sp = _pickSpot(stmtSpotsByCategory, slot.spot_category_id, activeStationId, dayStr, spotLastTs, spotPlaysToday);
         if (sp) {
           spotLastTs.set(sp.id, currentTs);
           spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
@@ -5379,7 +5327,6 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
         currentTs += durationS;
       } else { currentTs += slotDurationS; }
     }
-    injectDueBreaks(); // final drain: a grid break due after the hour's last element (song finished, then break drops)
   }
 }
 
