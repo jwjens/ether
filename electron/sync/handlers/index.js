@@ -10,6 +10,7 @@ const { installAnnouncements } = require('./announcements');
 const { installArtists } = require('./artists');
 const { installCartSlots } = require('./cart_slots');
 const { installCategories } = require('./categories');
+const { installClockBreaks } = require('./clock_breaks');
 const { installClockSlots } = require('./clock_slots');
 const { installClocks } = require('./clocks');
 const { installDeckConfigs } = require('./deck_configs');
@@ -51,6 +52,7 @@ function installAll(ipcMain, db) {
   installArtists(ipcMain, db);
   installCartSlots(ipcMain, db);
   installCategories(ipcMain, db);
+  installClockBreaks(ipcMain, db);
   installClockSlots(ipcMain, db);
   installClocks(ipcMain, db);
   installDeckConfigs(ipcMain, db);

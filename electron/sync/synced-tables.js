@@ -17,6 +17,7 @@ const SYNCED_TABLES = [
   'artists',
   'cart_slots',
   'categories',
+  'clock_breaks',
   'clock_slots',
   'clocks',
   'deck_configs',
@@ -161,6 +162,27 @@ const REGISTRY = {
       updated_at: 'scalar',
       deleted_at: 'scalar',
     },
+  },
+
+  clock_breaks: {
+    tableName: 'clock_breaks',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:               'scalar',
+      clock_id:         'scalar',
+      minute:           'scalar',
+      spot_category_id: 'scalar',
+      count:            'scalar',
+      sort_order:       'scalar',
+      station_id:       'scalar',
+      uuid:             'scalar',
+      created_at:       'scalar',
+      updated_at:       'scalar',
+      deleted_at:       'scalar',
+    },
+    // UUID-identity refs: local-integer FKs resolved to/from stable uuids on push/apply.
+    refs: { station_id: 'stations', clock_id: 'clocks', spot_category_id: 'spot_categories' },
   },
 
   clock_slots: {

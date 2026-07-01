@@ -281,6 +281,7 @@ contextBridge.exposeInMainWorld("ether", {
   artists:                   handlers.artists,
   cartSlots:                 handlers.cartSlots,
   categories:                handlers.categories,
+  clockBreaks:               handlers.clockBreaks,
   clockSlots:                handlers.clockSlots,
   clocks:                    handlers.clocks,
   deckConfigs:               handlers.deckConfigs,
