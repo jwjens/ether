@@ -1609,6 +1609,26 @@ app.whenReady().then(() => {
     console.error(e.stack);
   }
 
+  // ── v2 library bootstrap + tail (spec §4) — ALWAYS ON, independent of the opt-in mutation sync
+  // (sync_enabled). Runs only when a real account session exists (account_jwt) AND a license resolves:
+  // on a fresh install it fills songs_v2 from GET /library/snapshot; thereafter it tails
+  // GET /library/changes. Guarded so failures never affect the app. Metadata read-path only —
+  // nothing reads songs_v2 into the UI yet (that's the separate read-cutover).
+  const runLibrarySync = async () => {
+    try {
+      const d = getDb();
+      const jwt = d.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value;
+      const licenseKey = accountLicenseKey();
+      if (!jwt || !licenseKey) return;                       // no signed-in account yet → wait
+      const { bootstrapLibrary, tailChanges, getStoredVersion } = require('./sync/library-client');
+      const opts = { backendUrl: ETHER_BACKEND_URL, licenseKey, musicDir: getMusicDir() };
+      if (getStoredVersion(d) == null) await bootstrapLibrary(d, opts);   // fresh install → snapshot
+      else await tailChanges(d, opts);                                    // steady state → changes
+    } catch (e) { console.error('[library-sync]', e.message); }
+  };
+  setTimeout(runLibrarySync, 4000);        // shortly after startup (or right after a sign-in this session)
+  setInterval(runLibrarySync, 30000);      // tail on cadence; also picks up a sign-in that lands later
+
   // ── Sync scheduler — Phase F Stage 4 ──────────────────────────
   // Off by default. Users opt in via Settings → System → Multi-Device Sync.
   try {
