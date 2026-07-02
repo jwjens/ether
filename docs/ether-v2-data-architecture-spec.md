@@ -1,7 +1,8 @@
 # Ether v2 Data Architecture Spec
 
-**Status:** Draft for approval — nothing in this document is built yet.
-**Scope:** Library identity, cloud truth, delete semantics, file storage, client bootstrap, and the genesis migration. Everything above the data layer (Rust engine, daemon, decks, clocks, spots, operator console, UI) is explicitly out of scope and unchanged.
+**Status:** In build — week 1 (schemas + endpoints) code-complete and proven on scratch; see `docs/v2-progress.md`.
+**Clean slate (decided 2026-07-02):** All old data is abandoned — the old backend (every license, mutation, station, and station-scoped history) and all local DBs. The go-live target is a BRAND-NEW account created through the normal signup flow. Week 2 imports the library into it; week 3 is the full new-customer path signup→on-air with stations/clocks/programming authored fresh. Nothing is migrated or reseeded. This removes the reseed/truncate, `library_grants` scoping, and tombstone-cleanup work entirely.
+**Scope:** Library identity, cloud truth, delete semantics, file storage, client bootstrap, and the fresh-account import. Everything above the data layer (Rust engine, daemon, decks, clocks, spots, operator console, UI) is explicitly out of scope and unchanged.
 **Timebox:** 4 weeks, pre-launch. If work drifts into redesigning clocks, the daemon protocol, or UI systems, it is out of scope — stop and re-check this spec.
 **Workflow:** Claude Code executes; Jeff approves each step with explicit go/no-go. Read-only diagnosis before every destructive step. All scripts are `.js` files run with node, never inline `-e`. Migrations verified on a DB copy first, never the live file.
 
@@ -162,23 +163,30 @@ Playback, cue editor, and waveform/mipmap all call this. The Library UI's presen
 
 ---
 
-## 7. Genesis migration (week 2)
+## 7. Fresh account + library import (week 2)
 
-Source of truth: the four folders under `C:\Users\jensj\Music\ether music library` — `Daytime` (215), `Halloween` (58), `Christmas` (36), `CS - Coffee Shop` (43), plus anything added since. Loose root files are ignored entirely.
+**Full clean slate.** The old backend (all licenses, mutations, stations, and station-scoped history) and all local DBs are abandoned — nothing from them carries forward. Week 2 stands up a brand-new go-live account through the **normal signup flow** and imports the library into it. Because the account is new, there is no per-license reseed, no truncate-of-old-state, and no `library_grants` scoping to reason about — the target license starts with an empty log and an empty snapshot. (The step-zero OV/19 license/grant map is now historical only; it described the old data we are walking away from.)
 
-1. **Importer run (OVEVENTS dev):** recursively scan ONLY the four folders. For each audio file: SHA-256, extract metadata (title/artist/album/duration via existing tagging path), copy into the content store, upsert `songs_v2` keyed by hash. Identical bytes in two folders → one row (record both source folders in a note if useful; `source_folder` keeps the first). Report: files scanned, unique hashes, duplicate groups collapsed, any unreadable files.
-2. **Review gate (Jeff):** eyeball the deduped list — count should land near the real library size. Explicit go/no-go.
-3. **Publish genesis snapshot:** admin script truncates `library_songs`/`library_tombstones` for the target license, bulk-inserts from the importer output, sets version=1. (License scoping: confirm which `license_key_id` owns the library and the `library_grants` relationships first — this read-only check was already queued and must complete before publish.)
-4. **R2 upload by hash:** upload all store files not yet in R2. Old basename-keyed objects are left in place and ignored; delete them in week 4 once cutover is verified.
-5. **Verify on dev:** wipe dev's local DB, bootstrap from snapshot, confirm exactly one row per real song, all resolvable.
+Source of truth for audio: the four folders under `C:\Users\jensj\Music\ether music library` — `Daytime` (215), `Halloween` (58), `Christmas` (36), `CS - Coffee Shop` (43), plus anything added since. Loose root files are ignored entirely.
 
-The polluted mutation log for songs is never cleaned — it is abandoned. Station-scoped history (clocks, spots, programming structure) is preserved on the existing stream.
+1. **Fresh signup:** create the go-live account via the normal signup flow (signup.ether-technologies.com / in-app trial activation), yielding a new license with no prior data.
+2. **Importer run (OVEVENTS dev):** recursively scan ONLY the four folders. For each audio file: SHA-256, extract metadata (title/artist/album/duration via existing tagging path), copy into the content store, upsert `songs_v2` keyed by hash. Identical bytes in two folders → one row (`source_folder` keeps the first). Report: files scanned, unique hashes, duplicate groups collapsed, any unreadable files.
+3. **Review gate (Jeff):** eyeball the deduped list — count should land near the real library size. Explicit go/no-go.
+4. **Publish snapshot:** populate the fresh license's `library_songs` from the importer output via `POST /library/songs` (or the admin bulk-insert path), version rising from 0. No truncate needed — the account is empty.
+5. **R2 upload by hash:** upload all store files to R2 keyed by `<content_hash>.<ext>` under the new license's prefix.
+6. **Verify on dev:** wipe dev's local DB, bootstrap from the snapshot, confirm exactly one row per real song, all resolvable.
 
-## 7.1 Cutover (week 3)
+Nothing from the old backend is migrated. The old mutation log, old stations, and old library are simply left behind (see §10 for whether they're deleted or left dormant).
 
-1. OVEVENTS install build: wipe, fresh install, bootstrap, verify library + playback + cue.
-2. jensj: wipe app data, fresh install, bootstrap. Minimal local-only data on jensj is accepted as lost (Jeff's call, already made). Verify all three stations schedule and play from the clean library.
-3. Regenerate programming/schedules against `content_hash` references. `station_programming` and `separation_rules` are re-authored, which also resolves: the never-seeded separation_rules for HalloVeen and Magical Forest (seed all 5 rule rows), and the schedule-referencing-tombstones mess (regenerated from clean data).
+## 7.1 New-customer experience (week 3)
+
+Week 3 is the full path a brand-new customer walks, end to end, with zero legacy data — signup to on-air:
+
+1. **OVEVENTS:** wipe app data, fresh install, sign in to the new account, bootstrap library from the snapshot, verify library + playback + cue.
+2. **jensj:** wipe app data, fresh install, sign in to the new account, bootstrap. All prior local-only data on jensj is intentionally discarded (Jeff's call, already made).
+3. **Author programming FRESH:** create stations, clocks, spots, and programming from scratch against `content_hash` references. Nothing is migrated or regenerated from old data — it is authored new. Station creation seeds the 5 default `separation_rules` in one transaction (§8), so the never-seeded-rules gap can't recur.
+
+Because every station/clock/programming row is created clean, the old bug classes — schedule rows referencing tombstoned songs, never-seeded `separation_rules`, ghost/duplicate library — cannot appear: there is no legacy state to carry them.
 
 ---
 
@@ -199,9 +207,10 @@ The polluted mutation log for songs is never cleaned — it is abandoned. Statio
 - The sync engine's transport, HLC, per-license scoping, and mutation stream — for station-scoped tables and library deltas. Only its role as *library truth via replay* is removed.
 - Railway Postgres backend, auth/licensing, R2.
 
-## 10. Risks and honest unknowns
+## 10. Risks and honest unknowns (clean-slate)
 
-- **library_grants scoping (blocking for §7.3):** which license owns the library and whether OV reads DJ's catalog by grant is not yet confirmed. The queued read-only backend query must run before the genesis publish. Publishing to the wrong license, or ignoring a grant, re-creates cross-feed confusion.
-- **Metadata quality:** hashing dedups perfectly, but title/artist tags on the deduped survivor come from the file's tags. The review gate in §7.2 is where bad tags get caught.
-- **Same song, different encodings:** two different rips/bitrates of one song are different hashes and will both survive. That is correct behavior (they are different audio), but the review gate should expect a few of these.
-- **Schedule regeneration:** week 3 assumes regenerating schedules is acceptable (it is — pre-launch, test mode). Post-launch this cutover style would not be available; that is exactly why it happens now.
+- **~~library_grants scoping~~ — NO LONGER APPLICABLE.** The target is a fresh signup account with no grants; the old OV/DJ grant entanglement is abandoned with the old data. The step-zero license map is retained only as history.
+- **Old-data disposal — DECISION NEEDED:** the old backend rows (licenses 2/19/20/21 + their mutations/stations) are all license-scoped, so they do NOT interfere with the fresh account. Options: **(a)** leave them dormant (zero-risk; delete later via the existing platform delete-account route) — *recommended*; **(b)** actively wipe old prod data now (destructive prod op, gains nothing for the fresh account). Pending Jeff's call.
+- **Metadata quality:** unchanged — hashing dedups perfectly, but title/artist tags on the survivor come from the file. The §7 review gate is where bad tags get caught.
+- **Same song, different encodings:** unchanged — two rips/bitrates are different hashes and both survive (correct; expect a few at the review gate).
+- **Programming authored fresh (was: schedule regeneration):** week 3 creates all programming/schedules new against `content_hash`. Acceptable pre-launch (test mode); nothing is regenerated from old data. Post-launch this clean-slate style would not be available — exactly why it happens now.

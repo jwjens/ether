@@ -41,4 +41,20 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 **Next (Week 1 close-out — both HELD for one combined apply, on Jeff's go):**
 1. **Railway deploy** of ether-backend (schema §2.2 + endpoints §3) together — creates the tables on prod + serves the endpoints.
 2. **Dev restart** on OVEVENTS to apply client migration v27 to the live dev DB.
-Then Week 1 is complete and we move to Week 2 (genesis migration §7): importer scans the four folders, hashes, dedups, publishes the genesis snapshot to license 19.
+
+---
+
+## Session 2026-07-02 — SCOPE CHANGE: full clean slate + fresh account
+
+**Decision (Jeff):** abandon ALL old data — old backend (every license/mutation/station + station-scoped history) and all local DBs. Go-live target = a BRAND-NEW account via the normal signup flow. Spec updated to match (header banner + §7 rewritten to "Fresh account + library import", §7.1 to "New-customer experience", §10 clean-slate). openair commit pending this note.
+
+**What this changes:**
+- **Week 2** = fresh signup → importer (scan 4 folders, hash, dedup) → publish snapshot to the NEW license (no reseed, no truncate, no grant scoping). Step-zero OV/19 map is now historical only.
+- **Week 3** = full new-customer path signup→on-air; stations/clocks/programming AUTHORED FRESH (not migrated/regenerated). Kills the tombstone-referencing-schedule + never-seeded-separation_rules bug classes by construction.
+- **Simplifications dropped from the plan:** per-license reseed (§3.4 truncate), library_grants entanglement, schedule regeneration from old data, careful license juggling. Week 1 v2 schema/endpoints still stand and still need the one Railway deploy.
+
+**OPEN DECISION (in spec §10):** old prod rows (licenses 2/19/20/21 + mutations/stations) — leave **dormant** (recommended, zero-risk, license-scoped so they don't touch the fresh account; deletable later via platform delete-account route) vs **actively wipe** now. Awaiting Jeff.
+
+**Unchanged pending applies:** the Week 1 Railway deploy (schema+endpoints) and the v27 client migration still happen — they're account-agnostic foundation. The fresh account is created against them.
+
+**Next:** Jeff's calls on (a) old-data disposal (dormant vs wipe), (b) go on the Week-1 combined apply (Railway deploy + dev restart). Then Week 2 = fresh signup + import.
