@@ -439,7 +439,27 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
       }
     }
 
-    if (created > 0 || registered > 0) window.dispatchEvent(new Event("station-switched")); // nudge switcher/badge
+    // v2 FIRST-STATION ADOPTION: if this install has NO active station (fresh install — the default
+    // "Station 1" seed was removed in the station-provisioning work), activate the account's station so
+    // it shows on screen right after a plain sign-in ("your station, with your name on it, on screen").
+    // Safe: acts ONLY when nothing is active, so it never changes an on-air station on a multi-station
+    // install (the same reason materialize itself never switches). Prefer an account (cloud) station.
+    let adopted = false;
+    try {
+      const active = await ether.stations.getActive();
+      if (!active || !active.id) {
+        const fresh = await ether.stations.list();
+        const freshList = (Array.isArray(fresh) ? fresh : (fresh?.rows || [])) as any[];
+        const adopt = freshList.find((s: any) => cloudUuids.has(s.uuid)) || freshList[0];
+        if (adopt?.id) {
+          await ether.stations.switch(adopt.id);
+          adopted = true;
+          console.log(`[reconcile] adopted active station ${adopt.name} (${adopt.uuid}) — first-station adoption`);
+        }
+      }
+    } catch (e) { /* best-effort — retry next tick */ }
+
+    if (created > 0 || registered > 0 || adopted) window.dispatchEvent(new Event("station-switched")); // nudge switcher/badge
     return created + registered;
   } catch (e) {
     console.warn("[reconcile] account stations reconcile failed:", (e as any)?.message ?? e);
