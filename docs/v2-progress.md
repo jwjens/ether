@@ -80,3 +80,26 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 5. R2 upload by hash. 6. Verify: wipe dev DB, bootstrap, one row per song, resolvable.
 
 Note: ether-backend deployed state == local commit `4581111`; GitHub remote NOT yet updated (deploy was via `railway up`, not git push).
+
+---
+
+## Session 2026-07-02 (cont.) — clean-slate executed + verified; HalloVeen diagnostic
+
+**Jeff actions (outside this session):** deleted old accounts on prod — licenses **2 (DJ) and 19 (OV) are gone**; signed up a **fresh djdeniro** → **license 22** (plan=station, one empty station "djdeniro" id 32). jensj/OV **not yet re-signed-up** (no license on prod).
+
+**Diagnostic — fresh djdeniro showed a HalloVeen station he never created (audio dead):**
+- **Root cause = LOCAL residue.** The dev machine's `openair.db` (283 MB, schema v27) was **never wiped before sign-in** — it still held all old stations (HalloVeen id 10 on OV's key, Magical Forest, OV, +1186 old songs, 37,535 generated_schedule rows). The app displayed old local stations under the new login (station identity is local-first).
+- **License 22 is CLEAN on the server** (read-only prod check): 0 mutations (whole table empty), 0 library_songs/snapshot_version/tombstones, 0 staged_programming; only its own empty station. Not down-flowed, not up-polluted.
+- **Deletes of 2/19 were clean:** no orphans in station_cc_data/now_playing/metadata/play_history/listener_samples; staged_programming empty; their mutations gone. Route covers the server; it does NOT touch local DBs.
+
+**Delete/re-signup mechanism verified (read-only):** the only re-signup blocker is `users.email UNIQUE`; `users` has no soft-delete column; `licenses.email` is not unique. The delete route frees an email **iff** the email's `users` row has `license_key_id = <deleted license>`. Platform auth is a Railway-secret JWT (independent of any license) → deleting license 2 can't lock the route.
+
+**Local wipe (executed, proven):** killed all Ether/electron/engine/dev procs (0 remaining), then deleted `%LOCALAPPDATA%\Ether` + `Roaming\Ether` + `Roaming\openair` (`Roaming\com.ether.radio` absent). All targets gone. **`Music\ether music library` preserved — 1430 files intact.**
+
+**Fresh boot verified:** new DB created clean, migrated **v1→v27** (schema_version max=27/count=27), `songs_v2`(11 cols)+`local_files`(3) present, **zero old data** (1 default Station + 5 separation_rules + 8 config = first-run seeds). Jeff confirmed the app opened fully clean.
+
+**Lesson:** wipe local app data BEFORE the first sign-in to a fresh account.
+
+**Still pending:** push ether-backend to origin (requested but preempted by this diagnostic — origin still behind `d919e82`,`4581111`); jensj/OV fresh re-signup.
+
+**Next:** Week 2 importer — write it, prove on scratch, stop at the review gate.
