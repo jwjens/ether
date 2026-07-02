@@ -200,3 +200,15 @@ No jargon, no toggles, no second step.
 ---
 
 ## Next build: spec §6 — resolveByHash resolver (local store → R2 → cache into store). Prove on scratch, stop at gate.
+
+---
+
+## Session 2026-07-02 (cont.) — §6 resolveByHash resolver BUILT + proven (at gate)
+
+**Build:** `electron/audio-resolver.js` — `resolveByHash(db, content_hash, {store, r2GetToFile})`: (1) local_files hit + file exists → local; (2) file already in store → repair local_files + return; (3) R2 GET `<hash>.<ext>` → write into `<musicDir>/store` → upsert local_files → return; (4) miss → `{ok:false,'not local, not in R2'}`. ext is authoritative from songs_v2. R2 fetch is INJECTED (prod passes the backend-signed flow / fetchR2Track; tests pass a direct S3 client). License-agnostic — hands r2GetToFile the bare `<hash>.<ext>`; the injected fn applies the license prefix. Replaces resolveLocalAudioPath.
+
+**Proven on scratch (8/8, `scratchpad/prove-resolver.js`, real license-22 hash + backend R2 creds via `railway run` + electron-as-node):** R2 fetch → source=r2, 14.5 MB mp3 landed in store, local_files inserted; 2nd call → source=local, R2 NOT hit, stored path returned; unknown hash → ok:false (not in songs_v2); in-songs_v2-but-not-in-R2 → ok:false (not local, not in R2). openair commit pending.
+
+**NOT wired into playback yet** — audio:load/cue still use resolveLocalAudioPath; swapping them to resolveByHash is part of the read-cutover (needs songs_v2 to be the read source + prod r2GetToFile bound to fetchR2Track). §6 is the resolver + gate only.
+
+**Next build:** station-provisioning + seed-removal + §8 bundle (see plan above). Its acceptance test is the verbatim customer sentence; the renderer pre-onboarding-write audit runs as a read-only proof FIRST.
