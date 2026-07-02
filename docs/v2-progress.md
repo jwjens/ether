@@ -121,3 +121,26 @@ Note: ether-backend deployed state == local commit `4581111`; GitHub remote NOT 
 - Count lands exactly on the real library size → healthy. **STOPPED — awaiting Jeff go/no-go on the deduped list.**
 
 **Post-go (Phase 2, not done):** copy uniques to content store; publish to djdeniro/license-22 via `POST /library/songs` (server-side, safe) OR write local songs_v2 with app CLOSED; R2 upload by hash; verify (wipe dev, bootstrap, one row per song, resolvable).
+
+---
+
+## Session 2026-07-02 (cont.) — Week 2 Phase 2 COMPLETE + verified
+
+**source_folder question (Jeff):** confirmed **display-only** — zero references in `electron/`+`src/`; song→category is `songs.category_id` (explicit FK), never derived from folder. Collapsing White Christmas does not affect what the Christmas station pulls.
+
+**ether-backend pushed to origin:** `24620e7..4581111 main` (origin now matches deployed; 0 unpushed). (GitHub dependabot flags 10 pre-existing vulns — unrelated, later.)
+
+**Publish:** `scripts/import-library-v2.js` scan → 350 POSTs to `/library/songs` for license 22 (key ETH-STN-4462…, read in-process, never printed; key_hash NULL so lookupLicense matches plaintext). **350/350 ok, 0 fail**; snapshot version=350, songs=350.
+
+**R2 upload by hash:** bucket **`ether-backups`** (R2_BUCKET env; code default "ether-audio" is overridden), key scheme `22/<content_hash>.<ext>`, via `railway run` (backend R2 creds), WHEN_REQUIRED checksum. **uploaded=350, failed=0.**
+
+**Mid-pipeline disk change (Jeff):** deleted the Daytime White Christmas copy (folders now FROZEN). Re-verify vs frozen disk:
+- per-folder Daytime **214** / Halloween 58 / Christmas 36 / CS 43 = **351 scanned, 350 unique, 1 dup group** (only "Somebody's Watching Me", straight-vs-curly apostrophe), 0 unreadable.
+- **No drift:** disk's 350 hashes == snapshot's 350 hashes (0 only-disk, 0 only-snapshot).
+- White Christmas (`a4e576842aad…`) now Christmas on disk **and** already Christmas on server (metadata matched — fix was a no-op). Snapshot still 350/version 350.
+
+**API/cloud verify PASS:** `GET /library/snapshot` license 22 = **350 songs**; R2 HeadObject **350/350 resolvable, 0 missing**, White Christmas resolves YES.
+
+**Limitation noted:** this is an API/cloud-level verify. The literal wipe-and-app-bootstrap can't run yet — the client does not consume `/library/snapshot` on sign-in (that's §4, not built). Server + cloud are correct and a bootstrap *would* succeed once wired.
+
+**Next build: spec §4 — client bootstrap** (app pulls snapshot into `songs_v2` on sign-in, then tails `/library/changes`). Scope only, stop before code.
