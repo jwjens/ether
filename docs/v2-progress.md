@@ -103,3 +103,21 @@ Note: ether-backend deployed state == local commit `4581111`; GitHub remote NOT 
 **Still pending:** push ether-backend to origin (requested but preempted by this diagnostic — origin still behind `d919e82`,`4581111`); jensj/OV fresh re-signup.
 
 **Next:** Week 2 importer — write it, prove on scratch, stop at the review gate.
+
+---
+
+## Session 2026-07-02 (cont.) — Week 2 importer written + proven; AT REVIEW GATE
+
+**Importer:** `scripts/import-library-v2.js` (uses `music-metadata`, the app's existing tag path). Scans ONLY the 4 folders, SHA-256 = content_hash (identity, D1), dedups by hash (source_folder keeps first), extracts title/artist/album/duration. `--dry-run` = scan+report only (no writes); write mode copies to `<store>/<hash>.<ext>` + upserts `songs_v2`/`local_files` (Phase 2, post-go, app CLOSED or scratch `--db`).
+
+**Proven on scratch (14/14 checks, `scratchpad/prove-importer.js`):** dedup collapses byte-identical cross-folder copies to one row + keeps first source_folder + hash-is-identity; write path (songs_v2+local_files+`<hash>.<ext>` store copy); idempotent re-run (row count stable, copied=0); real tags read (Britney "…Baby One More Time" dur=211096 artist=Britney Spears). Fixed one bug (scanLibrary musicDir default).
+
+**REVIEW-GATE REPORT (dry-run over real library, 23.9s):**
+- per-folder: Daytime 215, Halloween 58, Christmas 36, CS - Coffee Shop 43 = **352 scanned**
+- **350 unique content hashes**; **2 duplicate groups** collapsed (2 extra copies), **0 unreadable/tagless**
+- dup 1: `Halloween/Somebody's Watching Me.mp3` == `Halloween/Somebody’s Watching Me.mp3` (straight vs curly apostrophe, byte-identical)
+- dup 2: `Daytime/White Christmas …` == `Christmas/White Christmas … Spotify Singles …` (same recording, cross-folder)
+- full deduped list (350) written to scratchpad `v2-import-report.json`
+- Count lands exactly on the real library size → healthy. **STOPPED — awaiting Jeff go/no-go on the deduped list.**
+
+**Post-go (Phase 2, not done):** copy uniques to content store; publish to djdeniro/license-22 via `POST /library/songs` (server-side, safe) OR write local songs_v2 with app CLOSED; R2 upload by hash; verify (wipe dev, bootstrap, one row per song, resolvable).
