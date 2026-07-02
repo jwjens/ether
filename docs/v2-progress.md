@@ -21,3 +21,15 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 **Backend facts confirmed en route (from earlier read-only map):** mutations table is the only library store (no materialized `songs` table on backend yet — v2 adds `library_songs`); pull is `WHERE server_seq > since AND license_key_id = ?`; push dedups `ON CONFLICT (license_key_id, id)`; per-license `DELETE FROM mutations WHERE license_key_id=$1` primitive exists (in the account-delete route). Railway project `brave-simplicity` / production; Postgres service name `Postgres`.
 
 **Next:** await Jeff's "go" on **Week 1** (spec §2 schemas + §3 endpoint contracts — build `library_songs` / `library_snapshot_version` / `library_tombstones` tables and the snapshot/changes/upsert/delete endpoints; client `songs_v2` / `local_files` tables). Nothing built yet.
+
+---
+
+## Session 2026-07-01 (cont.) — Week 1, steps 1–2 (schemas)
+
+**Spec change (Jeff-approved, Option 1):** added `snapshot_version BIGINT NOT NULL` to `library_songs` (§2.2) — resolves the §2.2-vs-§3.2 conflict (upserts now filter by `snapshot_version > N` exactly like tombstones). Spec doc updated. openair commit `c81ba3f`.
+
+**Step 1 — client SQLite (done, proven, NOT applied to live):** migration v27 `scripts/migrate-songs-v2-phase-sync-27.js` creates `songs_v2` (content-hash PK, install-scoped, REST-populated → deliberately NOT in synced-tables) + `local_files` (machine-local, never synced). Old `songs` untouched. Proven on a dev DB copy 26→27 (all cols + PK, idempotent, old songs intact); verify:schema PASS; fresh-install chain clean v0→v27. openair commit `c0a612c`. **Not applied to live dev DB — happens on next dev restart (separate go).**
+
+**Step 2 — backend Postgres (done, proven on scratch, NOT applied to prod):** `ether-backend/src/lib/library-schema.js` (`LIBRARY_V2_DDL`) = `library_songs` / `library_snapshot_version` / `library_tombstones` + 2 change-stream indexes; wired into `initDB()` schema-init (additive `CREATE ... IF NOT EXISTS`). Proven on pg-mem scratch with a stub `licenses` FK: all 25 checks pass (columns incl. snapshot_version, composite PKs, changes-by-version query on both tables, dup rejection; idempotency guaranteed by IF NOT EXISTS — pg-mem can't re-run the no-op, noted). ether-backend commit `d919e82`. **NOT deployed — lands on next Railway deploy (separate go).** Tooling note: no docker/psql on OVEVENTS; pg-mem is the scratch Postgres.
+
+**Next:** Step 3 — backend endpoints §3.1–3.4 (`GET /library/snapshot`, `GET /library/changes`, `POST /library/songs`, `DELETE /library/songs/:content_hash`), written + proven on pg-mem, stop before deploy. Then the two pending applies (dev restart for v27; Railway deploy for backend schema+endpoints) on Jeff's go.
