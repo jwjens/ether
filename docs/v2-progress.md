@@ -144,3 +144,59 @@ Note: ether-backend deployed state == local commit `4581111`; GitHub remote NOT 
 **Limitation noted:** this is an API/cloud-level verify. The literal wipe-and-app-bootstrap can't run yet — the client does not consume `/library/snapshot` on sign-in (that's §4, not built). Server + cloud are correct and a bootstrap *would* succeed once wired.
 
 **Next build: spec §4 — client bootstrap** (app pulls snapshot into `songs_v2` on sign-in, then tails `/library/changes`). Scope only, stop before code.
+
+---
+
+## Session 2026-07-02 (cont.) — §4 client bootstrap SHIPPED + proven
+
+**Build:** `electron/sync/library-client.js` — `bootstrapLibrary` (GET /library/snapshot → songs_v2 + store version in system_state `library_snapshot_version` + populate local_files from content store) and `tailChanges` (GET /library/changes, apply upserts/deletes by content_hash, 410 → re-bootstrap). Wired in `main.js` as an **ALWAYS-ON timer** gated on `account_jwt` + resolvable license key.
+
+**Key correction (why v1 failed):** first attempt hooked `sync:set-active`, but that handler lives inside the `sync_enabled === 'true'` block (opt-in Multi-Device Sync, OFF by default) → never registered on a fresh install. Fixed by making the library bootstrap independent of that toggle (always-on). Library bootstrap ≠ mutation sync.
+
+**PROOF (real, wiped machine + djdeniro sign-in):** `songs_v2 = 350` from snapshot v350; distinct hashes 350; `library_snapshot_version = 350`; per source_folder Daytime 214 / Halloween 57 / Christmas 36 / CS 43; White Christmas = Christmas. `local_files = 0` (no local store on this machine → playback via §6/R2). openair commit `b6cfd29`. Metadata read-path only — nothing reads songs_v2 into the UI yet (read-cutover, later).
+
+**Follow-up flagged:** account-switch should reset `library_snapshot_version` / re-bootstrap for the new license (single-value cursor). Fine for single-account go-live.
+
+---
+
+## Session 2026-07-02 (cont.) — Station 1 seed investigation (READ-ONLY)
+
+**Trigger:** on a wiped machine + djdeniro sign-in, the app showed a local **"Station 1"** the user never created, and the user's real **"djdeniro"** station (server, license 22, id 32) was NOT in the station switcher.
+
+**Provenance — CONFIRMED old, Jeff-authored, NOT session-added:** the Station 1 seed in `initDB()` is foundational fresh-install code Jeff wrote in May–June 2026:
+- `INSERT INTO stations (id=1 …)` + `"[DB] Seeded station 1"` → `501fb29` *refactor(fresh-install): extract seedFreshInstall()* **2026-05-16**.
+- pre-chain `INSERT INTO stations (name) VALUES ('Station 1')` → `8072176` *feat(schema): Option B — schema-v0-baseline* **2026-05-17**.
+- icecast/generate defaults → `4696740` *fresh-install stations generate/stream by default (v4.3.83)* **2026-06-18**. Lineage to `fb9277e` (Electron migration, 2026-03-29). Nothing this session created or modified it.
+
+**Why "djdeniro" isn't in the badge:** the switcher lists LOCAL stations; "djdeniro" exists only on the SERVER (signup auto-created it). The desktop seeds its own local "Station 1" on fresh install and never pulls the account's server stations down (station rows move only over the opt-in mutation sync; there is no "adopt account stations on sign-in"). §4 is library-only and does not touch stations.
+
+**What actually breaks if no station exists pre-onboarding:**
+- "40 callsites" header at top of main.js is AUDIT HISTORY (resolved, `08f75da`) — not a live blocker.
+- Real: `getActiveStationId()` returns `row?.id ?? 1` → phantom station 1. FKs to `stations(id)` DO exist in migrations (`pinned_songs` + v4 lib table in `migrate-library-phase-sync-4`, metadata in `migrate-metadata-tables-phase-sync-6`) → phantom-1 writes to those FK-violate (baseline alone has no FK; migrations add them).
+- Migration chain does NOT crash on 0 stations (station-loops iterate empty), but per-station seeds produce 0 rows (migration-6: 47 metadata_definitions + 35 vocabulary × 0; separation_rules etc. = 0). The seed exists so these bind to station 1.
+- RUST engine boots "Station 1" at startup; onboarding CONFIGURES station 1 (`OnboardingFlow.tsx:240` hardcodes `upsertByKey(1,…)`), it does not create one.
+
+---
+
+## PLAN (not built): station-provisioning + seed-removal + spec §8 bundle
+
+**This is the fix for the missing djdeniro station.** Build AFTER §6 resolver, BEFORE the read-cutover.
+
+**ACCEPTANCE TEST (verbatim customer sentence — the ONLY definition of done, demonstrated on a WIPED machine):**
+> "Sign up on the web, create a station, install the app, sign in: your station, with your name on it, is on screen."
+No jargon, no toggles, no second step.
+
+**REQUIRED BEFORE THE BUILD STARTS (read-only proof, not a during-build check):** the renderer pre-onboarding-write audit (plan step 7) — prove that no renderer screen issues a station-scoped write before a station exists (the FK-violation path). Runs as its own read-only proof first.
+
+**Plan steps:**
+1. Delete the Station 1 seed (main.js ~993–1034). Fresh DB → 0 stations. Existing installs keep their stations (fresh-install-only).
+2. `getActiveStationId()` → `?? null` (not 1); callers treat null as pre-onboarding.
+3. Move per-station seeding from migration-time → station-creation time (spec §8): `seedStationConfig(stationId)` in `stations:create` inserts the 5 default separation_rules (30/30/30 STRICT, gender 3 SOFT, category 1000 SOFT), 47 metadata_definitions, 35 metadata_vocabulary, icecast defaults — one transaction. Also fixes never-seeded-separation_rules gap.
+4. Onboarding becomes the creator: "create" path calls `stations:create` (→ seeds config); drop hardcoded station-1 assumption.
+5. Sign-in station provisioning: on sign-in, GET /account/connect → materialize each account station locally (uuid = server uuid, owner_license_key = account license) → set active. Returning djdeniro gets "djdeniro"; brand-new account → onboarding-create makes the first. No default seeds anywhere.
+6. Reconcile signup "djdeniro" (id 32): provisioning-pull adopts it → no duplicate.
+7. Guards: RUST engine inits lazily on station-active (not at boot); generator/scheduler/playout gate on `getActiveStationId() != null`; renderer never writes station-scoped rows before a station exists (the read-only proof above).
+
+---
+
+## Next build: spec §6 — resolveByHash resolver (local store → R2 → cache into store). Prove on scratch, stop at gate.
