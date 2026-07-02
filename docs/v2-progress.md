@@ -242,3 +242,40 @@ No jargon, no toggles, no second step.
 **⚠️ FINDING (blocks the "wiped machine" acceptance test — needs its own fix before the acceptance run):** on the wiped machine the fresh DB came back with `account_jwt` + `license_key` + `account_email=djdeniro`, the app AUTO-signed-in, and §4 re-bootstrapped `songs_v2=350` with NO manual sign-in. So my wipe (`%LOCALAPPDATA%\Ether` + `Roaming\Ether` + `Roaming\openair`) is NOT a true factory reset — the session persists. `userData` = `Roaming\Ether` (renderer Local/Session Storage + Cookies); un-wiped `Roaming\Electron` + `Local\Electron` also hold a `Local Storage`. Renderer does NOT cache the JWT in localStorage, so the session is surviving in a store the wipe isn't reliably clearing. §4's auto-bootstrap made this newly visible. **A valid factory reset / acceptance test must reliably clear userData (Roaming\Ether: Cookies, Local/Session Storage, IndexedDB) — pin down the exact persistence location first.** (Note: packaged app sets its own userData; may differ from dev — confirm.)
 
 **LEAK IS ACTIVE, NOT PASSIVE:** the leaked session didn't just pull the library down — it **wrote a station identity to the server**. License 22 acquired a second station id=33 "Station 1" (uuid `32e62ffc…` = the local seeded phantom's uuid, created 09:38) via the **station-registration endpoint** (license_key + machine_id + station_uuid), NOT the mutation stream — `mutations` table is 0 across all licenses. The phantom (id 33) is empty (cc/staged/now_playing/play_history all 0). Signup station id=32 "djdeniro" (uuid `766cdcce…`, 01:07) is the keeper. → This is the station-provisioning duplicate trap firing live; being cleaned now (delete id 33 from server on Jeff's go) BEFORE steps 3–7. Confirms the leak/wipe defect is a bidirectional (read+write) integrity problem, raising its priority.
+
+---
+
+## Session 2026-07-02 (cont.) — Fixes A/B, step 5, cleanup, sync dead-end trace, + SUBSCRIPTION-MODEL rework (spec updated)
+
+**Phantom station cleaned:** deleted server station id=33 "Station 1" via `DELETE /api/platform/stations/:uuid` (platform token from ETHER_PLATFORM_SECRET). License 22 back to exactly 1 station "djdeniro" (id 32). Deleted-license (2/19) rejection re-verified: mutations empty, 0 activations for old keys, `/account/connect` only under valid license 22.
+
+**Session-leak resolution:** pinned `sessionData == userData == Roaming\Ether` (Chromium session lives in the same dir the wipe clears; DB in `LocalAppData\Ether`, also cleared). No out-of-band store, no auto-restore code path → the "session returning" was a manual sign-in on boot, not a passive leak. **Fix A** (openair `7ff2c06`): `system:factoryReset` now async, `session.defaultSession.clearStorageData()+clearCache()` + `rm(app.getPath('sessionData'))` before the file wipe — path-independent. **Fix B** (openair `6323d84`): `scripts/dev-factory-wipe.ps1` — complete verified wipe of both stores (kills lockers, retry, preserves music). Primary proof = the app's own reset button (now the proven wipe).
+
+**Step 5 (openair `1c6ba32`):** `reconcileAccountStations` first-station adoption — materialize account stations by uuid already existed (no-dup, step 6), but it was add-only and never set one active; added: when NO station is active, activate the account's (cloud) station → "your station on screen." **Seats:** freed license 22's 5/5 test-junk activations (→0) so a fresh sign-in can activate.
+
+**DEMO DEAD-END (the sync screen) — traced read-only:**
+- **Call:** onboarding `'pulling'` screen → `runCloudInstall()` → `ether.invoke('station:install-from-cloud')` (OnboardingFlow.tsx:499–500) → main.js:3047 handler → `POST /backup/download-url`. Months-old restore-from-backup era.
+- **Runtime:** license 22 has **0 backups** → `/backup/download-url` → **404** → `{ok:false,"No cloud backup found"}` → `syncPhase='error'` → "Sync failed"; Retry re-calls the same 404. Local state at dead-end: **stations=(none)**, onboarding flags=(none), session present (license 22 + jwt), songs_v2=350 (§4 bootstrap ran).
+- **Bypass:** YES — the restore step dead-ends BEFORE `first_run_complete`, so the new provisioning (`reconcileAccountStations`, App.tsx:868) never materializes djdeniro (`stations=(none)` proves it). The obsolete restore step preempts steps 3–7. It also can't distinguish "404 = no backup yet (normal for a new account)" from "sync failed (error)".
+
+**Part 1 — spec updated:** added the **CORE ARCHITECTURAL VISION** north-star to the top of `ether-v2-data-architecture-spec.md` (stations are cloud-defined; surfaces SUBSCRIBE; playout is a CLAIM not a binding; playout fully local, cloud never in the playback path; claims degrade safely offline; transfers server-mediated with human confirmation / dead-air disclosure).
+
+---
+
+## PLAN (Part 3 — subscription model, not built; stop for Jeff's go)
+
+**Schema — `station_attachments` (backend, license-scoped):** `(license_key_id, surface_id, station_id, role TEXT DEFAULT 'playout' CHECK role IN ('playout','monitor'), created_at, updated_at)`. **Playout claim is EXCLUSIVE per station** (one playout surface at a time; claimable + releasable). Future rail for studio handoff + cloud playout; **only desktop-playout attachment is built now**; roles beyond playout/monitor deferred. `surface_id` MUST be a STABLE machine id across wipes (hardware-derived) — NOT the per-DB `client_id` (which regenerates on wipe) — or the persistence sentence fails. **[design item: introduce/confirm a stable surface id.]**
+
+**Onboarding decision table (replaces the sync step entirely):**
+- **0 stations** → no sync question (empty account is normal, not an error) → straight to **create-your-station** → `stations:create` → §8 seed → attach as playout → done.
+- **1 station** → **attach as playout automatically + silently**, materialize by uuid, set active → done. **Zero questions (the customer sentence).**
+- **≥2 stations** → **"Which stations does this machine run?"** by name, checkboxes, **min one** → write playout attachments for the chosen → materialize each + §8 seed, set first active → done.
+- No "sync" jargon, no dead-end screens. **Backup/Restore moves to Settings** (out of the sign-in path).
+
+**Sign-in reads attachments:** a known surface with existing attachments auto-gets its stations — even after a full wipe + reinstall it becomes itself again (requires the stable surface_id). A new surface on a multi-station account gets the placement question ONCE; the answer persists server-side.
+
+**Station creation** (onboarding or later) seeds §8 per-station config in ONE transaction (5 separation_rules, metadata definitions, everything).
+
+**Remove from onboarding:** `'pulling'` / `install-from-cloud` / `pickAudioLocation` (restore + audio-source steps). Library arrives via §4 snapshot bootstrap (already automatic).
+
+**Acceptance tests:** (1) **customer sentence** — sign up → create station → install → sign in: your station, your name, on screen, no questions. (2) **placement sentence** — multi-station account, new machine, pick stations by name, only those appear. (3) **persistence sentence** — a machine with attachments, fully wiped + reinstalled, signs in and becomes itself again, no questions.

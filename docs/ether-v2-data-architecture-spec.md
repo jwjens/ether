@@ -1,5 +1,13 @@
 # Ether v2 Data Architecture Spec
 
+## CORE ARCHITECTURAL VISION
+
+**Stations are fully cloud-defined entities; machines and surfaces SUBSCRIBE to them. Playout responsibility is a CLAIM, not a binding.** Any authenticated surface can attach to a station: a desktop as playout engine, a phone as monitor, Iris as watchman, a future cloud renderer as playout with no desktop at all. This is why Iris is a client, why the dashboard and listener are independent surfaces, and why studio handoff exists. Never model stations as belonging to machines. Radio-as-cloud-service with attachable surfaces is the product.
+
+**HARD REQUIREMENT — Playout is fully local: local DB, local content store, local engine.** Pulling the network mid-broadcast must NEVER interrupt audio. The cloud defines and coordinates; it is never in the playback path. Playout claims degrade safely offline: a surface holding a claim keeps operating without connectivity; claims can only be transferred through the server, and a transfer can never silently yank playout from an unreachable machine — that requires human confirmation (the dead-air-disclosure rule the handoff console already implements).
+
+---
+
 **Status:** In build — week 1 (schemas + endpoints) code-complete and proven on scratch; see `docs/v2-progress.md`.
 **Clean slate (decided 2026-07-02):** All old data is abandoned — the old backend (every license, mutation, station, and station-scoped history) and all local DBs. The go-live target is a BRAND-NEW account created through the normal signup flow. Week 2 imports the library into it; week 3 is the full new-customer path signup→on-air with stations/clocks/programming authored fresh. Nothing is migrated or reseeded. This removes the reseed/truncate, `library_grants` scoping, and tombstone-cleanup work entirely.
 **Scope:** Library identity, cloud truth, delete semantics, file storage, client bootstrap, and the fresh-account import. Everything above the data layer (Rust engine, daemon, decks, clocks, spots, operator console, UI) is explicitly out of scope and unchanged.
