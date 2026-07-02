@@ -1792,6 +1792,7 @@ app.whenReady().then(() => {
   logStartup('=== SESSION START ===');
   logStartup(`version: ${app.getVersion()}  packaged: ${app.isPackaged}  pid: ${process.pid}`);
   logStartup(`userData: ${app.getPath('userData')}`);
+  try { logStartup(`sessionData: ${app.getPath('sessionData')}`); } catch (e) { logStartup(`sessionData: (unavailable) ${e.message}`); }
 
   // Show native splash first; main window stays hidden behind it
   createSplash();
@@ -2934,8 +2935,18 @@ ipcMain.handle("db:restore", (_, backupName) => {
 // else getDbPath copies it back) so the next launch is a clean first run: re-onboarding +
 // first-user PIN setup. Closes the DB, deletes both copies + their WAL sidecars, then
 // relaunches. Destructive — the renderer gates this behind a double-email confirmation.
-ipcMain.handle("system:factoryReset", () => {
+ipcMain.handle("system:factoryReset", async () => {
   try {
+    // Fix A — clear the Electron session BEFORE anything else. The account session (cookies + Local/
+    // Session Storage + IndexedDB) survived a file-only wipe because it lives in the Chromium session
+    // store at app.getPath('sessionData'), which is NOT the DB dir and was not redirected when userData
+    // was overridden. Clearing via the session API is path-independent (clears the live session wherever
+    // it is). MUST await before relaunch/exit so it actually flushes.
+    try {
+      const { session } = require("electron");
+      await session.defaultSession.clearStorageData();             // cookies + all web storage, all origins
+      await session.defaultSession.clearCache();
+    } catch (e) { console.error("[factoryReset] clearStorageData:", e.message); }
     try { db.close(); } catch {}
     const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
     // Wipe EVERYTHING so a reset is truly clean. The old version only deleted openair.db and left
@@ -2944,6 +2955,7 @@ ipcMain.handle("system:factoryReset", () => {
     rm(path.dirname(_etherDir()));                                  // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
     rm(path.join(app.getPath("appData"), "com.ether.radio"));      // legacy Roaming DB (redirected to network on managed boxes)
     rm(path.join(app.getPath("appData"), "openair"));              // old (pre-rename) Roaming userData, if any lingers
+    try { rm(app.getPath("sessionData")); } catch {}               // Fix A — the Chromium session store (cookies/Local Storage/IndexedDB): the session leak's on-disk home
     for (const m of [".ether-on-air", ".ether-keep-session"]) {    // markers that skip sign-in / trigger resurrection
       try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
     }
