@@ -212,3 +212,31 @@ No jargon, no toggles, no second step.
 **NOT wired into playback yet** — audio:load/cue still use resolveLocalAudioPath; swapping them to resolveByHash is part of the read-cutover (needs songs_v2 to be the read source + prod r2GetToFile bound to fetchR2Track). §6 is the resolver + gate only.
 
 **Next build:** station-provisioning + seed-removal + §8 bundle (see plan above). Its acceptance test is the verbatim customer sentence; the renderer pre-onboarding-write audit runs as a read-only proof FIRST.
+
+---
+
+## Session 2026-07-02 (cont.) — pre-onboarding-write audit (READ-ONLY proof, PASSED)
+
+**Scope:** prove no renderer screen writes a station-scoped row before a station exists (the FK-violation path), so removing the Station 1 seed won't crash a fresh install.
+
+**Hard-fail FK set** (write with station_id + no matching stations row → FK violation): `station_programming`, `pinned_songs` (migrate-library-phase-sync-4), `metadata_definitions`, `metadata_vocabulary` (migrate-metadata-tables-phase-sync-6). Everything else with station_id (`station_config_kv`, `songs`, `categories`, `clocks`, `clock_slots`, `shows`, `generated_schedule`, `play_log`, `scheduled_log`) is a plain column → orphan, not crash.
+
+**Render gate (App.tsx 1925–1934):** Splash → OnboardingFlow (if not signed in) → UserLogin → OnShiftScreen → main app. All ~40 station-scoped write callsites live in the main app → unreachable until after sign-in + login + shift.
+
+**Only pre-station screen = OnboardingFlow.** Writes EXCLUSIVELY `station_config_kv` (`kv.upsertByKey(stationId,…)`, `stationId` from `useActiveStation()`) + `install_config_kv` (account_jwt/email) — both NON-FK. Writes to NONE of the four FK tables.
+
+**VERDICT: renderer pre-onboarding path is SAFE** — seed removal won't FK-crash. Three grounds: write screens gated behind sign-in; only pre-station screen writes non-FK config; no FK-table write before a station exists.
+
+**Build-time follow-ups (not crashes):** (1) OnboardingFlow config writes under phantom station_id=1 → orphan config; onboarding must create the station first then write config under its real id. (2) `getActiveStationId() ?? 1` → `?? null` + `useActiveStation()` null-tolerant. (3) Engine/main-process boot writes non-FK tables with phantom 1 → orphan; migration chain with 0 stations seeds 0 rows (loops empty) → no FK writes; engine still needs a no-station boot guard.
+
+**ADDED PROOF REQUIREMENT (Jeff):** the Rust engine's zero-station boot must be DEMONSTRATED with an actual boot against an empty-station DB — not reasoned about. Finish line stays the verbatim customer sentence on a wiped machine.
+
+---
+
+## Session 2026-07-02 (cont.) — station-provisioning build: steps 1–2 DONE + engine zero-station boot PROVEN
+
+**Step 1 (seed removal):** deleted both Station 1 seed spots in `initDB`/`seedFreshInstall` (pre-chain bare seed + the id=1 INSERT); guarded the `separation_rules` seed to skip when `getActiveStationId()` is null (per-station config moves to §8 station-create). **Step 2:** `getActiveStationId()` now returns `null` (was `?? 1`) when no active station. Renderer `useActiveStation()` already tolerates this (falls back to id=1 + ready → routes to sign-in), so no renderer change needed.
+
+**ENGINE ZERO-STATION BOOT — DEMONSTRATED (actual boot on empty-station DB, not reasoned):** wiped → booted with seedless code → `stations=0, separation_rules=0, metadata_definitions=0, schema_version=27`; migration chain clean; **0** FK/constraint/migration-fail errors in the log; RUST engine opened its default Station-1 audio slot (by integer id, DB-independent), mixer + Program Bus running, 7 electron procs healthy — no crash. openair commit pending.
+
+**⚠️ FINDING (blocks the "wiped machine" acceptance test — needs its own fix before the acceptance run):** on the wiped machine the fresh DB came back with `account_jwt` + `license_key` + `account_email=djdeniro`, the app AUTO-signed-in, and §4 re-bootstrapped `songs_v2=350` with NO manual sign-in. So my wipe (`%LOCALAPPDATA%\Ether` + `Roaming\Ether` + `Roaming\openair`) is NOT a true factory reset — the session persists. `userData` = `Roaming\Ether` (renderer Local/Session Storage + Cookies); un-wiped `Roaming\Electron` + `Local\Electron` also hold a `Local Storage`. Renderer does NOT cache the JWT in localStorage, so the session is surviving in a store the wipe isn't reliably clearing. §4's auto-bootstrap made this newly visible. **A valid factory reset / acceptance test must reliably clear userData (Roaming\Ether: Cookies, Local/Session Storage, IndexedDB) — pin down the exact persistence location first.** (Note: packaged app sets its own userData; may differ from dev — confirm.)

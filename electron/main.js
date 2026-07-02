@@ -990,13 +990,9 @@ function runMigrations() {
   // installs may have D/E/F stuck at disabled. Re-enable them so all 6 show.
   db.exec("UPDATE deck_configs SET enabled=1 WHERE slot IN ('D','E','F')");
 
-  // Seed bare station 1 before chain so migration-6's seeding loop has a station to bind to
-  if (isFreshInstall) {
-    const stationCount = db.prepare("SELECT COUNT(*) as c FROM stations").get().c;
-    if (stationCount === 0) {
-      db.prepare("INSERT INTO stations (name) VALUES (?)").run('Station 1');
-    }
-  }
+  // v2 (station-provisioning): the default "Station 1" seed is REMOVED. A fresh install starts with
+  // ZERO stations; onboarding/sign-in provisioning is the only creator of the first station, which
+  // seeds its own per-station config (spec §8). Migrations that loop over stations no-op on 0 rows.
 
   runMigrationChain(db);
 
@@ -1023,20 +1019,14 @@ function seedFreshInstall() {
 
   db.prepare("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('multistation_insert_audit_complete', 'true')").run();
 
-  const stationCount = db.prepare("SELECT COUNT(*) as c FROM stations").get();
-  if (stationCount.c === 0) {
-    const serverKv = db.prepare("SELECT value FROM station_config_kv WHERE key='playout_server'").get();
-    const pwKv     = db.prepare("SELECT value FROM station_config_kv WHERE key='icecast_source_password'").get();
-    const nameKv   = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name'").get();
-    db.prepare(
-      "INSERT INTO stations (id, name, callsign, is_active, icecast_server_url, icecast_mount, icecast_password, icecast_bitrate, icecast_format) VALUES (1, ?, '', 1, ?, '/live', ?, 128, 'mp3')"
-    ).run(nameKv?.value || 'Station 1', serverKv?.value?.trim() || '44.244.52.207', pwKv?.value?.trim() || 'hackme');
-    console.log("[DB] Seeded station 1");
-  }
+  // v2: no default station seeded here. The first station comes from onboarding/provisioning
+  // (spec §8), which also seeds its icecast + per-station config in one transaction.
 
+  // v2: per-station config (separation_rules etc.) is seeded at STATION CREATION (spec §8), not here.
+  // Guarded on a real active station so a zero-station fresh install seeds nothing (no null station_id write).
+  const sid = getActiveStationId();
   const ruleCount = db.prepare("SELECT COUNT(*) as c FROM separation_rules").get();
-  if (ruleCount.c === 0) {
-    const sid = getActiveStationId();
+  if (sid != null && ruleCount.c === 0) {
     const insertRule = db.prepare(
       "INSERT INTO separation_rules (station_id, rule_type, scope, value, is_hard, is_active, description) VALUES (?,?,?,?,?,?,?)"
     );
@@ -1054,10 +1044,13 @@ function seedFreshInstall() {
 
 // ── Active station helper ─────────────────────────────────────
 function getActiveStationId() {
+  // v2: returns null when NO active station exists (fresh install, pre-onboarding). Boot-path callers
+  // guard on null; user-triggered IPC handlers only run once a station exists. (Was `?? 1`, a phantom
+  // that targeted a non-existent station and would FK-violate station_programming/pinned_songs/metadata.)
   try {
     const row = getDb().prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get();
-    return row?.id ?? 1;
-  } catch { return 1; }
+    return row?.id ?? null;
+  } catch { return null; }
 }
 
 // ── Account-scoped station ownership ───────────────────────────
