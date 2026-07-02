@@ -58,3 +58,25 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 **Unchanged pending applies:** the Week 1 Railway deploy (schema+endpoints) and the v27 client migration still happen — they're account-agnostic foundation. The fresh account is created against them.
 
 **Next:** Jeff's calls on (a) old-data disposal (dormant vs wipe), (b) go on the Week-1 combined apply (Railway deploy + dev restart). Then Week 2 = fresh signup + import.
+
+---
+
+## Session 2026-07-02 (cont.) — WEEK 1 COMPLETE (applied + proven)
+
+**Decision:** old data stays DORMANT (spec §10 updated). No prod wipe.
+
+**Railway deploy (prod):** `railway up` (2nd attempt; 1st timed out on upload) deployed ether-backend commit `4581111`. Deployment `d3d9fc49`, `● Online`, logs `[Ether] API live → port 8080` + `[DB] Schema ready` (initDB ran → v2 tables created on prod). Backend URL https://ether-backend-production.up.railway.app. Auth header = `x-license-key`.
+  - Smoke tests PASS: `GET /library/snapshot` valid license → 200 `{version:0, songs:[]}`; no header → 401 "Missing x-license-key header"; invalid key → 401 "invalid_license_key".
+
+**Dev restart (OVEVENTS):** electron:dev restarted → boot log `[migrate-v27] Transaction committed.`. Live dev DB now schema_version=27; `songs_v2` (11 cols) + `local_files` (3 cols) EXIST, both empty. Confirmed read-only.
+
+**State:** Week 1 (v2 schemas + endpoints) is deployed to prod and applied to dev, all proven. Old data untouched/dormant. ether-backend commits `d919e82`,`4581111` still local-only in git (deployed via `railway up`, NOT pushed to GitHub — push later for repo/GitHub-Railway consistency if desired).
+
+**Next: WEEK 2 — fresh account + library import (spec §7):**
+1. Create the go-live account via the normal signup flow (fresh license).
+2. Importer (OVEVENTS dev): scan the 4 folders, SHA-256, dedup, extract metadata, copy to content store, upsert songs_v2. Report scanned/unique/dup-collapsed/unreadable.
+3. Review gate (Jeff) → go/no-go.
+4. Publish snapshot to the fresh license via POST /library/songs.
+5. R2 upload by hash. 6. Verify: wipe dev DB, bootstrap, one row per song, resolvable.
+
+Note: ether-backend deployed state == local commit `4581111`; GitHub remote NOT yet updated (deploy was via `railway up`, not git push).

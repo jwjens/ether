@@ -210,7 +210,7 @@ Because every station/clock/programming row is created clean, the old bug classe
 ## 10. Risks and honest unknowns (clean-slate)
 
 - **~~library_grants scoping~~ — NO LONGER APPLICABLE.** The target is a fresh signup account with no grants; the old OV/DJ grant entanglement is abandoned with the old data. The step-zero license map is retained only as history.
-- **Old-data disposal — DECISION NEEDED:** the old backend rows (licenses 2/19/20/21 + their mutations/stations) are all license-scoped, so they do NOT interfere with the fresh account. Options: **(a)** leave them dormant (zero-risk; delete later via the existing platform delete-account route) — *recommended*; **(b)** actively wipe old prod data now (destructive prod op, gains nothing for the fresh account). Pending Jeff's call.
+- **Old-data disposal — DECIDED (2026-07-02): leave dormant.** The old backend rows (licenses 2/19/20/21 + their mutations/stations) are license-scoped and don't interfere with the fresh account; they stay in place (deletable later via the platform delete-account route). No prod wipe.
 - **Metadata quality:** unchanged — hashing dedups perfectly, but title/artist tags on the survivor come from the file. The §7 review gate is where bad tags get caught.
 - **Same song, different encodings:** unchanged — two rips/bitrates are different hashes and both survive (correct; expect a few at the review gate).
 - **Programming authored fresh (was: schedule regeneration):** week 3 creates all programming/schedules new against `content_hash`. Acceptable pre-launch (test mode); nothing is regenerated from old data. Post-launch this clean-slate style would not be available — exactly why it happens now.
