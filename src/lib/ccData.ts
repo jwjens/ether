@@ -1,5 +1,6 @@
 import { ETHER_BACKEND_URL } from "./etherBackend";
 import { query } from "../db/client";
+import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
 
 // Control Center data mirror (Phase 2). Pushes install-owned table rows up so the
 // dashboard can view them, and applies remote dashboard edits back through the local
@@ -385,19 +386,22 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     } catch { /* best-effort — absence just means no tombstone filtering this tick */ }
     const norm = (n: any) => String(n || "").trim().toLowerCase();
 
-    // ── Cloud → local: materialize any account station this install doesn't have yet (but never a
-    //    station we tombstoned — that's a resurrection). ──
+    // ── Cloud → local: ATTACHMENT-AWARE materialize (Phase 3). Materialize ONLY the stations THIS
+    //    surface is attached to (from /account/connect.attachments) — not every account station — and
+    //    never one we tombstoned (a resurrection). FAIL-CLOSED: no attachments → materialize nothing;
+    //    the placement question (onboarding) is what writes them. Pure decision in provisioning.js. ──
+    const attachments: any[] = Array.isArray(data.attachments) ? data.attachments : [];
+    const toMaterialize = selectAttachedStationsToMaterialize({ cloud, attachments, haveUuids, tombstoned });
     let created = 0;
-    for (const s of cloud) {
-      if (!s?.uuid || haveUuids.has(s.uuid) || tombstoned.has(s.uuid)) continue;
+    for (const s of toMaterialize) {
       const r = await ether.stations.create({
         uuid:      s.uuid,
         name:      s.name         || "Station",
         callsign:  s.call_letters || "",
         frequency: s.frequency    || "",
       });
-      // NOTE: no stations.switch — never change the active/on-air station.
-      if (r?.ok) { created++; console.log(`[reconcile] materialized cloud station ${s.name} (${s.uuid})`); }
+      // NOTE: no stations.switch here — activation is decided once, below, only when nothing is active.
+      if (r?.ok) { created++; console.log(`[reconcile] materialized attached station ${s.name} (${s.uuid})`); }
       else console.warn("[reconcile] local station insert failed:", r?.error);
     }
 
@@ -447,10 +451,12 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     let adopted = false;
     try {
       const active = await ether.stations.getActive();
-      if (!active || !active.id) {
+      const hasActive = !!(active && active.id);
+      if (!hasActive) {
         const fresh = await ether.stations.list();
         const freshList = (Array.isArray(fresh) ? fresh : (fresh?.rows || [])) as any[];
-        const adopt = freshList.find((s: any) => cloudUuids.has(s.uuid)) || freshList[0];
+        // Prefer an ATTACHED station; fall back to first local (legacy single-station installs). Pure.
+        const adopt = chooseActiveStation({ localStations: freshList, attachments, hasActive: false });
         if (adopt?.id) {
           await ether.stations.switch(adopt.id);
           adopted = true;

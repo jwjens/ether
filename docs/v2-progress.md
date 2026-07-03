@@ -341,3 +341,18 @@ Added "FORMATS — station DNA, portable across markets" to the spec. Formats = 
 **PART 2/3 — STATE TABLE is the Monday gate.** Every state this week touches gets a row + a demonstration on this box where possible (djdeniro↔OV switching, authoring-under-OV-while-holding-djdeniro-claim, 3-station placement, flaky-net sign-in, sign-in mid-deploy). jensj-only rows flagged "Monday-verified." Account switching = first-class demonstrated (no session bleed, per-account claims/attachments, clean scoped-library swap, truthful badge). Undefined this week = fixable bug; undefined Monday = failure. Produced as Phase 4 lands.
 
 **BUILD SEQUENCE (to protect Monday):** Phases 2 → 3 → 4 (provisioning + onboarding placement — unblocks the djdeniro walkthrough AND OV authoring/switching this week) → read-cutover → intra-account scoping (prove vs OV's real categories; non-gating for Monday) → state table filled+demonstrated through the week. NOTE: the djdeniro walkthrough needs Phase 4 in — "dev up" alone still hits the old dead-end until then.
+
+---
+
+## Session 2026-07-02 (cont.) — Phase 2 (§8) + Phase 3 (attachment-aware provisioning) DONE + proven
+
+**PHASE 2 (openair `a8e60b3`):** `electron/seed-station-config.js` — `seedStationConfig(db, stationId)` seeds a station's config in ONE transaction the moment it exists: 5 separation rules + 47 metadata definitions + 35 vocabulary (verbatim from migrate-v6 so a new station matches a migrated one). Idempotent per station → safe for onboarding-created AND reconcile-materialized stations. Wired into the `stations:create` handler; never blocks creation. Proven 11/11 on scratch (counts, idempotency, per-station isolation).
+
+**PHASE 3 (attachment-aware provisioning) — checkpointed alone before Phase 4:**
+- `src/lib/provisioning.js` (+ `.d.ts`) — PURE, unit-testable decisions: `selectAttachedStationsToMaterialize` (materialize ONLY stations this surface is attached to; fail-closed on no attachments; skip already-local + tombstoned) and `chooseActiveStation` (prefer attached; never change an on-air station; legacy fallback to first local).
+- `src/lib/ccData.ts` `reconcileAccountStations` now reads `/account/connect.attachments`, materializes only attached stations, adopts active via the pure fn. **No App.tsx render-gate change** (reconcile already fires on the signed-in effect) — deliberately minimal touch to the sign-in routing layer where the prior two gates failed.
+- **Proven 10/10 (script-level, pure):** provisioning-first (attached [A,B] of {A,B,C} → materialize A,B only, NOT C); fail-closed (no attachments → nothing, never all); no-dup (already-local → skip); tombstone (locally-deleted → no resurrection); **interrupted mid-sign-in** (connect failed → attachments [] → materialize nothing, no bad state; resume after partial is idempotent add-only); adoption (prefer attached / never switch on-air / legacy fallback).
+- **Preservation re-run GREEN:** Phase 1 attachments 9/9, Phase 2 §8 11/11 — both unchanged. Factory-reset (Fix A) untouched.
+- **Transition note:** with the seed gone + fail-closed, a surface with NO attachments materializes nothing (correct) — so the dev box stays station-less until Phase 4 writes an attachment via the placement answer. Phase 4 completes the walkable path. Existing installs with local stations are unaffected (add-only never removes; adoption falls back to first local).
+
+**Next: Phase 4** — onboarding decision table (0/1/≥2 → 3-station placement question, writes attachments) removing the install-from-cloud dead-end; produces the state table. Bring dev up when the placement flow is walkable for the djdeniro walkthrough.
