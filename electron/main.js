@@ -5878,6 +5878,11 @@ ipcMain.handle('stations:create', (_, data) => {
       icecast_bitrate: data.icecast_bitrate || 128, icecast_format: data.icecast_format || 'mp3',
       is_active: 0,
     });
+    // §8: seed this station's per-station config (5 separation rules + 47 metadata definitions + 35
+    // vocabulary) in one transaction, the moment the station exists. Idempotent per station, so it's
+    // safe for onboarding-created AND reconcile-materialized stations. Never blocks station creation.
+    try { require('./seed-station-config').seedStationConfig(db, row.id); }
+    catch (e) { console.error('[stations:create] seedStationConfig (§8) failed:', e.message); }
     return { ok: true, id: row.id };
   } catch (e) { return { ok: false, error: e.message }; }
 });
