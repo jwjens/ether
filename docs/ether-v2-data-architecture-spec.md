@@ -50,6 +50,12 @@ Formats are **first-class cloud objects**: a station's initial import + programm
 
 ---
 
+## Playout claim transfer — final form (DEFERRED BUILD, post-launch)
+
+The entire spec: **a new machine requests the seat → a profile 4-PIN confirms → the claim transfers → the old machine gives up the stream.** No reachability cases, no reconnect logic, no state narration. Deferred build, post-launch. (For launch, claim collisions are handled by the pre-launch model: author-without-claiming + the D3 graceful "held by \<machine\>" message; no transfer flow ships now.)
+
+---
+
 ## 1. The four foundation decisions
 
 These are reversals of current design decisions, not patches. Every schema, endpoint, and flow below derives from them.

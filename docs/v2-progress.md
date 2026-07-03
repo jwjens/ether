@@ -356,3 +356,11 @@ Added "FORMATS — station DNA, portable across markets" to the spec. Formats = 
 - **Transition note:** with the seed gone + fail-closed, a surface with NO attachments materializes nothing (correct) — so the dev box stays station-less until Phase 4 writes an attachment via the placement answer. Phase 4 completes the walkable path. Existing installs with local stations are unaffected (add-only never removes; adoption falls back to first local).
 
 **Next: Phase 4** — onboarding decision table (0/1/≥2 → 3-station placement question, writes attachments) removing the install-from-cloud dead-end; produces the state table. Bring dev up when the placement flow is walkable for the djdeniro walkthrough.
+
+---
+
+## Session 2026-07-03 — claim-release proposal + claim-transfer final form (both DEFERRED for launch)
+
+**Claim-release (proposed for Phase 4 gate):** problem = authoring OV's stations on this box claims playout here; Monday jensj wipes → new surface_id → all 3 show held-by-a-dead-surface. Options: A sign-out release, B explicit release, **C author-without-claiming (RECOMMENDED)** — authoring attaches monitor/editor (non-exclusive), playout claimed only at go-on-air, so Monday's placement shows all 3 available; nothing to release/strand, no transfer flow needed. A is the safety net for the audition case; dead-air rule overrides (a live claim never silently released). Default knob for Phase 4 = C unless Jeff sets otherwise at the gate.
+
+**Claim transfer — FINAL FORM (Jeff, deferred build, post-launch):** a new machine requests the seat → a profile 4-PIN confirms → the claim transfers → the old machine gives up the stream. That's the entire spec — no reachability cases, no reconnect logic, no state narration. Logged to spec. For launch, collisions are handled by author-without-claiming + the D3 graceful "held by \<machine\>" message; no transfer flow ships now.
