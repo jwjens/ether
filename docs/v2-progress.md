@@ -295,3 +295,19 @@ No jargon, no toggles, no second step.
 - `station_attachments (license_key_id, surface_id, machine_name, station_uuid, role playout|monitor)` + partial UNIQUE `one_playout` per (license, station) = D3. Proven pg-mem 9/9 (attach, idempotent, D3 hold-by-another 409+holder, detach+reclaim, monitor non-exclusive). Prod-verified: table + 4 indexes present; `/account/connect` returns `attachments`.
 
 **Remaining phases (in order):** Phase 2 = §8 `seedStationConfig` in `stations:create` (main.js). Phase 3 = provisioning attachment-aware (ccData `reconcileAccountStations` reads/writes attachments; App.tsx D1 provisioning-first). Phase 4 = onboarding decision table (OnboardingFlow: remove `'pulling'`/`'pickAudioLocation'`, replace `'pickStation'` with 0/1/≥2 branches writing attachments; `'addStation'` = create). Phase 5 = Backup/Restore → Settings. Then regression checklist (backup/restore from settings; plain sign-in bootstraps library; factory reset lands clean) + the 3 sentences + dev-box demo (next sign-in shows djdeniro, zero questions).
+
+---
+
+## Session 2026-07-02 (cont.) — MAJOR requirement: STATION LIBRARY SCOPING (launch-blocking) + build-order change
+
+**PART 1 (spec updated):** station library scoping is launch-blocking correctness, not roadmap. Replaces the "install-scoped / shared pool" note. Stations subscribe to SLICES; a machine bootstraps ONLY the union of slices for its attached stations; `/library/snapshot` filters **server-side** (unsubscribed songs never leave the server — filtered, not delivered-but-hidden); slices seed from `source_folder` first, graduate to category/programming; **fail CLOSED** (ambiguous/missing scope → empty, never everything). Spec: new "LAUNCH-BLOCKING REQUIREMENT — Station library scoping" section + amended §2.1 songs_v2 comment + §3.1 snapshot semantics.
+- **Two equally-binding acceptance tests (both must pass, one mechanism):** (1) **Portland** — 1,000-song station's machine gets those 1,000 and nothing else from other markets. (2) **OV** — machines attached to OV stations are STRUCTURALLY incapable of receiving explicit content from personal stations' slices.
+- **Week-3 grants flag:** cross-account grants (personal↔OV) either don't exist or become slice-scoped — decided at jensj/OV setup, OV test as the lens.
+
+**PART 2 (build order updated, in spec):** (1) finish read-cutover; (2) **station library scoping BEFORE the jensj cutover** (jensj bootstraps scoped); (3) week 3.
+
+**PART 3 (deliverable, gated):** sign-in/onboarding **STATE TABLE** — every reachable state, what the user sees, ≥1 path forward; no undefined branches / generic failure screens / dead-ends. "Nothing to sync yet" is a normal state with a normal screen. The old "Sync failed" dead-end was an unenumerated state → the cure is enumeration, not error copy. Reviewed at a gate.
+
+**PART 4 (week-4 punch-list — LOGGED, NOT BUILT):** with Backup/Restore moved to Settings, a returning user has no signpost that authored content (clocks/programming) is restorable there. Until programming/clocks are server-truth, add a one-time discoverability cue: if the account's R2 backup namespace has archives AND the local DB has no programming → "You have a cloud backup — restore from Settings?" notice.
+
+**Gate-readiness note:** the provisioning gate (customer/placement/persistence sentences + dev-box demo) is NOT walkable yet — only Phase 1 (backend attachments) is built; Phases 2–4 (esp. the Phase 4 onboarding decision table that removes the `'pulling'`/install-from-cloud dead-end) are not. A sign-in now still hits the old "Sync failed" dead-end. The dev-box walkthrough requires Phases 2–4 first.

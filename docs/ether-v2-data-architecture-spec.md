@@ -16,6 +16,24 @@
 
 ---
 
+## LAUNCH-BLOCKING REQUIREMENT — Station library scoping
+
+Stations subscribe to library **SLICES**; a machine bootstraps ONLY the union of slices for the stations it is attached to. This is a **correctness requirement, not a roadmap item** — it supersedes the earlier "install-scoped / single shared pool" note. The original design (four folders + per-station sync onboarding) WAS station-scoped delivery; the current pull-everything bootstrap is a regression against it.
+
+- **Server-side filtering.** `GET /library/snapshot` (and `/changes`) return only songs in the caller's attached station-set's slices — **filtered on the server, so unsubscribed songs never leave the server** (filtered, not delivered-but-hidden).
+- **Slice definition.** Initial subscriptions seed from `source_folder` (Halloween station ← Halloween folder); graduate to category/programming-based after.
+- **Fail CLOSED.** Ambiguous or missing subscription scope bootstraps to **EMPTY**, never to everything.
+- **Two equally-binding acceptance tests — neither outranks the other; the build passes when BOTH pass; one mechanism serves both:**
+  1. **Portland** — a machine attached to a 1,000-song station receives those 1,000 and nothing else from other markets.
+  2. **OV** — machines attached to Opportunity Village stations are **structurally incapable** of receiving explicit content from personal stations' slices.
+- **Week-3 grants flag:** cross-account library grants between the personal and OV accounts either **don't exist**, or become **slice-scoped** — decided at the jensj/OV setup, with the OV test as the deciding lens.
+
+**Build order (updated):** (1) finish the read-cutover; (2) **station library scoping BEFORE the jensj cutover** (jensj bootstraps scoped, not pull-everything); (3) week 3.
+
+**Required deliverable with the scoping work — sign-in/onboarding STATE TABLE:** every reachable state, what the user sees, and ≥1 path forward from each. No undefined branches, no generic failure screens, no dead ends. "Nothing to sync yet" is a NORMAL state with a normal screen, not an error — the old "Sync failed" dead-end was an *unenumerated* state getting a generic error, so **the cure is enumeration, not better error copy.** Reviewed at a gate like everything else.
+
+---
+
 ## 1. The four foundation decisions
 
 These are reversals of current design decisions, not patches. Every schema, endpoint, and flow below derives from them.
@@ -35,7 +53,8 @@ These are reversals of current design decisions, not patches. Every schema, endp
 ### 2.1 Client (SQLite) — new library tables
 
 ```sql
--- One row per unique piece of audio content. install-scoped (shared across stations).
+-- One row per unique piece of audio content. Holds ONLY the union of slices for THIS machine's attached
+-- stations (station library scoping — see the launch-blocking requirement above). NOT a shared pull-everything pool.
 CREATE TABLE songs_v2 (
   content_hash   TEXT PRIMARY KEY,          -- sha256 hex of file bytes
   title          TEXT NOT NULL,
@@ -117,7 +136,7 @@ Returns:
   "generated_at": "2026-07-08T00:00:00Z"
 }
 ```
-Semantics: full current state for the license. ~400 rows, one response (paginate at 5,000+ if ever needed). Honors `library_grants`: if the license reads another license's library, the snapshot is the grantor's state (same grant logic as the current pull's UNION).
+Semantics: the songs in the caller's ATTACHED station-set's slices — **filtered SERVER-SIDE** (unsubscribed songs never leave the server). **Fail CLOSED:** no/ambiguous scope → empty snapshot, never everything. One response (paginate at 5,000+ if ever needed). Grants (week-3 decision): cross-account grants either don't exist or are **slice-scoped** — a grant never widens scope past the attached station-set (the OV structural-isolation test is the deciding lens).
 
 ### 3.2 `GET /library/changes?since_version=N`
 Returns upserts from `library_songs` and deletes from `library_tombstones` with `snapshot_version > N`, plus the current `version`. If `N` is older than the oldest retained tombstone (client was offline past the GC horizon), return `410 Gone` — the client must re-bootstrap from `/library/snapshot`. This makes long-offline correctness explicit instead of accidental.
