@@ -4,6 +4,7 @@ import { setPlanGlobally, usePlan } from "../hooks/usePlan";
 import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
+import { reconcileAccountStations } from "../lib/ccData";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import etherAtom from "../assets/ether-atom.png";
 
@@ -26,7 +27,8 @@ type OnboardingState =
   | 'venueType'          // bolted, restyled FirstRunWizard step 1
   | 'nameStation'        // bolted, restyled FirstRunWizard step 2 (name + tagline)
   | 'pickAudioLocation'  // Screen 3.5 — Milestone B only; skipped in Milestone A
-  | 'pulling'            // Screen 4 — initial library sync
+  | 'pulling'            // Screen 4 — initial library sync (legacy restore path; out of the sign-in flow)
+  | 'placement'          // Phase 4 — "Which stations does this machine run?" (≥2 stations) → writes attachments
   | 'done';              // calls onComplete(); App.tsx routes to main UI
 
 interface Props {
@@ -470,20 +472,45 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
         }
       } catch { /* network/seat error — fall through to a fresh profile setup */ }
 
-      if (stations.length > 0) {
-        setConnectStations(stations);
-        setSyncSel(new Set(stations.map(s => s.uuid))); // default: everything selected
-        setSyncPhase('choose'); setSyncMsg('');
-        setAuthBusy(false);
-        setState('cloudSync');
-        return;
-      }
-
-      const kv = (window as any).ether.stationConfigKv;
-      await kv.upsertByKey(stationId, 'first_run_complete', '1');
-      setState('done');
+      // Phase 4 — station-provisioning DECISION TABLE (replaces the cloudSync/install-from-cloud
+      // dead-end). 0 stations → create-your-station; 1 → silent attach + materialize (the customer
+      // sentence, zero questions); ≥2 → the placement question. "Nothing to sync yet" is not an error.
+      if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }
+      if (stations.length === 1) { await provisionAttached([stations[0].uuid], lk); return; }
+      setConnectStations(stations);
+      setSyncSel(new Set(stations.map(s => s.uuid))); // default: all checked (min one enforced on confirm)
+      setAuthBusy(false);
+      setState('placement');
+      return;
     }
     catch (e: any) { setAuthErr(e?.message || 'Could not sign in.'); setAuthBusy(false); }
+  };
+
+  // Phase 4 — write playout attachments for the chosen stations, materialize them via the Phase-3
+  // provisioning (reconcileAccountStations reads /account/connect.attachments), then finish. No
+  // install-from-cloud, no dead-end. ATTACH_ROLE is the claim-release knob (Jeff's Phase-4-gate
+  // decision): 'playout' = this machine runs the station (default — makes the walkthrough + Monday
+  // land). Recommendation C (author-without-claiming) would attach 'monitor' here and claim playout
+  // only at go-on-air; flip this one constant to switch models.
+  const ATTACH_ROLE = 'playout';
+  const provisionAttached = async (uuids: string[], lk: string) => {
+    const ether = (window as any).ether;
+    const idResp = await ether.identity?.get?.().catch(() => null);
+    const surface_id = idResp?.ok ? idResp.machine_id : '';
+    const machine_name = idResp?.ok ? idResp.machine_name : '';
+    for (const uuid of uuids) {
+      try {
+        await fetch(`${ETHER_BACKEND_URL}/account/attach`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ license_key: lk, surface_id, machine_name, station_uuid: uuid, role: ATTACH_ROLE }),
+        });
+      } catch { /* provisioning retries on the signed-in poll */ }
+    }
+    try { await reconcileAccountStations(lk); } catch { /* poll will retry */ }
+    const kv = ether.stationConfigKv;
+    await kv.upsertByKey(stationId, 'first_run_complete', '1');
+    setAuthBusy(false);
+    setState('done');
   };
 
   // ── Cloud-sync handlers ──────────────────────────────────────
@@ -1430,6 +1457,53 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
           </div>
         </div>
         <style>{ANIMATION_CSS}</style>
+      </div>
+    );
+  }
+
+  if (state === 'placement') {
+    const chosen = [...syncSel];
+    const onContinue = () => { if (chosen.length > 0) provisionAttached(chosen, licenseKey); };
+    return (
+      <div style={OVERLAY_STYLE}>
+        <div style={GLOW_STYLE} />
+        <div style={SHELL_STYLE}>
+          <div style={{ animation: "onb-in 0.4s ease both" }}>
+            <div style={{ textAlign: "center", marginBottom: 32 }}>
+              <div style={LABEL_STYLE}>Step 2 of 2</div>
+              <h1 style={HEADING_STYLE}>Which stations does<br />this machine run?</h1>
+              <p style={SUB_STYLE}>{connectAccountName || 'Your account'} — pick the stations this computer operates. You can run more than one.</p>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 520, margin: "0 auto" }}>
+              {connectStations.map(s => (
+                <StationRadioCard
+                  key={s.uuid}
+                  selected={syncSel.has(s.uuid)}
+                  onClick={() => toggleSyncSel(s.uuid)}
+                  title={`${s.frequency ? s.frequency + ' ' : ''}${s.name}`}
+                  subtitle={s.call_letters || s.nickname || undefined}
+                />
+              ))}
+            </div>
+            <div style={{ maxWidth: 520, margin: "24px auto 0", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+              <button
+                onClick={() => setState('auth')}
+                style={{
+                  padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)",
+                  border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Newsreader', Georgia, serif",
+                  fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer",
+                }}
+              >
+                ← Back
+              </button>
+              <PrimaryButton
+                label={authBusy ? "Setting up…" : `Continue${chosen.length ? ` (${chosen.length})` : ''}`}
+                onClick={onContinue}
+                disabled={chosen.length === 0 || authBusy}
+              />
+            </div>
+          </div>
+        </div>
       </div>
     );
   }
