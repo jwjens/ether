@@ -34,6 +34,16 @@ Stations subscribe to library **SLICES**; a machine bootstraps ONLY the union of
 
 ---
 
+## FORMATS — station DNA, portable across markets
+
+Formats are **first-class cloud objects**: a station's initial import + programming crystallizes into a **reusable format** (library slice, categories, eventually clocks/rules). This is the model for **multi-market launch** — a new station in a new market launches by a privileged engineer signing in and **syncing a format** to the first machine.
+
+- **Templates vs instances.** Formats are TEMPLATES; stations are INSTANCES. Syncing a format **seeds a new station's categories** — it NEVER clones the source station's identity. Each station's categories remain its own **living library membership** after seeding (they diverge as the station's library grows/changes).
+- **Composes with scoping.** A format defines a slice; a seeded station subscribes to its own slice under the station-library-scoping rules. Formats **compose with — never replace —** station library scoping and fail-closed bootstrap (a format that can't resolve its slice seeds EMPTY, not everything).
+- **Deferred decision:** whether format updates propagate to already-subscribing stations — **auto / on-approval / snapshot-at-birth** — is explicitly deferred.
+
+---
+
 ## 1. The four foundation decisions
 
 These are reversals of current design decisions, not patches. Every schema, endpoint, and flow below derives from them.

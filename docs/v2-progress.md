@@ -311,3 +311,9 @@ No jargon, no toggles, no second step.
 **PART 4 (week-4 punch-list — LOGGED, NOT BUILT):** with Backup/Restore moved to Settings, a returning user has no signpost that authored content (clocks/programming) is restorable there. Until programming/clocks are server-truth, add a one-time discoverability cue: if the account's R2 backup namespace has archives AND the local DB has no programming → "You have a cloud backup — restore from Settings?" notice.
 
 **Gate-readiness note:** the provisioning gate (customer/placement/persistence sentences + dev-box demo) is NOT walkable yet — only Phase 1 (backend attachments) is built; Phases 2–4 (esp. the Phase 4 onboarding decision table that removes the `'pulling'`/install-from-cloud dead-end) are not. A sign-in now still hits the old "Sync failed" dead-end. The dev-box walkthrough requires Phases 2–4 first.
+
+---
+
+## Session 2026-07-02 (cont.) — FORMATS design extension (spec only; build order UNCHANGED)
+
+Added "FORMATS — station DNA, portable across markets" to the spec. Formats = first-class cloud objects; a station's initial import + programming crystallizes into a reusable format (library slice, categories, eventually clocks/rules). Multi-market launch = a privileged engineer signs in and syncs a format to the first machine. **Templates (formats) vs instances (stations):** syncing a format SEEDS a new station's categories, never clones the source station's identity; each station's categories remain its living library membership after seeding. **Composes with — never replaces —** station library scoping + fail-closed bootstrap (a format that can't resolve its slice seeds EMPTY). **Deferred:** whether format updates propagate (auto / on-approval / snapshot-at-birth). No build; still awaiting go on Phases 2–4 for the provisioning gate.
