@@ -279,3 +279,19 @@ No jargon, no toggles, no second step.
 **Remove from onboarding:** `'pulling'` / `install-from-cloud` / `pickAudioLocation` (restore + audio-source steps). Library arrives via §4 snapshot bootstrap (already automatic).
 
 **Acceptance tests:** (1) **customer sentence** — sign up → create station → install → sign in: your station, your name, on screen, no questions. (2) **placement sentence** — multi-station account, new machine, pick stations by name, only those appear. (3) **persistence sentence** — a machine with attachments, fully wiped + reinstalled, signs in and becomes itself again, no questions.
+
+---
+
+## Session 2026-07-02 (cont.) — Part 3 build APPROVED (D1/D2/D3) + Phase 1 DONE
+
+**Decisions (Jeff):** D1 provisioning-first, D2 reuse machine_id as surface_id, D3 enforce UNIQUE playout now. D3 addendum: attach against a station whose playout is held by ANOTHER machine fails gracefully (show holder, clean message, no transfer flow yet).
+
+**D2 honesty note:** `machine_id == client_identity.client_id` (main.js:5970) is PER-DB and regenerates on a full wipe (why 3 ids appeared across test wipes). Consequence: 1-station persistence passes regardless (count-branch asks nothing — covers dev box + go-live); MULTI-station persistence (test #3) would re-ask after a wipe until client_id is stabilized (cheapest: preserve client_id across factory-reset, reusing the install-from-cloud pattern). Flagged as a follow-up; does NOT block the dev-box finish line or 1-station go-live.
+
+**Naming corrections (the plan uses REAL names):** backup subsystem = `electron/cloud-backup.js` (not backup-service.js); restore step = `'pulling'` state in OnboardingFlow (not CloudSyncStep); provisioning = `reconcileAccountStations` in `src/lib/ccData.ts` (not provisionStationsOnSignIn); account stations from `POST /account/connect` (not /stations/mine). Provisioning is PARTIAL (materialize-by-uuid old; step-5 adoption added-unproven; not yet attachment-aware) → rework EXTENDS it.
+
+**PHASE 1 DONE (backend subscription model) — built, proven, deployed, verified:**
+- `ether-backend/src/lib/attachments-schema.js` (`ATTACHMENTS_DDL`) + `src/routes/attachments.js` (attachSurface/detachSurface/attachmentsForSurface + router) + index.js wiring (initDB, mount `/account/attach`+`/account/detach`, `/account/connect` now returns this surface's `attachments`). ether-backend commit `5fab4e2`, deployed `99fe35c1` (Online).
+- `station_attachments (license_key_id, surface_id, machine_name, station_uuid, role playout|monitor)` + partial UNIQUE `one_playout` per (license, station) = D3. Proven pg-mem 9/9 (attach, idempotent, D3 hold-by-another 409+holder, detach+reclaim, monitor non-exclusive). Prod-verified: table + 4 indexes present; `/account/connect` returns `attachments`.
+
+**Remaining phases (in order):** Phase 2 = §8 `seedStationConfig` in `stations:create` (main.js). Phase 3 = provisioning attachment-aware (ccData `reconcileAccountStations` reads/writes attachments; App.tsx D1 provisioning-first). Phase 4 = onboarding decision table (OnboardingFlow: remove `'pulling'`/`'pickAudioLocation'`, replace `'pickStation'` with 0/1/≥2 branches writing attachments; `'addStation'` = create). Phase 5 = Backup/Restore → Settings. Then regression checklist (backup/restore from settings; plain sign-in bootstraps library; factory reset lands clean) + the 3 sentences + dev-box demo (next sign-in shows djdeniro, zero questions).
