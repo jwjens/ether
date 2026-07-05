@@ -398,3 +398,13 @@ Added "FORMATS — station DNA, portable across markets" to the spec. Formats = 
 - `src/App.tsx`: `.catch` the best-effort `sync:set-active` invoke.
 
 **STILL TO DO before Monday:** run `smoke-renderer.ps1 -Mode packaged` against the packaged build (same layer as the old packaged blank-screen bug; not yet run — no local packaged build). Verify packaged factory-reset → relaunch (dev can't self-relaunch; packaged should). State table (Monday gate) with all rows incl. row 18 + dev-vs-packaged reset. Then ≥2 placement test during OV authoring, read-cutover, scoping.
+
+---
+
+## Session 2026-07-05 (cont.) — STATE TABLE built (the Monday gate) → `docs/onboarding-signin-state-table.md`
+
+Enumerated every reachable sign-in/onboarding state (boot/gate, provisioning decision, failure/edge, account-switch, migration) with a path forward from each. Status legend ✅ demonstrated / 🔶 Monday-verified / ⛔ open / 🔒 deferred.
+
+**NEW FINDING (surfaced by building the table) — C1–C3, ⛔ OPEN, Monday-relevant:** `doSignIn` (OnboardingFlow.tsx:473) swallows **network error, non-OK HTTP, AND seat-limit 403** all into `stations=[]` → the 0-branch → **create-a-station**. So a flaky-network / **mid-deploy** / seat-limited sign-in on an account that ALREADY has stations wrongly offers "create a station" (duplicate risk). Fix (one place): create ONLY on `res.ok && data.stations.length === 0`; on throw/non-OK → a dedicated "can't reach the server — Retry" state; on 403 → "devices full — free one" (Manage Devices). Recommend fixing before Monday (mid-deploy sign-in is plausible).
+
+**Demonstrated green:** A1–A3 (gate), B1–B4/B6 (0- and 1-station branches; djdeniro), C4 (interrupted provisioning fail-closed), D2, E1 (fresh-wipe→sign-in = Monday's path), A4-dev (renderer smoke). **Open:** C1–C3 (server-unreachable branch), E2/row-18 (pre-rework install, un-wiped), A4/E4 packaged smoke + packaged reset, B5/D1 (≥2 placement + account-switch, during OV authoring).
