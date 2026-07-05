@@ -5901,11 +5901,14 @@ ipcMain.handle('stations:switch', (_, id) => {
 });
 
 ipcMain.handle('stations:create', (_, data) => {
-  // Safety gate: block second-station creation until Phase 3 INSERT audit is complete.
-  // 40 renderer callsites still rely on DEFAULT station_id=1 — see checklist at top of file.
-  // To unlock: INSERT OR REPLACE INTO station_config_kv (key,value) VALUES ('multistation_insert_audit_complete','true')
+  // Safety gate: block a USER creating an additional local station until the Phase-3 INSERT audit is
+  // complete (40 renderer callsites still assume DEFAULT station_id=1). MATERIALIZING an account's OWN
+  // cloud station (reconcile / sign-in provisioning) is EXEMPT — it passes the server station_uuid, is
+  // not a user-authored second station, and is core to v2 multi-station provisioning; it must never be
+  // gated (this gate was blocking OV from materializing on sign-in). Exemption = an explicit uuid.
+  const isMaterialize = !!(data && data.uuid);
   const existingCount = db.prepare("SELECT COUNT(*) as c FROM stations").get().c;
-  if (existingCount >= 1) {
+  if (existingCount >= 1 && !isMaterialize) {
     const auditRow = db.prepare("SELECT value FROM station_config_kv WHERE key='multistation_insert_audit_complete'").get();
     if (auditRow?.value !== 'true') {
       return {
