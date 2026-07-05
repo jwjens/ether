@@ -488,6 +488,29 @@ function _clearAccountSessionKeys() {
   for (const k of ACCOUNT_SESSION_KEYS) { try { del.run(now, now, k); } catch {} }
 }
 
+// THE SIGN-OUT INVARIANT (2026-07-05): sign-out is TOTAL and FINAL. Clears EVERY store an identity/
+// account touches so the next sign-in/signup starts from absolute zero with no residual — the same
+// clear factory-reset performs, reused verbatim. Chromium session (cookies/Local+Session Storage/
+// IndexedDB) + on-disk DB (openair.db, WAL, keyed copies, engine staging) + legacy dirs + sessionData
+// + skip-sign-in markers. The music library (~/Music/ether music library) is NOT touched — it re-
+// bootstraps from the account on the next sign-in (account is root; the machine is a terminal).
+async function _wipeLocalIdentityAndData() {
+  try {
+    const { session } = require("electron");
+    await session.defaultSession.clearStorageData();   // cookies + all web storage, all origins
+    await session.defaultSession.clearCache();
+  } catch (e) { console.error("[wipe] clearStorageData:", e.message); }
+  try { db.close(); } catch {}
+  const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
+  rm(path.dirname(_etherDir()));                              // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
+  rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB
+  rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
+  try { rm(app.getPath("sessionData")); } catch {}           // Chromium session store on disk
+  for (const m of [".ether-on-air", ".ether-keep-session"]) {
+    try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
+  }
+}
+
 // Which account's data this DB holds, kept at install level so it SURVIVES the per-station
 // account-key clears that File ▸ Switch Account / sign-out do (license_email gets wiped; this
 // doesn't). SELF-HEALING: on every startup, set the marker to the CURRENT license_email so it
@@ -515,7 +538,7 @@ function _backfillAccountMarker() {
 // the menu items "did nothing". Clears the per-station account/onboarding keys so App re-runs the
 // sign-in gate; leaves the install-level account marker + local station data intact (the per-account
 // detection relies on the marker). `switching` only changes the wording.
-function accountSignOut(switching) {
+async function accountSignOut(switching) {
   try {
     const { dialog } = require("electron");
     const win = BrowserWindow.getFocusedWindow() || mainWindow;
@@ -524,12 +547,12 @@ function accountSignOut(switching) {
       buttons: ["Cancel", switching ? "Switch Account" : "Sign Out"],
       title: switching ? "Switch Account" : "Sign Out",
       message: switching ? "Switch to a different account?" : "Sign out of this account?",
-      detail: "Returns to the sign-in screen, where you can sign in as a different account. This computer's local station data is left in place.",
+      detail: "Signs out COMPLETELY — this account and ALL its local data are removed from this computer. The next sign-in starts fresh and pulls only that account's stations and library. Nothing is left behind.",
     });
     if (choice !== 1) return;
-    try { _clearAccountSessionKeys(); }
-    catch (e) { console.error("[account] sign-out clear:", e.message); }
-    try { _persistOnAir(false); } catch {}  // explicit sign-out → next launch requires sign-in
+    // TOTAL sign-out invariant: clear every identity store (same as factory-reset). Nothing residual.
+    try { await _wipeLocalIdentityAndData(); }
+    catch (e) { console.error("[account] sign-out wipe:", e.message); }
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);
@@ -2974,28 +2997,7 @@ ipcMain.handle("db:restore", (_, backupName) => {
 // relaunches. Destructive — the renderer gates this behind a double-email confirmation.
 ipcMain.handle("system:factoryReset", async () => {
   try {
-    // Fix A — clear the Electron session BEFORE anything else. The account session (cookies + Local/
-    // Session Storage + IndexedDB) survived a file-only wipe because it lives in the Chromium session
-    // store at app.getPath('sessionData'), which is NOT the DB dir and was not redirected when userData
-    // was overridden. Clearing via the session API is path-independent (clears the live session wherever
-    // it is). MUST await before relaunch/exit so it actually flushes.
-    try {
-      const { session } = require("electron");
-      await session.defaultSession.clearStorageData();             // cookies + all web storage, all origins
-      await session.defaultSession.clearCache();
-    } catch (e) { console.error("[factoryReset] clearStorageData:", e.message); }
-    try { db.close(); } catch {}
-    const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
-    // Wipe EVERYTHING so a reset is truly clean. The old version only deleted openair.db and left
-    // keyed copies (openair__*.db) + the legacy folder + userData markers behind, which let the old
-    // install resurrect on the next launch. Nuke the whole local data folder + legacy + markers.
-    rm(path.dirname(_etherDir()));                                  // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
-    rm(path.join(app.getPath("appData"), "com.ether.radio"));      // legacy Roaming DB (redirected to network on managed boxes)
-    rm(path.join(app.getPath("appData"), "openair"));              // old (pre-rename) Roaming userData, if any lingers
-    try { rm(app.getPath("sessionData")); } catch {}               // Fix A — the Chromium session store (cookies/Local Storage/IndexedDB): the session leak's on-disk home
-    for (const m of [".ether-on-air", ".ether-keep-session"]) {    // markers that skip sign-in / trigger resurrection
-      try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
-    }
+    await _wipeLocalIdentityAndData();   // shared total clear (session + DB + legacy + sessionData + markers)
     markHaExpectedRestart();
     app.relaunch();
     app.exit(0);
@@ -3017,10 +3019,11 @@ ipcMain.handle("app:relaunch", () => {
 // where the operator authenticates as whichever account they want. No file moves, no data mixing.
 // (Account data isolation is handled by scoping what's shown to the signed-in account, not by
 // juggling DB files.) The `email` arg is ignored — kept for call-site compatibility.
-ipcMain.handle("account:switch-to", () => {
+ipcMain.handle("account:switch-to", async () => {
   try {
-    _clearAccountSessionKeys();
-    try { _persistOnAir(false); } catch {}  // explicit switch → next launch requires sign-in
+    // Switch = total sign-out then a fresh sign-in as the other account. Same clean-room clear as
+    // factory-reset/sign-out — nothing from the old account survives into the next sign-in.
+    await _wipeLocalIdentityAndData();
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);

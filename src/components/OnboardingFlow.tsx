@@ -364,27 +364,29 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // After auth, ask the backend which stations this account already has, then route into the
   // existing pick-station (has stations) or add-station (none yet) screens. License/plan are
   // already stored by activateAndContinue.
+  // Post-auth CLEAN-ROOM provisioning decision (Phase 4) — SHARED by sign-in AND sign-up. Reads the
+  // account's stations from /account/connect and routes via the decision table: 0 → create-your-station;
+  // 1 → silent attach + materialize; ≥2 → placement. NEVER the legacy pickStation/install-from-cloud
+  // restore path, and never stamps a prior account's station: the total sign-out invariant guarantees a
+  // clean local context here, so signup provisions the NEW account only (kills last night's hijack).
   const routeAfterAuth = async (lk: string) => {
     setLicenseKey(lk);
+    let stations: OnboardingStation[] = [];
     try {
       const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
-      const machine_id = idResp?.ok ? idResp.machine_id : '';
-      const machine_name = idResp?.ok ? idResp.machine_name : '';
       const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ license_key: lk, machine_id, machine_name }),
+        body: JSON.stringify({ license_key: lk, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '' }),
       });
       const data = await res.json().catch(() => ({}));
-      const kv = (window as any).ether.stationConfigKv;
-      if (data.account_name) await kv.upsertByKey(stationId, 'account_name', data.account_name);
-      await kv.upsertByKey(stationId, 'onboarding_license_entered', '1');
-      const stations = Array.isArray(data.stations) ? (data.stations as OnboardingStation[]) : [];
-      setConnectAccountName(data.account_name || '');
-      setConnectStations(stations);
-      setState(stations.length > 0 ? 'pickStation' : 'addStation');
-    } catch {
-      setState('addStation');
-    }
+      if (Array.isArray(data.stations)) { stations = data.stations as OnboardingStation[]; setConnectAccountName(data.account_name || ''); }
+    } catch { /* server unreachable/seat → treated as empty; C1-C3 (retry state) is a separate flagged fix */ }
+    if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }
+    if (stations.length === 1) { await provisionAttached([stations[0].uuid], lk); return; }
+    setConnectStations(stations);
+    setSyncSel(new Set(stations.map(s => s.uuid))); // default all checked (min one enforced on confirm)
+    setAuthBusy(false);
+    setState('placement');
   };
 
   // desktop-activate provisions/returns the license for this account + machine, stores
@@ -451,36 +453,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     setAuthBusy(true); setAuthErr('');
     try {
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
-      setLicenseKey(lk);
-
-      // Ask the backend which stations this account already has (license-key authed).
-      let stations: OnboardingStation[] = [];
-      try {
-        const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
-        const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            license_key:  lk,
-            machine_id:   idResp?.ok ? idResp.machine_id   : '',
-            machine_name: idResp?.ok ? idResp.machine_name : '',
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (Array.isArray(data.stations)) {
-          stations = data.stations as OnboardingStation[];
-          setConnectAccountName(data.account_name || '');
-        }
-      } catch { /* network/seat error — fall through to a fresh profile setup */ }
-
-      // Phase 4 — station-provisioning DECISION TABLE (replaces the cloudSync/install-from-cloud
-      // dead-end). 0 stations → create-your-station; 1 → silent attach + materialize (the customer
-      // sentence, zero questions); ≥2 → the placement question. "Nothing to sync yet" is not an error.
-      if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }
-      if (stations.length === 1) { await provisionAttached([stations[0].uuid], lk); return; }
-      setConnectStations(stations);
-      setSyncSel(new Set(stations.map(s => s.uuid))); // default: all checked (min one enforced on confirm)
-      setAuthBusy(false);
-      setState('placement');
+      await routeAfterAuth(lk);   // shared clean-room decision table (Phase 4) — same for sign-in + sign-up
       return;
     }
     catch (e: any) { setAuthErr(e?.message || 'Could not sign in.'); setAuthBusy(false); }
