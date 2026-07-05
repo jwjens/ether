@@ -409,6 +409,20 @@ Enumerated every reachable sign-in/onboarding state (boot/gate, provisioning dec
 
 **Demonstrated green:** A1–A3 (gate), B1–B4/B6 (0- and 1-station branches; djdeniro), C4 (interrupted provisioning fail-closed), D2, E1 (fresh-wipe→sign-in = Monday's path), A4-dev (renderer smoke). **Open:** C1–C3 (server-unreachable branch), E2/row-18 (pre-rework install, un-wiped), A4/E4 packaged smoke + packaged reset, B5/D1 (≥2 placement + account-switch, during OV authoring).
 
+## Session 2026-07-05 (cont.) — TOTAL SIGN-OUT INVARIANT + signup cleanroom + 350 republished to OV
+
+**Total sign-out invariant (openair `6652594`):** new `_wipeLocalIdentityAndData()` (main.js) clears EVERY identity store — Chromium session (clearStorageData+clearCache), on-disk DB + keyed copies + legacy dirs + sessionData + skip-sign-in markers (music library untouched → re-bootstraps). Reused verbatim by `system:factoryReset`, `accountSignOut`, and `account:switch-to` — all now total/final. Sign-out dialog text updated ("removed COMPLETELY... nothing left behind"). This makes "sign out = gone, forever, nothing residual" structural, not a patch — subsumes the auto-sign-in-after-wipe + reset fixes.
+
+**Signup cleanroom (same commit):** `routeAfterAuth`'s legacy `pickStation`/install-from-cloud body REPLACED with the Phase-4 decision table (0→create, 1→silent attach, ≥2→placement); `doSignIn` + `doSignUp` now share it. Kills last night's hijack — signup no longer runs under / stamps the prior account's residual active-station. vite build ✓, syntax/transform ✓.
+
+**Root of last night, definitively (evidence):** signup DID work — `doSignUp` → `/api/user/signup` created jensj@ (user 25, **license 24** `ETH-STN-BAA8`; NOT 23 — 23 is customer cristianmalliani) → activate wrote jensj identity locally → but legacy `routeAfterAuth` ran under djdeniro's residual active-station (stationId=1), never switched off it. Data verdict = WRONG-READ, server CLEAN (OV station 35 carries license_key_id=24, not 22). No corruption.
+
+**350 REPUBLISHED to OV (Jeff's correction — the 350 are OV's catalog, were wrongly under djdeniro/22):** server-side move via `/library` endpoints, SCOPED to keys 22/24 only. Published 350→license 24 (verified snapshot v350 count 350), then removed from 22 (verified count 0). R2: copied 350 objects `22/<hash>`→`24/<hash>` in bucket ether-backups (350/350 ok, sample 5/5 present). **djdeniro (22) library now honestly empty; jensj/OV (24) = 350.** Nothing referenced the 350 (0 categories/programming) → clean move.
+
+**Grid-0 answer (Jeff's question):** it was the READ-CUTOVER gap, not the misplacement — the grid reads the OLD `songs` table regardless of account. Orthogonal to the republish; still pending (narrow read-cutover: grid→songs_v2 + click→resolveByHash).
+
+**PENDING verification (Jeff, on this box):** restart dev (new sign-out code) → click Sign Out (total wipe) → sign in as jensj → expect ONLY jensj/OV, no djdeniro residue. (Dev can't self-relaunch after the wipe — same dev artifact as factory-reset; relaunch dev manually, then sign in.)
+
 ## PLATFORM SAFETY RULE (PERMANENT, 2026-07-05) — read before ANY platform DB/R2 op
 
 `netgeak` (license 21) + `cristianmalliani@gmail.com` (license 23) are **CUSTOMERS**. NEVER touch/modify/delete/cleanup their accounts/licenses/stations/data. **All platform maintenance/migration/cleanup scopes to Jeff's accounts ONLY: djdeniro (22) + jensj@ (24).** No platform-wide writes, ever. (See spec header + memory `feedback_customer_accounts_never_touch`.)
