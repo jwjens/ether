@@ -384,3 +384,17 @@ Added "FORMATS — station DNA, portable across markets" to the spec. Formats = 
 - **Renderer-mount smoke check** (boot real window, assert React mounted + zero console exceptions, dev AND packaged) — QUEUED, guards this exact layer + adds the missing renderer-console pipe.
 
 **Next:** renderer-mount smoke check; ≥2 placement test (OV authoring — needs the claim-release C/A/B decision first so this box doesn't claim OV playout); state table (Monday gate) with all rows; then read-cutover → scoping.
+
+---
+
+## Session 2026-07-05 — claim-release C chosen + renderer-mount smoke check built (openair `14236d0`)
+
+**Claim-release = C (author-without-claiming), Jeff's decision.** OnboardingFlow `ATTACH_ROLE='monitor'` (non-exclusive): signing in to author/operate never takes the exclusive playout claim → authoring OV on this box never strands Monday's jensj placement. Playout-claim-at-go-on-air + transfer deferred post-launch; local streaming unaffected (cloud never in playback path). Materialize/adopt is role-agnostic → a monitor attachment still brings the station on screen + active.
+
+**Renderer-mount smoke check (structural, standing pre-Monday gate):**
+- `electron/main.js`: renderer console → main-log pipe (level ≥ warn) + `render-process-gone` hook — **closes the gap that hid the white-screen exception from logs**; + `ETHER_SMOKE=1` self-check (boots real window, asserts `#root` has children + no renderer console exception, writes `[SMOKE] PASS/FAIL` to startup log, exits pass/fail).
+- `scripts/smoke-renderer.ps1`: `-Mode dev|packaged` launcher that reads the verdict (from the startup log — works for packaged GUI too, where stdout is unreliable).
+- **Proven working:** first run correctly FAILED on a real boot console error (`sync:set-active` unhandled promise rejection — App.tsx invoked it without `.catch` and the handler is gated off by default), then PASSED after the fix. Boot is now **console-clean**. (Also fixed a runner slice bug that read a stale verdict.)
+- `src/App.tsx`: `.catch` the best-effort `sync:set-active` invoke.
+
+**STILL TO DO before Monday:** run `smoke-renderer.ps1 -Mode packaged` against the packaged build (same layer as the old packaged blank-screen bug; not yet run — no local packaged build). Verify packaged factory-reset → relaunch (dev can't self-relaunch; packaged should). State table (Monday gate) with all rows incl. row 18 + dev-vs-packaged reset. Then ≥2 placement test during OV authoring, read-cutover, scoping.
