@@ -409,6 +409,10 @@ Enumerated every reachable sign-in/onboarding state (boot/gate, provisioning dec
 
 **Demonstrated green:** A1–A3 (gate), B1–B4/B6 (0- and 1-station branches; djdeniro), C4 (interrupted provisioning fail-closed), D2, E1 (fresh-wipe→sign-in = Monday's path), A4-dev (renderer smoke). **Open:** C1–C3 (server-unreachable branch), E2/row-18 (pre-rework install, un-wiped), A4/E4 packaged smoke + packaged reset, B5/D1 (≥2 placement + account-switch, during OV authoring).
 
+## PLATFORM SAFETY RULE (PERMANENT, 2026-07-05) — read before ANY platform DB/R2 op
+
+`netgeak` (license 21) + `cristianmalliani@gmail.com` (license 23) are **CUSTOMERS**. NEVER touch/modify/delete/cleanup their accounts/licenses/stations/data. **All platform maintenance/migration/cleanup scopes to Jeff's accounts ONLY: djdeniro (22) + jensj@ (24).** No platform-wide writes, ever. (See spec header + memory `feedback_customer_accounts_never_touch`.)
+
 ## Session 2026-07-05 (cont.) — FULL PASS of everything shipped (World 1 confirmed)
 
 **Tonight = full pass of the shipped build (Jeff):** provisioning DEMONSTRATED on a history-laden machine (badge djdeniro); §4 bootstrap VERIFIED (songs_v2=350, snapshot_version=350); grid-0 is the EXPECTED symptom at this stage (read-cutover not shipped — UI still reads the old `songs` table, App.tsx:4442, which is 0 on a fresh machine). Station provisioning ✅ + library bootstrap ✅ + read-cutover ⛔-not-yet = coherent World 1. Next build: read-cutover.

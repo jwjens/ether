@@ -14,6 +14,7 @@
 **Scope:** Library identity, cloud truth, delete semantics, file storage, client bootstrap, and the fresh-account import. Everything above the data layer (Rust engine, daemon, decks, clocks, spots, operator console, UI) is explicitly out of scope and unchanged.
 **Timebox:** 4 weeks, pre-launch. If work drifts into redesigning clocks, the daemon protocol, or UI systems, it is out of scope — stop and re-check this spec.
 **Workflow:** Claude Code executes; Jeff approves each step with explicit go/no-go. Read-only diagnosis before every destructive step. All scripts are `.js` files run with node, never inline `-e`. Migrations verified on a DB copy first, never the live file.
+**PLATFORM SAFETY (PERMANENT, effective 2026-07-05):** the `netgeak` (license 21) and `cristianmalliani@gmail.com` (license 23) accounts are **CUSTOMERS** on the shared prod platform. NEVER touch, modify, query-with-side-effects, delete, or "clean up" their accounts/licenses/stations/data — under any task. **Every platform DB / R2 maintenance, migration, or cleanup MUST explicitly scope to Jeff's accounts only — djdeniro (license 22) and jensj@opportunityvillage.org (license 24)** (`license_key_id IN (22,24)` / the specific key). No platform-wide `DELETE`/`UPDATE`/`TRUNCATE`, ever. Read-only scans may be broad; writes never are.
 
 ---
 
