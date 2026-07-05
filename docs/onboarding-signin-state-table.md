@@ -23,6 +23,8 @@ Source of truth for behavior: `src/components/OnboardingFlow.tsx` (doSignIn + de
 | A3 | Session valid → app | valid session present | UserLogin (profile PIN) → OnShift → main app | operate | ✅ (existing) |
 | A4 | Renderer fails to load | module/render exception at boot | (was) blank white window | **guarded**: smoke check catches pre-ship; `did-fail-load` force-shows the window | dev ✅ / packaged 🔶 |
 
+> **Packaged-smoke coverage caveat:** `smoke-renderer.ps1 -Mode packaged` launches the packaged **renderer bundle under an Electron binary** — it verifies the renderer mounts, but it is **NOT** the true installer output (NSIS install, asar packing, code signing, auto-update delivery). A green packaged smoke ≠ installer coverage. Real installer verification is a separate step (install the built artifact, launch it, smoke that).
+
 ## B. Sign-in → station-provisioning decision (post-auth, `doSignIn`)
 
 | # | State | Trigger | User sees | Path(s) forward | Status |
@@ -64,7 +66,7 @@ attachments/claims stay per-account; scoped library swaps cleanly; badge always 
 | # | State | Trigger | User sees | Path(s) forward | Status |
 |---|-------|---------|-----------|-----------------|--------|
 | E1 | **Fresh wipe → sign in** (Monday's jensj path) | factory-reset/clean install → sign in | clean fresh provisioning | B-decision | ✅ **DEMONSTRATED (djdeniro post-wipe)** |
-| E2 | **Pre-rework local state boots reworked flow (NO wipe)** — "row 18" | existing install updates to this build | unknown (old attachment under attach=claim, station already materialized, old routing flags) | must define + test | ⛔ **UNVERIFIED** (Monday's jensj is wiped=E1, but other installs cross E2) |
+| E2 | **Pre-rework local state boots reworked flow (NO wipe)** — "**row 18**" | existing install auto-updates to this build (stale `first_run_complete` / `onboarding_*` flags, station already materialized, old attach=claim attachment) | **FAILURE MODE: lands on "Choose Your Path" / a legacy onboarding screen** instead of its correct screen — this is row 18 failing its *defined* screen (stale-flag routing), NOT stale UI copy | **Correct**: route to the right screen — main app if already onboarded, else the proper B-decision. Fix = stale-flag routing in the resume path. **Demo must show a history-laden machine reaching the CORRECT screen, not merely booting.** | ⛔ **SCHEDULED** — this week if cheap, **week 4 at the latest**. Not deferrable: **every auto-updating customer machine post-launch crosses E2.** |
 | E3 | Factory reset — dev | reset in dev | wipe works; app does NOT self-return (vite orchestration torn down) | manual dev relaunch | ✅ (known dev artifact) |
 | E4 | Factory reset — packaged | reset in packaged | expected: self-relaunch → auth | verify before Monday | 🔶 |
 
@@ -75,9 +77,12 @@ attachments/claims stay per-account; scoped library swaps cleanly; badge always 
 1. ⛔ **C1–C3** — sign-in when the server is unreachable / mid-deploy / seat-limited must NOT fall through to
    create-a-station. One fix in `doSignIn`: only create on `res.ok && data.stations.length === 0`; otherwise a
    "can't reach the server — Retry" state (and a distinct seat-limit message for 403). **Recommend fixing now.**
-2. ⛔ **E2 / row 18** — test an existing (un-wiped) install updating into the reworked flow; define what it shows.
+2. ⛔ **E2 / row 18 — SCHEDULED (this week if cheap, week 4 latest), not deferrable.** Every auto-updating
+   customer machine crosses it. Fix the stale-flag routing so a history-laden boot reaches its CORRECT screen
+   (not "Choose Your Path"). Demo must show a history-laden machine routing correctly, not just booting.
 3. 🔶 **A4 / E4** — run the packaged renderer smoke (`scripts/smoke-renderer.ps1 -Mode packaged`) and packaged
-   factory-reset → relaunch, against the packaged build.
+   factory-reset → relaunch, against the packaged build. **Caveat: packaged smoke ≠ installer coverage** (it runs
+   the renderer under an Electron binary, not the NSIS-installed/signed/auto-update artifact — verify that separately).
 4. 🔶 **B5 / D1** — demonstrate the ≥2 placement (OV) and account-switching rows on this box during OV authoring.
 
 Demonstrated green so far: A1–A3, B1–B4, B6, C4, D2, E1, A4(dev).
