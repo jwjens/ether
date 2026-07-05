@@ -916,7 +916,9 @@ export default function App() {
   // a license and pulling/pushing another account's data before anyone has signed in.
   useEffect(() => {
     const ether = (window as any).ether;
-    ether?.invoke?.("sync:set-active", !!currentUser);
+    // Best-effort: the handler only registers when Multi-Device Sync is enabled, so swallow the
+    // "no handler" rejection instead of leaking an unhandled promise rejection to the console.
+    ether?.invoke?.("sync:set-active", !!currentUser)?.catch?.(() => {});
     if (currentUser && apiKeyRef.current) pushInstallUsers(apiKeyRef.current);
   }, [currentUser]);
 

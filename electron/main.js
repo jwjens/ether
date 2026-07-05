@@ -1215,6 +1215,43 @@ function createWindow() {
     }
   });
 
+  // Renderer console → main log (warnings + errors). Closes the gap where a renderer exception was
+  // invisible to the main process — the reason a white screen couldn't be diagnosed from logs. Cheap.
+  let _rendererSawError = false;
+  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level >= 2) { // 2 = warning, 3 = error
+      if (level >= 3) _rendererSawError = true;
+      logStartup(`[renderer:${level >= 3 ? 'error' : 'warn'}] ${message}${sourceId ? ` (${sourceId}:${line})` : ''}`);
+    }
+  });
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    _rendererSawError = true;
+    logStartup(`render-process-gone: reason=${details?.reason} exitCode=${details?.exitCode}`);
+  });
+
+  // SMOKE MODE (ETHER_SMOKE=1): boot the REAL window, assert React mounted (#root has children) and no
+  // renderer console exception, print a verdict, exit. Guards the render/module-load layer (the white-
+  // screen / packaged blank-screen class) in dev AND packaged. Never runs in normal use.
+  if (process.env.ETHER_SMOKE === '1') {
+    let _smokeDone = false;
+    const finishSmoke = (ok, why) => {
+      if (_smokeDone) return; _smokeDone = true;
+      logStartup(`[SMOKE] ${ok ? 'PASS' : 'FAIL'} — ${why}`);
+      console.log(`[SMOKE] ${ok ? 'PASS' : 'FAIL'} ${why}`);
+      setTimeout(() => app.exit(ok ? 0 : 1), 300);
+    };
+    mainWindow.webContents.once('did-finish-load', async () => {
+      try {
+        await new Promise(r => setTimeout(r, 2500)); // let React mount after load
+        const rootKids = await mainWindow.webContents.executeJavaScript(
+          "((document.getElementById('root')||{}).childElementCount)||0", true).catch(() => 0);
+        finishSmoke(rootKids > 0 && !_rendererSawError,
+          `react_mounted=${rootKids > 0} root_children=${rootKids} renderer_error=${_rendererSawError}`);
+      } catch (e) { finishSmoke(false, `harness_error=${e.message}`); }
+    });
+    setTimeout(() => finishSmoke(false, 'timeout — no did-finish-load within 30s'), 30000);
+  }
+
   // Closing the window is a DECISION, not a silent tray-hide. The old behavior (vanish to tray,
   // keep running + on air) left operators thinking Ether had quit while it kept eating resources
   // and there was no obvious way to actually stop it. Make the choice explicit.

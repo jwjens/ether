@@ -486,13 +486,16 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     catch (e: any) { setAuthErr(e?.message || 'Could not sign in.'); setAuthBusy(false); }
   };
 
-  // Phase 4 — write playout attachments for the chosen stations, materialize them via the Phase-3
-  // provisioning (reconcileAccountStations reads /account/connect.attachments), then finish. No
-  // install-from-cloud, no dead-end. ATTACH_ROLE is the claim-release knob (Jeff's Phase-4-gate
-  // decision): 'playout' = this machine runs the station (default — makes the walkthrough + Monday
-  // land). Recommendation C (author-without-claiming) would attach 'monitor' here and claim playout
-  // only at go-on-air; flip this one constant to switch models.
-  const ATTACH_ROLE = 'playout';
+  // Phase 4 — attach the chosen stations, materialize them via the Phase-3 provisioning
+  // (reconcileAccountStations reads /account/connect.attachments), then finish. No install-from-cloud,
+  // no dead-end. CLAIM-RELEASE = C (author-without-claiming, Jeff's Phase-4-gate decision): onboarding
+  // attaches 'monitor' (NON-exclusive) — signing in to author/operate never takes the exclusive playout
+  // claim, so authoring OV on one box never strands another box's placement (nothing to release/transfer).
+  // Local streaming is unaffected — the cloud is never in the playback path (north-star). The exclusive
+  // playout CLAIM at go-on-air, and its transfer (request → 4-PIN → transfer → old machine drops), are
+  // DEFERRED post-launch. Materialize/adopt is role-agnostic, so a monitor attachment still brings the
+  // station on screen and active (proven for djdeniro).
+  const ATTACH_ROLE = 'monitor';
   const provisionAttached = async (uuids: string[], lk: string) => {
     const ether = (window as any).ether;
     const idResp = await ether.identity?.get?.().catch(() => null);
