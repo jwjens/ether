@@ -364,3 +364,23 @@ Added "FORMATS — station DNA, portable across markets" to the spec. Formats = 
 **Claim-release (proposed for Phase 4 gate):** problem = authoring OV's stations on this box claims playout here; Monday jensj wipes → new surface_id → all 3 show held-by-a-dead-surface. Options: A sign-out release, B explicit release, **C author-without-claiming (RECOMMENDED)** — authoring attaches monitor/editor (non-exclusive), playout claimed only at go-on-air, so Monday's placement shows all 3 available; nothing to release/strand, no transfer flow needed. A is the safety net for the audition case; dead-air rule overrides (a live claim never silently released). Default knob for Phase 4 = C unless Jeff sets otherwise at the gate.
 
 **Claim transfer — FINAL FORM (Jeff, deferred build, post-launch):** a new machine requests the seat → a profile 4-PIN confirms → the claim transfers → the old machine gives up the stream. That's the entire spec — no reachability cases, no reconnect logic, no state narration. Logged to spec. For launch, collisions are handled by author-without-claiming + the D3 graceful "held by \<machine\>" message; no transfer flow ships now.
+
+---
+
+## Session 2026-07-04/05 — Phase 4 built; WHITE-SCREEN caught+fixed; PROVISIONING GATE PASSED (customer sentence demonstrated)
+
+**Phase 4 (openair `fe46e66`):** OnboardingFlow decision table replaces the cloudSync/install-from-cloud dead-end. doSignIn: 0 stations → create-your-station; 1 → silent attach + materialize; ≥2 → new 'placement' screen (checkboxes, min one). `provisionAttached()` → POST /account/attach → Phase-3 reconcile. `ATTACH_ROLE` = claim-release knob (default 'playout').
+
+**WHITE-SCREEN (failed gate) → fixed (openair `c7d19b9`):** provisioning.js was CommonJS (`module.exports`); Rollup/Vite can't get ESM named exports → ccData import failed → App module graph failed → blank window at boot. Render/module-load bug, NOT routing; universal (any machine), not the pre-rework-state theory. Missed because node-require proofs pass under CJS and the Vite bundle was never built. Fix: ESM `export function`. **GATE LESSON (now standing): `vite build` must pass for any renderer change** — node-require + single-file esbuild are insufficient. Verified: vite build ✓ + logic proof 10/10 (esbuild-bundled ESM).
+
+**PROVISIONING GATE PASSED — customer sentence DEMONSTRATED on this box (fresh wipe + djdeniro sign-in, zero questions):**
+- Local: `djdeniro` materialized + **active** (uuid 766cdcce); §8 seed 5 rules + 47 defs; songs_v2=350; first_run_complete=1. **Badge shows "djdeniro" (Jeff confirmed on screen).**
+- Backend: 1 attachment — surface `641d4597…` (OVEVENTS) → station `766cdcce…` role `playout`; seats 1/5.
+- Chain proven: sign in → 1-station silent-attach → /account/attach → reconcile materialize+seed+bootstrap → active. No sync screen, no dead-end.
+
+**FINDINGS → state table:**
+- **Factory reset in DEV ≠ packaged:** dev `app.relaunch()` tears down the vite orchestration → app doesn't self-return (wipe still works; must manually relaunch dev). Packaged is self-contained → must VERIFY packaged reset→relaunch before Monday.
+- **Row 18** (existing machine with pre-rework state boots reworked flow, NO wipe) — still UNVERIFIED (this run was post-wipe = the fresh/Monday path). Matters for non-wiped installs.
+- **Renderer-mount smoke check** (boot real window, assert React mounted + zero console exceptions, dev AND packaged) — QUEUED, guards this exact layer + adds the missing renderer-console pipe.
+
+**Next:** renderer-mount smoke check; ≥2 placement test (OV authoring — needs the claim-release C/A/B decision first so this box doesn't claim OV playout); state table (Monday gate) with all rows; then read-cutover → scoping.
