@@ -446,12 +446,31 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // — so instead of dropping straight to "create a profile", offer to pull them
   // down (the 'cloudSync' step). If the account has no stations there is nothing to
   // sync: mark first-run complete and go straight to the profile PIN login.
+  // CLEAN-ROOM guard (sign-in clause of the total-sign-out invariant): a FRESH sign-in/sign-up must
+  // start from zero. If residual local stations exist — a DB contaminated before the invariant shipped,
+  // or any leftover from a prior account — wipe + relaunch FIRST so the new sign-in provisions ONLY the
+  // account signed into (never inherits a foreign active station). Returns true if it triggered a reset
+  // (the app is relaunching → caller must stop). On a clean DB (0 local stations) it's a no-op.
+  const ensureCleanRoom = async (): Promise<boolean> => {
+    try {
+      const local = await (window as any).ether.stations.list();
+      const localList = Array.isArray(local) ? local : (local?.rows || []);
+      if (localList.length > 0) {
+        console.log('[cleanroom] residual local stations on fresh sign-in → total reset', localList.length);
+        await (window as any).ether.invoke('account:cleanRoomReset'); // wipes everything + relaunches
+        return true;
+      }
+    } catch { /* can't check → don't block sign-in */ }
+    return false;
+  };
+
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
     // One database per install now — signing in just signs in. (The old "switch accounts on this
     // computer" detour belonged to the removed per-account-DB swap and caused a sign-in loop.)
     setAuthBusy(true); setAuthErr('');
     try {
+      if (await ensureCleanRoom()) return;   // residual local state → total wipe + relaunch; sign in on the clean boot
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
       await routeAfterAuth(lk);   // shared clean-room decision table (Phase 4) — same for sign-in + sign-up
       return;
@@ -646,6 +665,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     // One database per install — sign up directly (no per-account-DB switch detour).
     setAuthBusy(true); setAuthErr('');
     try {
+      if (await ensureCleanRoom()) return;   // residual local state → total wipe + relaunch; sign up on the clean boot
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: authEmail.trim(), password: authPassword, name: authName.trim() || null }),

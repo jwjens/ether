@@ -3031,6 +3031,21 @@ ipcMain.handle("account:switch-to", async () => {
   } catch (e) { console.error("[account:switch-to]", e.message); return { ok: false, error: e.message }; }
 });
 
+// CLEAN-ROOM SIGN-IN guard (the invariant's sign-in clause): a FRESH sign-in/sign-up must start from
+// absolute zero. If the local DB carries residual station/identity data (e.g. a DB contaminated before
+// the total-sign-out invariant shipped, or any leftover from a prior account), the renderer calls this
+// BEFORE establishing the new identity — total wipe (reuse the same clear) + relaunch, so the next
+// sign-in provisions ONLY the account signed into. On a clean DB the renderer never calls it.
+ipcMain.handle("account:cleanRoomReset", async () => {
+  try {
+    await _wipeLocalIdentityAndData();
+    try { markHaExpectedRestart(); } catch {}
+    app.relaunch();
+    app.exit(0);
+    return { ok: true };
+  } catch (e) { console.error("[account:cleanRoomReset]", e.message); return { ok: false, error: e.message }; }
+});
+
 // ── Legacy Tauri command aliases — called by SettingsPanel ────
 ipcMain.handle("get_local_ip", () => audio.getLocalIp());
 // These were Tauri commands in the original build. Now aliased here so
