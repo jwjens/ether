@@ -57,6 +57,7 @@ never create — creating on a populated account makes a duplicate). Monday-rele
 |---|-------|---------|-----------|-----------------|--------|
 | D1 | Switch account | signed in as A, choose B | sign out → relaunch → auth | sign in B → B-decision for B | 🔶 (walk repeatedly this week) |
 | D2 | Signed out, idle | sign out, no re-sign-in | auth screen | sign in → B | ✅ |
+| D3 | **Existing session present, user initiates NEW-account signup** | signed in as A (djdeniro), sign up B (jensj) WITHOUT signing out | **DEFECT (observed): account identity switches to B, but A's local station row persists + stays active → badge shows A's station under B's account (looks like "hijack to A"); B's station blocked from materializing by the multi-station audit gate** | **CORRECT: the signup path must FORCE SIGN-OUT/clear the prior account's local state first (session + station rows + active station + station-scoped config), OR run fully independent of any stored session.** | ⛔ **OPEN — defect, fix before Monday-adjacent account switching** |
 
 **D1 assertions to prove on this box this week:** sessions never bleed (A's data gone after switch to B);
 attachments/claims stay per-account; scoped library swaps cleanly; badge always shows who's signed in.
