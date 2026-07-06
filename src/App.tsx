@@ -47,7 +47,7 @@ import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
-import { getEngine } from "./audio/engine-registry";
+import { getEngine, getAllEngines } from "./audio/engine-registry";
 import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine } from "./audio/cmd-routing";
 import { computeDeckRole } from "./lib/deckRole";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
@@ -565,8 +565,8 @@ export default function App() {
   const durQueried = useRef(new Set<string>());
   const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
-  const lastNowPlaySig = useRef<string>(""); // dedupe backend now-playing POSTs on the heartbeat
-  const lastNowPlayPostAt = useRef<number>(0); // Slice 1: last actual POST time → silent keepalive (defeats dedupe)
+  const lastNowPlaySig = useRef<Map<number, string>>(new Map()); // per-station dedupe of now-playing POSTs
+  const lastNowPlayPostAt = useRef<Map<number, number>>(new Map()); // per-station last POST time → keepalive
   // Slice 2: source-machine attribution + last error. This machine's id (= client_identity.client_id),
   // and per-station stream live/last-error from the existing stream:status events (keyed by stationId).
   const machineIdRef = useRef<string | null>(null);
@@ -1824,17 +1824,28 @@ export default function App() {
   // Icecast/Shoutcast pushes aren't re-fired every tick.
   useEffect(() => {
     const push = async () => {
-      // Slice 2: attribute the report to this machine when it is the live source of this station's
-      // mount, and carry the station's last stream error. stationId keys the stream:status cache.
-      const ss = streamStatusRef.current.get(stationId) || { live: false, lastError: null, lastErrorAt: null };
-      const payload = buildNowPlayingPayload(engine, stationName, stationUuid,
+      const nowMs = Date.now();
+      const KEEPALIVE_MS = 20_000;
+      // Publish now-playing for EVERY running station's engine (not just the active one) so all
+      // concurrently-streaming stations keep a fresh cloud now-playing and their listener cards show
+      // live art. Previously only the active station reported, so background stations went stale within
+      // 5 min and their cards blanked. The active station also drives the Iris live-wire below.
+      let stationsMeta: { id: number; uuid: string | null; name: string | null }[] = [];
+      try { stationsMeta = await query<{ id: number; uuid: string | null; name: string | null }>("SELECT id, uuid, name FROM stations WHERE uuid IS NOT NULL"); } catch { /* ignore */ }
+      const engines = getAllEngines();
+      for (const st of stationsMeta) {
+      if (!st.uuid) continue;
+      const eng = engines.get(st.id);
+      if (!eng) continue; // no running engine for this station on this machine
+      const ss = streamStatusRef.current.get(st.id) || { live: false, lastError: null, lastErrorAt: null };
+      const payload = buildNowPlayingPayload(eng, st.name || "", st.uuid,
         { machineId: machineIdRef.current, live: ss.live, lastError: ss.lastError, lastErrorAt: ss.lastErrorAt });
       // Iris live wire (L1): push consolidated state to main every heartbeat so the
       // assistant producer has fresh now-playing + back-time + up-next. Fires every
       // tick (position is excluded from the backend dedup signature below), so Iris's
       // back-timing stays current. Reuses this payload — the only path-independent
       // source of position/duration/queue is the renderer engine.
-      try {
+      if (st.id === stationId) try {
         (window as any).ether?.emit?.("iris:state", {
           stationId,
           playing: payload.playing,
@@ -1850,7 +1861,7 @@ export default function App() {
       // Embedded cover art of the on-air file → R2 public (primary listener artwork).
       // Cached URL returns immediately, or null while the upload is in flight; it's part
       // of the signature so the next heartbeat re-POSTs once the art is ready.
-      try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(stationUuid, payload.filePath)) || null; } catch { /* ignore */ }
+      try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(st.uuid, payload.filePath)) || null; } catch { /* ignore */ }
       const sig = [
         payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url, payload.engine_state,
         payload.source_machine_id, payload.last_error,
@@ -1862,12 +1873,10 @@ export default function App() {
       // that, re-POST the same payload to keep engine_heartbeat_at fresh (backend stamps it NOW() each
       // report). 20s ≈ 4 beats inside the backend's 90s stale window — healthy stations still POST on
       // every real change exactly as before (engine_state is in the sig, so a stall POSTs at once).
-      const KEEPALIVE_MS = 20_000;
-      const nowMs = Date.now();
-      if (sig === lastNowPlaySig.current && (nowMs - lastNowPlayPostAt.current) < KEEPALIVE_MS) return;
-      lastNowPlaySig.current = sig;
-      lastNowPlayPostAt.current = nowMs;
-      console.log(`[NOWPLAY] POST playing=${payload.playing} state=${payload.engine_state} title=${JSON.stringify(payload.title)} deck=${payload.deck ?? "null"} q=${payload.queue.length}`);
+      if (sig === lastNowPlaySig.current.get(st.id) && (nowMs - (lastNowPlayPostAt.current.get(st.id) || 0)) < KEEPALIVE_MS) continue;
+      lastNowPlaySig.current.set(st.id, sig);
+      lastNowPlayPostAt.current.set(st.id, nowMs);
+      console.log(`[NOWPLAY] POST ${st.name} playing=${payload.playing} state=${payload.engine_state} title=${JSON.stringify(payload.title)} q=${payload.queue.length}`);
       fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
         method: "POST",
         headers: {
@@ -1876,6 +1885,7 @@ export default function App() {
         },
         body: JSON.stringify(payload),
       }).catch(() => {});
+      }
     };
     push();
     const hb = setInterval(push, 3000);
