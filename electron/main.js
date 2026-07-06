@@ -485,20 +485,50 @@ function _clearAccountSessionKeys() {
   for (const k of ACCOUNT_SESSION_KEYS) { try { del.run(now, now, k); } catch {} }
 }
 
-// THE SIGN-OUT INVARIANT (2026-07-05): sign-out is TOTAL and FINAL. Clears EVERY store an identity/
-// account touches so the next sign-in/signup starts from absolute zero with no residual — the same
-// clear factory-reset performs, reused verbatim. Chromium session (cookies/Local+Session Storage/
-// IndexedDB) + on-disk DB (openair.db, WAL, keyed copies, engine staging) + legacy dirs + sessionData
-// + skip-sign-in markers. The music library (~/Music/ether music library) is NOT touched — it re-
-// bootstraps from the account on the next sign-in (account is root; the machine is a terminal).
-async function _wipeLocalIdentityAndData() {
+// THE SIGN-OUT INVARIANT (2026-07-05): sign-out clears EVERY store the ACCOUNT/station/library/session
+// touches so the next sign-in/signup starts from absolute zero with no residual. The music library
+// (~/Music/ether music library) is NOT touched — it re-bootstraps from the account on next sign-in.
+//
+// opts.spareProfiles=true (SIGN-OUT / switch / clean-room): PRESERVE operator profiles (the `users`
+//   table). Profiles are in-app, machine-local, NOT account identity (CLAUDE.md) — signing out must not
+//   delete them. Done via an IN-PLACE clear (keep openair.db, wipe every table except users) so the
+//   file that holds profiles survives; session + legacy dirs + keyed copies + markers still cleared.
+// opts.spareProfiles falsy (FACTORY RESET): TOTAL file wipe, including profiles.
+async function _wipeLocalIdentityAndData(opts = {}) {
+  const spareProfiles = !!opts.spareProfiles;
   try {
     const { session } = require("electron");
     await session.defaultSession.clearStorageData();   // cookies + all web storage, all origins
     await session.defaultSession.clearCache();
   } catch (e) { console.error("[wipe] clearStorageData:", e.message); }
-  try { db.close(); } catch {}
   const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
+
+  if (spareProfiles) {
+    // IN-PLACE clear of the live DB — delete every account/station/library table but KEEP operator
+    // profiles. Driven off sqlite_master so no table is missed; FK off during the sweep.
+    try {
+      const keep = new Set(['users', 'schema_version', 'sqlite_sequence']);
+      db.pragma('foreign_keys = OFF');
+      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(t => t.name);
+      db.transaction(() => { for (const t of tables) if (!keep.has(t)) { try { db.prepare(`DELETE FROM ${t}`).run(); } catch {} } })();
+      db.pragma('foreign_keys = ON');
+    } catch (e) { console.error("[wipe] profile-sparing in-place clear:", e.message); }
+    // Remove stale keyed per-account DB copies (NOT the live openair.db, which now holds only profiles).
+    try {
+      const dir = path.dirname(getDbPath());
+      for (const f of fs.readdirSync(dir)) if (/^openair__[0-9a-f]+\.db(-wal|-shm)?$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
+    } catch {}
+    rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB (no profiles)
+    rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
+    try { rm(app.getPath("sessionData")); } catch {}           // Chromium session store on disk
+    for (const m of [".ether-on-air", ".ether-keep-session"]) {
+      try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
+    }
+    return;
+  }
+
+  // FACTORY RESET — total file wipe, including operator profiles.
+  try { db.close(); } catch {}
   rm(path.dirname(_etherDir()));                              // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
   rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB
   rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
@@ -548,7 +578,7 @@ async function accountSignOut(switching) {
     });
     if (choice !== 1) return;
     // TOTAL sign-out invariant: clear every identity store (same as factory-reset). Nothing residual.
-    try { await _wipeLocalIdentityAndData(); }
+    try { await _wipeLocalIdentityAndData({ spareProfiles: true }); }  // sign-out spares operator profiles (in-app, not account)
     catch (e) { console.error("[account] sign-out wipe:", e.message); }
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
@@ -3017,9 +3047,9 @@ ipcMain.handle("app:relaunch", () => {
 // juggling DB files.) The `email` arg is ignored — kept for call-site compatibility.
 ipcMain.handle("account:switch-to", async () => {
   try {
-    // Switch = total sign-out then a fresh sign-in as the other account. Same clean-room clear as
-    // factory-reset/sign-out — nothing from the old account survives into the next sign-in.
-    await _wipeLocalIdentityAndData();
+    // Switch = sign-out (spares operator profiles) then a fresh sign-in as the other account. Nothing
+    // of the old ACCOUNT (identity/stations/library/session) survives; in-app profiles persist.
+    await _wipeLocalIdentityAndData({ spareProfiles: true });
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);
@@ -3034,7 +3064,7 @@ ipcMain.handle("account:switch-to", async () => {
 // sign-in provisions ONLY the account signed into. On a clean DB the renderer never calls it.
 ipcMain.handle("account:cleanRoomReset", async () => {
   try {
-    await _wipeLocalIdentityAndData();
+    await _wipeLocalIdentityAndData({ spareProfiles: true });  // clean-room for a fresh sign-in; keep operator profiles
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);
