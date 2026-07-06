@@ -1067,6 +1067,17 @@ function runMigrations() {
 
   if (isFreshInstall) seedFreshInstall();
 
+  // Ensure this machine ALWAYS has a client identity (machine_id). Migration-3 seeds it, but a DB whose
+  // client_identity was cleared (e.g. a sign-out before it was added to the keep-list) would be left
+  // without one → empty machine_id breaks activation, attachments, and seat reclaim. Re-seed if missing.
+  try {
+    if (!db.prepare("SELECT 1 FROM client_identity LIMIT 1").get()) {
+      db.prepare("INSERT INTO client_identity (id, client_id, created_at, label) VALUES (1, ?, ?, NULL)")
+        .run(require("crypto").randomUUID(), new Date().toISOString());
+      console.log("[DB] re-seeded missing client_identity");
+    }
+  } catch (e) { console.error("[DB] client_identity ensure:", e.message); }
+
   console.log("[DB] Schema ready");
 
   const maxVer = db.prepare("SELECT MAX(version) AS v FROM schema_version").get();

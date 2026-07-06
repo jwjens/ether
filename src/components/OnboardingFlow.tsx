@@ -372,6 +372,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const routeAfterAuth = async (lk: string) => {
     setLicenseKey(lk);
     let stations: OnboardingStation[] = [];
+    let connectOk = false;   // did the server AFFIRMATIVELY answer with a station list?
     try {
       const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
       const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
@@ -379,9 +380,18 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
         body: JSON.stringify({ license_key: lk, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '' }),
       });
       const data = await res.json().catch(() => ({}));
-      if (Array.isArray(data.stations)) { stations = data.stations as OnboardingStation[]; setConnectAccountName(data.account_name || ''); }
-    } catch { /* server unreachable/seat → treated as empty; C1-C3 (retry state) is a separate flagged fix */ }
-    if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }
+      if (res.ok && Array.isArray(data.stations)) { connectOk = true; stations = data.stations as OnboardingStation[]; setConnectAccountName(data.account_name || ''); }
+    } catch { /* connectOk stays false */ }
+    // C1–C3 FIX: only "create-your-station" when the server AFFIRMATIVELY says this account has ZERO
+    // stations. A connect error / non-OK must NEVER fall through to create — that's how a signed-in
+    // account with stations gets wrongly asked to make a NEW (duplicate/Nth) one. On failure: retry, not create.
+    if (!connectOk) {
+      setAuthBusy(false);
+      setAuthErr("Couldn't reach the server to load your stations. Check your connection and try Sign in again.");
+      setState('auth');
+      return;
+    }
+    if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }  // affirmed empty → create
     if (stations.length === 1) { await provisionAttached([stations[0].uuid], lk); return; }
     setConnectStations(stations);
     setSyncSel(new Set(stations.map(s => s.uuid))); // default all checked (min one enforced on confirm)
