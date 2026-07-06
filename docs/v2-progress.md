@@ -432,3 +432,17 @@ Enumerated every reachable sign-in/onboarding state (boot/gate, provisioning dec
 **Tonight = full pass of the shipped build (Jeff):** provisioning DEMONSTRATED on a history-laden machine (badge djdeniro); §4 bootstrap VERIFIED (songs_v2=350, snapshot_version=350); grid-0 is the EXPECTED symptom at this stage (read-cutover not shipped — UI still reads the old `songs` table, App.tsx:4442, which is 0 on a fresh machine). Station provisioning ✅ + library bootstrap ✅ + read-cutover ⛔-not-yet = coherent World 1. Next build: read-cutover.
 
 ## Row 18 reclassified + SCHEDULED (Jeff): "Choose Your Path" on a history-laden boot = **row 18 failing its defined screen** (stale-flag routing), NOT stale UI copy. Every auto-updating customer machine crosses E2 post-launch → not deferrable: fix the stale-flag routing **this week if cheap, week 4 at the latest**. Row-18 demonstration must show a history-laden machine routing to the **correct** screen (main app if onboarded, else proper decision), not just booting. **Packaged-smoke caveat logged:** `smoke-renderer.ps1 -Mode packaged` runs the packaged renderer under an Electron binary — verifies mount, but is NOT true installer output (NSIS/asar/signing/auto-update); a green packaged smoke ≠ installer coverage (verify the installed artifact separately).
+
+---
+
+## Session 2026-07-05 (cont.) — ROOT FIX: stable machine identity (survives wipes) + tonight's cascade resolved
+
+**Root defect:** machine_id = client_identity.client_id lived IN the DB that wipes destroy → every wipe = a new device → seat accumulation, 5/5 lockout, re-registration, ghost activations. Every weekend bug downstream of this.
+
+**Fix (openair `6d459ca`):** `getStableMachineId()` persists the id in `LocalAppData\EtherMachine\machine-id` — a SIBLING of the Ether data dir, OUTSIDE every wiped path, and LOCAL (not Roaming → never network-redirected on OV). On every boot `client_identity` is forced to that stable id, so ALL machine_id plumbing (identity:get, /account/connect, activation, station_attachments.surface_id, sync:devices) recognizes a returning machine → backend `ON CONFLICT(license,machine_id)` REUSES the slot. First boot adopts the existing client_id (no re-registration). Pre-wipe seat release kept as defense-in-depth.
+
+**SIX-STEP PROOF GREEN (license 24, id 8e8f6181):** wipe→signin, wipe→signin, factory-reset→signin — id-survived-wipe=true every step (incl factory-reset); ACTIVE SLOTS=1 throughout; FINAL = exactly ONE slot, same id. Ghost activations structurally impossible.
+
+**Blast-radius audit (all under the stable id):** seats — backend ON CONFLICT reuses (no ghost); attachments/claims — surface_id stable → persist & reclaim across wipes; RBAC — account-JWT based, no machine_id dependency, unaffected; sync:devices — one stable device.
+
+**Also this session (root-causing the operator-screen jam):** the profile-sparing in-place clear CORRUPTED infrastructure (wiped system_state.hlc_last → the mutation clock → NO row could be created → stations wouldn't materialize → operator-add failed). REVERTED to the bulletproof total file wipe (openair `79eb691`). C1-C3 fixed (openair `5ce4d4a`): connect error → retry, never "create" (no duplicate/Nth station). Multistation audit gate REMOVED (`6c3e1a0`). **Profile-sparing DEFERRED to a safe stash+restore (not a live-DB table sweep). ensureCleanRoom flagged for removal (too blunt — can wipe legit stations on re-sign-in).**
