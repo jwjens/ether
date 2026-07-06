@@ -495,11 +495,16 @@ function _clearAccountSessionKeys() {
 //   file that holds profiles survives; session + legacy dirs + keyed copies + markers still cleared.
 // opts.spareProfiles falsy (FACTORY RESET): TOTAL file wipe, including profiles.
 async function _wipeLocalIdentityAndData(opts = {}) {
-  const spareProfiles = !!opts.spareProfiles;
-  // PRE-WIPE: release THIS machine's server activation FIRST, so a wipe never strands a seat (tonight's
-  // 5-of-5 lockout was one box registering a new device on every wipe). Read license + machine_id BEFORE
-  // clearing. Best-effort (offline is fine). On sign-out client_identity is preserved (keep-list below),
-  // so re-sign-in reclaims the SAME seat via the backend's ON CONFLICT(license,machine_id) upsert.
+  // NOTE (2026-07-05): reverted to a TOTAL FILE WIPE for ALL callers. The profile-sparing in-place clear
+  // ("DELETE all tables except a keep-list") corrupted INFRASTRUCTURE — it wiped system_state (the
+  // hlc_last mutation clock → NO row could be created afterward), client_identity, and FTS shadow tables.
+  // A fresh DB is bulletproof: correct infra every time. Profile-sparing (keep operators/users across
+  // sign-out) is DEFERRED to a safe stash+restore implementation, not a live-DB table sweep. opts kept
+  // for call-site compatibility; ignored for now.
+  void opts;
+  // PRE-WIPE: release THIS machine's server activation FIRST, so the wipe never strands a seat (tonight's
+  // 5-of-5 lockout was one box registering a new device per wipe). Read license + machine_id BEFORE the
+  // wipe. Best-effort (offline is fine).
   try {
     const lk = accountLicenseKey();
     const mid = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get()?.client_id || null;
@@ -519,34 +524,7 @@ async function _wipeLocalIdentityAndData(opts = {}) {
   } catch (e) { console.error("[wipe] clearStorageData:", e.message); }
   const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
 
-  if (spareProfiles) {
-    // IN-PLACE clear of the live DB — delete every account/station/library table but KEEP operator
-    // profiles. Driven off sqlite_master so no table is missed; FK off during the sweep.
-    try {
-      // Keep operator profiles (users) AND this machine's identity (client_identity) — the machine is the
-      // same machine after sign-out, so it must keep its machine_id to reclaim its seat on re-sign-in
-      // (no new device). schema_version/sqlite_sequence kept for a clean, non-migrating reopen.
-      const keep = new Set(['users', 'schema_version', 'sqlite_sequence', 'client_identity']);
-      db.pragma('foreign_keys = OFF');
-      const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(t => t.name);
-      db.transaction(() => { for (const t of tables) if (!keep.has(t)) { try { db.prepare(`DELETE FROM ${t}`).run(); } catch {} } })();
-      db.pragma('foreign_keys = ON');
-    } catch (e) { console.error("[wipe] profile-sparing in-place clear:", e.message); }
-    // Remove stale keyed per-account DB copies (NOT the live openair.db, which now holds only profiles).
-    try {
-      const dir = path.dirname(getDbPath());
-      for (const f of fs.readdirSync(dir)) if (/^openair__[0-9a-f]+\.db(-wal|-shm)?$/.test(f)) fs.rmSync(path.join(dir, f), { force: true });
-    } catch {}
-    rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB (no profiles)
-    rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
-    try { rm(app.getPath("sessionData")); } catch {}           // Chromium session store on disk
-    for (const m of [".ether-on-air", ".ether-keep-session"]) {
-      try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
-    }
-    return;
-  }
-
-  // FACTORY RESET — total file wipe, including operator profiles.
+  // TOTAL file wipe (fresh DB on next launch = correct infrastructure, no residue, no corruption).
   try { db.close(); } catch {}
   rm(path.dirname(_etherDir()));                              // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
   rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB
