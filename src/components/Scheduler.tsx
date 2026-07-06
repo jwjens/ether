@@ -1160,7 +1160,7 @@ function ClocksTab() {
 
         {/* Main area */}
         {selected ? (
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" as const }}>
 
             {/* Time bar */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: "7px 12px", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
@@ -1181,7 +1181,7 @@ function ClocksTab() {
             </div>
 
             {/* ── Spreadsheet table ── */}
-            <div style={{ border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden", marginBottom: 8, order: 3 }}>
 
               {/* Column headers */}
               <div style={{
@@ -1453,8 +1453,8 @@ function ClocksTab() {
               )}
             </div>
 
-            {/* Quick-add category bar */}
-            <div style={{ marginBottom: 8 }}>
+            {/* Quick-add category bar — pinned to the top (order:1 + sticky) so it never gets pushed below a long clock */}
+            <div style={{ marginBottom: 8, order: 1, position: "sticky" as const, top: 0, zIndex: 5, background: "var(--bg-primary)", paddingTop: 4 }}>
               <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 5 }}>
                 QUICK ADD
               </div>
@@ -1492,7 +1492,7 @@ function ClocksTab() {
                     Spots
                   </button>
                   {showSpotPicker && (
-                    <div style={{ position: "absolute" as const, bottom: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 240, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                    <div style={{ position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 240, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
                       <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>SPOTS — PICK CATEGORY</div>
                       {spotCats.length === 0 ? (
                         <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Create a spot category in Spots &amp; Promos first.</span>
@@ -1521,7 +1521,7 @@ function ClocksTab() {
                     TALK
                   </button>
                   {showTalkPicker && (
-                    <div style={{ position: "absolute" as const, bottom: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 320, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+                    <div style={{ position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 320, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
                       <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>TALK BREAK DURATION</div>
                       <TalkPicker
                         onAdd={(type, catId, dur, label) => { handleAdd(type, catId, dur, label); setShowTalkPicker(false); }}
@@ -1533,8 +1533,8 @@ function ClocksTab() {
               </div>
             </div>
 
-            {/* Add segment */}
-            <div style={{ position: "relative" as const }}>
+            {/* Add segment — kept with Quick Add at the top */}
+            <div style={{ position: "relative" as const, order: 2 }}>
               {showPicker && (
                 <SegmentPicker cats={cats} spotCats={spotCats} onAdd={handleAdd} onClose={() => setShowPicker(false)} />
               )}
@@ -1552,7 +1552,7 @@ function ClocksTab() {
             </div>
 
             {/* ── Spots row: categories + timed breaks, side by side (stack on narrow) ── */}
-            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 16, marginTop: 16, alignItems: "flex-start" }}>
+            <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 16, marginTop: 16, alignItems: "flex-start", order: 4 }}>
 
               {/* Spot Categories (per station) — managed here so categories + breaks work together */}
               <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>

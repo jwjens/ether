@@ -24,6 +24,7 @@ const open = (opts?: { directory?: boolean; title?: string; multiple?: boolean }
 const readDir = (path: string) =>
   (window as any).ether.fs.readDir(path);
 import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
 import { queryScoped } from "./db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "./hooks/useActiveStation";
@@ -4094,6 +4095,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     catch { return new Set(); }
   }, []);
   const [showImport, setShowImport]   = useState(false);
+  // Item 1 — cue popup menu (anchored to the row's arrow button) + Quick Cue slide-up panel.
+  const [cueMenu, setCueMenu] = useState<{ song: SongRow; x: number; y: number } | null>(null);
+  const [quickCueSong, setQuickCueSong] = useState<SongRow | null>(null);
   // Borrowed catalog → read-only: gate ingest + core-field edits (the hard guarantee lives in
   // electron/sync/mutation-writer.js). Station-scoped tagging/programming stays fully editable.
   const libraryBorrowed = useLibraryBorrowed();
@@ -5074,7 +5078,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                 <button onClick={() => onLoadB(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>B</button>
                 <button onClick={() => onLoadC(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>C</button>
                 <button onClick={() => onQueue(s)} className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
-                <button onClick={() => onEdit(s)} title="Cue Editor" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>
+                <button onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setCueMenu({ song: s, x: r.right, y: r.bottom + 4 }); }} title="Cue…" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
                 </button>
                 <button onClick={async () => { if (confirm("Delete " + (s.title || "this track") + "?")) { await (window as any).ether.songs.deleteById(s.id); load(); } }} title="Delete" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
@@ -5108,6 +5112,35 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           onClear={() => { clearSingleChoice(singlePopover.songId, singlePopover.defId); setSinglePopover(null); }}
           onClose={() => setSinglePopover(null)}
         />
+      )}
+
+      {/* Item 1 — cue popup menu (portaled so the table's overflow:hidden can't clip it). */}
+      {cueMenu && createPortal(
+        <>
+          <div onClick={() => setCueMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 6000 }} />
+          <div style={{ position: "fixed", top: cueMenu.y, left: cueMenu.x, transform: "translateX(-100%)", zIndex: 6001, minWidth: 190, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
+            {[
+              { label: "Open in Cue Editor", act: () => { const s = cueMenu.song; setCueMenu(null); onEdit(s); } },
+              { label: "Quick Cue here",     act: () => { const s = cueMenu.song; setCueMenu(null); setQuickCueSong(s); } },
+            ].map((it, i) => (
+              <button key={it.label} onClick={it.act}
+                style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "9px 12px", background: "transparent", color: "var(--text-primary)", border: "none", borderTop: i ? "1px solid var(--border-primary)" : "none", fontSize: 12, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" as const }}
+                onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-tertiary)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >{it.label}</button>
+            ))}
+          </div>
+        </>,
+        document.body
+      )}
+
+      {/* Item 1 — Quick Cue: compact cue editor slid up OVER the library; never leaves the view. */}
+      {quickCueSong && (
+        <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, height: "72vh", zIndex: 5500, background: "var(--bg-primary)", borderTop: "2px solid var(--accent-blue)", boxShadow: "0 -16px 50px rgba(0,0,0,0.6)", display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <TrackEditor song={quickCueSong as any} onClose={() => setQuickCueSong(null)} onSaved={(s: any) => setQuickCueSong(s)} />
+          </div>
+        </div>
       )}
     </div>
   );

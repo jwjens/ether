@@ -5392,6 +5392,8 @@ function _buildScheduleCtx(stationId) {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
+    // Why-nothing-filled diagnostics (surfaced to the operator so Generate never fails silently).
+    diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
     stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
     stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
@@ -5413,9 +5415,10 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       if (s.end_hour > s.start_hour) return h >= s.start_hour && h < s.end_hour;
       return h >= s.start_hour || h < s.end_hour;
     });
-    if (!show || !show.clock_id) continue;
+    if (!show) { ctx.diag.noShowHours.add(h); continue; }
+    if (!show.clock_id) { ctx.diag.noClock.add(h); continue; }
     const slots = stmtSlots.all(show.clock_id);
-    if (!slots.length) continue;
+    if (!slots.length) { ctx.diag.emptyClocks.add(show.clock_id); continue; }
     const usedSongIds = new Set(), usedArtistIds = new Set(), usedTitles = new Set();
     const hourEnd = hourStartTs + 3600;
     let currentTs = hourStartTs;
@@ -5433,6 +5436,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       // sequential path; returns the row or null (does NOT record/push).
       const selectMusic = (categoryId, cursorTs) => {
         const candidates = stmtCandidates.all(categoryId, h);
+        if (!candidates.length) ctx.diag.emptyCats.add(categoryId);
         let picked = null, softFallback = null;
         for (const song of candidates) {
           if (usedSongIds.has(song.id)) continue;
@@ -5551,6 +5555,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       }
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
       const candidates = stmtCandidates.all(slot.category_id, h);
+      if (!candidates.length) ctx.diag.emptyCats.add(slot.category_id);
       let picked = null, softFallback = null;
       for (const song of candidates) {
         if (usedSongIds.has(song.id)) continue;
@@ -5597,8 +5602,23 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     const ctx = _buildScheduleCtx(activeStationId);
     _generateDayRows(dayBase, ctx, effStart);
     generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
-    console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}`);
-    return { ok: true, count: ctx.generatedRows.length };
+    // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
+    // calendar can tell the operator exactly what's missing instead of flickering silently.
+    const d = ctx.diag, reasons = [];
+    if (d.emptyCats.size) {
+      const names = [...d.emptyCats].map(id => { const c = db.prepare("SELECT code, name FROM categories WHERE id = ?").get(id) || {}; return c.code ? (c.code + (c.name ? " — " + c.name : "")) : ("category #" + id); });
+      reasons.push("No eligible songs to fill music from: " + names.join(", ") + " — the category is empty, or every song in it is filtered out by rotation status, dayparts, or separation rules.");
+    }
+    if (d.emptyClocks.size) {
+      const names = [...d.emptyClocks].map(id => (db.prepare("SELECT name FROM clocks WHERE id = ?").get(id) || {}).name || ("clock #" + id));
+      reasons.push("Clock has no elements: " + names.join(", ") + " — add segments to it on the Clocks page.");
+    }
+    if (d.noClock.size) reasons.push("A scheduled show has no clock assigned (" + d.noClock.size + " hour(s)) — pick a clock for the show on the Shows page.");
+    if (d.noShowHours.size >= 24) reasons.push("No active show is scheduled for this day — create or enable a show that covers these hours on the Shows page.");
+    else if (d.noShowHours.size) reasons.push(d.noShowHours.size + " hour(s) have no show scheduled — extend or add a show to cover them.");
+    const station = (db.prepare("SELECT name FROM stations WHERE id = ?").get(activeStationId) || {}).name || ("station #" + activeStationId);
+    console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}${reasons.length ? " · issues: " + reasons.length : ""}`);
+    return { ok: true, count: ctx.generatedRows.length, station, reasons };
   } catch (e) { console.error('[schedule:generateDay]', e.message); return { ok: false, error: e.message }; }
 });
 
