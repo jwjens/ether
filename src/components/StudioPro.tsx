@@ -33,6 +33,7 @@
 import React, {
   useCallback, useEffect, useMemo, useReducer, useRef, useState,
 } from "react";
+import { createPortal } from "react-dom";
 import WaveformGL from "./WaveformGL";
 import VoiceTracker from "./VoiceTracker";
 import { execute, query } from "../db/client";
@@ -4005,23 +4006,96 @@ function TBtn({ children, onClick, title, active, danger }: {
 }
 const lbl: React.CSSProperties = { fontSize: 10, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 };
 
-function DeckMenu({ onPick }: { onPick: (d: "A" | "B" | "C") => void }) {
+// ── Shared toolbar/panel dropdown ───────────────────────────────
+// ROOT FIX for clipped menus: the menu is PORTALED to <body> and positioned
+// with position:fixed, so it escapes every ancestor overflow:hidden (e.g. the
+// top toolbar) and stacking context. zIndex 4000 sits ABOVE all editor content
+// but BELOW modals/dialogs (9999) and the right-click context menu (99999), so
+// dialogs still cover it. Every toolbar menu uses this — none can be clipped by
+// a parent container again. Closes on select, pointer-leave, outside-click, or
+// scroll/resize (repositions while open).
+function ToolbarMenu({ label, title, minWidth = 140, children }: {
+  label: React.ReactNode;
+  title?: string;
+  minWidth?: number;
+  children: (close: () => void) => React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+  const place = useCallback(() => {
+    const el = anchorRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setPos({ top: r.bottom + 4, right: Math.max(4, window.innerWidth - r.right) });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    place();
+    const reposition = () => place();
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (anchorRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);   // capture — catch scroll in any ancestor
+    document.addEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      document.removeEventListener("mousedown", onDown, true);
+    };
+  }, [open, place]);
+
+  const close = useCallback(() => setOpen(false), []);
   return (
-    <div style={{ position: "relative" }}>
-      <TBtn onClick={() => setOpen(o => !o)} title="Send to deck">To Deck ▾</TBtn>
-      {open && (
-        <div onMouseLeave={() => setOpen(false)}
-          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 20, minWidth: 120 }}
+    <div ref={anchorRef} style={{ position: "relative" }}>
+      <TBtn onClick={() => setOpen(o => !o)} title={title} active={open}>{label}</TBtn>
+      {open && pos && createPortal(
+        <div
+          ref={menuRef}
+          onMouseLeave={close}
+          style={{
+            position: "fixed", top: pos.top, right: pos.right,
+            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+            zIndex: 4000, minWidth,
+          }}
         >
-          {(["A", "B", "C"] as const).map(d => (
-            <button key={d} onClick={() => { setOpen(false); onPick(d); }}
-              style={{ display: "block", width: "100%", textAlign: "left", padding: "6px 10px", background: "transparent", color: "var(--text-primary)", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
-            >Deck {d}</button>
-          ))}
-        </div>
+          {children(close)}
+        </div>,
+        document.body,
       )}
     </div>
+  );
+}
+
+function MenuItem({ children, onClick, fontSize = 12 }: {
+  children: React.ReactNode; onClick: () => void; fontSize?: number;
+}) {
+  return (
+    <button onClick={onClick}
+      style={{
+        display: "block", width: "100%", textAlign: "left", padding: "6px 10px",
+        background: "transparent", color: "var(--text-primary)", border: "none",
+        fontSize, cursor: "pointer", borderRadius: 0, whiteSpace: "nowrap",
+      }}
+      onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-tertiary)")}
+      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+    >{children}</button>
+  );
+}
+
+function DeckMenu({ onPick }: { onPick: (d: "A" | "B" | "C") => void }) {
+  return (
+    <ToolbarMenu label="To Deck ▾" title="Send to deck" minWidth={120}>
+      {(close) => (["A", "B", "C"] as const).map(d => (
+        <MenuItem key={d} onClick={() => { close(); onPick(d); }}>Deck {d}</MenuItem>
+      ))}
+    </ToolbarMenu>
   );
 }
 
@@ -5479,23 +5553,15 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
 // ── Export menu (Mix / Stems) ──────────────────────────────────
 
 function ExportMenu({ onExportMix, onExportStems }: { onExportMix: () => void; onExportStems: () => void }) {
-  const [open, setOpen] = useState(false);
   return (
-    <div style={{ position: "relative" }}>
-      <TBtn onClick={() => setOpen(o => !o)} title="Export options">Export ▾</TBtn>
-      {open && (
-        <div onMouseLeave={() => setOpen(false)}
-          style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 30, minWidth: 160 }}
-        >
-          <button onClick={() => { setOpen(false); onExportMix(); }}
-            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "var(--text-primary)", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
-          >Export Mix (one WAV)</button>
-          <button onClick={() => { setOpen(false); onExportStems(); }}
-            style={{ display: "block", width: "100%", textAlign: "left" as const, padding: "6px 10px", background: "transparent", color: "var(--text-primary)", border: "none", fontSize: 12, cursor: "pointer", borderRadius: 0 }}
-          >Export Stems (one WAV per track)</button>
-        </div>
+    <ToolbarMenu label="Export ▾" title="Export options" minWidth={160}>
+      {(close) => (
+        <>
+          <MenuItem onClick={() => { close(); onExportMix(); }}>Export Mix (one WAV)</MenuItem>
+          <MenuItem onClick={() => { close(); onExportStems(); }}>Export Stems (one WAV per track)</MenuItem>
+        </>
       )}
-    </div>
+    </ToolbarMenu>
   );
 }
 
@@ -6634,37 +6700,17 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
 // ── Auto-normalize dropdown ─────────────────────────────────────
 
 function NormalizeMenu({ onPick }: { onPick: (target: number) => void }) {
-  const [open, setOpen] = useState(false);
   return (
-    <div style={{ position: "relative" }}>
-      <TBtn onClick={() => setOpen(o => !o)} title="Auto-normalize mix to broadcast loudness">▮▮ Norm ▾</TBtn>
-      {open && (
-        <div onMouseLeave={() => setOpen(false)}
-          style={{
-            position: "absolute", top: "100%", right: 0, marginTop: 4,
-            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
-            zIndex: 30, minWidth: 200,
-          }}
-        >
-          {[
-            { name: "Broadcast (-23 LUFS, EBU R128)",  v: -23 },
-            { name: "Streaming (-16 LUFS)",             v: -16 },
-            { name: "Spotify / Apple (-14 LUFS)",       v: -14 },
-            { name: "Loud (-9 LUFS)",                   v: -9  },
-          ].map(o => (
-            <button key={o.v}
-              onClick={() => { setOpen(false); onPick(o.v); }}
-              style={{
-                display: "block", width: "100%", textAlign: "left" as const,
-                padding: "6px 10px",
-                background: "transparent", color: "var(--text-primary)",
-                border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
-              }}
-            >{o.name}</button>
-          ))}
-        </div>
-      )}
-    </div>
+    <ToolbarMenu label="▮▮ Norm ▾" title="Auto-normalize mix to broadcast loudness" minWidth={200}>
+      {(close) => [
+        { name: "Broadcast (-23 LUFS, EBU R128)",  v: -23 },
+        { name: "Streaming (-16 LUFS)",             v: -16 },
+        { name: "Spotify / Apple (-14 LUFS)",       v: -14 },
+        { name: "Loud (-9 LUFS)",                   v: -9  },
+      ].map(o => (
+        <MenuItem key={o.v} fontSize={11} onClick={() => { close(); onPick(o.v); }}>{o.name}</MenuItem>
+      ))}
+    </ToolbarMenu>
   );
 }
 
