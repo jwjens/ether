@@ -50,43 +50,12 @@ export default function ImportDialog({ onDone }: Props) {
     setNewCatName("");
   };
 
-  const startImport = async () => {
-    const folder = await open({ directory: true, title: "Select music folder to import" });
-    if (!folder) return;
-    const folderPath = Array.isArray(folder) ? folder[0] : folder;
+  const AUDIO_EXTS = [".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".aiff"];
 
+  // Shared import pipeline — one function, fed by either a folder scan or a file picker.
+  const importFiles = async (files: string[]) => {
     setStep("importing");
-    setProgress({ done: 0, total: 0, current: "Scanning folder..." });
-
-    // Scan for audio files
-    const audioExts = [".mp3", ".flac", ".ogg", ".wav", ".m4a", ".aac", ".aiff"];
-    const files: string[] = [];
-
-    const scanDir = async (dirPath: string) => {
-      try {
-        const entries = await readDir(dirPath);
-        for (const entry of entries) {
-          const fullPath = dirPath + "/" + entry.name;
-          if (entry.isDir) {
-            await scanDir(fullPath);
-          } else {
-            const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
-            if (audioExts.includes(ext)) files.push(fullPath);
-          }
-        }
-      } catch (e) {
-        console.error("Scan error:", e);
-      }
-    };
-
-    await scanDir(folderPath);
     setProgress({ done: 0, total: files.length, current: "Importing..." });
-
-    // DEBUG: log actual DB schema
-    const songCols = await query<{name:string}>("PRAGMA table_info(songs)");
-    console.log("SONGS TABLE COLS:", (songCols as any[]).map(c=>c.name).join(", "));
-    const albCols = await query<{name:string}>("PRAGMA table_info(albums)");
-    console.log("ALBUMS TABLE COLS:", (albCols as any[]).map(c=>c.name).join(", "));
 
     let count = 0;
     for (const filePath of files) {
@@ -99,7 +68,7 @@ export default function ImportDialog({ onDone }: Props) {
             await (window as any).ether.songs.updateById(existing.id, { category_id: selectedCat });
           }
           count++;
-          setProgress({ done: count, total: files.length, current: filePath.split("/").pop() || "" });
+          setProgress({ done: count, total: files.length, current: filePath.split(/[\\/]/).pop() || "" });
           continue;
         }
 
@@ -142,6 +111,50 @@ export default function ImportDialog({ onDone }: Props) {
     setStep("done");
   };
 
+  // Entry shape 1 — a folder (recursively scanned for audio files).
+  const startImport = async () => {
+    const folder = await open({ directory: true, title: "Select music folder to import" });
+    if (!folder) return;
+    const folderPath = Array.isArray(folder) ? folder[0] : folder;
+
+    setStep("importing");
+    setProgress({ done: 0, total: 0, current: "Scanning folder..." });
+
+    const files: string[] = [];
+    const scanDir = async (dirPath: string) => {
+      try {
+        const entries = await readDir(dirPath);
+        for (const entry of entries) {
+          const fullPath = dirPath + "/" + entry.name;
+          if (entry.isDir) {
+            await scanDir(fullPath);
+          } else {
+            const ext = "." + (entry.name.split(".").pop() || "").toLowerCase();
+            if (AUDIO_EXTS.includes(ext)) files.push(fullPath);
+          }
+        }
+      } catch (e) {
+        console.error("Scan error:", e);
+      }
+    };
+
+    await scanDir(folderPath);
+    await importFiles(files);
+  };
+
+  // Entry shape 2 — one or more individual audio files (multi-select file picker).
+  const startFileImport = async () => {
+    const picked = await (window as any).ether.dialog.openFile({
+      multiple: true,
+      title: "Select audio file(s) to import",
+      filters: [{ name: "Audio", extensions: AUDIO_EXTS.map(e => e.slice(1)) }],
+    });
+    if (!picked) return;
+    const files = (Array.isArray(picked) ? picked : [picked]).filter(Boolean);
+    if (!files.length) return;
+    await importFiles(files);
+  };
+
   return (
     <div style={{
       background: "var(--bg-secondary)",
@@ -153,9 +166,9 @@ export default function ImportDialog({ onDone }: Props) {
     }}>
       {step === "pick" && (
         <div>
-          <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Import Music Folder</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Import Music</h3>
           <p style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 16 }}>
-            Choose a category for the imported songs. Great for seasonal music (Christmas, Halloween), format-specific libraries, or organizing by rotation.
+            Import a whole folder or pick individual songs. Choose a category for the imported songs — great for seasonal music (Christmas, Halloween), format-specific libraries, or organizing by rotation.
           </p>
 
           {/* Category selection */}
@@ -229,6 +242,19 @@ export default function ImportDialog({ onDone }: Props) {
                 cursor: "pointer",
               }}
             >Choose Folder & Import</button>
+            <button
+              onClick={startFileImport}
+              style={{
+                padding: "10px 24px",
+                borderRadius: 0,
+                fontSize: 13,
+                fontWeight: 600,
+                background: "var(--bg-tertiary)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--accent-blue)",
+                cursor: "pointer",
+              }}
+            >Choose File(s) & Import</button>
             <button
               onClick={onDone}
               style={{

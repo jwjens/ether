@@ -461,16 +461,27 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // or any leftover from a prior account — wipe + relaunch FIRST so the new sign-in provisions ONLY the
   // account signed into (never inherits a foreign active station). Returns true if it triggered a reset
   // (the app is relaunching → caller must stop). On a clean DB (0 local stations) it's a no-op.
-  const ensureCleanRoom = async (): Promise<boolean> => {
+  // Clean-room reset — ACCOUNT-AWARE. Only wipe when the local data belongs to a DIFFERENT account
+  // (a genuine account switch made without signing out first). A SAME-account re-sign-in — e.g. after a
+  // reboot, when the short-lived resume-session marker has gone stale and the sign-in screen reappears —
+  // must PRESERVE all local work. The old version wiped on ANY existing stations, which meant a plain
+  // reboot + re-sign-in destroyed the operator's whole session (profile, imports, categories, stations)
+  // — total data loss shipped in v4.4.31. Never destroy data on uncertainty: unknown/empty local email
+  // (or same email) → preserve.
+  const ensureCleanRoom = async (emailSigningIn: string): Promise<boolean> => {
     try {
       const local = await (window as any).ether.stations.list();
       const localList = Array.isArray(local) ? local : (local?.rows || []);
-      if (localList.length > 0) {
-        console.log('[cleanroom] residual local stations on fresh sign-in → total reset', localList.length);
+      if (localList.length === 0) return false;   // nothing local → nothing to clean
+      const localEmail = String((await (window as any).ether.installConfigKv?.get?.('account_email'))?.row?.value || '').trim().toLowerCase();
+      const signingIn = String(emailSigningIn || '').trim().toLowerCase();
+      if (localEmail && signingIn && localEmail !== signingIn) {
+        console.log('[cleanroom] local data belongs to a DIFFERENT account → total reset', { localEmail, signingIn, stations: localList.length });
         await (window as any).ether.invoke('account:cleanRoomReset'); // wipes everything + relaunches
         return true;
       }
-    } catch { /* can't check → don't block sign-in */ }
+      // Same account (or local owner unknown) → this is a resume/re-sign-in; KEEP the work.
+    } catch { /* can't check → don't block sign-in, don't wipe */ }
     return false;
   };
 
@@ -480,7 +491,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     // computer" detour belonged to the removed per-account-DB swap and caused a sign-in loop.)
     setAuthBusy(true); setAuthErr('');
     try {
-      if (await ensureCleanRoom()) return;   // residual local state → total wipe + relaunch; sign in on the clean boot
+      if (await ensureCleanRoom(authEmail.trim())) return;   // ONLY a different-account switch wipes; same-account re-sign-in preserves
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
       await routeAfterAuth(lk);   // shared clean-room decision table (Phase 4) — same for sign-in + sign-up
       return;
@@ -675,7 +686,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     // One database per install — sign up directly (no per-account-DB switch detour).
     setAuthBusy(true); setAuthErr('');
     try {
-      if (await ensureCleanRoom()) return;   // residual local state → total wipe + relaunch; sign up on the clean boot
+      if (await ensureCleanRoom(authEmail.trim())) return;   // ONLY a different-account switch wipes; same-account preserves
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: authEmail.trim(), password: authPassword, name: authName.trim() || null }),

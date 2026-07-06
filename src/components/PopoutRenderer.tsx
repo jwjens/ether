@@ -64,12 +64,17 @@ function PopoutLibrary() {
   const cue = (deck: "A" | "B" | "C", s: any) => {
     try { eng.deckCue?.(deck, { filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch { /* engine not ready */ }
   };
+  // PopoutShell's content area is overflow:hidden; LibraryPanel is a plain flex-column with no
+  // internal scroll (in the main app the surrounding page scrolls). Give the pop-out its own
+  // vertical scroll so a library taller than the window is reachable.
   return (
-    <LibraryPanel
-      onLoadA={s => cue("A", s)} onLoadB={s => cue("B", s)} onLoadC={s => cue("C", s)}
-      onQueue={s => { try { (eng as any).enqueue?.({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch {} }}
-      onEdit={() => {}} onSendToStudio={() => {}}
-    />
+    <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 16 }}>
+      <LibraryPanel
+        onLoadA={s => cue("A", s)} onLoadB={s => cue("B", s)} onLoadC={s => cue("C", s)}
+        onQueue={s => { try { (eng as any).enqueue?.({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch {} }}
+        onEdit={() => {}} onSendToStudio={() => {}}
+      />
+    </div>
   );
 }
 
