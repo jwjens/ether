@@ -1336,6 +1336,7 @@ const EMPTY_PUBLIC_PAGE = {
   slug: "", display_name: "", logo_url: "", stream_url: "",
   color_primary: "var(--accent-blue)", color_secondary: "var(--accent-blue)", description: "",
   socials: { website: "", instagram: "", twitter: "", facebook: "", youtube: "" } as Record<string, string>,
+  links: [] as { label: string; url: string }[],
   public_enabled: false,
 };
 
@@ -1368,6 +1369,7 @@ export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: st
           color_primary: m.color_primary || "var(--accent-blue)", color_secondary: m.color_secondary || "var(--accent-blue)",
           description: m.description || "",
           socials: { ...EMPTY_PUBLIC_PAGE.socials, ...(m.socials || {}) },
+          links: Array.isArray(m.links) ? m.links.map((l: any) => ({ label: l?.label || "", url: l?.url || "" })) : [],
           public_enabled: !!m.public_enabled,
         };
         setLoaded(norm);
@@ -1408,6 +1410,9 @@ export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: st
 
   const setField  = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
   const setSocial = (k: string, v: string) => setForm((f: any) => ({ ...f, socials: { ...f.socials, [k]: v } }));
+  const setLink   = (i: number, k: "label" | "url", v: string) => setForm((f: any) => ({ ...f, links: (f.links || []).map((l: any, idx: number) => idx === i ? { ...l, [k]: v } : l) }));
+  const addLink   = () => setForm((f: any) => ({ ...f, links: [...(f.links || []), { label: "", url: "" }] }));
+  const removeLink = (i: number) => setForm((f: any) => ({ ...f, links: (f.links || []).filter((_: any, idx: number) => idx !== i) }));
 
   const save = async () => {
     setSaving(true); setMsg(null);
@@ -1420,6 +1425,7 @@ export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: st
       description: form.description || null,
       stream_url: form.stream_url || null,
       socials: form.socials,
+      links: (form.links || []).filter((l: any) => (l.label || "").trim() && (l.url || "").trim()),
       public_enabled: !!form.public_enabled,
     });
     setSaving(false);
@@ -1569,6 +1575,18 @@ export function PublicPageEditor({ stationUuid, stationName }: { stationUuid: st
               <input value={form.socials[s.key] || ""} onChange={e => setSocial(s.key, e.target.value)} placeholder={s.placeholder} style={{ ...inputStyle, width: 360 }} />
             </SettingRow>
           ))}
+
+          {/* Named links — buttons on the listener page (e.g. a Donate link). */}
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, margin: "16px 0 6px" }}>Links</div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 10 }}>Named buttons shown on your listener page — e.g. a “Donate” link to your cause.</div>
+          {(form.links || []).map((l: { label: string; url: string }, i: number) => (
+            <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
+              <input value={l.label} onChange={e => setLink(i, "label", e.target.value)} placeholder="Label (e.g. Donate)" style={{ ...inputStyle, width: 150 }} />
+              <input value={l.url} onChange={e => setLink(i, "url", e.target.value)} placeholder="https://…" style={{ ...inputStyle, flex: 1 }} />
+              <button onClick={() => removeLink(i)} style={{ ...linkBtn, color: "var(--accent-red)", border: "1px solid rgba(239,68,68,0.3)" }}>Remove</button>
+            </div>
+          ))}
+          <button onClick={addLink} style={{ ...linkBtn, marginTop: 2 }}>+ Add link</button>
 
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16, flexWrap: "wrap" as const }}>
             <button onClick={save} disabled={!canSave} style={{ padding: "8px 20px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: canSave ? "var(--accent-blue)" : "var(--bg-tertiary)", color: canSave ? "#fff" : "var(--text-tertiary)", border: "none", cursor: canSave ? "pointer" : "default" }}>
