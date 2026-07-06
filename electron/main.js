@@ -467,6 +467,34 @@ function _etherDir() {
   return etherDir;
 }
 
+// ── Stable machine identity (survives every wipe) ───────────────────────────────────────────────
+// The machine's id must OUTLIVE any wipe so the server recognizes a returning machine and reuses its
+// activation slot (root fix for ghost activations / lockout). Stored in a LOCAL dir that is a SIBLING
+// of the Ether data dir — never inside any path the wipe deletes (LocalAppData\Ether, Roaming\Ether,
+// Roaming\com.ether.radio, Roaming\openair). Local (not Roaming) so it's never network-redirected on
+// managed boxes like OV.
+function _machineIdDir() {
+  const localRoot = (process.platform === "win32" && process.env.LOCALAPPDATA)
+    ? process.env.LOCALAPPDATA
+    : path.dirname(app.getPath("userData"));   // mac/linux: parent of the app's userData
+  return path.join(localRoot, "EtherMachine");
+}
+function getStableMachineId() {
+  const fs = require("fs");
+  const dir = _machineIdDir();
+  const file = path.join(dir, "machine-id");
+  // 1. An existing stable id ALWAYS wins — this is the whole point (survives wipes/factory-reset).
+  try { if (fs.existsSync(file)) { const id = String(fs.readFileSync(file, "utf8")).trim(); if (id) return id; } } catch {}
+  // 2. First time on this machine: adopt the current client_identity id if present (an existing install
+  //    keeps its identity — no re-registration), else mint a fresh UUID. Then persist it for good.
+  let id = null;
+  try { id = db && db.prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || null; } catch {}
+  if (!id) id = require("crypto").randomUUID();
+  try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(file, id, "utf8"); }
+  catch (e) { console.error("[machine-id] persist:", e.message); }
+  return id;
+}
+
 // ── Account session keys ───────────────────────────────────────────────────────────────────────
 // Sign Out / Switch Account clear these so App re-runs the sign-in gate. (The per-account DB-swap
 // that used to back "Switch Account" was removed — it made sign-out unreliable. There is ONE
@@ -1045,16 +1073,23 @@ function runMigrations() {
 
   if (isFreshInstall) seedFreshInstall();
 
-  // Ensure this machine ALWAYS has a client identity (machine_id). Migration-3 seeds it, but a DB whose
-  // client_identity was cleared (e.g. a sign-out before it was added to the keep-list) would be left
-  // without one → empty machine_id breaks activation, attachments, and seat reclaim. Re-seed if missing.
+  // STABLE MACHINE IDENTITY (root fix, 2026-07-05): the machine's id lives OUTSIDE every wiped store
+  // (getStableMachineId → LocalAppData\EtherMachine\machine-id). A wipe erases the machine's world but
+  // NEVER its identity. Force client_identity to that stable id on every boot — all machine_id plumbing
+  // (identity:get, /account/connect, activation, station_attachments.surface_id, sync:devices) reads
+  // client_identity.client_id, so a returning machine is recognized and the server REUSES its slot.
+  // Ghost activations become structurally impossible, not cleaned up.
   try {
-    if (!db.prepare("SELECT 1 FROM client_identity LIMIT 1").get()) {
+    const stableId = getStableMachineId();
+    const row = db.prepare("SELECT client_id FROM client_identity LIMIT 1").get();
+    if (!row) {
       db.prepare("INSERT INTO client_identity (id, client_id, created_at, label) VALUES (1, ?, ?, NULL)")
-        .run(require("crypto").randomUUID(), new Date().toISOString());
-      console.log("[DB] re-seeded missing client_identity");
+        .run(stableId, new Date().toISOString());
+    } else if (row.client_id !== stableId) {
+      db.prepare("UPDATE client_identity SET client_id = ?").run(stableId);
     }
-  } catch (e) { console.error("[DB] client_identity ensure:", e.message); }
+    console.log("[DB] machine identity (stable):", String(stableId).slice(0, 8));
+  } catch (e) { console.error("[DB] stable machine identity:", e.message); }
 
   console.log("[DB] Schema ready");
 
