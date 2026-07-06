@@ -250,13 +250,8 @@ function NewStationModal({ onClose, onCreated }: { onClose: () => void; onCreate
       });
       if (r?.ok) { onCreated(); }
       else {
-        // Safety gate or other error — show inline, keep modal open
-        const msg = r?.error || "Unknown error";
-        if (msg.includes("renderer INSERT audit incomplete")) {
-          setError("Multi-station creation is locked until Phase 3 database audit is complete. Contact development to unlock.");
-        } else {
-          setError(msg);
-        }
+        // Show any creation error inline, keep the modal open. (The Phase-3 audit lock was removed.)
+        setError(r?.error || "Unknown error");
       }
     } catch (e: any) {
       setError(e?.message || "Unexpected error");

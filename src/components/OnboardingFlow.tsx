@@ -1025,9 +1025,8 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       // Mirror the backend create in the local stations table so the new
       // station shows in the header badge and active-station-aware code (OB18).
       // Reuse the backend's station_uuid so peer sync treats the two rows as
-      // identical. create() is gated behind multistation_insert_audit_complete,
-      // which seedFreshInstall sets to 'true'. Non-fatal: the backend already
-      // succeeded, so a local-mirror failure logs and lets onboarding proceed.
+      // identical. Non-fatal: the backend already succeeded, so a local-mirror
+      // failure logs and lets onboarding proceed.
       // No 'station-switched' dispatch — the badge picks up the new active
       // station when the main UI mounts after onComplete(); dispatching here
       // would change stationId mid-flow and re-trigger the [stationId] resume

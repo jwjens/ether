@@ -13,12 +13,9 @@
 //   midi_mappings     station_id added — schema v14 (commit bcc9f66, 2026-05-14)
 //   ai_voice_segments station_id added — schema v15 (commit 1c0fc88, 2026-05-14)
 //
-// Gate flag 'multistation_insert_audit_complete' = 'true':
-//   Existing installs — flag already present in station_config_kv
-//   Fresh installs    — seeded via INSERT OR IGNORE in runMigrations() (this file)
-//   Guard location    — stations:create handler ~line 3935
-//
-// Multi-station station creation is now permitted.
+// The 'multistation_insert_audit_complete' tripwire was REMOVED 2026-07-05 (gate + flag-set + renderer
+// message). The audit is long complete and Phase 3/4 shipped callsite mapping, empty-state handling,
+// and a demonstrated zero-station boot. Multi-station creation is unconditional.
 //
 // ── Original callsite inventory (audit history — not a live to-do list) ──────
 // Table               File                               INSERT location
@@ -1040,7 +1037,6 @@ function seedFreshInstall() {
   // first-run PIN/profile setup (UserLogin) lets the first person name their profile and
   // set their own PIN — instead of preset Admin/Jock/MD profiles with a shared default PIN.
 
-  db.prepare("INSERT OR IGNORE INTO station_config_kv (key, value) VALUES ('multistation_insert_audit_complete', 'true')").run();
 
   // v2: no default station seeded here. The first station comes from onboarding/provisioning
   // (spec §8), which also seeds its icecast + per-station config in one transaction.
@@ -5901,24 +5897,9 @@ ipcMain.handle('stations:switch', (_, id) => {
 });
 
 ipcMain.handle('stations:create', (_, data) => {
-  // Safety gate: block a USER creating an additional local station until the Phase-3 INSERT audit is
-  // complete (40 renderer callsites still assume DEFAULT station_id=1). MATERIALIZING an account's OWN
-  // cloud station (reconcile / sign-in provisioning) is EXEMPT — it passes the server station_uuid, is
-  // not a user-authored second station, and is core to v2 multi-station provisioning; it must never be
-  // gated (this gate was blocking OV from materializing on sign-in). Exemption = an explicit uuid.
-  const isMaterialize = !!(data && data.uuid);
-  const existingCount = db.prepare("SELECT COUNT(*) as c FROM stations").get().c;
-  if (existingCount >= 1 && !isMaterialize) {
-    const auditRow = db.prepare("SELECT value FROM station_config_kv WHERE key='multistation_insert_audit_complete'").get();
-    if (auditRow?.value !== 'true') {
-      return {
-        ok: false,
-        error: "Cannot create additional stations: renderer INSERT audit incomplete. " +
-          "40 callsites still rely on DEFAULT station_id=1 (see checklist at top of electron/main.js). " +
-          "Set multistation_insert_audit_complete=true in station_config_kv after Phase 3 audit to enable.",
-      };
-    }
-  }
+  // Multi-station creation is unconditional. The Phase-3 INSERT-audit tripwire
+  // (multistation_insert_audit_complete) was REMOVED 2026-07-05 — the audit is complete (Phase 3/4
+  // mapped the station_id callsites, shipped empty-state handling, and demonstrated zero-station boot).
   try {
     const { stationsCreate } = require('./sync/handlers/stations');
     const row = stationsCreate(db, {
