@@ -496,6 +496,22 @@ function _clearAccountSessionKeys() {
 // opts.spareProfiles falsy (FACTORY RESET): TOTAL file wipe, including profiles.
 async function _wipeLocalIdentityAndData(opts = {}) {
   const spareProfiles = !!opts.spareProfiles;
+  // PRE-WIPE: release THIS machine's server activation FIRST, so a wipe never strands a seat (tonight's
+  // 5-of-5 lockout was one box registering a new device on every wipe). Read license + machine_id BEFORE
+  // clearing. Best-effort (offline is fine). On sign-out client_identity is preserved (keep-list below),
+  // so re-sign-in reclaims the SAME seat via the backend's ON CONFLICT(license,machine_id) upsert.
+  try {
+    const lk = accountLicenseKey();
+    const mid = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get()?.client_id || null;
+    if (lk && mid) {
+      const { default: fetchFn } = await import('node-fetch').catch(() => ({ default: global.fetch }));
+      await fetchFn(`${ETHER_BACKEND_URL}/account/deauthorize-seat`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: lk, machine_id: mid }),
+      }).catch(() => {});
+      console.log('[wipe] released server activation for machine', mid.slice(0, 8));
+    }
+  } catch (e) { console.error("[wipe] pre-wipe seat release:", e.message); }
   try {
     const { session } = require("electron");
     await session.defaultSession.clearStorageData();   // cookies + all web storage, all origins
@@ -507,7 +523,10 @@ async function _wipeLocalIdentityAndData(opts = {}) {
     // IN-PLACE clear of the live DB — delete every account/station/library table but KEEP operator
     // profiles. Driven off sqlite_master so no table is missed; FK off during the sweep.
     try {
-      const keep = new Set(['users', 'schema_version', 'sqlite_sequence']);
+      // Keep operator profiles (users) AND this machine's identity (client_identity) — the machine is the
+      // same machine after sign-out, so it must keep its machine_id to reclaim its seat on re-sign-in
+      // (no new device). schema_version/sqlite_sequence kept for a clean, non-migrating reopen.
+      const keep = new Set(['users', 'schema_version', 'sqlite_sequence', 'client_identity']);
       db.pragma('foreign_keys = OFF');
       const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(t => t.name);
       db.transaction(() => { for (const t of tables) if (!keep.has(t)) { try { db.prepare(`DELETE FROM ${t}`).run(); } catch {} } })();
