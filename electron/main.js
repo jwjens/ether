@@ -5257,7 +5257,6 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
           const candidates = stmtCandidates.all(slot.category_id, h);
 
           let picked = null;
-          let softFallback = null;
 
           for (const song of candidates) {
             if (usedSongIds.has(song.id)) continue;
@@ -5281,14 +5280,11 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
             const artistBlocked = usedArtistIds.has(song.artist_id)
               || (song.artist_id && artistAgeSec < artistSepMin * 60);
 
-            if (!artistBlocked) { picked = song; break; }
-            if (!softFallback)    softFallback = song; // same artist, but song+title repeat ok
+            if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
           }
 
-          // Soft fallback: violates artist sep but passes song+title repeat
-          if (!picked) picked = softFallback;
-          // Last resort: any unused song
-          if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
+          // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
+          if (!picked) picked = _lrpFallback(candidates, usedSongIds, songLastTs);
 
           if (picked) {
             usedSongIds.add(picked.id);
@@ -5401,6 +5397,19 @@ function _buildScheduleCtx(stationId) {
   };
 }
 
+// Ladder fallback for Generate (Tier 2/3): when no FULLY-compliant song exists for a slot, pick the
+// LEAST-RECENTLY-PLAYED candidate (aired longest ago first) — never a random one. Tier 2 prefers songs
+// not yet used this hour; Tier 3 allows reuse. Returns null ONLY when the category has no candidate at
+// all (empty category / daypart) — which the runway + auto-extend + emergency layers cover. This is the
+// "ladder into Generate": the generated log degrades gracefully instead of leaving a random/soft pick.
+function _lrpFallback(candidates, usedSongIds, songLastTs) {
+  const lrp = (s) => songLastTs.get(s.id) ?? (s.last_played_at || 0);
+  const fresh = candidates.filter(s => !usedSongIds.has(s.id));
+  const pool = fresh.length ? fresh : candidates;   // Tier 2 (unused-this-hour) then Tier 3 (allow reuse)
+  if (!pool.length) return null;
+  return pool.reduce((a, b) => (lrp(b) < lrp(a) ? b : a));
+}
+
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
   const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, stmtClockBreaks, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
@@ -5437,7 +5446,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       const selectMusic = (categoryId, cursorTs) => {
         const candidates = stmtCandidates.all(categoryId, h);
         if (!candidates.length) ctx.diag.emptyCats.add(categoryId);
-        let picked = null, softFallback = null;
+        let picked = null;
         for (const song of candidates) {
           if (usedSongIds.has(song.id)) continue;
           const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
@@ -5449,11 +5458,10 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           }
           const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
           const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (cursorTs - lastArtistTs) < artistSepMin * 60);
-          if (!artistBlocked) { picked = song; break; }
-          if (!softFallback) softFallback = song;
+          if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
         }
-        if (!picked) picked = softFallback;
-        if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
+        // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
+        if (!picked) picked = _lrpFallback(candidates, usedSongIds, songLastTs);
         return picked;
       };
       const recordMusic = (picked, categoryId, ts, durationS) => {
@@ -5556,7 +5564,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
       const candidates = stmtCandidates.all(slot.category_id, h);
       if (!candidates.length) ctx.diag.emptyCats.add(slot.category_id);
-      let picked = null, softFallback = null;
+      let picked = null;
       for (const song of candidates) {
         if (usedSongIds.has(song.id)) continue;
         const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
@@ -5568,11 +5576,10 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
         }
         const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
         const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < artistSepMin * 60);
-        if (!artistBlocked) { picked = song; break; }
-        if (!softFallback) softFallback = song;
+        if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
       }
-      if (!picked) picked = softFallback;
-      if (!picked) picked = candidates.find(s => !usedSongIds.has(s.id)) ?? candidates[0] ?? null;
+      // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
+      if (!picked) picked = _lrpFallback(candidates, usedSongIds, songLastTs);
       if (picked) {
         usedSongIds.add(picked.id);
         if (picked.artist_id) usedArtistIds.add(picked.artist_id);
