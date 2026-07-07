@@ -1,45 +1,59 @@
-// audiod/loggen.js — daemon-side scheduler (Item 10, Phase 1 step 3). A node:sqlite port
-// of src/audio/loggen.ts's fill, so the daemon can keep the queue full on its own (no
-// renderer, no better-sqlite3). Mirrors the FIXED behavior: every fallback pull is
-// restricted to the active-show clocks' categories, so off-format/seasonal songs (e.g.
-// Christmas) never leak in.
+// audiod/loggen.js — daemon-side scheduler (Item 10). node:sqlite port of loggen.ts's fill.
 //
-// Fill priority (matches loggen.ts): generated_schedule → active clock → on-format random.
-// Two deliberate omissions vs. the renderer, both because the daemon has no renderer:
-//   • SmartRules (renderer localStorage) — legacy secondary path; not ported.
-//   • generated_schedule entries with NO local file_path (cloud-only) are SKIPPED — the
-//     renderer materializes those via r2:fetch-track, which needs the app. Phase-2 cutover
-//     can pass resolved paths in, or the daemon can gain its own R2 fetch. Local entries
-//     (the steady state on an installed station) are honored in order.
+// DESIGN LAW (Jeff): AUTO NEVER STOPS. The selector is a priority ladder that CANNOT return empty
+// while the category has an active song — silence is never the fallback.
+//   Tier 0: pre-generated log (generated_schedule), in order.
+//   Tier 1: all rules satisfied — pick normally (clock categories in order, then on-format random).
+//   Tier 2: compliant pool empty → relax soft rules, pick LEAST-RECENTLY-PLAYED (aired longest ago
+//           first), working forward. Each relaxed pick is logged so the operator sees it.
+//   Tier 3: absolute least-recently-played in the on-format categories, NO rules (daypart dropped).
+//   Tier 3b: on-format set empty/misconfigured → LRP across ALL active songs, any category.
+//
+// SCOPE FIX: separation + LRP are evaluated against play_log for THIS station (station_id-scoped,
+// real airplay) — NOT the shared songs.last_played_at column (which has no station_id, so it bled
+// across stations, and which the daemon never even writes). This is the second bug under the dead air.
+//
+// RULES-OFF actually means off here: with no ACTIVE separation rule, Tier 1 applies no separation
+// (it no longer silently falls back to a hidden 60-min default).
 
-// ── Base conditions every candidate must pass (loggen.ts buildBaseConditions) ──
-// NOTE: `songs` is a single shared library — it has NO station_id column (stations
-// differentiate via clocks/shows/schedule, which do). So the artist-separation subquery
-// is NOT station-scoped. (loggen.ts references s2.station_id here, which doesn't exist —
-// its live-pick path errors in production and falls through to generated_schedule; the
-// daemon uses correct SQL.) `stationId` is unused here but kept for signature parity.
-function baseConditions(hour, artistSepSec, params, stationId) {
+// ── Separation config — station-scoped, honors rules-off ──
+// rulesOn = an ACTIVE artist-separation rule exists for this station. No active rule → separation OFF.
+function sepConfig(db, stationId) {
+  try {
+    const rows = db.prepare("SELECT rule_type, value, is_active FROM separation_rules WHERE station_id = ?").all(stationId);
+    const artist = rows.find(r => r.rule_type === "artist_separation_min");
+    const rulesOn = !!(artist && artist.is_active);
+    return { rulesOn, artistSepSec: rulesOn ? (artist.value || 60) * 60 : 0 };
+  } catch { return { rulesOn: false, artistSepSec: 0 }; }
+}
+
+// ── Base conditions. opts toggles each soft rule so the ladder can relax tier by tier ──
+//   opts.daypart      (default on)  — current-hour daypart mask
+//   opts.songSep      (bool)        — per-song no_repeat_hours, station-scoped via play_log
+//   opts.artistSepSec (seconds, >0) — artist separation, station-scoped via play_log
+// rotation_status='inactive' is ALWAYS excluded (that song is deliberately out of rotation), so the
+// "category has an active song" invariant is well-defined.
+function baseConditions(hour, params, stationId, opts) {
+  opts = opts || {};
   let c = "s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";
-  c += " AND ((s.daypart_mask >> ?) & 1) = 1";
-  params.push(hour);
-  c += " AND (s.last_played_at IS NULL OR s.last_played_at < (unixepoch() - s.no_repeat_hours * 3600))";
-  c += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
-    SELECT DISTINCT s2.artist_id FROM songs s2
-    WHERE s2.artist_id IS NOT NULL AND s2.last_played_at > (unixepoch() - ?)))`;
-  params.push(artistSepSec);
+  if (opts.daypart !== false) { c += " AND ((s.daypart_mask >> ?) & 1) = 1"; params.push(hour); }
+  if (opts.songSep) {
+    c += ` AND NOT EXISTS (SELECT 1 FROM play_log pl
+             WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL
+               AND pl.played_at > (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))`;
+    params.push(stationId);
+  }
+  if (opts.artistSepSec && opts.artistSepSec > 0) {
+    c += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
+             SELECT s2.artist_id FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
+             WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND pl.played_at > (unixepoch() - ?)
+               AND s2.artist_id IS NOT NULL))`;
+    params.push(stationId, opts.artistSepSec);
+  }
   return c;
 }
 
-function sepSeconds(db, stationId) {
-  try {
-    const rows = db.prepare("SELECT rule_type, value FROM separation_rules WHERE is_active = 1 AND station_id = ?").all(stationId);
-    const a = rows.find(r => r.rule_type === "artist_separation_min");
-    return (a ? a.value : 60) * 60;
-  } catch { return 3600; }
-}
-
 // ── Active show + its clock right now (loggen.ts getActiveShowClock) ──
-// ORDER BY tightest hour-range so the most-specific show wins among overlaps.
 function getActiveShowClock(db, stationId) {
   const hour = new Date().getHours();
   const day = String(new Date().getDay());
@@ -63,9 +77,7 @@ function getActiveShowClock(db, stationId) {
   return null;
 }
 
-// ── On-format category universe (loggen.ts getFormatCategoryIds) ──
-// Active clock's music cats, else cats of clocks an ACTIVE SHOW uses — never a dormant
-// seasonal clock. This is the Christmas-leak fix.
+// ── On-format category universe (loggen.ts getFormatCategoryIds) — Christmas-leak fix ──
 function getFormatCategoryIds(db, stationId, clockId) {
   try {
     const rows = clockId
@@ -83,35 +95,49 @@ const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.dura
 const toItem = (r) => ({
   filePath: r.file_path, title: r.title, artist: r.artist_name || r.artist || "",
   durationMs: r.duration_ms || 0, introEnd: r.intro_end ?? undefined, outroStart: r.outro_start ?? undefined,
-  scheduledAt: r.scheduled_at ?? undefined,   // generated_schedule row identity (single source for the calendar)
+  scheduledAt: r.scheduled_at ?? undefined,
 });
 
-function pickFromClock(db, clockId, count, hour, sepSec, stationId) {
+// least-recently-played first: songs never aired on THIS station (MAX→NULL→0) come first, then oldest.
+function lrpOrder(params, stationId) {
+  params.push(stationId);
+  return `ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
+            WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, RANDOM()`;
+}
+
+// One tier of the ladder. order: "random" (Tier 1) or "lrp" (Tier 2/3). Returns [] on SQL error
+// (never throws into the fill path). formatCats [] = no category restriction.
+function pickTier(db, count, hour, stationId, formatCats, excludeIds, opts, order) {
+  if (count <= 0) return [];
+  const params = [];
+  let cond = baseConditions(hour, params, stationId, opts);
+  if (formatCats && formatCats.length) { cond += ` AND s.category_id IN (${formatCats.map(() => "?").join(",")})`; params.push(...formatCats); }
+  if (excludeIds && excludeIds.length) { cond += ` AND s.id NOT IN (${excludeIds.map(() => "?").join(",")})`; params.push(...excludeIds); }
+  const orderSql = order === "lrp" ? lrpOrder(params, stationId) : "ORDER BY RANDOM()";
+  params.push(count);
+  try { return db.prepare(`${SELECT} WHERE ${cond} ${orderSql} LIMIT ?`).all(...params); }
+  catch (e) { console.error("[loggen] pickTier failed:", e.message); return []; }
+}
+
+// Clock: fill each music slot in order with a compliant pick (Tier-1 rules).
+function pickFromClock(db, clockId, count, hour, stationId, opts) {
   const slots = db.prepare(`SELECT category_id FROM clock_slots
     WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND station_id = ? ORDER BY position`).all(clockId, stationId);
   const out = [], used = [];
   for (const slot of slots) {
     if (out.length >= count) break;
     const params = [];
-    let cond = baseConditions(hour, sepSec, params, stationId) + " AND s.category_id = ?";
+    let cond = baseConditions(hour, params, stationId, opts) + " AND s.category_id = ?";
     params.push(slot.category_id);
     if (used.length) { cond += ` AND s.id NOT IN (${used.map(() => "?").join(",")})`; params.push(...used); }
-    const row = db.prepare(`${SELECT} WHERE ${cond} ORDER BY RANDOM() LIMIT 1`).get(...params);
+    let row = null;
+    try { row = db.prepare(`${SELECT} WHERE ${cond} ORDER BY RANDOM() LIMIT 1`).get(...params); } catch (e) { row = null; }
     if (row) { out.push(row); used.push(row.id); }
   }
   return out;
 }
 
-function pickRandom(db, count, hour, sepSec, stationId, formatCats) {
-  const params = [];
-  let cond = baseConditions(hour, sepSec, params, stationId);
-  if (formatCats.length) { cond += ` AND s.category_id IN (${formatCats.map(() => "?").join(",")})`; params.push(...formatCats); }
-  params.push(count);
-  return db.prepare(`${SELECT} WHERE ${cond} ORDER BY RANDOM() LIMIT ?`).all(...params);
-}
-
-// ── Priority 1: pre-generated log (loggen.ts readGeneratedSchedule), local files only ──
-// Cursor advances across refills so we don't re-queue played rows; resets when exhausted.
+// ── Priority 0: pre-generated log (local files only) ──
 let _schedCursor = 0;
 function resetScheduleCursor() { _schedCursor = 0; }
 
@@ -129,17 +155,12 @@ function readGeneratedSchedule(db, count, stationId) {
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
-  } catch { return []; } // no generated_schedule table / empty
+  } catch { return []; }
   if (rows.length) _schedCursor = rows[rows.length - 1].row_id;
-  return rows.filter(r => r.file_path); // skip cloud-only entries (need app r2:fetch)
+  return rows.filter(r => r.file_path);
 }
 
-// ── Top-of-hour: read the schedule starting EXACTLY at a given hour boundary ──
-// Used by the daemon's hard top-of-hour cut. Unlike readGeneratedSchedule (which has a -300s
-// grace and a cross-refill cursor), this is anchored to hourStartTs with NO grace, so it returns
-// the new hour's first scheduled element and onward — never a tail item from the previous hour.
-// Advances the shared cursor past these rows so the next normal refill continues after them.
-// Returns mapped items (local files only); [] if the hour has no schedule.
+// Top-of-hour: schedule anchored exactly at hourStartTs, no grace (daemon hard cut).
 function fillFromHour(db, stationId, hourStartTs, count = 20) {
   const fmt = getFormatCategoryIds(db, stationId);
   const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
@@ -155,29 +176,59 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
   } catch { return []; }
   const playable = rows.filter(r => r.file_path);
-  if (playable.length) _schedCursor = playable[playable.length - 1].row_id; // next normal refill continues after these
+  if (playable.length) _schedCursor = playable[playable.length - 1].row_id;
   return playable.map(toItem);
 }
 
-// ── Main: fill `count` on-format tracks. Priority schedule → clock → on-format random ──
+// ── Main: fill `count` tracks. Never-empty priority ladder (see DESIGN LAW at top). ──
 function fillQueue(db, stationId, count = 12) {
   const hour = new Date().getHours();
-  const sepSec = sepSeconds(db, stationId);
 
-  // Priority 1: generated schedule (loop back to start once exhausted).
+  // Tier 0: pre-generated log (loop back to start once exhausted).
   let sched = readGeneratedSchedule(db, count, stationId);
   if (!sched.length && _schedCursor > 0) { _schedCursor = 0; sched = readGeneratedSchedule(db, count, stationId); }
-  if (sched.length) return { source: "generated_schedule", formatCats: [], items: sched.map(toItem) };
+  if (sched.length) return { source: "generated_schedule", tier: 0, formatCats: [], items: sched.map(toItem) };
 
-  // Priority 2: active show's clock. Priority 4: on-format random. (SmartRules omitted.)
+  const { rulesOn, artistSepSec } = sepConfig(db, stationId);
   const clock = getActiveShowClock(db, stationId);
   const formatCats = getFormatCategoryIds(db, stationId, clock && clock.clockId);
-  let songs = clock ? pickFromClock(db, clock.clockId, count, hour, sepSec, stationId) : [];
-  if (songs.length < count) {
-    const have = new Set(songs.map(s => s.id));
-    for (const e of pickRandom(db, count - songs.length, hour, sepSec, stationId, formatCats)) if (!have.has(e.id)) songs.push(e);
+  const songs = [];
+  const ids = () => songs.map(s => s.id);
+  const add = (rows) => { for (const r of rows) if (!ids().includes(r.id)) songs.push(r); };
+  let tier = 1;
+
+  try {
+    // Tier 1 — all rules satisfied. Separation applied ONLY when rules are ON (rules-off = off here).
+    const t1 = { artistSepSec: rulesOn ? artistSepSec : 0, songSep: rulesOn, daypart: true };
+    if (clock) add(pickFromClock(db, clock.clockId, count, hour, stationId, t1));
+    if (songs.length < count) add(pickTier(db, count - songs.length, hour, stationId, formatCats, ids(), t1, "random"));
+
+    // Tier 2 — relax soft rules → least-recently-played.
+    if (songs.length < count) {
+      const before = songs.length;
+      add(pickTier(db, count - songs.length, hour, stationId, formatCats, ids(), { artistSepSec: 0, songSep: false, daypart: true }, "lrp"));
+      if (songs.length > before) { tier = 2; console.warn(`[loggen] TIER 2 (relaxed separation → least-recently-played): +${songs.length - before}`); }
+    }
+    // Tier 3 — absolute LRP in-format, no rules (daypart dropped).
+    if (songs.length < count) {
+      const before = songs.length;
+      add(pickTier(db, count - songs.length, hour, stationId, formatCats, ids(), { artistSepSec: 0, songSep: false, daypart: false }, "lrp"));
+      if (songs.length > before) { tier = 3; console.warn(`[loggen] TIER 3 (absolute least-recently-played, no rules): +${songs.length - before}`); }
+    }
+    // Tier 3b — on-format set empty/misconfigured → LRP across ALL active songs, any category.
+    if (songs.length === 0) {
+      add(pickTier(db, count, hour, stationId, [], [], { artistSepSec: 0, songSep: false, daypart: false }, "lrp"));
+      if (songs.length) { tier = 4; console.warn(`[loggen] TIER 3b (LRP across all active songs — no on-format candidates): +${songs.length}`); }
+    }
+  } catch (e) {
+    console.error("[loggen] ladder failed:", e.message);
   }
-  return { source: clock ? `clock "${clock.showName}"` : "on-format random", formatCats, items: songs.map(toItem) };
+
+  if (songs.length === 0) {
+    // Only reachable if the station genuinely has ZERO active songs (empty library) — nothing to play.
+    console.error("[loggen] INVARIANT: no active songs exist for this station — cannot avoid silence.");
+  }
+  return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem) };
 }
 
-module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor };
+module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig };
