@@ -4203,6 +4203,30 @@ function routeIrisCommand(cmd) {
       return { ok: true };
     }
 
+    case 'generate': {
+      // SCHEDULING tier — autonomous-allowed (no operator gate). payload: { month:'YYYY-MM' } OR
+      // { fromTs, toTs }, plus { stationId } or { stationName }. Runs the real Generate path
+      // (LRP ladder + diagnostics) and returns count/relaxedPicks/runwayDays/throughDate/reasons.
+      let stationId = payload.stationId;
+      if (!stationId && payload.stationName) {
+        const row = db.prepare("SELECT id FROM stations WHERE name = ? OR slug = ? LIMIT 1").get(payload.stationName, payload.stationName);
+        stationId = row && row.id;
+      }
+      if (!stationId) stationId = getActiveStationId();
+      let fromTs = payload.fromTs, toTs = payload.toTs;
+      if (payload.month && /^\d{4}-\d{2}$/.test(payload.month)) {
+        const [y, m] = payload.month.split('-').map(Number);
+        fromTs = Math.floor(new Date(y, m - 1, 1, 0, 0, 0, 0).getTime() / 1000);
+        toTs   = Math.floor(new Date(y, m,     1, 0, 0, 0, 0).getTime() / 1000);
+      }
+      if (!fromTs || !toTs) return { ok: false, error: "generate needs {month:'YYYY-MM'} or {fromTs,toTs}" };
+      try {
+        const r = _generateRange(stationId, fromTs, toTs);
+        sendToAllWindows('iris:command-received', { action: 'generate', label: `Generated ${r.count} for ${r.station}` });
+        return r;
+      } catch (e) { return { ok: false, error: e.message }; }
+    }
+
     case 'getStatus': {
       let state = {};
       try { state = JSON.parse(audio.audioGetState()); } catch {}
@@ -4356,6 +4380,20 @@ ipcMain.on("iris:state", (_evt, s) => {
   if (qSig !== _sseQSig) { _sseQSig = qSig; sseBroadcast("queue", { upNext }); }
 });
 
+// ── Iris chat channel (operator ↔ Iris over the same :3400 link) ──────────────
+// Prompt DOWN: the renderer's Iris panel sends operator text → pushed to Iris on the SSE as a `chat`
+// event. Reply + speaking UP: Iris POSTs /iris/reply and /iris/speaking (in the HTTP server below) →
+// relayed to the renderer. Keeps Iris a pure client (no inbound port on her side).
+ipcMain.on("iris:chat-send", (_evt, msg) => {
+  sseBroadcast("chat", { id: (msg && msg.id) || null, text: (msg && msg.text) || "" });
+});
+// Presence: flip the badge online/offline from the :3400 heartbeat freshness (ping / any POST refreshes
+// irisLastSeen). Emitted to the renderer only on change so the badge has a definite state at all times.
+setInterval(() => {
+  const connected = (Date.now() - irisLastSeen) < 10000;
+  if (connected !== irisConnected) { irisConnected = connected; sendToAllWindows("iris:connected", connected); }
+}, 3000);
+
 // Keepalive comment so idle SSE connections aren't dropped by proxies/clients.
 setInterval(() => { for (const res of sseClients) { try { res.write(": keepalive\n\n"); } catch { /* gone */ } } }, 15000);
 
@@ -4391,6 +4429,24 @@ const irisHttpServer = require('http').createServer((req, res) => {
     req.on('end', () => {
       try { const cmd = JSON.parse(body); irisConnected = true; irisLastSeen = Date.now(); res.end(JSON.stringify(routeIrisCommand(cmd))); }
       catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: e.message })); }
+    }); return;
+  }
+
+  // ── Iris chat round-trip (Iris → Ether) ──
+  // Reply → operator chat panel:  /api/captions/iris  (Iris already POSTs here) or /iris/reply  { text }
+  // Speaking → badge glow on/off:  /api/iris/status  or /iris/speaking  { speaking: bool }
+  if (req.method === 'POST' && (url === '/iris/reply' || url === '/api/captions/iris' || url === '/iris/speaking' || url === '/api/iris/status')) {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      irisConnected = true; irisLastSeen = Date.now();
+      try {
+        const data = JSON.parse(body || '{}');
+        const isSpeaking = (url === '/iris/speaking' || url === '/api/iris/status');
+        if (isSpeaking) sendToAllWindows('iris:speaking', { speaking: !!data.speaking });
+        else sendToAllWindows('iris:reply', { id: data.id ?? null, text: data.text || '' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: e.message })); }
     }); return;
   }
 
@@ -5405,7 +5461,7 @@ function _buildScheduleCtx(stationId) {
   return {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
-    spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
+    spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxedPicks: 0,
     // Why-nothing-filled diagnostics (surfaced to the operator so Generate never fails silently).
     diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
@@ -5479,7 +5535,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
         }
         // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-        if (!picked) picked = _lrpFallback(candidates, usedSongIds, songLastTs);
+        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxedPicks++; }
         return picked;
       };
       const recordMusic = (picked, categoryId, ts, durationS) => {
@@ -5597,7 +5653,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
         if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
       }
       // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-      if (!picked) picked = _lrpFallback(candidates, usedSongIds, songLastTs);
+      if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxedPicks++; }
       if (picked) {
         usedSongIds.add(picked.id);
         if (picked.artist_id) usedArtistIds.add(picked.artist_id);
@@ -5646,6 +5702,37 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     return { ok: true, count: ctx.generatedRows.length, station, reasons };
   } catch (e) { console.error('[schedule:generateDay]', e.message); return { ok: false, error: e.message }; }
 });
+
+// Callable Generate over a date range — used by Iris's SCHEDULING-tier 'generate' command (autonomous-
+// allowed). Generates each day in [fromTs, toTs), never regenerating already-aired hours; the shared ctx
+// carries separation + the LRP ladder across days. Returns operator-readable diagnostics: count,
+// relaxedPicks (Tier 2/3 fallback fills), throughDate, runwayDays (schedule tail − now), station, reasons.
+function _generateRange(stationId, fromTs, toTs) {
+  const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+  const nowTs = Math.floor(Date.now() / 1000);
+  const ctx = _buildScheduleCtx(stationId);
+  const start = new Date(Math.max(fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
+  const endMs = toTs * 1000;
+  for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
+    const dayBase = new Date(d); dayBase.setHours(0, 0, 0, 0);
+    const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
+    const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600);
+    if (effStart >= dayEnd) continue;
+    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(stationId, effStart, dayEnd);
+    _generateDayRows(dayBase, ctx, effStart);
+  }
+  generatedScheduleBulkCreate(db, stationId, ctx.generatedRows);
+  const dg = ctx.diag, reasons = [];
+  if (dg.emptyCats.size) reasons.push("Empty/over-filtered categories: " + [...dg.emptyCats].map(id => (db.prepare("SELECT code FROM categories WHERE id = ?").get(id) || {}).code || ("#" + id)).join(", "));
+  if (dg.emptyClocks.size) reasons.push(dg.emptyClocks.size + " clock(s) have no elements");
+  if (dg.noClock.size) reasons.push(dg.noClock.size + " show-hour(s) have no clock assigned");
+  if (dg.noShowHours.size) reasons.push(dg.noShowHours.size + " hour(s) have no show scheduled");
+  const station = (db.prepare("SELECT name FROM stations WHERE id = ?").get(stationId) || {}).name || ("station #" + stationId);
+  const tail = db.prepare("SELECT MAX(scheduled_at) m FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL").get(stationId) || {};
+  const runwayDays = tail.m ? Math.max(0, Math.round((tail.m - nowTs) / 86_400)) : 0;
+  const throughDate = tail.m ? new Date(tail.m * 1000).toDateString() : null;
+  return { ok: true, count: ctx.generatedRows.length, relaxedPicks: ctx.relaxedPicks, runwayDays, throughDate, station, reasons };
+}
 
 ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
   try {

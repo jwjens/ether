@@ -44,6 +44,19 @@ contextBridge.exposeInMainWorld("ether", {
     export: (presetId, vars, font) => ipcRenderer.invoke("theme:export", { presetId, vars, font }),
     import: ()                     => ipcRenderer.invoke("theme:import"),
   },
+  // Iris presence surface (contract: docs/iris-ether-contract.md). Chat prompt out, reply/speaking/
+  // presence in. `command` carries source:'operator' for transport verbs (command-executed gate).
+  iris: {
+    chatSend:          (msg) => ipcRenderer.send("iris:chat-send", msg),
+    command:           (cmd) => ipcRenderer.invoke("iris:command", cmd),
+    onReply:           (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("iris:reply", h); return h; },
+    offReply:          (h)  => ipcRenderer.removeListener("iris:reply", h),
+    onSpeaking:        (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("iris:speaking", h); return h; },
+    offSpeaking:       (h)  => ipcRenderer.removeListener("iris:speaking", h),
+    onConnected:       (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("iris:connected", h); return h; },
+    offConnected:      (h)  => ipcRenderer.removeListener("iris:connected", h),
+    onCommandReceived: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("iris:command-received", h); return h; },
+  },
   station: {
     uploadLogo: () => ipcRenderer.invoke("station:uploadLogo"),
     // Public listener page config (Phase 2) — talks to ether-backend via main.

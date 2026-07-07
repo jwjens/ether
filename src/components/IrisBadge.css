@@ -1,0 +1,47 @@
+/* Iris presence surface — bottom-right, never obscuring broadcast UI. Glow = badge pulse on speaking. */
+.iris-root { position: fixed; right: 18px; bottom: 18px; z-index: 9000;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+
+.iris-badge { position: relative; width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #6040C0, #8868D8); color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45); transition: transform 0.12s; }
+.iris-badge:hover { transform: translateY(-2px); }
+.iris-badge-glyph { font-size: 22px; line-height: 1; }
+.iris-badge.offline { background: #23232c; color: #7a7a86; }
+
+/* THE GLOW — soft purple pulse synced to Iris speaking (badge-only; never a screen-wide glow). */
+.iris-badge.speaking { animation: iris-pulse 1.3s ease-in-out infinite; }
+@keyframes iris-pulse {
+  0%,100% { box-shadow: 0 6px 20px rgba(0,0,0,0.45), 0 0 0 0 rgba(136,104,216,0.5); }
+  50%     { box-shadow: 0 6px 20px rgba(0,0,0,0.45), 0 0 24px 7px rgba(136,104,216,0.9); }
+}
+
+.iris-badge-dot { position: absolute; right: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid #14141a; background: #6b7280; }
+.iris-badge-dot.online-idle, .iris-badge-dot.thinking, .iris-badge-dot.speaking { background: #34d399; }
+.iris-badge-dot.error { background: #ef4444; }
+.iris-badge-dot.offline { background: #6b7280; }
+
+.iris-panel { width: 340px; max-height: 60vh; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
+  background: #14141a; border: 1px solid rgba(136,104,216,0.35); box-shadow: 0 16px 48px rgba(0,0,0,0.6); }
+.iris-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  background: rgba(136,104,216,0.12); border-bottom: 1px solid rgba(136,104,216,0.22); }
+.iris-title { font-weight: 700; font-size: 13px; color: #eee; flex: 1; }
+.iris-dot { width: 8px; height: 8px; border-radius: 50%; background: #34d399; }
+.iris-dot.offline { background: #6b7280; }
+.iris-dot.error { background: #ef4444; }
+.iris-dot.speaking { background: #8868D8; }
+.iris-x { background: none; border: none; color: #999; cursor: pointer; font-size: 13px; padding: 2px 4px; }
+
+.iris-msgs { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.iris-empty { color: #8a8a96; font-size: 12px; line-height: 1.5; }
+.iris-msg { max-width: 85%; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.4; white-space: pre-wrap; word-break: break-word; }
+.iris-msg.you { align-self: flex-end; background: #6040C0; color: #fff; border-bottom-right-radius: 4px; }
+.iris-msg.iris { align-self: flex-start; background: #23232c; color: #e8e8ee; border-bottom-left-radius: 4px; }
+.iris-typing { letter-spacing: 2px; opacity: 0.7; }
+
+.iris-input { display: flex; gap: 6px; padding: 10px; border-top: 1px solid rgba(255,255,255,0.06); }
+.iris-input input { flex: 1; background: #0e0e13; border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #eee; padding: 8px 10px; font-size: 13px; outline: none; }
+.iris-input input:focus { border-color: rgba(136,104,216,0.6); }
+.iris-input button { background: #8868D8; border: none; border-radius: 8px; color: #fff; padding: 0 14px; font-weight: 700; cursor: pointer; }
+.iris-input button:disabled { opacity: 0.4; cursor: default; }

@@ -116,6 +116,7 @@ import StudioEditor from "./components/StudioEditor";
 import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
+import IrisBadge from "./components/IrisBadge";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help";
 
@@ -1967,6 +1968,7 @@ export default function App() {
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
       <TrialGate />
+      <IrisBadge />{/* Iris presence surface — always present (contract: docs/iris-ether-contract.md) */}
 
       {/* ── Header — 3-column grid (1fr | clock | 1fr) keeps the clock mathematically centered ── */}
       <header style={{ height: viewport.isTablet ? 48 : 56, display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 12px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
