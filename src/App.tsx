@@ -117,6 +117,7 @@ import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
+import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
 type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help";
 
@@ -1969,6 +1970,7 @@ export default function App() {
       <KeyboardHelp />
       <TrialGate />
       <IrisBadge />{/* Iris presence surface — always present (contract: docs/iris-ether-contract.md) */}
+      <SchedulerHealthHost />{/* Movable Scheduler Health panel — opened from Tools */}
 
       {/* ── Header — 3-column grid (1fr | clock | 1fr) keeps the clock mathematically centered ── */}
       <header style={{ height: viewport.isTablet ? 48 : 56, display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", padding: "0 12px", background: "var(--bg-secondary)", borderBottom: "1px solid rgba(255,255,255,0.04)", flexShrink: 0, position: "relative" as const, zIndex: 200 }}>
@@ -2894,6 +2896,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
         {/* Station — admin/music_director features gated by role */}
         {(currentUser?.role === "admin") && <Item label="Stream Manager"       onClick={() => set("streaming")} />}
         {(currentUser?.role === "admin" || currentUser?.role === "music_director") && <Item label="Smart Scheduler"      onClick={() => set("smartschedule")} />}
+        {(currentUser?.role === "admin" || currentUser?.role === "music_director") && <Item label="Scheduler Health"     onClick={() => window.dispatchEvent(new Event("ether:open-scheduler-health"))} />}
         {(currentUser?.role === "admin") && <Item label="Listener Analytics"   onClick={() => set("analytics")} />}
         {(currentUser?.role === "admin") && <Item label="Cloud Log Backup"     onClick={() => set("cloudbackup")} />}
         {(currentUser?.role === "admin") && <Item label="Audio Routing"        onClick={() => set("multioutput")} />}

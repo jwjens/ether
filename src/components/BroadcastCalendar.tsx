@@ -141,9 +141,8 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
-  // Generate diagnostics notification — shown when generation couldn't fully populate, so it never
-  // fails silently. null = no report open.
-  const [genReport, setGenReport]   = useState<{ station: string; reasons: string[]; count: number } | null>(null);
+  // Generate diagnostics now flow to the movable Scheduler Health panel (Tools) via the
+  // "ether:gen-report" event — structured, actionable, non-blocking (no locked modal).
 
   // Generate the airing log (generated_schedule) for exactly the WEEK or MONTH being viewed,
   // by regenerating each of its days (per-day clear+rebuild — no full wipe).
@@ -164,31 +163,36 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     }
     try {
       let count = 0;
-      const reasonSet = new Set<string>();
       let station = "";
+      const days: any[] = [];
       for (const d of dates) {
         const ts = Math.floor(new Date(d).setHours(0, 0, 0, 0) / 1000);
         const res = await (window as any).ether.invoke("schedule:generateDay", ts);
         count += (res?.count || 0);
         if (res?.station) station = res.station;
-        (res?.reasons || []).forEach((r: string) => reasonSet.add(r));
+        const g = res?.gaps || {};
+        const relaxed = res?.relaxed || [];
+        if (g.noShow?.length || g.noClock?.length || g.emptyCats?.length || g.emptyClocks?.length || relaxed.length) {
+          days.push({ date: res.date, dateTs: res.dateTs, noShow: g.noShow || [], noClock: g.noClock || [], emptyCats: g.emptyCats || [], emptyClocks: g.emptyClocks || [], relaxed });
+        }
       }
-      const reasons = [...reasonSet];
       setShowTracks(true);
       await loadTrackCounts();
-      // Tell the app to resync the live queue to the freshly-generated schedule (from now).
+      // Resync the live queue to the freshly-generated schedule (from now).
       window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
-      if (reasons.length || count === 0) {
-        // Something couldn't fill — tell the operator EXACTLY what's missing, don't fail silently.
-        setGenMsg("");
-        setGenReport({ station, reasons, count });
+      // Feed the movable Scheduler Health panel with the STRUCTURED diagnostics (named gaps + relaxed).
+      window.dispatchEvent(new CustomEvent("ether:gen-report", { detail: { station, count, days } }));
+      if (days.length || count === 0) {
+        window.dispatchEvent(new Event("ether:open-scheduler-health")); // surface it, don't lock the screen
+        setGenMsg(count === 0 ? "Generated nothing — see Scheduler Health (Tools)" : `Generated ${count} · gaps/relaxed → Scheduler Health`);
+        setTimeout(() => setGenMsg(""), 9000);
       } else {
-        setGenMsg(`✓ Generated this ${scope} · ${count} items`);
+        setGenMsg(`✓ Generated this ${scope} · ${count} items · clean`);
         setTimeout(() => setGenMsg(""), 6000);
       }
     } catch (e: any) {
-      setGenMsg("");
-      setGenReport({ station: "", reasons: ["Generation failed: " + String(e?.message || e)], count: 0 });
+      setGenMsg("Generation failed: " + String(e?.message || e));
+      setTimeout(() => setGenMsg(""), 9000);
     } finally { setGenerating(false); }
   };
 
@@ -251,6 +255,13 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     const refresh = setInterval(() => loadTrackCounts(), 60_000);
     return () => clearInterval(refresh);
   }, [weekOffset, viewMode, stationId]);   // re-query on station switch (matches the [stationId] reactive pattern)
+
+  // Scheduler Health panel → click a gap → jump the calendar to that day.
+  useEffect(() => {
+    const h = (e: any) => { const ts = e?.detail?.dateTs; if (ts) openDay(new Date(ts * 1000)); };
+    window.addEventListener("ether:calendar-open-day", h);
+    return () => window.removeEventListener("ether:calendar-open-day", h);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Day view render ──
   if (selectedDay) {
@@ -620,39 +631,6 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       </div>
       )}
 
-      {/* Generate diagnostics — no silent failure: say exactly what couldn't fill. */}
-      {genReport && (
-        <div onClick={() => setGenReport(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: "min(560px, 92vw)", maxHeight: "80vh", overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, boxShadow: "0 20px 60px rgba(0,0,0,0.6)", padding: 22 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-              <span style={{ fontSize: 18 }}>⚠</span>
-              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: "var(--text-primary)" }}>
-                {genReport.count === 0 ? "Nothing was generated" : "Generated with gaps"}
-              </h3>
-            </div>
-            <p style={{ margin: "0 0 14px", fontSize: 12, color: "var(--text-secondary)" }}>
-              {genReport.station ? <>Station: <b style={{ color: "var(--text-primary)" }}>{genReport.station}</b> · </> : null}
-              {genReport.count === 0
-                ? "Generation ran but couldn't place anything. Here's exactly what's missing:"
-                : `Placed ${genReport.count} item${genReport.count === 1 ? "" : "s"}, but some parts of the hour couldn't fill:`}
-            </p>
-            {genReport.reasons.length > 0 ? (
-              <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column" as const, gap: 8 }}>
-                {genReport.reasons.map((r, i) => (
-                  <li key={i} style={{ fontSize: 12.5, lineHeight: 1.5, color: "var(--text-primary)" }}>{r}</li>
-                ))}
-              </ul>
-            ) : (
-              <p style={{ fontSize: 12.5, color: "var(--text-secondary)", margin: 0 }}>
-                No specific cause was reported. Check that this station has an active show covering these hours, a clock with elements, and songs in its categories.
-              </p>
-            )}
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
-              <button onClick={() => setGenReport(null)} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Got it</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
