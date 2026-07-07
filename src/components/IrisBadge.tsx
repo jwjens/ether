@@ -22,10 +22,13 @@ export default function IrisBadge() {
   const reqId = useRef(0);
 
   useEffect(() => {
-    if (!iris) return;
-    const hC = iris.onConnected((c: boolean) => { setConnected(!!c); if (!c) { setSpeaking(false); setThinking(false); } });
-    const hS = iris.onSpeaking((v: { speaking: boolean }) => setSpeaking(!!v?.speaking));
-    const hR = iris.onReply((v: { id: number | null; text: string }) => {
+    // The presence surface must NEVER crash the broadcast UI. If the loaded preload is missing any iris
+    // method — e.g. a renderer/preload version skew during an auto-update — guard every call so the badge
+    // just stays offline instead of throwing into the error boundary. Air-safety over presence.
+    if (!iris || typeof iris.onConnected !== "function") return;
+    const hC = iris.onConnected?.((c: boolean) => { setConnected(!!c); if (!c) { setSpeaking(false); setThinking(false); } });
+    const hS = iris.onSpeaking?.((v: { speaking: boolean }) => setSpeaking(!!v?.speaking));
+    const hR = iris.onReply?.((v: { id: number | null; text: string }) => {
       setThinking(false); setError(false);
       setMsgs(m => [...m, { from: "iris", text: v?.text || "" }]);
     });
@@ -55,7 +58,7 @@ export default function IrisBadge() {
       return;
     }
     setThinking(true);
-    try { iris.chatSend({ id: ++reqId.current, text }); }
+    try { iris.chatSend?.({ id: ++reqId.current, text }); }
     catch { setThinking(false); setError(true); }
   };
 
