@@ -85,7 +85,10 @@ export default function VUMeter({
       ctx.fillRect(0, 0, w, h);
 
       // ── STANDBY ───────────────────────────────────────────────
-      if (!isPlaying) {
+      // Signal-driven, NOT UI-state-driven (METERS ARE TAPS): show standby only in genuine silence
+      // (the real tap is at the noise floor). Any real signal draws bars below — so a playing deck can
+      // never render standby/flat, regardless of the isPlaying prop.
+      if (rawLevel.current < 0.004) {
         if (hasTrack) {
           // Gentle center flatline wave — not a fake level simulation
           standbyPhase.current += 0.022;
@@ -211,14 +214,13 @@ export default function VUMeter({
   }, [externalLevel]);
 
   // ── Real-time level subscription — 30fps push, no polling ─────
+  // STANDING LAW: METERS ARE TAPS, NEVER GATED BY UI STATE. The channel VU subscribes to the real
+  // per-deck post-fader tap UNCONDITIONALLY. It must NOT be suppressed by an isPlaying (or any renderer)
+  // boolean — the Rust peak already decays to 0 via VU_RELEASE when the deck stops, so the tap tells the
+  // truth on its own. (The old isPlaying gate produced flat meters under audible, playing songs — a
+  // display element lying about real signal.) The externalLevel path (mic strips) is preserved.
   useEffect(() => {
-    if (externalLevel !== undefined) return; // skip IPC when caller provides level
-    if (!isPlaying) {
-      rawLevel.current = 0;
-      levelL.current   = 0;
-      peakL.current    = 0;
-      return;
-    }
+    if (externalLevel !== undefined) return; // caller feeds the level directly (e.g. mic strips)
     const handle = (window as any).ether.audio.onLevels(
       (lvl: { a: number; b: number; c: number; [k: string]: number }) => {
         const raw = deckId === "A" ? lvl.a
@@ -233,7 +235,7 @@ export default function VUMeter({
       levelL.current   = 0;
       peakL.current    = 0;
     };
-  }, [isPlaying, deckId, externalLevel]);
+  }, [deckId, externalLevel]);
 
   // ── HiDPI canvas sizing ────────────────────────────────────────
   useEffect(() => {

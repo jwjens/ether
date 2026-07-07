@@ -4,6 +4,24 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 
 ---
 
+## STANDING LAWS (design invariants — a violation is a bug by definition)
+
+- **METERS ARE TAPS, NEVER GATED BY UI STATE.** No display element that claims to represent signal may be
+  suppressed or synthesized by renderer-side booleans, ever. A meter renders the real signal tap
+  unconditionally; when there is no signal it reads zero *because the tap reads zero* — never because a UI
+  flag (isPlaying, focus, etc.) says so. Established 2026-07-07 after the channel-VU `isPlaying` gate showed
+  flat meters under audible, playing songs (the engine was honest; the UI lied). Full trace:
+  `docs/vu-meter-signal-path-2026-07-07.md`.
+  - **Fix 1 — DONE (`src/components/VUMeter.tsx`):** deleted the subscription gate (was `:214-219`) *and*
+    the draw gate (`:88`, now signal-driven `rawLevel < 0.004`). The channel VU subscribes to and renders
+    the real per-deck post-fader tap unconditionally; `externalLevel`/mic path preserved. `vite build` ✓.
+  - **Fix 2 — KNOWN + BOUNDED (on the v4.5.0 re-key track):** the levels frame is not yet station-scoped
+    (`stationId` dropped at `electron/main.js:349`; global `onLevels`). **Until v4.5.0 Phase 1-2 (levels
+    channel) lands, channel meters can cross-talk between stations** — a meter may reflect another
+    station's same-index deck. Known, bounded, tracked; **display only, no audio impact.**
+
+---
+
 ## Session 2026-07-01 — Step zero (spec §7.3 / §10 blocking risk)
 
 **Done:** Read-only backend query mapping licenses + library_grants + where the library lives. Ran against production Postgres via `railway run -s Postgres` (Railway injects `DATABASE_PUBLIC_URL` through the `ballast.proxy.rlwy.net` public proxy — no secret handled locally).
