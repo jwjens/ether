@@ -5461,7 +5461,7 @@ function _buildScheduleCtx(stationId) {
   return {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
-    spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxedPicks: 0,
+    spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxed: [],
     // Why-nothing-filled diagnostics (surfaced to the operator so Generate never fails silently).
     diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
@@ -5535,7 +5535,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
         }
         // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxedPicks++; }
+        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: categoryId }); }
         return picked;
       };
       const recordMusic = (picked, categoryId, ts, durationS) => {
@@ -5653,7 +5653,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
         if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
       }
       // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-      if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxedPicks++; }
+      if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: slot.category_id }); }
       if (picked) {
         usedSongIds.add(picked.id);
         if (picked.artist_id) usedArtistIds.add(picked.artist_id);
@@ -5670,6 +5670,20 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
 }
 
 // Generate (or regenerate) a SINGLE day — clears just that day's rows, leaves the rest intact.
+// Group a set of hour-numbers (0–23) into labeled ranges for the diagnostics panel:
+// {2,3,4,5,6} → [{startHour:2, endHour:7, label:"2 AM–7 AM"}]. endHour is exclusive.
+function _fmtHour(h) { const hh = ((h % 24) + 24) % 24; const am = hh < 12; const d = hh % 12 === 0 ? 12 : hh % 12; return `${d} ${am ? 'AM' : 'PM'}`; }
+function _hourRanges(hourSet) {
+  const hrs = [...hourSet].sort((a, b) => a - b);
+  const out = [];
+  for (const h of hrs) {
+    const last = out[out.length - 1];
+    if (last && h === last.endHour) last.endHour = h + 1;
+    else out.push({ startHour: h, endHour: h + 1 });
+  }
+  return out.map(r => ({ startHour: r.startHour, endHour: r.endHour, label: `${_fmtHour(r.startHour)}–${_fmtHour(r.endHour)}` }));
+}
+
 ipcMain.handle('schedule:generateDay', (_, dayTs) => {
   try {
     const activeStationId = getActiveStationId();
@@ -5698,8 +5712,19 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     if (d.noShowHours.size >= 24) reasons.push("No active show is scheduled for this day — create or enable a show that covers these hours on the Shows page.");
     else if (d.noShowHours.size) reasons.push(d.noShowHours.size + " hour(s) have no show scheduled — extend or add a show to cover them.");
     const station = (db.prepare("SELECT name FROM stations WHERE id = ?").get(activeStationId) || {}).name || ("station #" + activeStationId);
-    console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}${reasons.length ? " · issues: " + reasons.length : ""}`);
-    return { ok: true, count: ctx.generatedRows.length, station, reasons };
+    // Structured, per-day diagnostics for the panel: named gaps (date + hour ranges) by TYPE, plus the
+    // relaxed-pick list (song · category — a rule bent to avoid a gap). `reasons` kept for compatibility.
+    const catName = (id) => { const c = db.prepare("SELECT code, name FROM categories WHERE id = ?").get(id) || {}; return c.code ? (c.name ? c.code + " — " + c.name : c.code) : ("category #" + id); };
+    const date = dayBase.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const gaps = {
+      noShow:      _hourRanges(d.noShowHours),
+      noClock:     _hourRanges(d.noClock),
+      emptyCats:   [...d.emptyCats].map(catName),
+      emptyClocks: [...d.emptyClocks].map(id => (db.prepare("SELECT name FROM clocks WHERE id = ?").get(id) || {}).name || ("clock #" + id)),
+    };
+    const relaxed = ctx.relaxed.map(r => ({ hour: r.hour, hourLabel: _fmtHour(r.hour), title: r.title, artist: r.artist, category: catName(r.category_id) }));
+    console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}${reasons.length ? " · issues: " + reasons.length : ""}${relaxed.length ? " · relaxed: " + relaxed.length : ""}`);
+    return { ok: true, count: ctx.generatedRows.length, station, date, dateTs: Math.floor(dayBase.getTime() / 1000), gaps, relaxed, reasons };
   } catch (e) { console.error('[schedule:generateDay]', e.message); return { ok: false, error: e.message }; }
 });
 
@@ -5731,7 +5756,7 @@ function _generateRange(stationId, fromTs, toTs) {
   const tail = db.prepare("SELECT MAX(scheduled_at) m FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL").get(stationId) || {};
   const runwayDays = tail.m ? Math.max(0, Math.round((tail.m - nowTs) / 86_400)) : 0;
   const throughDate = tail.m ? new Date(tail.m * 1000).toDateString() : null;
-  return { ok: true, count: ctx.generatedRows.length, relaxedPicks: ctx.relaxedPicks, runwayDays, throughDate, station, reasons };
+  return { ok: true, count: ctx.generatedRows.length, relaxedPicks: ctx.relaxed.length, runwayDays, throughDate, station, reasons };
 }
 
 // ── Layer #2: runway + auto-extend ───────────────────────────────────────────────────────────
@@ -5785,6 +5810,38 @@ ipcMain.handle('schedule:runway', (_, stationId) => {
   const id = stationId || getActiveStationId();
   const sec = _stationRunwaySec(id);
   return { ok: true, stationId: id, runwaySec: sec, runwayHours: Math.round(sec / 360) / 10, runwayDays: Math.round(sec / 86_400) };
+});
+
+// Category health — how much room each category has before artist separation starts eliminating every
+// candidate. The binding constraint on the ladder is DISTINCT ARTISTS (a 60-min artist separation locks
+// out an artist's whole catalog after one spin), so distinct-artist count is the headroom metric; song
+// count is raw depth. Status thresholds follow the pool math in the report (target 8–10+ distinct
+// artists per hourly-called category). Powers the Scheduler Health panel's category gauge.
+ipcMain.handle('schedule:categoryHealth', (_, stationId) => {
+  try {
+    const id = stationId || getActiveStationId();
+    const sep = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 AND station_id=? LIMIT 1").get(id);
+    const artistSepMin = sep ? sep.value : 60;
+    // In-rotation categories: those an active show's clock actually calls (falls back to any category
+    // that has active songs, so a station without clocks still gets a readout).
+    let inRotation = [];
+    try {
+      inRotation = db.prepare(`SELECT DISTINCT cs.category_id FROM clock_slots cs
+        WHERE cs.slot_type='music' AND cs.category_id IS NOT NULL AND cs.deleted_at IS NULL AND cs.station_id=?
+          AND cs.clock_id IN (SELECT clock_id FROM shows WHERE is_active=1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id=?)`).all(id, id).map(r => r.category_id);
+    } catch {}
+    const inRot = new Set(inRotation);
+    const cats = db.prepare(`
+      SELECT c.id, c.code, c.name,
+        (SELECT COUNT(*) FROM songs s WHERE s.category_id=c.id AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')) AS songs,
+        (SELECT COUNT(DISTINCT s.artist_id) FROM songs s WHERE s.category_id=c.id AND s.artist_id IS NOT NULL AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')) AS artists
+      FROM categories c WHERE (c.station_id=? OR c.station_id IS NULL) ORDER BY c.code`).all(id);
+    const rows = cats.filter(c => c.songs > 0).map(c => {
+      const status = c.artists >= 10 ? 'healthy' : c.artists >= 6 ? 'tight' : 'at_risk';
+      return { id: c.id, code: c.code, name: c.name, songs: c.songs, artists: c.artists, status, inRotation: inRot.has(c.id) };
+    });
+    return { ok: true, stationId: id, artistSepMin, rows };
+  } catch (e) { console.error('[schedule:categoryHealth]', e.message); return { ok: false, error: e.message, rows: [] }; }
 });
 startAutoExtend();
 
