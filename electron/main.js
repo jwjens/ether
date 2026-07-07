@@ -4164,8 +4164,25 @@ function sendToAllWindows(channel, payload) {
   });
 }
 
+// Two-tier Iris grant — docs/iris-ether-contract.md is the law:
+//  • SCHEDULING tier (Generate-layer) — AUTONOMOUS: Iris may run/adjust generation on her own
+//    initiative (watchman role, calendar commands).
+//  • TRANSPORT tier — COMMAND-EXECUTED ONLY: play/stop/skip/next/auto-on/auto-off execute immediately on
+//    the operator's EXPLICIT instruction (voice/chat, relayed as source:'operator'), and NEVER from
+//    Iris's own reasoning, watchman logic, or any autonomous loop. Her judgment moves the fader at the
+//    planning layer; only the operator's moves it at the air layer. The deterministic floor stays fully
+//    Iris-independent regardless.
+const IRIS_TRANSPORT_VERBS = new Set(['play', 'stop', 'skip', 'next', 'auto-on', 'auto-off']);
+
 function routeIrisCommand(cmd) {
   const { action, payload = {} } = cmd;
+  // Command-executed gate: a transport verb is honored ONLY with explicit operator provenance
+  // (cmd.source === 'operator' = a verbatim relay of the operator's voice/chat instruction). Iris-
+  // initiated transport (autonomous / watchman) is refused at the air layer, by contract.
+  if (IRIS_TRANSPORT_VERBS.has(action) && cmd.source !== 'operator') {
+    console.warn(`[iris] TRANSPORT '${action}' REFUSED — not operator-commanded (Iris may not initiate transport)`);
+    return { ok: false, error: 'transport_requires_operator_command', action };
+  }
   switch (action) {
     case 'play':
       audio.audioPlay('A');
@@ -4177,6 +4194,7 @@ function routeIrisCommand(cmd) {
       sendToAllWindows('iris:command-received', { action, label: 'Stopped deck A' });
       return { ok: true };
 
+    case 'skip':
     case 'next': {
       // Pause current deck — the auto-advance engine in the renderer handles loading next
       audio.audioPause('A');
