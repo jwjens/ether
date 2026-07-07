@@ -16,6 +16,11 @@ for how Iris and Ether relate. Code that crosses this seam must conform to it.
    offline changes nothing about whether audio keeps playing.
 4. **To the user, Iris is part of Ether.** The separate-process seam is an implementation detail and is
    invisible in the packaged product (see §6). There is never a separate download, launch, or management.
+5. **Station identity is the UUID — on every boundary.** Any station reference that crosses a process,
+   persistence, API, or contract boundary (including Iris's local live-wire, chat, and generate command)
+   uses the station **UUID**, never a per-machine integer id. The integer may exist only as a private DB
+   auto-increment PK or a process-private engine handle, never observable across a boundary. (Amended
+   2026-07-07 with the station UUID re-key, v4.5.0; closes the prior gap where `iris:state` was integer.)
 
 ---
 

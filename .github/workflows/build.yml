@@ -40,6 +40,9 @@ jobs:
           node-version: 22
           cache: "npm"
 
+      - name: Station-identity leak guard (mandatory)
+        run: node scripts/test-station-identity-leak.js
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
