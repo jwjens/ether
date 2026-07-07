@@ -5734,6 +5734,60 @@ function _generateRange(stationId, fromTs, toTs) {
   return { ok: true, count: ctx.generatedRows.length, relaxedPicks: ctx.relaxedPicks, runwayDays, throughDate, station, reasons };
 }
 
+// ── Layer #2: runway + auto-extend ───────────────────────────────────────────────────────────
+// Runway = how far ahead the generated log reaches for a station. Auto-extend keeps every station's
+// runway above a threshold by running Generate ahead on its own initiative — so the log never runs out
+// and the emergency floor stays theoretically unreachable. Runway + extend results are published on the
+// :3400 SSE as telemetry the Phase-3 watchman consumes. Deterministic-floor-independent: this only makes
+// the log deeper; it never touches playout.
+const AUTO_EXTEND_THRESHOLD_H = Number(process.env.ETHER_RUNWAY_THRESHOLD_H || 48);   // extend when runway < this
+const AUTO_EXTEND_TARGET_DAYS = Number(process.env.ETHER_RUNWAY_TARGET_DAYS || 14);   // top runway up to this depth
+const AUTO_EXTEND_EVERY_MS    = 30 * 60 * 1000;                                       // re-check every 30 min
+
+function _stationRunwaySec(stationId) {
+  try {
+    const nowTs = Math.floor(Date.now() / 1000);
+    const r = db.prepare("SELECT MAX(scheduled_at) m FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL").get(stationId) || {};
+    return r.m ? Math.max(0, r.m - nowTs) : 0;
+  } catch { return 0; }
+}
+
+function _autoExtendTick() {
+  if (!db) return;
+  let stations = [];
+  try { stations = db.prepare("SELECT id, name FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
+  const nowTs = Math.floor(Date.now() / 1000);
+  for (const st of stations) {
+    // Only stations that actually schedule (an active show with a clock) — others have nothing to build.
+    let hasShow = false;
+    try { hasShow = !!db.prepare("SELECT 1 FROM shows WHERE station_id = ? AND is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL LIMIT 1").get(st.id); } catch {}
+    if (!hasShow) continue;
+    const runwaySec = _stationRunwaySec(st.id);
+    try { sseBroadcast("runway", { stationId: st.id, station: st.name, runwaySec, runwayHours: Math.round(runwaySec / 360) / 10 }); } catch {}
+    if (runwaySec >= AUTO_EXTEND_THRESHOLD_H * 3600) continue;
+    try {
+      const r = _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
+      console.log(`[auto-extend] ${st.name}: runway ${Math.round(runwaySec / 3600)}h < ${AUTO_EXTEND_THRESHOLD_H}h → +${r.count} tracks (runway now ${r.runwayDays}d, ${r.relaxedPicks} relaxed)`);
+      try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons }); } catch {}
+    } catch (e) { console.error(`[auto-extend] ${st.name} failed:`, e.message); }
+  }
+}
+
+let _autoExtendTimer = null;
+function startAutoExtend() {
+  if (_autoExtendTimer) return;
+  setTimeout(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] first tick:', e.message); } }, 60_000);
+  _autoExtendTimer = setInterval(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] tick:', e.message); } }, AUTO_EXTEND_EVERY_MS);
+  console.log(`[auto-extend] armed — keep runway ≥ ${AUTO_EXTEND_THRESHOLD_H}h, top up to ${AUTO_EXTEND_TARGET_DAYS}d, every ${AUTO_EXTEND_EVERY_MS / 60000}min`);
+}
+// Runway readout for the UI (visualizer gauge, #5) + Iris.
+ipcMain.handle('schedule:runway', (_, stationId) => {
+  const id = stationId || getActiveStationId();
+  const sec = _stationRunwaySec(id);
+  return { ok: true, stationId: id, runwaySec: sec, runwayHours: Math.round(sec / 360) / 10, runwayDays: Math.round(sec / 86_400) };
+});
+startAutoExtend();
+
 ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
   try {
     // generated_schedule is per-station; without a station filter this returned EVERY station's rows
