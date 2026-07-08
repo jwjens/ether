@@ -49,7 +49,12 @@ function applyMigration(db) {
   console.log('[migrate-v28] Transaction committed.');
 }
 
-module.exports = { applyMigration };
+module.exports = {
+  // Additive migration: station_uuid is derived + backfilled LOCALLY from station_id (see applyMigration),
+  // never carried as a synced payload field, so the synced payload shape is unchanged → identity.
+  payloadTransformer: function payloadTransformer(payload) { return payload; },
+  applyMigration,
+};
 
 if (require.main === module) {
   const path = require('path');

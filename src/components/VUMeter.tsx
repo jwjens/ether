@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import { vuSmooth, vuPeak } from "../lib/vuMeter";
+import { matchesStation } from "../lib/levelsScope";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface Props {
   deckId: "A" | "B" | "C" | string;
@@ -25,6 +27,12 @@ export default function VUMeter({
   const rafRef        = useRef<number>(0);
   const standbyPhase  = useRef(Math.random() * Math.PI * 2);
   const lastFrameMs   = useRef(0);   // wall-clock of the previous RAF tick → delta-time ballistics
+
+  // Station scope: this meter renders only its own station's levels frames (kills VU cross-talk).
+  // Read live via a ref so a station switch takes effect without re-subscribing.
+  const { stationUuid } = useActiveStation();
+  const myUuidRef = useRef(stationUuid);
+  myUuidRef.current = stationUuid;
 
   // ── Draw loop ─────────────────────────────────────────────────
   useEffect(() => {
@@ -222,7 +230,8 @@ export default function VUMeter({
   useEffect(() => {
     if (externalLevel !== undefined) return; // caller feeds the level directly (e.g. mic strips)
     const handle = (window as any).ether.audio.onLevels(
-      (lvl: { a: number; b: number; c: number; [k: string]: number }) => {
+      (lvl: { a?: number; b?: number; c?: number; stationUuid?: string }) => {
+        if (!matchesStation(lvl, myUuidRef.current)) return; // other station's frame → ignore (station scope)
         const raw = deckId === "A" ? lvl.a
           : deckId === "C" ? lvl.c
           : lvl.b;

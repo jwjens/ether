@@ -10,6 +10,8 @@ import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { playClick } from "../lib/uiSound";
 import { vuHeight, vuColor as vuZoneColor } from "../lib/vuMeter";
+import { matchesStation } from "../lib/levelsScope";
+import { useActiveStation } from "../hooks/useActiveStation";
 
 interface Props {
   label: string;
@@ -53,6 +55,10 @@ export default function ConsoleStrip({
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
+  // Station scope — this strip's VU renders only its own station's levels frames (ref → no re-subscribe).
+  const { stationUuid } = useActiveStation();
+  const myUuidRef = useRef(stationUuid);
+  myUuidRef.current = stationUuid;
   const [dragging, setDragging] = useState(false);
   // Local drag value: the knob follows the pointer instantly off this, instead of waiting
   // for the audio-engine state to round-trip back into `volume` (which ticks, so the knob
@@ -130,7 +136,8 @@ export default function ConsoleStrip({
     if (!ether?.audio?.onLevels) return;
     let rafId = 0;
     let smoothed = 0; // smoothed bar HEIGHT (0..1): fast attack, slow release (VU ballistic)
-    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; master?: number }) => {
+    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; master?: number; stationUuid?: string }) => {
+      if (!matchesStation(lvl, myUuidRef.current)) return; // station scope
       const id = deckId.toUpperCase();
       let raw = id === "A" ? (lvl.a ?? 0)
               : id === "B" ? (lvl.b ?? 0)

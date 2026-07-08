@@ -342,12 +342,26 @@ function startAudioLivenessWatchdog() {
   }, 2000);
 }
 
+// VU levels station-scoping (v4.5 levels-slice; docs/vu-meter-crosstalk-2026-07-08.md). Resolve the
+// daemon's integer stationId → station UUID (cached; NOT the sync getter, NOT gated by uuidIdentity) so
+// the levels frame carries UUID identity and the renderer renders each station's meters only.
+const { scopeLevelsFrame } = require('./levels-scope');
+const _uuidByIdCache = new Map();
+function _stationUuidById(id) {
+  if (id == null) return null;
+  if (_uuidByIdCache.has(id)) return _uuidByIdCache.get(id);
+  let uuid = null;
+  try { uuid = getDb().prepare('SELECT uuid FROM stations WHERE id = ?').get(id)?.uuid || null; } catch { /* db not ready */ }
+  if (uuid) _uuidByIdCache.set(id, uuid);
+  return uuid;
+}
+
 if (AUDIO_DAEMON_DESIRED) {
   audiodClient.setEventHandler((m) => {
     try {
       if (m.event === "levels") {
-        const lv = { a: m.a || 0, b: m.b || 0, c: m.c || 0 };
-        lv.master = typeof m.master === "number" ? m.master : Math.max(lv.a, lv.b, lv.c);
+        // Forward the whole frame with the station UUID (not the per-machine integer id).
+        const lv = scopeLevelsFrame(m, _stationUuidById);
         sendToAllWindows("audio:levels", lv);
         // Audio-liveness signal (feeds BOTH the stale-daemon reload and the silent-wedge watchdog):
         // real output keeps this fresh; a wedged daemon (deck claims playing, output silent) stops
@@ -2029,10 +2043,11 @@ app.whenReady().then(() => {
     if (!AUDIO_DAEMON) levelPushId = setInterval(() => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       try {
-        const levels = JSON.parse(audio.audioGetLevels());
-        // Real program peak from the engine (post-EQ master). Fall back to max-of-decks
-        // only if the native master field is absent (older addon).
-        if (typeof levels.master !== "number") levels.master = Math.max(levels.a || 0, levels.b || 0, levels.c || 0);
+        // In-process fallback (single active engine). Tag with the ACTIVE station's uuid so the renderer's
+        // uuid filter renders it — otherwise uuid-scoped meters go dark when the daemon isn't connected.
+        // scopeLevelsFrame computes master (post-EQ, else max-of-decks) and swaps the integer id for uuid.
+        const sid = getActiveStationId();
+        const levels = scopeLevelsFrame({ ...JSON.parse(audio.audioGetLevels(sid)), stationId: sid }, _stationUuidById);
         sendToAllWindows("audio:levels", levels);
       } catch {}
     }, 33);

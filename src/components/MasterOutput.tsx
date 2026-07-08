@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { matchesStation } from "../lib/levelsScope";
 import MasterEQRack from "./MasterEQRack";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
@@ -57,10 +58,16 @@ function MasterVU() {
   const masterRef  = useRef(0);
   const lastFrameMs = useRef(0);   // wall-clock of the previous RAF tick → delta-time ballistics
 
+  // Station scope — master VU shows the active station's master only (ref → switch needs no re-subscribe).
+  const { stationUuid } = useActiveStation();
+  const myUuidRef = useRef(stationUuid);
+  myUuidRef.current = stationUuid;
+
   useEffect(() => {
     const ether = (window as any).ether;
     if (!ether?.audio?.onLevels) return;
-    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number }) => {
+    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number; stationUuid?: string }) => {
+      if (!matchesStation(lvl, myUuidRef.current)) return; // station scope
       masterRef.current = lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0);
     });
     return () => ether.audio.offLevels(h);
@@ -500,7 +507,7 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 // ── MasterOutput ─────────────────────────────────────────────
 export default function MasterOutput({ expanded, collapsed = false, onToggleCollapsed }: { expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const engine = useAudioEngine();
-  const { stationId, isReady } = useActiveStation();
+  const { stationId, stationUuid, isReady } = useActiveStation();
   const [masterLevel, setMasterLevel] = useState(0);
   const [masterVol,  setMasterVol]  = useState(1.0);
   const [monitorVol, setMonitorVol] = useState(() => {
@@ -525,10 +532,14 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
 
   // Subscribe to audio:levels directly — keeps masterLevel out of App.tsx state
   // so the library table doesn't re-render at 30Hz.
+  // Station scope — render the active station's master only (ref so a switch needs no re-subscribe).
+  const masterUuidRef = useRef(stationUuid);
+  masterUuidRef.current = stationUuid;
   useEffect(() => {
     const ether = (window as any).ether;
     if (!ether?.audio?.onLevels) return;
-    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number }) => {
+    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number; stationUuid?: string }) => {
+      if (!matchesStation(lvl, masterUuidRef.current)) return; // station scope
       setMasterLevel(lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0));
     });
     return () => ether.audio.offLevels(h);
