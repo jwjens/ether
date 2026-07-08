@@ -22,6 +22,17 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 
 ---
 
+## PARKED 2026-07-07 — ensureCleanRoom removal (blocked on list-scoping)
+
+Read-only verified: station **list-scoping is NOT enforced** — `stations:list` is unfiltered
+(`electron/main.js:6197`), comment `:893` defers it to the v4.5 account-vs-license rework, and a 2-owner
+DB copy returned all rows to any sign-in. Per Jeff's rule, removal **STOPPED**: the fix is "make
+list-scoping true" (v4.5) FIRST, then remove the wipe. **`ensureCleanRoom` is UNCHANGED** and remains the
+account-separation mechanism until then. Full receipts + corrected plan + the switch-back design payoff:
+`docs/ensurecleanroom-scoping-2026-07-07.md`. Parked to prioritize the v4.4.39 VU-fix release.
+
+---
+
 ## Session 2026-07-01 — Step zero (spec §7.3 / §10 blocking risk)
 
 **Done:** Read-only backend query mapping licenses + library_grants + where the library lives. Ran against production Postgres via `railway run -s Postgres` (Railway injects `DATABASE_PUBLIC_URL` through the `ballast.proxy.rlwy.net` public proxy — no secret handled locally).

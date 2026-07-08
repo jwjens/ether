@@ -1,0 +1,13 @@
+=== push state 2026-07-07T23:03Z ===
+--- origin/main..HEAD (unpushed) ---
+--- status -sb ---
+## main...origin/main
+ D $null
+?? =ro
+--- recent origin/main ---
+7ed00af fix(vu): channel VU is a truthful tap — delete both isPlaying gates (METERS ARE TAPS law)
+4604cec docs: VU signal-path integrity — Rust taps honest; channel VU gated by UI isPlaying (the lie)
+0bc6049 fix(v5-rekey): remove stray duplicate v27 migration (station_uuid is v28; songs-v2 is the real v27)
+a5a1a4d feat(v5-rekey): Phase 0.3 — additive station_uuid migration (v28), copy-verified
+5dc7acd chore(v5-rekey): Phase 0.1-0.2 — Iris contract UUID clause + CI leak-guard ratchet + identity docs
+f3ff1dc chore(release): v4.4.38 — IrisBadge crash guard (t.onSpeaking skew) on top of v4.4.37
