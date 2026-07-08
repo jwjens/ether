@@ -98,7 +98,7 @@ Both agents, both ends, same conclusion.
 
 ---
 
-## IMPLEMENTED & VERIFIED (GO'd 2026-07-08) — HOLD for tag GO
+## IMPLEMENTED, SHIPPED v4.4.40 & VERIFIED LIVE (2026-07-08)
 
 **Code (two-path UUID levels-slice):**
 - `electron/levels-scope.js` (new) — shared pure core: `scopeLevelsFrame` (relay transform) + `matchesStation` (renderer predicate). Single source of truth.
@@ -114,4 +114,8 @@ Both agents, both ends, same conclusion.
 
 **Out of scope (flagged, not touched):** `ConsoleStrip.tsx:140` still gates its VU by `isPlaying` — the same "meters are taps" law violation Fix 1 removed from `VUMeter`. Separate follow-up.
 
-**Committed locally, NOT pushed, NOT tagged. HOLD for the tag's own GO.**
+**Shipped v4.4.40.** Commit `c35d275`; tag GO given explicitly (Jeff: "GO to push c35d275 and tag the release") → pushed + tagged `v4.4.40` = `ab820a4`, released all-platform. Release gate held.
+
+**VERIFIED LIVE (2026-07-08) — the only test that settles it.** On jensj, three live stations, each deck meter reads its OWN station's per-deck signal: view Halloween → Halloween's decks move; view Magical Forest → its decks. This also clears the daemon caveat — a viewed station shows active meters on the deck *it* is playing, so the daemon meters every live station, not just the on-air one. Meters attached to the audio, confirmed on glass (not on unit tests — those passed on 4.4.39-shaped logic; the live 3-station run is what proved it).
+
+**Version-vs-symptom trap (for future bug reports).** The reporter saw the bug on **4.4.39** while the fix lived in **4.4.40** — accurate report + correct fix, both true at once. First question on ANY bug report from now on: **Help → About** (confirm the running version before diagnosing).
