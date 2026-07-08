@@ -4,6 +4,30 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 
 ---
 
+## NEXT SESSION — START HERE (updated 2026-07-08)
+
+**Shipped: v4.4.39** — VU meter fix (channel VU is a truthful tap; both `isPlaying` gates removed) + v5
+re-key Phase 0 (Iris contract UUID clause, CI leak-guard ratchet, `station_uuid` migration v28, additive).
+Tag `e7ddf01`; all-platform installers published (Win `.exe` / Mac `.dmg`+arm64 / Linux AppImage+deb).
+**jensj:** clean-install 4.4.39 + full close/reopen → VU fix live + v28 migration applied + daemon restart
+(retires the pending "close-and-reopen for the daemon selector"). Jeff running this himself.
+
+**PRIORITY ORDER (Jeff, 2026-07-08):**
+1. **v4.5 list-scoping fix FIRST** — enforce `owner_license_key` at `stations:list` + `stations:get-active`,
+   filtered by the **signed-in account's** license (not the active-station anchor). Proven-needed:
+   scoping is NOT enforced today (`electron/main.js:6197` unfiltered; comment `:893` defers to v4.5).
+   Prove on a 2-owner DB copy: each account sees ONLY its own stations.
+2. **THEN ensureCleanRoom removal** — only after (1) is proven. Delete `ensureCleanRoom` + both call sites
+   (`OnboardingFlow.tsx:494, 689`). Payoff: A→B switch preserves A hidden-but-intact → switch-back instant.
+   `ensureCleanRoom` is UNCHANGED / parked until then. Full receipts + plan:
+   `docs/ensurecleanroom-scoping-2026-07-07.md`.
+
+**Also parked (unchanged):** Track A scheduler → **#3 emergency floor**; Track B Iris → **Phase 2 Gate 0
+(§7 transport gate)**, nothing beyond until gated; v5 re-key **Phases 1-4** (levels-channel station scoping
+— also lands VU Fix 2, the known-bounded meter cross-talk).
+
+---
+
 ## STANDING LAWS (design invariants — a violation is a bug by definition)
 
 - **METERS ARE TAPS, NEVER GATED BY UI STATE.** No display element that claims to represent signal may be
