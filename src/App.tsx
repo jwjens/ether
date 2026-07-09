@@ -129,6 +129,7 @@ interface SongRow {
   intro_end?: number | null; outro_start?: number | null; bpm?: number | null;
   gain_db?: number | null; play_count?: number | null;
   cart_id?: string | null;
+  content_class?: string | null;   // jingles design 1b — MUSIC/JIN/SPOT (teal treatment on JIN)
 }
 
 const EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
@@ -1426,6 +1427,7 @@ export default function App() {
           const rows = await queryScoped<SongRow>(
             `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
              WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+               AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
                AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
              ORDER BY RANDOM() LIMIT 100`,
             fmt.length ? [suHour, ...fmt] : [suHour], stationId, { skipScoping: true });
@@ -1620,6 +1622,7 @@ export default function App() {
             const rows = await queryScoped<SongRow>(
               `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
                WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+               AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
                  AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
                ORDER BY RANDOM() LIMIT 100`,
               fmt.length ? [drHour, ...fmt] : [drHour], stationId, { skipScoping: true });
@@ -1684,6 +1687,7 @@ export default function App() {
           const rows = await queryScoped<SongRow>(
             `SELECT s.*, a.name as artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
              WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+               AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
                AND ((s.daypart_mask >> ?) & 1) = 1 ${catClause}
              ORDER BY RANDOM() LIMIT 100`,
             fmt.length ? [seedHour, ...fmt] : [seedHour], stationId, { skipScoping: true });
@@ -4767,6 +4771,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
         <div ref={ctxRef} style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", minWidth: 180, borderRadius: 0 }}>
           {[
             { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
+            { label: ctxMenu.song.content_class === "JIN" ? "Unmark Jingle (→ Music)" : "Mark as Jingle (JIN)", action: async () => { const next = ctxMenu.song.content_class === "JIN" ? "MUSIC" : "JIN"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
             { label: ctxMenu.song.cart_id ? `Cart # — ${ctxMenu.song.cart_id}` : "Enter Cart #", action: () => openCartId(ctxMenu.song) },
             { label: "Load to Deck A", action: () => { onLoadA(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
@@ -4977,6 +4982,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     )}
                     {s.cart_id && (
                       <span title={`Cart #${s.cart_id}`} style={{ marginRight: 6, padding: "1px 6px", fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "var(--accent-cyan)", background: "rgb(from var(--accent-cyan) r g b / 0.12)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.04em" }}>{s.cart_id}</span>
+                    )}
+                    {s.content_class === "JIN" && (
+                      <span title="Jingle — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#14e0c8", background: "rgba(20, 224, 200, 0.12)", border: "1px solid rgba(20, 224, 200, 0.35)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>JIN</span>
                     )}
                     {isInlineTitle
                       ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />

@@ -194,7 +194,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
           LEFT JOIN artists a ON a.id = s2.artist_id AND a.station_id = ${stationId}
           WHERE s2.station_id = ${stationId}
         ) s ON s.title = pl.title
-        ${whereClause}
+        ${whereClause} AND (pl.content_class IS NULL OR pl.content_class = 'MUSIC')
         GROUP BY pl.title
         ORDER BY play_count DESC
         LIMIT 50
@@ -220,7 +220,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
                COUNT(*) as play_count,
                COUNT(DISTINCT artist) as unique_artists
         FROM play_log
-        WHERE station_id = ? ${sinceClause}
+        WHERE station_id = ? AND (content_class IS NULL OR content_class = 'MUSIC') ${sinceClause}
         GROUP BY hour ORDER BY hour
       `, [stationId], stationId, { skipScoping: true });
       const hourlyMap: Record<number, HourlyData> = {};
