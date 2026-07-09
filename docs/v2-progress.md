@@ -16,10 +16,15 @@ daemon_log_staged=true** on a warm re-stage (real profile, sole instance). Tag `
 jensj + both customers. (This box was a non-source second install → smoke window cost = zero.)
 
 **FOUR TRACKED ITEMS (open — from the 2026-07-09 incident chain):**
-1. **First-launch daemon grace period** — a fresh install's FIRST launch can miss the daemon-connect window
-   during the cold ~220 MB stage (`setupAudioBackend` 5 s timeout, `main.js:439`) → in-process fallback until
-   a warm relaunch. Real customers hit this on install. Fix: retry/extend the connect window until staging
-   completes (don't terminal-fallback while a stage is in progress).
+1. **First-launch daemon grace period — ⭐ PROMOTED TO NEXT-UP (post-v4.4.42, per Jeff 2026-07-09).**
+   A fresh/updated install's FIRST launch can miss the daemon-connect window during the cold ~220 MB stage
+   (`setupAudioBackend` 5 s timeout, `main.js:439`) → in-process fallback until a warm relaunch. Real customers
+   hit this on EVERY post-update launch (the engine re-stages on each version bump), so the first launch after
+   an auto-update runs degraded until the customer relaunches. Evidence: bit the packaged smoke on BOTH the
+   v4.4.41 and v4.4.42 cold runs (daemon spawned + pipe-listening, but the app hadn't confirmed connect inside
+   the assert window; warm re-run PASSes daemon_started=true). This ships BEFORE the customer boxes take these
+   updates. Fix: retry/extend the connect window until staging completes (don't terminal-fallback while a stage
+   is in progress); assert on daemon pipe-listening + client-connected, not a fixed 5 s.
 2. **Bug A — ghost tracks** — library rows with no file / 0 duration load onto a deck as 0:00, never fire
    song-end, strand the advance (OV "Don't Stop Me Now" confirmed; it self-recovers past the ghost). 3-layer
    fix: scheduler NEVER selects an unplayable asset (generation + pull time); daemon treats zero-duration /
