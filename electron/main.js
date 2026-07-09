@@ -266,6 +266,11 @@ const _daemonEngineState = new Map();    // stationId → last daemon enginestat
 // that's exactly the state we need to replay so a respawned (idle, _started=false) daemon resumes
 // playout instead of dead air. stationId → the automationStart args, so the replay is faithful.
 const _automationIntent = new Map();
+// Phase D (4.4.43): stream intent — stationId → startStream args. Set on startStream, cleared on
+// stopStream (and on automationStop — no automation means nothing to air). Replayed on daemon
+// (re)connect alongside automationStart so a reload restores the Icecast stream, not just playout.
+const _streamIntent = new Map();
+const { replayIntents } = require('./daemon-auto-resume');
 
 // Stale-daemon auto-reload (Item 10 follow-up — closes the dead-air-on-update gotcha). The daemon
 // is detached so it survives an app update gaplessly; the downside is a daemon left running OLD
@@ -428,12 +433,10 @@ if (AUDIO_DAEMON_DESIRED) {
     // Disarm first, then re-evaluate the daemon we're now talking to.
     disarmDaemonReload();
     checkStaleDaemon();
-    if (_automationIntent.size === 0) return;
-    for (const [sid, args] of _automationIntent) {
-      audiodClient.cmd("automationStart", args || { stationId: sid })
-        .then(() => console.log(`[AUDIO] auto-resume: replayed automationStart for station ${sid} on daemon (re)connect`))
-        .catch((e) => console.warn(`[AUDIO] auto-resume: replay failed for station ${sid}: ${e && e.message || e}`));
-    }
+    // Phase D: replay BOTH automation AND stream intent. A reload used to restore playout+monitor but
+    // NOT the Icecast stream → every reload = listener dead air until a manual restart. Now streams
+    // auto-restore (delayed so the program bus is warm), turning a reload into a blip, not silence.
+    replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) });
   });
 
   // Safety net for the recurring silent-wedge (cpal output death) — auto-recovers dead air.
@@ -2795,7 +2798,9 @@ ipcMain.handle("audio:daemon", async (_, cmd, args) => {
     const sid = args && args.stationId;
     if (sid != null) {
       if (cmd === "automationStart") _automationIntent.set(sid, args);
-      else if (cmd === "automationStop") _automationIntent.delete(sid);
+      else if (cmd === "automationStop") { _automationIntent.delete(sid); _streamIntent.delete(sid); }
+      else if (cmd === "startStream") _streamIntent.set(sid, args);
+      else if (cmd === "stopStream") _streamIntent.delete(sid);
     }
   } catch {}
   try { return { ok: true, result: await audiodClient.cmd(cmd, args || {}) }; }
