@@ -168,9 +168,9 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
       // Overview stats — station_id scoping: Strategy C dynamic builders
       const [playsRow, songsRow, artistsRow] = await Promise.all([
-        queryScoped<{ c: number }>(`SELECT COUNT(*) as c FROM play_log WHERE station_id = ? ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
-        queryScoped<{ c: number }>(`SELECT COUNT(DISTINCT title) as c FROM play_log WHERE station_id = ? ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
-        queryScoped<{ c: number }>(`SELECT COUNT(DISTINCT artist) as c FROM play_log WHERE station_id = ? AND artist IS NOT NULL ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
+        queryScoped<{ c: number }>(`SELECT COUNT(*) as c FROM play_log WHERE station_id = ? AND (content_class IS NULL OR content_class = 'MUSIC') ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
+        queryScoped<{ c: number }>(`SELECT COUNT(DISTINCT title) as c FROM play_log WHERE station_id = ? AND (content_class IS NULL OR content_class = 'MUSIC') ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
+        queryScoped<{ c: number }>(`SELECT COUNT(DISTINCT artist) as c FROM play_log WHERE station_id = ? AND artist IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') ${since > 0 ? `AND played_at >= ${since}` : ""}`, [stationId], stationId, { skipScoping: true }),
       ]);
 
       const plays = playsRow[0]?.c ?? 0;
@@ -207,7 +207,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
                COUNT(DISTINCT title) as unique_songs,
                MAX(played_at) as last_played
         FROM play_log
-        WHERE station_id = ? AND artist IS NOT NULL ${sinceClause}
+        WHERE station_id = ? AND artist IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') ${sinceClause}
         GROUP BY artist
         ORDER BY play_count DESC
         LIMIT 50

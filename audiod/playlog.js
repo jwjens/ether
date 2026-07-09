@@ -18,10 +18,21 @@ const { logMutation, serializePayload } = require(path.join(__dirname, "..", "el
 // Mirrors src/db/client.ts logPlay → play_log:create. db must be a read-WRITE node:sqlite
 // DatabaseSync handle. Returns the new row uuid, or null on failure (logging never throws
 // into the playout path — a logging error must not interrupt audio).
-function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, filePath }) {
+function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, filePath, contentClass }) {
   if (!db || stationId == null || !title) return null;
   const now = new Date().toISOString();
   const uuid = crypto.randomUUID();
+  // content_class (jingles design 1b): stamp every play so reporting/affidavit can exclude non-MUSIC.
+  // Prefer the caller's hint; else derive from the library (the song's class), else spot, else MUSIC.
+  let content_class = contentClass || null;
+  if (!content_class && filePath) {
+    try {
+      const s = db.prepare("SELECT content_class FROM songs WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1").get(filePath, stationId);
+      if (s && s.content_class) content_class = s.content_class;
+      else if (db.prepare("SELECT 1 FROM spots WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1").get(filePath, stationId)) content_class = "SPOT";
+    } catch { /* logging must never throw into playout */ }
+  }
+  if (!content_class) content_class = "MUSIC";
   const row = {
     title, artist: artist || "", deck, deck_id: deck,
     duration_ms: durationMs ?? null,
@@ -30,6 +41,7 @@ function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, fi
     scheduled_log_id: null, show_name: null, category_code: null, programming_row_id: null,
     station_id: stationId, uuid, created_at: now, updated_at: now, deleted_at: null,
     file_path: filePath || null,   // v19: the audio that aired — affidavit join key
+    content_class,                 // jingles design 1b — MUSIC/JIN/SPOT
   };
   let payloadAfter;
   try { payloadAfter = serializePayload(row, "play_log"); }
@@ -40,9 +52,9 @@ function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, fi
     db.exec("BEGIN IMMEDIATE");
     try {
       db.prepare(
-        `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path);
+        `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path, content_class)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path, row.content_class);
       // Spot accounting: count the spin if the aired file is a spot (no-op for songs).
       if (row.file_path) {
         db.prepare(`UPDATE spots SET play_count = play_count + 1, last_played_at = unixepoch(), updated_at = ? WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL`).run(now, row.file_path, stationId);

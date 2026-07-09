@@ -5303,6 +5303,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
        WHERE s.category_id = ?
          AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+         AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
          AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1)
        ORDER BY RANDOM()`
     );
@@ -5513,7 +5514,7 @@ function _buildScheduleCtx(stationId) {
     diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
     stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
-    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
+    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
 }

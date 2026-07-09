@@ -35,7 +35,9 @@ function sepConfig(db, stationId) {
 // "category has an active song" invariant is well-defined.
 function baseConditions(hour, params, stationId, opts) {
   opts = opts || {};
-  let c = "s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";
+  // content_class gate: MUSIC only. Jingles (JIN) / spots (SPOT) NEVER fill a music slot. IS NULL covers a
+  // pre-v29 / partially-migrated row (post-migration the column defaults to 'MUSIC'). (jingles design 1b)
+  let c = "s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC')";
   if (opts.daypart !== false) { c += " AND ((s.daypart_mask >> ?) & 1) = 1"; params.push(hour); }
   if (opts.songSep) {
     c += ` AND NOT EXISTS (SELECT 1 FROM play_log pl
@@ -47,7 +49,8 @@ function baseConditions(hour, params, stationId, opts) {
     c += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
              SELECT s2.artist_id FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
              WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND pl.played_at > (unixepoch() - ?)
-               AND s2.artist_id IS NOT NULL))`;
+               AND s2.artist_id IS NOT NULL
+               AND (s2.content_class IS NULL OR s2.content_class = 'MUSIC')))`;
     params.push(stationId, opts.artistSepSec);
   }
   return c;

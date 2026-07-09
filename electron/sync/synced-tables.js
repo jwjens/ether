@@ -520,6 +520,7 @@ const REGISTRY = {
       deleted_at:          'scalar',
       programming_row_id:  'scalar',
       file_path:           'blob-ref',   // v19: the audio that aired — affidavit join key
+      content_class:       'scalar',     // jingles design 1b — MUSIC/JIN/SPOT (v29)
     },
   },
 
@@ -715,6 +716,7 @@ const REGISTRY = {
       mood:                'scalar',
       gender:              'scalar',
       rotation_status:     'scalar',
+      content_class:       'scalar',   // jingles design 1b — MUSIC/JIN/SPOT (v29)
       daypart_mask:        'scalar',
       no_repeat_hours:     'scalar',
       lufs_measured:       'scalar',
