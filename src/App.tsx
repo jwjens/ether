@@ -1713,6 +1713,11 @@ export default function App() {
   // override the playing song. (Q below appends to the bottom of the queue.)
   const loadDeck = useCallback((deckId: "A" | "B" | "C", s: SongRow) => {
     if (!s.file_path) return;
+    // Command-path station scoping: resolve the ACTIVE station's engine fresh at call time.
+    // A useCallback that closed over the render-0 `engine` (line 506) froze to station 1, so after
+    // a station switch the library A/B/C buttons loaded onto the wrong station's decks (same class
+    // as the VU cross-talk, but on the command path). getEngine(stationId) here = active engine.
+    const engine = getEngine(stationId);
     if (engine.getDeck(deckId).getState().status === "playing") return; // don't kill what's on air
     // Stage 2a: daemon mode → deck:cue intent (the daemon loads + protects it from the self-heal).
     // In-process → load the deck locally as before.
@@ -1723,7 +1728,7 @@ export default function App() {
     }
     window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
-  }, []);
+  }, [stationId]);
   const loadA = useCallback((s: SongRow) => loadDeck("A", s), [loadDeck]);
   const loadB = useCallback((s: SongRow) => loadDeck("B", s), [loadDeck]);
   const loadC = useCallback((s: SongRow) => loadDeck("C", s), [loadDeck]);
@@ -1732,6 +1737,8 @@ export default function App() {
   });
   const addToQueue = useCallback((s: SongRow) => {
     if (s.file_path) {
+      // Command-path station scoping: resolve the ACTIVE station's engine fresh (see loadDeck).
+      const engine = getEngine(stationId);
       engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any]);
       setQueueLen(engine.getQueue().length);
       window.dispatchEvent(new CustomEvent('ether:queue-changed'));
@@ -1740,7 +1747,7 @@ export default function App() {
         autoCueSong(s.id, s.file_path).catch(() => {});
       }
     }
-  }, [autoSilenceTrim]);
+  }, [autoSilenceTrim, stationId]);
 
   const canvasEngine = useCanvasEngine();
   const updater = useUpdater();
