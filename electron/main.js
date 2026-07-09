@@ -260,6 +260,7 @@ try {
 // VU feed; deck/queue/playstart → the renderer proxy; stream → the on-air status).
 const audiodClient = require("./audio-daemon-client");
 const _daemonStreamStates = new Map();   // stationId → last stream state, for stream:status:global
+const _daemonEngineState = new Map();    // stationId → last daemon enginestate (live|stalled|off); corroborates the silent-wedge watchdog in the reload-reason log
 // Auto-resume (Item 10): per-station automation intent. Set when the app issues automationStart,
 // cleared ONLY by an explicit automationStop. A daemon disconnect/respawn must NEVER clear it —
 // that's exactly the state we need to replay so a respawned (idle, _started=false) daemon resumes
@@ -283,7 +284,9 @@ function disarmDaemonReload() {
 function fireDaemonReload(why) {
   if (!_daemonReloadArmed) return;
   disarmDaemonReload();
-  console.warn(`[AUDIO] stale daemon → reloading (${why})`);
+  // Reload reasons are PERMANENTLY tee'd to the startup log (not console-only) — a console-only
+  // reason once cost us the diagnosis of the 3-station reload loop (2026-07-09).
+  logStartup(`[AUDIO] RELOAD daemon — reason: stale/${why} (armed reload fired)`);
   try { audiodClient.reloadDaemon(); } catch {}
 }
 function armDaemonReload() {
@@ -305,14 +308,14 @@ async function checkStaleDaemon() {
     // (This is what lets the FIRST update after this ships self-heal: the running daemon predates
     // the command.) A plain connection error is NOT this — only treat "unknown cmd" as stale.
     if (e && /unknown cmd/.test(String(e.message || e))) {
-      console.warn("[AUDIO] daemon predates the version command — arming reload");
+      logStartup("[AUDIO] stale-check: daemon predates the version command — arming reload");
       armDaemonReload();
     }
     return;
   }
   const appV = (() => { try { return require("electron").app.getVersion(); } catch { return "0"; } })();
   if (dv && dv !== "0" && dv !== appV) {
-    console.warn(`[AUDIO] daemon v${dv} is older than app v${appV} — arming reload`);
+    logStartup(`[AUDIO] stale-check: daemon v${dv} != app v${appV} — arming reload`);
     armDaemonReload();
   }
 }
@@ -342,7 +345,13 @@ function startAudioLivenessWatchdog() {
         const playing = st && [st.deckA, st.deckB, st.deckC].some((d) => d && d.status === "playing");
         if (playing) {
           _lastAudioReloadAt = Date.now();
-          console.warn(`[AUDIO] liveness watchdog: station ${sid} deck reports playing but output silent ≥6s — reloading daemon (silent-wedge recovery)`);
+          // PERMANENT reload-reason receipt (tee'd to the startup log, not console-only). Captures the
+          // full context that a console-only warn hid on 2026-07-09: silence age, which station tripped
+          // it, all on-air stations, and the daemon's OWN enginestate per station — so a repro proves
+          // whether this is a real cpal wedge or a multi-station levels-blip false positive.
+          const silentMs = Date.now() - _lastDaemonAudioAt;
+          const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
+          logStartup(`[AUDIO] RELOAD daemon — reason: silent-wedge watchdog (station ${sid} deck=playing, output silent ${silentMs}ms; on-air=[${[...sids].join(",")}]; daemon-enginestate=[${esSnap}])`);
           try { audiodClient.reloadDaemon(); } catch {}
           break;
         }
@@ -387,6 +396,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // which folds it into the now-playing payload + silent keepalive so a stalled station reports
         // its real state instead of going quiet (→ "offline").
         sendToAllWindows("audio:daemon-enginestate", { stationId: m.stationId, state: m.state });
+        _daemonEngineState.set(m.stationId, m.state);   // corroborates the silent-wedge watchdog reload-reason log
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
