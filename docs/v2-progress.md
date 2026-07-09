@@ -4,6 +4,47 @@ Contract: `docs/ether-v2-data-architecture-spec.md`. Workflow: OVEVENTS dev + ba
 
 ---
 
+## NEXT SESSION — START HERE (updated 2026-07-09)
+
+**Shipped: v4.4.41 (hotfix)** — the recurring dead-air ROOT CAUSE: `daemon-log.js` was `require()`d unguarded
+by `ether-audiod.js:18` but never added to `stage-engine.js` `DAEMON_FILES` → every staged/packaged daemon
+since ~4.4.37 shipped **un-startable** (MODULE_NOT_FOUND) → degraded single-station **in-process fallback**.
+Fix: daemon-log.js added to the stage list + require **guarded** (a log module can never crash the daemon) +
+smoke-mode hardening (`SMOKE_ISOLATED` = `ETHER_SMOKE=1` AND explicit `--user-data-dir`; **daemon-start gate**
+in the packaged smoke; window title/logs marked SMOKE). Verified **[SMOKE] PASS daemon_started=true
+daemon_log_staged=true** on a warm re-stage (real profile, sole instance). Tag `v4.4.41` → CI installer to
+jensj + both customers. (This box was a non-source second install → smoke window cost = zero.)
+
+**FOUR TRACKED ITEMS (open — from the 2026-07-09 incident chain):**
+1. **First-launch daemon grace period** — a fresh install's FIRST launch can miss the daemon-connect window
+   during the cold ~220 MB stage (`setupAudioBackend` 5 s timeout, `main.js:439`) → in-process fallback until
+   a warm relaunch. Real customers hit this on install. Fix: retry/extend the connect window until staging
+   completes (don't terminal-fallback while a stage is in progress).
+2. **Bug A — ghost tracks** — library rows with no file / 0 duration load onto a deck as 0:00, never fire
+   song-end, strand the advance (OV "Don't Stop Me Now" confirmed; it self-recovers past the ghost). 3-layer
+   fix: scheduler NEVER selects an unplayable asset (generation + pull time); daemon treats zero-duration /
+   failed load as instant song-end + advances; library flags ghosts + Scheduler Health "N unplayable in
+   rotation", excluded from separation math. **Library scan pending a clean DB read** (electron-as-node
+   better-sqlite3 throws SQLITE_NOTADB on this box's DB though the app reads it — do via the app's `db:query`
+   IPC or on jensj; shared account library).
+3. **Bug B — st2 permanent wedged-advance** — `_advance` (`engine.js:396`) hangs if `await fn()` never
+   resolves (`finally` never runs → `_advanceStartedAt` stuck); watchdog resets the advanceP *reference*
+   (`:269`) but not the hung op → re-hangs. `continuous=true` (`:69`) rules out empty-queue. Only a full
+   automationStop→Start (AUTO toggle: stops decks + re-inits) revives → dead component = a hung deck/native
+   op. Fix: watchdog escalate to a full engine reset on persistent wedge + deck load/preload **timeout**.
+   Exact attempting-vs-erroring now capturable via the (now-fixed) daemon log on next occurrence.
+4. **In-app indicator unification → Health Monitor Part 2.** Honest source EXISTS: `engine._status()`
+   "off/stalled/live" (`engine.js:162-169`) → `audio:daemon-enginestate` (`main.js:380`); the cloud dashboard
+   consumes it (`ether-dashboard StatusPill.tsx:20,46` → "STALLED · DEAD AIR"). The in-app `GlobalOnAirBadge`
+   reads a shallow signal (onAir/encoder) → **stayed GREEN over dead air**. Fix: unify the in-app per-station
+   indicator to `enginestate` — RED + flag on `stalled`, AMBER on wrap/degraded, green ONLY on `live`; NO
+   green from automation-flag or encoder alone.
+
+**Health Monitor build plan:** `docs/playout-health-monitor-plan-2026-07-09.md` (Part 1's logging fix shipped
+in 4.4.41; the dead-air watchdog + Parts 2-4 remain).
+
+---
+
 ## NEXT SESSION — START HERE (updated 2026-07-08)
 
 **Shipped: v4.4.39** — VU meter fix (channel VU is a truthful tap; both `isPlaying` gates removed) + v5

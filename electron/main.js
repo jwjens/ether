@@ -184,20 +184,29 @@ if (process.platform === "win32") {
 // Without this, every additional Electron instance tries to bind port 3400
 // and crashes with EADDRINUSE. The second instance focuses the running window
 // and exits; the first instance never sees the conflict.
-if (global.__etherDiag) global.__etherDiag('POINT-2: before requestSingleInstanceLock');
-if (!app.requestSingleInstanceLock()) {
-  if (global.__etherDiag) global.__etherDiag('POINT-2b: lock NOT acquired — exiting (another instance running)');
-  app.quit();
-  process.exit(0);
-}
-if (global.__etherDiag) global.__etherDiag('POINT-3: lock acquired OK');
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+// SMOKE_ISOLATED: an isolated health/CI smoke may run ALONGSIDE the live app. It skips the single-instance
+// lock (and the :3400 bind, far below) so it never fights the live app. Guarded by BOTH ETHER_SMOKE=1 AND an
+// explicit --user-data-dir — never either alone — so a stray env var on a live box can NEVER spawn an
+// unlocked second instance. Loudly self-identifying (window title + [SMOKE] logs).
+const SMOKE_ISOLATED = process.env.ETHER_SMOKE === '1' && app.commandLine.hasSwitch('user-data-dir');
+if (SMOKE_ISOLATED) {
+  console.log('[SMOKE] ISOLATED MODE — single-instance lock + :3400 bind BYPASSED (ETHER_SMOKE=1 + explicit --user-data-dir). This is NOT the live app.');
+} else {
+  if (global.__etherDiag) global.__etherDiag('POINT-2: before requestSingleInstanceLock');
+  if (!app.requestSingleInstanceLock()) {
+    if (global.__etherDiag) global.__etherDiag('POINT-2b: lock NOT acquired — exiting (another instance running)');
+    app.quit();
+    process.exit(0);
   }
-});
+  if (global.__etherDiag) global.__etherDiag('POINT-3: lock acquired OK');
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
 
 // ── Environment ───────────────────────────────────────────────
 const isDev = process.env.NODE_ENV === "development" || !app.isPackaged;
@@ -1258,7 +1267,7 @@ function createWindow() {
     height: 800,
     minWidth: 960,
     minHeight: 600,
-    title: "EtherCast",
+    title: SMOKE_ISOLATED ? "EtherCast — SMOKE (isolated test — NOT the live app)" : "EtherCast",
     icon: WINDOW_ICON,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -1351,8 +1360,30 @@ function createWindow() {
         await new Promise(r => setTimeout(r, 2500)); // let React mount after load
         const rootKids = await mainWindow.webContents.executeJavaScript(
           "((document.getElementById('root')||{}).childElementCount)||0", true).catch(() => 0);
-        finishSmoke(rootKids > 0 && !_rendererSawError,
-          `react_mounted=${rootKids > 0} root_children=${rootKids} renderer_error=${_rendererSawError}`);
+        // DAEMON-START GATE (regression guard for 4.4.37–4.4.40): a staged daemon missing a runtime file
+        // (e.g. daemon-log.js) crashes on startup → never connects → AUDIO_DAEMON silently falls back to
+        // in-process (single-station, looked "fine"). The packaged smoke must prove the OUT-OF-PROCESS
+        // daemon actually reached ready, and that daemon-log.js landed in the staged engine dir.
+        await audioBackendReady;
+        const daemonDesired = AUDIO_DAEMON_DESIRED;
+        const daemonStarted = AUDIO_DAEMON === true;
+        let daemonLogStaged = false;
+        // Staged engine lives at %LOCALAPPDATA%\Ether\engine (stage-engine.js engineBaseDir), NOT userData
+        // (which is Roaming) — check the real staged path or this reads false on a healthy build.
+        // Staged engine lives at %LOCALAPPDATA%\Ether\engine (stage-engine engineBaseDir). _etherDir()
+        // returns …\Ether\com.ether.radio (the DB dir), so its PARENT (…\Ether) + engine is the stage root.
+        try { daemonLogStaged = require("fs").existsSync(path.join(path.dirname(_etherDir()), "engine", "audiod", "daemon-log.js")); } catch { /* ignore */ }
+        const daemonOk = !daemonDesired || (daemonStarted && daemonLogStaged);
+        // MANDATORY air-isolation: a smoke must run against an EMPTY DB (0 stations → no automationStart →
+        // no encoder → no Icecast). If the DB has stations, REFUSE to pass regardless of everything else.
+        let stationCount = -1;
+        try { stationCount = getDb().prepare("SELECT COUNT(*) AS c FROM stations WHERE deleted_at IS NULL").get().c; } catch { /* db not ready */ }
+        const airIsolated = stationCount === 0;
+        // air_isolated (0 stations) is MANDATORY only for an ISOLATED smoke running alongside the live app.
+        // A sole-instance real-profile smoke (SMOKE_ISOLATED=false, live app closed) legitimately has
+        // stations — there it gates on daemon_started + daemon_log_staged; station_count is informational.
+        finishSmoke(rootKids > 0 && !_rendererSawError && daemonOk && (!SMOKE_ISOLATED || airIsolated),
+          `react_mounted=${rootKids > 0} root_children=${rootKids} renderer_error=${_rendererSawError} daemon_desired=${daemonDesired} daemon_started=${daemonStarted} daemon_log_staged=${daemonLogStaged} station_count=${stationCount} air_isolated=${airIsolated}`);
       } catch (e) { finishSmoke(false, `harness_error=${e.message}`); }
     });
     setTimeout(() => finishSmoke(false, 'timeout — no did-finish-load within 30s'), 30000);
@@ -4626,7 +4657,8 @@ irisHttpServer.on('error', (err) => {
     console.error('[API] HTTP server error:', err.message);
   }
 });
-irisHttpServer.listen(3400, '0.0.0.0', () => {
+if (SMOKE_ISOLATED) console.log('[SMOKE] :3400 REST API NOT bound (isolated smoke — never contends with the live app).');
+if (!SMOKE_ISOLATED) irisHttpServer.listen(3400, '0.0.0.0', () => {
   console.log('[API] REST server listening on http://0.0.0.0:3400');
   // HA: /health can now answer, so a (re)spawned watchdog can adopt us instead of
   // racing into a fresh spawn. Run the --enable-ha/--disable-ha bootstrap here,

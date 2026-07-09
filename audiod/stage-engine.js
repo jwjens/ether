@@ -14,9 +14,12 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 
-// The 5 daemon runtime files (NOT the smoke/accept test scripts) + the runtime data files a
+// The daemon runtime files (NOT the smoke/accept test scripts) + the runtime data files a
 // renamed Electron needs to boot as node (proven empirically: exe + icu + the two snapshots).
-const DAEMON_FILES = ["ether-audiod.js", "engine.js", "loggen.js", "playlog.js", "stream.js"];
+// daemon-log.js MUST be staged — ether-audiod.js require()s it at startup; omitting it shipped a staged
+// daemon that hit MODULE_NOT_FOUND and went blind/crashed (regression; fixed 2026-07-09,
+// docs/overnight-rotation-stop-forensics-2026-07-09.md).
+const DAEMON_FILES = ["ether-audiod.js", "daemon-log.js", "engine.js", "loggen.js", "playlog.js", "stream.js"];
 const RUNTIME_DATA = ["icudtl.dat", "v8_context_snapshot.bin", "snapshot_blob.bin"];
 
 function engineBaseDir() {

@@ -15,7 +15,10 @@ const os = require("os");
 
 // Durable daemon log FIRST — the daemon runs detached/stdio:"ignore", so without this its
 // console output (including a fatal addon-load error below) is discarded. Tees console.* to a file.
-require("./daemon-log").install();
+// GUARDED: a missing/broken log module must NEVER crash the daemon. A staged build once omitted this file
+// (stage-engine DAEMON_FILES) → an unguarded require MODULE_NOT_FOUND took the whole daemon down → dead
+// air. Logging is diagnostic only; it can fail without stopping playout.
+try { require("./daemon-log").install(); } catch (e) { try { console.error("[audiod] daemon-log unavailable:", e && e.message); } catch { /* ignore */ } }
 
 // Cross-platform IPC endpoint: Windows → named pipe; macOS/Linux → a per-user Unix domain
 // socket in the temp dir. Override with ETHER_AUDIOD_PIPE. (Client + watchdog compute the
