@@ -136,15 +136,19 @@ export default function ConsoleStrip({
     if (!ether?.audio?.onLevels) return;
     let rafId = 0;
     let smoothed = 0; // smoothed bar HEIGHT (0..1): fast attack, slow release (VU ballistic)
-    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; master?: number; stationUuid?: string }) => {
+    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; cart?: number; master?: number; stationUuid?: string }) => {
       if (!matchesStation(lvl, myUuidRef.current)) return; // station scope
       const id = deckId.toUpperCase();
       let raw = id === "A" ? (lvl.a ?? 0)
               : id === "B" ? (lvl.b ?? 0)
               : id === "C" ? (lvl.c ?? 0)
+              : id === "CART" ? (lvl.cart ?? 0)   // jingle overlay bus (native slot 6, level_cart)
               : (lvl.master ?? 0);
       if (id === "MIC") raw = isOnRef.current ? (lvl.master ?? 0) * 0.6 : 0;
-      raw = isPlayingRef.current ? raw : 0;
+      // Meters are taps: the CART/jingle overlay has no steady "playing" status like a rotation deck
+      // (jingles fire briefly over master), so its VU always reflects the live tap. Other strips keep
+      // the existing isPlaying gate unchanged.
+      if (id !== "CART") raw = isPlayingRef.current ? raw : 0;
       const targetH = vuHeight(Math.min(1, raw));   // dB-scaled target height
       // Snap up to peaks (track the music), ease down — kills the flickery top edge.
       smoothed += (targetH - smoothed) * (targetH > smoothed ? 0.5 : 0.12);

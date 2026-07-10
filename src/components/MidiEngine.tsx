@@ -81,6 +81,7 @@ export const MIDI_ACTIONS: { category: string; actions: { id: string; label: str
     category: "Master",
     actions: [
       { id: "master_volume",  label: "Master Volume",   isFader: true },
+      { id: "cart_volume",    label: "Jingles/CART Volume", isFader: true },
       { id: "crossfader",     label: "Crossfader A↔B",  isFader: true },
       { id: "skip_next",      label: "Skip to Next",    isFader: false },
       { id: "auto_toggle",    label: "Auto-Advance Toggle", isFader: false },
@@ -104,7 +105,7 @@ export function useMidiState() { return useContext(MidiContext); }
 
 export function MidiProvider({ children }: { children: React.ReactNode }) {
   const [faderPositions, setFaderPositions] = useState<Record<string, number>>({
-    deck_a_volume: 1, deck_b_volume: 1, deck_c_volume: 1, master_volume: 1, crossfader: 0.5,
+    deck_a_volume: 1, deck_b_volume: 1, deck_c_volume: 1, master_volume: 1, cart_volume: 1, crossfader: 0.5,
   });
   const [channelOn, setChannelOn] = useState<Record<string, boolean>>({
     deck_a_on: true, deck_b_on: true, deck_c_on: true,
@@ -207,6 +208,7 @@ function dispatchMidiAction(
     if (action === "deck_a_volume") engine.getDeck("A")?.setVolume(normalized);
     if (action === "deck_b_volume") engine.getDeck("B")?.setVolume(normalized);
     if (action === "deck_c_volume") engine.getDeck("C")?.setVolume(normalized);
+    if (action === "cart_volume") engine.getDeck("CART" as any)?.setVolume(normalized);
     return;
   }
 

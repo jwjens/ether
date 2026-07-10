@@ -3348,6 +3348,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // Guest mic on/off state — keyed by slot ("E", "F", etc.). Mirrors mic state pattern.
   const [consoleGuestOn, setConsoleGuestOn] = useState<Record<string, boolean>>({});
   const [consoleGuestLevel, setConsoleGuestLevel] = useState<Record<string, number>>({});
+  // Jingle overlay fader (CART slot 6) — ride level for jingles/carts, independent of each item's
+  // gain_db trim. Ephemeral (resets to unity per session, like the deck faders).
+  const [jingleVol, setJingleVol] = useState(1);
 
   // Listen for guest level updates pushed from the WebRTC layer (Studio.tsx)
   useEffect(() => {
@@ -3744,6 +3747,21 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               </div>
             );
           })}
+          {/* Jingle overlay fader (CART slot 6) — a separate aux/cue level for jingles/carts, teal.
+              Rides the overlay bus gain via audio_set_volume("CART"); each item's gain_db (trim) stays
+              independent. Always shown alongside Master since jingles are a station-wide overlay. */}
+          <div style={{ flex: 1, minWidth: 0, maxWidth: 140, display: "flex" }}>
+            <ConsoleStrip
+              label="JINGLES"
+              color="#14e0c8"
+              volume={jingleVol}
+              deckId="CART"
+              isPlaying={false}
+              isOn={true}
+              onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
+              onToggleOn={() => { const cart = engine.getDeck("CART" as any) as any; const st = cart?.getState?.(); if (st?.status === "playing") cart?.pause(); else cart?.play(); }}
+            />
+          </div>
           {/* Master Output — owns its own audio:levels subscription */}
           <MasterOutput
             expanded={!showCarts && !masterCollapsed}
