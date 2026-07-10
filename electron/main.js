@@ -286,8 +286,21 @@ function disarmDaemonReload() {
   _daemonReloadArmed = false;
   if (_daemonReloadTimer) { clearInterval(_daemonReloadTimer); _daemonReloadTimer = null; }
 }
+// (b) UNIVERSAL RELOAD GUARD (4.4.44): a daemon whose engine reports itself LIVE is functioning — it
+// must NEVER be reloaded, no matter which path wants to (silent-wedge, armed song-boundary, no-audio
+// timer). Proven 2026-07-10 on jensj: the VU-levels signal stalled at a deck-C→A segue while
+// daemon-enginestate stayed [live,live,live], the daemon's own wraps kept succeeding and its stall
+// watchdog self-recovered — yet the app reloaded and the reload's shutdown is what cut all air. The
+// engine's own truth (a deck is actually playing) overrides the unreliable levels signal.
+function anyOnAirEngineLive() {
+  for (const sid of _automationIntent.keys()) { if (_daemonEngineState.get(sid) === "live") return true; }
+  return false;
+}
 function fireDaemonReload(why) {
   if (!_daemonReloadArmed) return;
+  // Never kill a healthy daemon mid-wrap. Stay ARMED (don't disarm) so a genuinely stale daemon still
+  // reloads later at a moment when no engine is live (e.g. off-air) — a working daemon is never disrupted.
+  if (anyOnAirEngineLive()) { logStartup(`[AUDIO] RELOAD SUPPRESSED (${why}) — on-air engine reports live; daemon healthy, staying armed`); return; }
   disarmDaemonReload();
   // Reload reasons are PERMANENTLY tee'd to the startup log (not console-only) — a console-only
   // reason once cost us the diagnosis of the 3-station reload loop (2026-07-09).
@@ -351,13 +364,18 @@ function startAudioLivenessWatchdog() {
         if (playing) {
           const silentMs = Date.now() - _lastDaemonAudioAt;
           const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
-          // FALSE-POSITIVE GUARD (proven 2026-07-09, v4.4.43 capture): the levels-derived signal is
-          // UNRELIABLE — a deck-C→A segue stalled it 6.6s while the daemon enginestate stayed live and
-          // the audio kept playing, so the watchdog nuked the whole 3-station daemon every ~11 min.
-          // Before reloading, confirm against the daemon's REAL cpal output-callback stamp (independent
-          // of the VU pipeline). If the output device callback is still firing, audio IS flowing → this
-          // is a levels false-positive → DO NOT reload. Only a genuinely stale callback (real output
-          // death) still reloads, so real-wedge recovery is preserved.
+          // (b) PRIMARY GATE — never reload a daemon whose engine reports itself LIVE. This is the
+          // decisive, daemon-version-independent fix (works even against a stale daemon): the engine's
+          // own truth overrides the unreliable VU-levels signal. Proven 2026-07-10 (jensj): enginestate
+          // stayed [live,live,live], wraps kept succeeding, the engine self-recovered — the levels
+          // signal just stalled at the deck-C→A segue, and the reload is what cut air.
+          if (_daemonEngineState.get(sid) === "live") {
+            logStartup(`[AUDIO] silent-wedge SUPPRESSED — daemon enginestate=live station ${sid} (levels stale ${silentMs}ms = false positive); NOT reloading (enginestate=[${esSnap}])`);
+            _lastDaemonAudioAt = Date.now();
+            break;
+          }
+          // SECONDARY GATE (active once the daemon is re-staged with the cmd): the real cpal output-
+          // callback stamp, independent of the VU pipeline. Fresh callback → audio flowing → suppress.
           let cbStaleMs = null;
           try { const cb = Number(await audiodClient.cmd("lastCallbackMs")); if (cb > 0) cbStaleMs = Date.now() - cb; } catch {}
           if (cbStaleMs !== null && cbStaleMs < 3000) {
@@ -6164,8 +6182,12 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
       const pw     = station.icecast_password?.trim()   || 'hackme';
       const mount  = station.icecast_mount?.trim()      || '/live';
       const bitrate = station.icecast_bitrate || 128;
-      try { await audiodClient.cmd('startStream', { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: 8000 } }); }
+      const streamArgs = { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: 8000 } };
+      try { await audiodClient.cmd('startStream', streamArgs); }
       catch (e) { return { ok: false, error: 'daemon startStream failed: ' + e.message }; }
+      // Phase D (e): record stream intent HERE (this is the real start path — the audio:daemon bridge
+      // is bypassed), so a daemon reload replays startStream and streams auto-restore instead of dead air.
+      _streamIntent.set(stationId, streamArgs);
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', { stationId, live: true, server, mount });
       return { ok: true, server, mount, stationId };
     }
@@ -6211,6 +6233,7 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
 ipcMain.handle('stream:stop-live', async (_, args = {}) => {
   const stationId = args.stationId ?? getActiveStationId();
   if (AUDIO_DAEMON) {
+    _streamIntent.delete(stationId);   // Phase D (e): operator stopped the stream → don't auto-replay it
     try { await audiodClient.cmd('stopStream', { stationId }); } catch {}
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('stream:status', { stationId, live: false });
     return { ok: true, stationId };

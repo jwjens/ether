@@ -65,15 +65,23 @@ function stageEngine({ srcRoot, unpacked, version }) {
     // locked we keep the existing staged copy (return it) rather than disturb a live engine.
     fs.mkdirSync(dir, { recursive: true });
 
-    cp1(path.join(srcRoot, "Ether.exe"), t.exe);                              // renamed runtime
-    for (const f of RUNTIME_DATA) { const s = path.join(srcRoot, f); if (fs.existsSync(s)) cp1(s, path.join(dir, f)); }
-    for (const f of DAEMON_FILES)  cp1(path.join(unpacked, "audiod", f), path.join(dir, "audiod", f));
-    cp1(path.join(unpacked, "native", "ether-audio.node"), path.join(dir, "native", "ether-audio.node"));
+    // Locked-file tolerant (4.4.44): a SURVIVING detached daemon holds ether-engine.exe (and the
+    // runtime data + native .node it mapped) open → copying throws EBUSY. Before, that aborted the
+    // WHOLE stage and returned the stale copy, so the daemon CODE never updated — jensj ran a 4.4.41
+    // daemon under a 4.4.43 app (2026-07-10), which is why the lastCallbackMs cmd was missing. The
+    // Electron runtime is unchanged across a code-only bump, so reuse the existing staged .exe/.node
+    // when locked but ALWAYS refresh the daemon .js code (node reads .js into memory, never locks it).
+    const cpSoft = (src, dst) => { try { cp1(src, dst); return true; } catch (e) { if (e && (e.code === "EBUSY" || e.code === "EPERM" || e.code === "EACCES")) return false; throw e; } };
+    const exeOk = cpSoft(path.join(srcRoot, "Ether.exe"), t.exe);              // renamed runtime (may be locked)
+    if (!exeOk && !fs.existsSync(t.exe)) throw new Error("ether-engine.exe: source locked and no prior staged copy");
+    for (const f of RUNTIME_DATA) { const s = path.join(srcRoot, f); if (fs.existsSync(s)) cpSoft(s, path.join(dir, f)); }
+    for (const f of DAEMON_FILES)  cp1(path.join(unpacked, "audiod", f), path.join(dir, "audiod", f));   // CODE — must refresh (not locked)
+    cpSoft(path.join(unpacked, "native", "ether-audio.node"), path.join(dir, "native", "ether-audio.node")); // may be loaded/locked
     for (const f of ["mutation-writer.js", "synced-tables.js"]) cp1(path.join(unpacked, "electron", "sync", f), path.join(dir, "electron", "sync", f));
     const ffSrc = path.join(unpacked, "node_modules", "ffmpeg-static");        // whole pkg (index.js resolves the binary)
-    if (fs.existsSync(ffSrc)) cpDir(ffSrc, path.join(dir, "node_modules", "ffmpeg-static"));
+    if (fs.existsSync(ffSrc)) { try { cpDir(ffSrc, path.join(dir, "node_modules", "ffmpeg-static")); } catch { /* locked ffmpeg — reuse */ } }
 
-    fs.writeFileSync(marker, version);
+    fs.writeFileSync(marker, version);   // code refreshed → mark this version even if the .exe was reused
     return t;
   } catch (e) {
     console.error("[stage-engine] staging failed (" + e.code + "): " + e.message + " — falling back to in-dir engine");
