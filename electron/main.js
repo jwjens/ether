@@ -349,14 +349,25 @@ function startAudioLivenessWatchdog() {
         const st = await audiodClient.cmd("getState", { stationId: sid }).catch(() => null);
         const playing = st && [st.deckA, st.deckB, st.deckC].some((d) => d && d.status === "playing");
         if (playing) {
-          _lastAudioReloadAt = Date.now();
-          // PERMANENT reload-reason receipt (tee'd to the startup log, not console-only). Captures the
-          // full context that a console-only warn hid on 2026-07-09: silence age, which station tripped
-          // it, all on-air stations, and the daemon's OWN enginestate per station — so a repro proves
-          // whether this is a real cpal wedge or a multi-station levels-blip false positive.
           const silentMs = Date.now() - _lastDaemonAudioAt;
           const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
-          logStartup(`[AUDIO] RELOAD daemon — reason: silent-wedge watchdog (station ${sid} deck=playing, output silent ${silentMs}ms; on-air=[${[...sids].join(",")}]; daemon-enginestate=[${esSnap}])`);
+          // FALSE-POSITIVE GUARD (proven 2026-07-09, v4.4.43 capture): the levels-derived signal is
+          // UNRELIABLE — a deck-C→A segue stalled it 6.6s while the daemon enginestate stayed live and
+          // the audio kept playing, so the watchdog nuked the whole 3-station daemon every ~11 min.
+          // Before reloading, confirm against the daemon's REAL cpal output-callback stamp (independent
+          // of the VU pipeline). If the output device callback is still firing, audio IS flowing → this
+          // is a levels false-positive → DO NOT reload. Only a genuinely stale callback (real output
+          // death) still reloads, so real-wedge recovery is preserved.
+          let cbStaleMs = null;
+          try { const cb = Number(await audiodClient.cmd("lastCallbackMs")); if (cb > 0) cbStaleMs = Date.now() - cb; } catch {}
+          if (cbStaleMs !== null && cbStaleMs < 3000) {
+            logStartup(`[AUDIO] silent-wedge SUPPRESSED — levels stale ${silentMs}ms but cpal output callback FRESH (${cbStaleMs}ms) → levels false-positive, NOT reloading (station ${sid}; enginestate=[${esSnap}])`);
+            _lastDaemonAudioAt = Date.now();   // trust the live callback as liveness so we don't re-check every 2s
+            break;
+          }
+          _lastAudioReloadAt = Date.now();
+          // PERMANENT reload-reason receipt (tee'd to the startup log, not console-only).
+          logStartup(`[AUDIO] RELOAD daemon — reason: silent-wedge watchdog (station ${sid} deck=playing, output silent ${silentMs}ms; cpal-callback-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}; on-air=[${[...sids].join(",")}]; daemon-enginestate=[${esSnap}])`);
           try { audiodClient.reloadDaemon(); } catch {}
           break;
         }

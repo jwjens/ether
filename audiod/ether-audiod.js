@@ -138,6 +138,11 @@ const handlers = {
   startStream:        (m) => getStream(m.stationId).start(m.config || {}),
   stopStream:         (m) => { const s = streams.get(m.stationId); return s ? s.stop() : { ok: true }; },
   streamStatus:       (m) => { const s = streams.get(m.stationId); return s ? s.status() : { stationId: m.stationId, state: "idle" }; },
+  // Real cpal output-callback stamp (epoch ms of the last device callback, ANY station). The
+  // authoritative "is the output device alive" signal — independent of the VU levels pipeline. The
+  // app's silent-wedge watchdog uses this to tell a real output death (callback stopped) from a
+  // levels false-positive (callback still firing) before reloading the whole daemon.
+  lastCallbackMs:     ()  => A.audioLastCallbackMs(),
 
   fill:               (m) => { const e = getEngine(m.stationId); return e.refillIfNeeded().then(() => e.getQueue()); },
   getQueue:           (m) => { const e = engines.get(m.stationId); return e ? e.getQueue() : []; },
