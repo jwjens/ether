@@ -53,6 +53,10 @@ class DaemonEngine {
     this.deckSched = {};
     this.deckChainType = { A: "segue", B: "segue", C: "segue" };
     this.deckReady = new Set();
+    // Bug A fix (source-wipe race): per-deck LOAD GENERATION — bumped on every fresh loadToDeck. A
+    // deferred post-crossfade stop captures this at rotate time and no-ops if it changed (the deck was
+    // re-loaded since), so a late stop can never wipe a freshly-preloaded source.
+    this.deckGen = { A: 0, B: 0, C: 0 };
     // Decks an operator hand-loaded via the A/B/C buttons. Marked ready so the self-heal won't
     // re-cue over them; flagged manual so the rotate path doesn't dequeue an unrelated song when
     // it crossfades into one (a manual cue didn't come from the queue).
@@ -440,9 +444,31 @@ class DaemonEngine {
           (fromId !== "B" && live.deckB?.status === "playing") ||
           (fromId !== "C" && live.deckC?.status === "playing")) : false;
         if (liveTo?.status === "playing" || otherPlaying) return; // spurious-end guard
+        // Play-skip guard (Bug A safety net): only segue to a deck that truly holds a loaded source
+        // (deckReady is now authoritative — the deferred stop below clears it). If it doesn't, never
+        // silently play an empty deck (the "[RUST] Play … source=None … skipping" dead-air) — emit a
+        // LOUD error and reload this deck from the queue, then rotate into it once it's ready.
+        if (!this.deckReady.has(toId) && this._deckState(toId).status !== "playing") {
+          this._log("play-skip GUARD: deck " + toId + " has no ready source — reloading instead of silent skip");
+          this.emit("error", { stationId: this.stationId, where: "play-skip", deck: toId, error: "source missing at rotate — reloading deck " + toId });
+          setTimeout(() => { this.preload(toId, 0).then(() => { if (this.deckReady.has(toId)) this.handleRotate(fromId, toId); }); }, 0);
+          return;
+        }
         this._play(toId);
         const cfMs = this.crossfadeDuration * 1000;
-        setTimeout(() => this._stop(fromId), cfMs + 500);
+        // Bug A (source-wipe race): run the outgoing deck's post-crossfade stop ON the advance chain
+        // (serialized with preload) and GUARD it — skip if the deck was re-loaded since (deckGen changed)
+        // or went live again; when it does stop, clear deckReady/endTriggered so a nulled Rust source can
+        // never be left marked "ready" (the stale-ready → silent source=None play). Replaces the old
+        // floating off-chain setTimeout(_stop) that could land after a re-preload and wipe a fresh source.
+        const fromGen = this.deckGen[fromId];
+        setTimeout(() => this._advance("stop:" + fromId, async () => {
+          if (this.deckGen[fromId] !== fromGen) return;             // re-loaded → fresh source, don't wipe
+          if (this._deckState(fromId).status === "playing") return; // live again → never stop a playing deck
+          this._stop(fromId);
+          this.deckReady.delete(fromId);
+          this.endTriggered.delete(fromId);
+        }), cfMs + 500);
         this._setDeck(toId, { status: "playing", positionSec: 0 });
         this._fireStart(toId);
         this._log("segue: deck " + toId + " LIVE — " + (this._deckState(toId).title || "(untitled)"));
@@ -570,6 +596,7 @@ class DaemonEngine {
     try { ok = this._load(id, item.filePath, item.title, item.artist, item.gainDb); }
     catch (e) { this.emit("error", { stationId: this.stationId, where: "loadToDeck", error: String(e) }); return false; }
     if (ok === false) return false;
+    this.deckGen[id] = (this.deckGen[id] || 0) + 1;   // Bug A: fresh source loaded → invalidate any pending deferred stop for this deck
     this.deckSched[id] = item.scheduledAt ?? null;   // remember this deck's schedule-row identity
     this._setDeck(id, { title: item.title || "", artist: item.artist || "", filePath: item.filePath, positionSec: 0, durationSec: (item.durationMs ?? 0) / 1000, status: "idle", volume: 1 });
     this.endTriggered.delete(id);

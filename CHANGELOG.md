@@ -1,3 +1,22 @@
+## [4.4.48] — 2026-07-13
+
+### Fixed — Bug A: source-wipe race caused silent dead air at song rotation
+
+- **A deck could go silent mid-rotation** ("`[RUST] Play deck X: source=None, path empty — skipping`").
+  In `handleRotate`, the outgoing deck's stop was a floating off-chain `setTimeout(_stop(fromId),
+  cfMs+500)` that, under event-loop delay, could fire *after* that deck was re-preloaded — nulling the
+  fresh audio source while the JS `deckReady` flag stayed set. The next rotation trusted the stale
+  flag and played an empty deck → dead air. Fixes:
+  - The deferred stop now runs **on the advance chain** (serialized with preload) and is **guarded by a
+    per-deck load generation** (`deckGen`) — it no-ops if the deck was re-loaded since, so it can never
+    wipe a fresh source.
+  - The stop now **clears `deckReady`/`endTriggered`**, so a nulled Rust source can never be left
+    marked "ready."
+  - A rotate into a deck with no ready source now emits a **loud error event + reloads the deck**
+    instead of silently skipping to dead air.
+- Native audio engine unchanged (daemon JS only). Diagnosed live via the v4.4.46 `[mix]`/`[RUST]`
+  telemetry. Separate from the streaming lock-wedge (still under investigation).
+
 ## [4.4.47] — 2026-07-13
 
 ### Fixed — sign-in loop after update on an already-provisioned machine
