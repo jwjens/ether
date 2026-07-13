@@ -1,3 +1,16 @@
+## [4.4.47] — 2026-07-13
+
+### Fixed — sign-in loop after update on an already-provisioned machine
+
+- **Reinstalling/updating on a set-up station no longer traps you at sign-in.** In 4.4.46 the
+  post-sign-in path was rerouted to force a cloud DB restore (`cloudSync`) for every account with
+  stations. On a machine whose stations are already present locally, that restore is unnecessary and
+  never completes, so `first_run_complete` was never set and the app re-gated to sign-in on every
+  launch. `routeAfterAuth` now checks whether the account's stations are already local and, if so,
+  completes locally via `provisionAttached` (the 4.4.45 behaviour) instead of the restore gate. A
+  genuinely fresh machine still gets the cloud restore. Audio was never affected (the daemon airs
+  independently of sign-in).
+
 ## [4.4.46] — 2026-07-13
 
 ### Added — native-layer observability (diagnostic only; no playout behaviour change)

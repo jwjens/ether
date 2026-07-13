@@ -392,6 +392,18 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       return;
     }
     if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }  // affirmed empty → create
+    // FIX (4.4.46 sign-in loop): if the account's stations are ALREADY present locally — a reinstall/
+    // update on a provisioned machine (the daemon is already airing from this DB) — there is nothing to
+    // restore. Complete locally via provisionAttached (sets first_run_complete=1 → 'done'); do NOT force
+    // the cloud-restore gate, which never completes here → sign-in loop. Fresh machines still get cloudSync.
+    try {
+      const local = await (window as any).ether.stations.list();
+      const localUuids = new Set((Array.isArray(local) ? local : (local?.rows || [])).map((s: any) => s.uuid));
+      if (stations.length > 0 && stations.every((s) => localUuids.has(s.uuid))) {
+        await provisionAttached(stations.map((s) => s.uuid), lk);
+        return;
+      }
+    } catch { /* fall through to the cloud-sync gate */ }
     // Account HAS stations → the RESTORE GATE (DESIGN-TRUTH #1). Show the sync-existing selection
     // screen: per-station checkboxes + "Create new station" beside it. Picking stations attaches
     // them (clean-room, monitor role) and gates the app on the CRDT initial pull. We do NOT silently
