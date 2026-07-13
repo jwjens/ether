@@ -137,4 +137,13 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     session_id:  getSessionId(),
     file_path:   filePath ?? null,   // v19: the audio that aired — affidavit join key
   });
+
+  // Stamp the library row so rotation separation + LRP actually work. The whole engine (live picker
+  // AND the day generator) filters on songs.last_played_at, but nothing ever wrote it — so every
+  // pick collapsed to pure RANDOM (no artist/title/song separation, no least-recently-played). Match
+  // by the file that aired. Best-effort: a play must never fail because the stamp didn't land.
+  if (filePath) {
+    try { await (window as any).ether.songs.markPlayed(filePath, Math.floor(Date.now() / 1000)); }
+    catch (e) { console.error('markPlayed error:', e); }
+  }
 }

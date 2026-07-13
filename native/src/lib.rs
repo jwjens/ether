@@ -156,11 +156,19 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         let _ = audio.sender.send(AudioCmd::GetLevel);
         audio.levels.clone()
     };
-    let (la, lb, lc, lcart, lmaster): (f32, f32, f32, f32, f32) = match levels_arc.lock() {
-        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master),
-        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0),
+    // v4.4.46: also surface the mix-telemetry the GetLevel handler now snapshots into AudioLevels
+    // (frames_total / active_decks / mon_vol / per-deck), so the daemon's `[mix sN]` heartbeat can
+    // read it off the existing getLevels call. Additive JSON fields — existing consumers (renderer
+    // VU: a/b/c/master) ignore the extra keys; no behaviour change.
+    let (la, lb, lc, lcart, lmaster, frames, active, mon, decks) = match levels_arc.lock() {
+        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master,
+                    lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone()),
+        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0u32, 0.0f32, Vec::new()),
     };
-    serde_json::json!({ "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster }).to_string()
+    serde_json::json!({
+        "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster,
+        "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks
+    }).to_string()
 }
 
 /// 10-band post-EQ master spectrum (0..~1 normalized magnitude), for the Master EQ
@@ -226,13 +234,15 @@ pub fn audio_broadcast_delay_state(station_id: Option<u32>) -> String {
     }).to_string()
 }
 
-// Epoch ms of the most recent audio output callback (engine-thread liveness),
-// or 0 if the engine has never produced a callback. Lock-free read of an atomic
-// — safe to call from the /health endpoint without risking a Mutex stall. f64
-// (not i64) so it crosses the napi bridge as a plain JS number, not a BigInt.
+// Epoch ms of station_id's most recent audio output callback (that station's
+// engine-thread liveness), or 0 if it has never produced a callback / is unknown.
+// Per-station: a wedged station reads stale here even while siblings keep airing —
+// the single global clock this replaced masked exactly that. stationId defaults to
+// 1 for legacy zero-arg callers. f64 (not i64) so it crosses the napi bridge as a
+// plain JS number, not a BigInt.
 #[napi]
-pub fn audio_last_callback_ms() -> f64 {
-    audio::last_audio_callback_ms()
+pub fn audio_last_callback_ms(station_id: Option<u32>) -> f64 {
+    audio::last_audio_callback_ms(station_id.unwrap_or(1))
 }
 
 #[napi]
@@ -273,6 +283,23 @@ pub fn audio_set_output_device(station_id: u32, device_name: String) -> bool {
     }
     get_or_create_engine(station_id, Some(device_name));
     true
+}
+
+// Per-station output recovery (DESIGN-TRUTH §2): reopen ONLY station_id's cpal output
+// stream on its current device — automates the manual automation toggle, scoped to one
+// card, without touching sibling stations. Returns false if the station has no engine.
+#[napi]
+pub fn audio_reopen_output(station_id: Option<u32>) -> bool {
+    let sid = station_id.unwrap_or(1);
+    let Some(engines) = ENGINES.get() else { return false };
+    let engine_opt = { engines.lock().ok().and_then(|m| m.get(&sid).cloned()) };
+    match engine_opt {
+        Some(state) => match state.lock() {
+            Ok(audio) => audio.sender.send(AudioCmd::ReopenOutput).is_ok(),
+            Err(_) => false,
+        },
+        None => false,
+    }
 }
 
 #[napi]

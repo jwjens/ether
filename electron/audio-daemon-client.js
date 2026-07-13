@@ -15,6 +15,7 @@ const net = require("net");
 const path = require("path");
 const os = require("os");
 const cp = require("child_process");
+const fs = require("fs");   // v4.4.46: open the daemon's log as an append fd for native stderr capture
 
 // Cross-platform endpoint (must match ether-audiod.js + watchdog): Windows named pipe;
 // macOS/Linux per-user Unix domain socket in the temp dir. Override with ETHER_AUDIOD_PIPE.
@@ -106,6 +107,19 @@ function spawnDaemon() {
     // (The daemon derives the same path as a fallback if this env is absent — never blind.)
     let logFile;
     try { logFile = path.join(require("electron").app.getPath("userData"), "logs", "ether-audiod.log"); } catch {}
+    // v4.4.46 observability (native stderr capture): hand the daemon child an APPEND fd to its own
+    // log as stderr, so the Rust addon's eprintln! diagnostics — [cpal] output errors, "Deck N
+    // finished (source exhausted)", "source=None, path empty — skipping", "reload failed — skipping"
+    // — previously discarded by stdio:"ignore", land in ether-audiod.log alongside the JS lines.
+    // WHY an inherited FILE fd and not a parent-held pipe: a detached child's pipe write end BREAKS
+    // (EPIPE) the instant this app process exits, and Rust eprintln! PANICS on a failed stderr write
+    // → poisoned mutex → dead air on every app exit / gapless update. An inherited file handle keeps
+    // writing across app exit with zero error. Both proven empirically — see
+    // docs/v4446-observability-build.md §"Windows detached-stderr survival test" (A=EPIPE, B=ok).
+    // The child gets its OWN duplicated handle at spawn, so we close our copy immediately. Best-effort:
+    // any open failure falls back to the previous "ignore" so a spawn is never blocked by logging.
+    let errStdio = "ignore", errFd = null;
+    if (logFile) { try { errFd = fs.openSync(logFile, "a"); errStdio = errFd; } catch { errStdio = "ignore"; errFd = null; } }
     const child = cp.spawn(exe, [script], {
       // ETHER_DAEMON_VERSION lets the daemon report (via the `version` cmd) which app version
       // spawned it, so a stale daemon left running across an update can be detected + reloaded.
@@ -116,10 +130,12 @@ function spawnDaemon() {
       // Packaged: detached + unref so an app/UI restart leaves the engine playing (gapless updates).
       // Dev: attached, so a graceful app exit reaps it too (the self-terminate above is the backstop
       // for a hard kill, where the OS closes the socket → the daemon sees its last client leave).
-      detached: !dev, stdio: "ignore",
+      // stdio: stdin/stdout ignored; stderr → the daemon's own append log (native eprintln capture).
+      detached: !dev, stdio: ["ignore", "ignore", errStdio],
     });
+    if (errFd != null) { try { fs.closeSync(errFd); } catch {} }  // child owns its inherited handle now
     child.unref();
-    console.log(`[audiod-client] spawned daemon (${dev ? "dev, dies-with-app" : "detached"}) pid`, child.pid, "—", tag);
+    console.log(`[audiod-client] spawned daemon (${dev ? "dev, dies-with-app" : "detached"}) pid`, child.pid, "—", tag, errFd != null ? "(+native stderr→log)" : "");
   } catch (e) { console.error("[audiod-client] spawn failed:", e.message); }
 }
 

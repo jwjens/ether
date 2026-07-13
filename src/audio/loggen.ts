@@ -55,9 +55,9 @@ interface SepRules {
 // ── Cursor into generated_schedule — advances as tracks are queued ──
 // Tracks the last row id already loaded into the queue so refills
 // continue forward rather than re-queuing played songs.
-let _schedCursor = 0;  // 0 = start from beginning
+const _schedCursor = new Map<number, number>();  // stationId → last-read gs.id (PER-STATION; a shared global made all stations trample one cursor → cross-station repeats)
 
-export function resetScheduleCursor() { _schedCursor = 0; }
+export function resetScheduleCursor(stationId?: number) { if (stationId != null) _schedCursor.delete(stationId); else _schedCursor.clear(); }
 
 // ── Hourly daypart log — fires once per clock-hour ────────────
 let _lastLoggedHour = -1;
@@ -162,7 +162,10 @@ function buildBaseConditions(
 
   // Song separation: use each song's own no_repeat_hours, not a hardcoded value.
   // A song that was played fewer than no_repeat_hours*3600 seconds ago is excluded.
-  cond += " AND (s.last_played_at IS NULL OR s.last_played_at < (unixepoch() - s.no_repeat_hours * 3600))";
+  // no_repeat_hours is NULL for un-tuned songs; NULL*3600 = NULL makes the comparison NULL (falsy),
+  // which would exclude a just-played song FOREVER once last_played_at is set. Coalesce to a 3h
+  // default so this is a rolling separation window, not a permanent ban.
+  cond += " AND (s.last_played_at IS NULL OR s.last_played_at < (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))";
 
   // Artist separation: exclude any artist whose songs were played recently.
   // Uses artist_separation_min from separation_rules DB table (converted to seconds).
@@ -452,7 +455,8 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
   // from an old generation). Uncategorized entries pass; empty fmt (no clocks) = no filter.
   const fmt = await getFormatCategoryIds(stationId);
   const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
-  const params = fmt.length ? [_schedCursor, stationId, nowTs, ...fmt, count] : [_schedCursor, stationId, nowTs, count];
+  const cursor = _schedCursor.get(stationId) ?? 0;
+  const params = fmt.length ? [cursor, stationId, nowTs, ...fmt, count] : [cursor, stationId, nowTs, count];
   const rows = await query<ScheduledTrackRow>(
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
             COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
@@ -468,7 +472,7 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
     params
   );
   if (rows.length > 0) {
-    _schedCursor = rows[rows.length - 1].row_id;
+    _schedCursor.set(stationId, rows[rows.length - 1].row_id);
   }
   return rows;
 }
@@ -480,9 +484,11 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
 // Priority 3: SmartRules         — localStorage rules.
 // Priority 4: filtered random    — last resort.
 
-export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
+export async function fillQueueFromSchedule(targetCount = 20, stationIdArg?: number): Promise<number> {
   try {
-    const stationId = getActiveStationIdSync();
+    // Per-station: default to the active station (legacy callers), but a specific station can be
+    // driven directly — this is what lets ALL stations (not just the foreground one) refill in auto.
+    const stationId = stationIdArg ?? getActiveStationIdSync();
     const engine = getEngine(stationId);
     // Item 10 Phase 2 Step 2: in daemon-driven mode the daemon self-refills via its own
     // node:sqlite scheduler — the renderer must NOT also fill (would double-source the queue).
@@ -493,8 +499,8 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
 
     // ── Priority 1: generated schedule ───────────────────────
     let scheduled = await readGeneratedSchedule(targetCount, stationId);
-    if (scheduled.length === 0 && _schedCursor > 0) {
-      _schedCursor = 0;
+    if (scheduled.length === 0 && (_schedCursor.get(stationId) ?? 0) > 0) {
+      _schedCursor.set(stationId, 0);
       scheduled = await readGeneratedSchedule(targetCount, stationId);
     }
     if (scheduled.length > 0) {
@@ -591,11 +597,12 @@ export async function fillQueueFromSchedule(targetCount = 20): Promise<number> {
   }
 }
 
-export async function refillFromSchedule(): Promise<void> {
-  const engine = getEngine(getActiveStationIdSync());
+export async function refillFromSchedule(stationIdArg?: number): Promise<void> {
+  const sid = stationIdArg ?? getActiveStationIdSync();
+  const engine = getEngine(sid);
   const queueLen = engine.getQueue().length;
   if (queueLen < 5) {
-    await fillQueueFromSchedule(20 - queueLen);
+    await fillQueueFromSchedule(20 - queueLen, sid);
   }
 }
 

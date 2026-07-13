@@ -126,6 +126,11 @@ function songsDelete(db, uuid) {
     db.prepare(
       `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
+    // Clean cascade (2026-07-11): a deleted song must leave NO residual the scheduler can grab as a
+    // ghost. Purge its generated_schedule rows, play_log history, and station_programming entries.
+    try { db.prepare(`DELETE FROM generated_schedule WHERE song_id = ?`).run(existing.id); } catch {}
+    try { if (existing.file_path) db.prepare(`DELETE FROM play_log WHERE file_path = ?`).run(existing.file_path); } catch {}
+    try { db.prepare(`DELETE FROM station_programming WHERE song_id = ?`).run(existing.id); } catch {}
   });
   return { ok: true };
 }
@@ -156,6 +161,33 @@ function songsDeleteById(db, intId) {
   return songsDelete(db, existing.uuid);
 }
 
+// Mark a song as just-aired: stamp last_played_at (unix seconds) and bump play_count. This is the
+// ONE writer of last_played_at — the whole rotation engine (live picker AND the generator) reads it
+// for song/artist separation and LRP, but nothing ever wrote it, so separation was a silent no-op.
+// Resolved by file_path (what the audio engine actually played); routed through the mutation path so
+// sync stays consistent. Returns {ok, matched}.
+function songsMarkPlayed(db, filePath, atSec) {
+  validateScope();
+  if (!filePath) return { ok: true, matched: 0 };
+  const row = db.prepare(`SELECT * FROM ${TABLE} WHERE file_path = ? AND deleted_at IS NULL`).get(filePath);
+  if (!row) return { ok: true, matched: 0 };
+  const now = new Date().toISOString();
+  const playedAt = Number.isFinite(atSec) ? Math.floor(atSec) : Math.floor(Date.now() / 1000);
+  let uuid = row.uuid;
+  if (!uuid) { uuid = crypto.randomUUID(); db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id); }
+  const before  = serializePayload({ ...row, uuid }, TABLE);
+  const updated = { ...row, uuid, last_played_at: playedAt, play_count: (row.play_count || 0) + 1, updated_at: now };
+  const after   = serializePayload(updated, TABLE);
+  withMutation(db, {
+    table_name: TABLE, row_id: uuid, op: 'update',
+    payload_before: before, payload_after: after, station_id: null, actor_id: null,
+  }, () => {
+    db.prepare(`UPDATE ${TABLE} SET last_played_at = ?, play_count = ?, updated_at = ? WHERE id = ?`)
+      .run(playedAt, (row.play_count || 0) + 1, now, row.id);
+  });
+  return { ok: true, matched: 1 };
+}
+
 function songsDeleteByStation(db, _stationId) {
   const rows = db.prepare(
     `SELECT * FROM ${TABLE} WHERE deleted_at IS NULL`
@@ -170,6 +202,10 @@ function songsDeleteByStation(db, _stationId) {
       }
       const before = serializePayload({ ...row, uuid }, TABLE);
       db.prepare(`UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE id = ?`).run(now, now, row.id);
+      // Clean cascade: no residual for the scheduler to grab as a ghost.
+      try { db.prepare(`DELETE FROM generated_schedule WHERE song_id = ?`).run(row.id); } catch {}
+      try { if (row.file_path) db.prepare(`DELETE FROM play_log WHERE file_path = ?`).run(row.file_path); } catch {}
+      try { db.prepare(`DELETE FROM station_programming WHERE song_id = ?`).run(row.id); } catch {}
       logMutation(db, {
         table_name:     TABLE,
         row_id:         uuid,
@@ -271,6 +307,11 @@ function installSongs(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  ipcMain.handle('songs:mark-played', (_, filePath, atSec) => {
+    try { return songsMarkPlayed(getDb(), filePath, atSec); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+
   console.log('[songs] handlers installed');
 }
 
@@ -287,4 +328,5 @@ module.exports = {
   songsDeleteById,
   songsDeleteByStation,
   songsResetLoudnessByStation,
+  songsMarkPlayed,
 };

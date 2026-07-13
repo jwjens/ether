@@ -126,6 +126,14 @@ contextBridge.exposeInMainWorld("ether", {
     getDir: ()    => ipcRenderer.invoke("music:get-dir"),
     setDir: (dir) => ipcRenderer.invoke("music:set-dir", dir),
   },
+  // Per-station audio folder + Test-sync / Re-sync / Relocate (DESIGN-TRUTH §2 — stations independent).
+  stationFolders: {
+    get:      (stationId) => ipcRenderer.invoke("station-folder:get", stationId),
+    choose:   (stationId) => ipcRenderer.invoke("station-folder:choose", stationId),
+    analyze:  (stationId) => ipcRenderer.invoke("station-folder:analyze", stationId),   // Test sync (dry run)
+    resync:   (stationId) => ipcRenderer.invoke("station-folder:resync", stationId),    // Re-sync + missing list
+    relocate: (stationId) => ipcRenderer.invoke("library:relocate", stationId),         // Library Relocate button
+  },
   db: {
     query: (sql, p) => ipcRenderer.invoke("db:query", sql, p),
     execute: (sql, p) => ipcRenderer.invoke("db:execute", sql, p),

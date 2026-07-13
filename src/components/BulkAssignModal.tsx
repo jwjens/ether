@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { MetadataDefinition, MetadataVocabulary } from "../types/metadata";
+import { query } from "../db/client";
 
 interface BulkChange {
   definition_id: number;
@@ -131,6 +132,9 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
   const [pending, setPending] = useState<Map<number, PendingChange>>(new Map());
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
+  // Category is a real songs column (per-station), not a metadata definition — handled specially.
+  const [catList, setCatList] = useState<{ id: number; name: string }[]>([]);
+  const [catChoice, setCatChoice] = useState<string>("");  // "" = no change · "__clear__" = clear · else category id
 
   useEffect(() => {
     (async () => {
@@ -149,6 +153,12 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
         }
         for (const arr of Object.values(byDef)) arr.sort((a, b) => a.display_order - b.display_order);
         setVocabByDef(byDef);
+        // This station's categories (categories are station-scoped).
+        try {
+          const cats = await query<{ id: number; name: string }>(
+            "SELECT id, name FROM categories WHERE station_id = ? AND deleted_at IS NULL ORDER BY name", [stationId]);
+          setCatList(cats ?? []);
+        } catch (e) { console.error("[BulkAssignModal] category load failed:", e); }
       } catch (e) { console.error("[BulkAssignModal] load failed:", e); }
     })();
   }, [stationId]);
@@ -168,7 +178,7 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
   };
 
   const apply = async () => {
-    if (pending.size === 0) return;
+    if (pending.size === 0 && !catChoice) return;
     setApplying(true);
     setError("");
     try {
@@ -188,9 +198,15 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
           changes.push({ definition_id: defId, action: "add", value_vocabulary_ids: ch.vocabIds });
         }
       }
-      if (changes.length === 0) { setApplying(false); return; }
-      const res = await (window as any).ether.songMetadataValues.bulkApply({ song_ids: songIds, changes, station_id: stationId });
-      if (!res?.ok) throw new Error(res?.error ?? "Unknown error");
+      if (changes.length > 0) {
+        const res = await (window as any).ether.songMetadataValues.bulkApply({ song_ids: songIds, changes, station_id: stationId });
+        if (!res?.ok) throw new Error(res?.error ?? "Unknown error");
+      }
+      // Category assignment (per-station songs.category_id) — separate from metadata definitions.
+      if (catChoice) {
+        const catId = catChoice === "__clear__" ? null : Number(catChoice);
+        for (const id of songIds) await (window as any).ether.songs.updateById(id, { category_id: catId });
+      }
       onApplied();
     } catch (e: any) {
       setError(e.message ?? String(e));
@@ -198,7 +214,7 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
     }
   };
 
-  const changeCount = pending.size;
+  const changeCount = pending.size + (catChoice ? 1 : 0);
 
   return (
     <div style={S.overlay} onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -220,6 +236,15 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
 
         {/* Definition rows */}
         <div style={S.body}>
+          {/* Category — per-station songs.category_id (a real column, not a metadata definition) */}
+          <div style={{ ...S.defRow, background: "rgba(124,58,237,0.06)" }}>
+            <span style={{ ...S.label, color: "var(--text-primary)", fontWeight: 700 }}>Category</span>
+            <select style={S.input} value={catChoice} onChange={e => setCatChoice(e.target.value)}>
+              <option value="">— no change —</option>
+              {catList.map(c => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
+            </select>
+            <button style={S.clearBtn(catChoice === "__clear__")} onClick={() => setCatChoice(catChoice === "__clear__" ? "" : "__clear__")}>Clear</button>
+          </div>
           {defs.length === 0 && (
             <div style={{ padding: "24px 18px", fontSize: 12, color: "var(--text-tertiary)" }}>Loading definitions…</div>
           )}

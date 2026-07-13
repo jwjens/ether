@@ -1279,10 +1279,47 @@ export default function App() {
       // separation, and the on-format category universe. This previously did a raw
       // whole-library random pull, which leaked off-format/seasonal songs (e.g. Christmas
       // — "Feliz Navidad") straight into the daypart queue when the queue ran dry.
-      await fillQueueFromSchedule();
+      // Pass THIS engine's stationId explicitly — otherwise a later station switch would make
+      // this engine refill the *new* active station's queue instead of its own.
+      await fillQueueFromSchedule(20, stationId);
       return [];
     });
   }, [stationId]);
+
+  // ── Drive AUTO on ALL stations, not just the foreground one ─────────────────────────────────────
+  // In-process mode previously ran auto only for the ACTIVE station, so background stations played their
+  // queue out and went to dead air (the overnight failure). Here every station the operator put in AUTO
+  // gets its own engine wired to refill from ITS OWN schedule and, if not already on air, filled + started.
+  // Each engine's own 250ms poll loop then keeps it rotating by the rules — no forcing, no daemon.
+  useEffect(() => {
+    if (!accountSignedIn) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      let rows: { id: number }[] = [];
+      try { rows = await query<{ id: number }>("SELECT id FROM stations WHERE uuid IS NOT NULL"); } catch { return; }
+      for (const { id: sid } of rows) {
+        if (cancelled) return;
+        if (!readAutoAdv(sid)) continue;                       // only stations the operator put in AUTO
+        const eng = getEngine(sid);
+        if ((eng as any).isDaemonDriven) continue;             // daemon owns playout in daemon mode
+        eng.setRefillCallback(async () => { await fillQueueFromSchedule(20, sid); return []; });
+        eng.continuous = true;
+        eng.autoAdvance = true;
+        const onAir = (["A", "B", "C"] as const).some(d => eng.getDeck(d)?.getState().status === "playing");
+        if (onAir) continue;                                   // already on air — never restart over it
+        if (eng.getQueue().length === 0) await fillQueueFromSchedule(20, sid);
+        const q = eng.getQueue();
+        if (q.length > 0 && !cancelled) {
+          const first = q[0]; eng.clearQueue(); eng.addToQueue(q.slice(1));
+          await eng.loadToDeck("A", first.filePath, first.title, first.artist, (first as any).gainDb, first.durationMs);
+          eng.getDeck("A")?.play();
+          setTimeout(() => eng.triggerPreload(), 800);
+          rotLog(`[ROT] all-station driver: started station ${sid} — "${first.title}"`);
+        }
+      }
+    }, 3000);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [accountSignedIn]);
 
   const [xfadeDuration, setXfadeDurationState] = useState(() => {
     try { const v = parseInt(localStorage.getItem("ether_xfade_duration") || "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(1, v)); } catch { return 3; }
@@ -1349,7 +1386,7 @@ export default function App() {
     const onRegen = async () => {
       if (!autoAdv) return;
       try {
-        resetScheduleCursor();
+        resetScheduleCursor(stationId);
         if (engine.isDaemonDriven) {
           (engine as any).queueClearPending?.();   // daemon refills from the new rows on its next cycle
         } else {
@@ -1414,7 +1451,7 @@ export default function App() {
         if (engine.getDeck("A")?.getState().status === "playing") return;
         rotLog(`[ROT] STARTUP autofill begin — queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
         engine.continuous = true;
-        resetScheduleCursor();
+        resetScheduleCursor(stationId);
         // Always fill from schedule — don't reuse crash_recovery's stale queue
         engine.clearQueue();
         const count = await fillQueueFromSchedule();
@@ -1670,7 +1707,7 @@ export default function App() {
       } catch {}
       // daemon-driven → hand the whole fill+play+advance to the daemon.
       if (engine.isDaemonDriven) { (engine as any).queueClearPending?.(); await engine.startDaemonAutomation(); return; }
-      resetScheduleCursor();
+      resetScheduleCursor(stationId);
       engine.clearQueue?.();   // the schedule is the source — always (re)load from the now-scheduled song,
       {                         // never inherit a stale queue from a prior session that has to "catch up"
         const count = await fillQueueFromSchedule();
@@ -4158,6 +4195,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const [categoryFilter, setCategoryFilter] = useState("");
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState("");
+  const [missingSongs, setMissingSongs] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showBulkAssign, setShowBulkAssign] = useState(false);
   const { isStation } = usePlan();
@@ -4596,21 +4634,16 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     setStatus("Done! Analyzed " + done + " songs."); setTimeout(() => setStatus(""), 4000);
   };
   const relocateLibrary = async () => {
-    const folder = await open({ directory: true, title: "Select new music folder location" });
-    if (!folder) return;
-    const newBase = (folder as string).replace(/\\/g, "/");
-    // station_id scoping: Strategy B — single table with existing WHERE
-    const broken = await queryScoped<{id: number, file_path: string}>("SELECT id, file_path FROM songs WHERE file_path IS NOT NULL", [], stationId);
-    let fixed = 0;
-    for (const song of broken) {
-      const filename = song.file_path.split(/[\/]/).pop();
-      if (!filename) continue;
-      const newPath = newBase + "/" + filename;
-      if (song.file_path !== newPath) {
-        await (window as any).ether.songs.updateById(song.id, { file_path: newPath }); fixed++;
-      }
-    }
-    setStatus("Relocated " + fixed + " songs"); setTimeout(() => setStatus(""), 4000); load();
+    // Per-station relocate (DESIGN-TRUTH §2): pick THIS station's folder, save it, and relink by title
+    // ONLY from that folder — verifying each file exists. Songs with no file are skipped (no dead air),
+    // and returned so you know what to add. Replaces the old blind path-rewrite (no existence check,
+    // Windows-slash bug, and it skipped songs that had no path — i.e. exactly the ones that needed it).
+    const r = await (window as any).ether.stationFolders.relocate(stationId);
+    if (!r || r.canceled) return;
+    if (!r.ok) { setStatus(r.error || "Relocate failed"); setTimeout(() => setStatus(""), 5000); return; }
+    setMissingSongs(r.missing || []);
+    setStatus(`Relocated: linked ${r.linked}/${r.total}` + (r.missing?.length ? `, ${r.missing.length} missing` : ""));
+    setTimeout(() => setStatus(""), 6000); load();
   };
   const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }))); window.dispatchEvent(new CustomEvent('ether:queue-changed')); };
   const filtered = songs.filter(s => {
@@ -4738,6 +4771,18 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
         </div>
       </div>
 
+      {missingSongs.length > 0 && (
+        <div style={{ padding: "8px 12px", marginBottom: 4, background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)", color: "#f59e0b", fontSize: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <strong>{missingSongs.length} song{missingSongs.length === 1 ? "" : "s"} missing a file in this station&apos;s folder — add the file or fix the title, then Re-sync.</strong>
+            <button onClick={() => setMissingSongs([])} style={{ background: "none", border: "none", color: "#f59e0b", cursor: "pointer", fontSize: 14 }}>✕</button>
+          </div>
+          <div style={{ maxHeight: 140, overflowY: "auto", fontSize: 11, opacity: 0.9 }}>
+            {missingSongs.map((t, i) => <div key={i}>• {t}</div>)}
+          </div>
+        </div>
+      )}
+
       {libraryBorrowed && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 4, borderRadius: 0, background: "rgba(167,139,250,0.10)", border: "1px solid rgba(167,139,250,0.35)", color: "#a78bfa", fontSize: 12, fontWeight: 600 }}>
           🔒 This library is read-only — its catalog (songs, artists, albums) is borrowed from another account. You can still program and tag these songs for your station.
@@ -4755,7 +4800,18 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
         </select>
         {/* Assign category to filtered songs */}
-        <select onChange={async (e) => { if (!e.target.value) return; const catId = catList.find(c => c.code === e.target.value)?.id || null; for (const s of filtered) await (window as any).ether.songs.updateById(s.id, { category_id: catId }); e.target.value = ""; load(); }}
+        <select onChange={async (e) => {
+          const code = e.target.value; e.target.value = "";
+          if (!code) return;
+          const cat = catList.find(c => c.code === code);
+          const catId = cat?.id ?? null;
+          // Guard the exact bug that wiped categories: a code with no matching station category would
+          // resolve to null and CLEAR the category on every shown song. Never mass-clear by accident.
+          if (catId == null) { window.alert(`"${code}" isn't a category for this station — nothing was changed.`); return; }
+          if (!window.confirm(`Assign category "${cat?.name || code}" to all ${filtered.length} shown song${filtered.length === 1 ? "" : "s"}?\n\nThis OVERWRITES their current category for this station and can't be undone.`)) return;
+          for (const s of filtered) await (window as any).ether.songs.updateById(s.id, { category_id: catId });
+          load();
+        }}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">Assign category...</option>
           {catList.map(c => <option key={c.id} value={c.code}>All → {c.code}</option>)}

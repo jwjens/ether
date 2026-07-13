@@ -281,7 +281,15 @@ const { replayIntents } = require('./daemon-auto-resume');
 // bounds dead-air. The fresh daemon is re-staged to the current version and auto-resume replays.
 let _daemonReloadArmed = false;
 let _daemonReloadTimer = null;
-let _lastDaemonAudioAt = 0;
+// Per-station audio-liveness clock (DESIGN-TRUTH §2): last time EACH station produced
+// non-silent output, keyed by stationId. No single shared scalar — a wedged station goes
+// stale here even while siblings keep airing (the global scalar this replaced masked that,
+// hiding halloVeen + Magical Forest on 2026-07-10). Helpers below read/write per station.
+const _lastDaemonAudioAt = new Map();
+let _armGraceAt = 0;   // whole-daemon armed-reload grace anchor (version/stale REPLACEMENT only)
+function _noteStationAudio(sid) { if (sid != null) _lastDaemonAudioAt.set(sid, Date.now()); }
+function _stationAudioAgeMs(sid) { const t = _lastDaemonAudioAt.get(sid); return t == null ? Infinity : Date.now() - t; }
+function _anyDaemonAudioAgeMs() { let best = Infinity; for (const t of _lastDaemonAudioAt.values()) best = Math.min(best, Date.now() - t); return best; }
 function disarmDaemonReload() {
   _daemonReloadArmed = false;
   if (_daemonReloadTimer) { clearInterval(_daemonReloadTimer); _daemonReloadTimer = null; }
@@ -310,11 +318,12 @@ function fireDaemonReload(why) {
 function armDaemonReload() {
   if (_daemonReloadArmed) return;
   _daemonReloadArmed = true;
-  _lastDaemonAudioAt = Date.now();   // grace: don't fire before we've seen whether audio is flowing
+  _armGraceAt = Date.now();   // grace: don't fire before we've seen whether audio is flowing
   // A daemon that isn't actually producing sound (wedged or idle) is safe to reload at once; a
-  // healthy one keeps _lastDaemonAudioAt fresh from levels events and instead waits for a boundary.
+  // healthy one keeps the per-station clocks fresh from levels events and instead waits for a boundary.
+  // Whole-daemon replacement (version/stale): fire only if NO station has produced audio recently.
   _daemonReloadTimer = setInterval(() => {
-    if (Date.now() - _lastDaemonAudioAt > 4500) fireDaemonReload("no audio");
+    if (Date.now() - _armGraceAt > 4500 && _anyDaemonAudioAgeMs() > 4500) fireDaemonReload("no audio");
   }, 1500);
 }
 async function checkStaleDaemon() {
@@ -347,48 +356,61 @@ async function checkStaleDaemon() {
 // false reloads — only fires when audio has been silent a while AND getState CONFIRMS a deck is
 // supposed to be playing, with a cooldown so a still-broken device can't induce a tight loop.
 let _audioWatchdogTimer = null;
-let _lastAudioReloadAt = 0;
+let _lastAudioReloadAt = 0;              // retained for other callers; whole-daemon reload cooldown
+const _wedgeAt = new Map();              // per-station wedge start ms (absent = healthy)
+const _lastReopenAt = new Map();         // per-station reopen cooldown
+// Per-station output-liveness watchdog (DESIGN-TRUTH §2). Each station is judged and, if wedged,
+// recovered INDEPENDENTLY — one station's dead output never triggers action on another. Recovery is
+// a per-station stream reopen (reopenOutput), NOT a whole-daemon reload. Signal precedence: the
+// station's OWN cpal output-callback stamp (authoritative) over the VU-levels hint; enginestate=live
+// (rotation bookkeeping, not PCM proof) may suppress only up to a persistence ceiling (jensj's diff),
+// then we stop believing it and reopen the card.
 function startAudioLivenessWatchdog() {
   if (_audioWatchdogTimer) return;
+  const WEDGE_CEILING_MS   = 12000;   // enginestate=live is trusted only this long into a wedge
+  const REOPEN_COOLDOWN_MS = 30000;   // per-station: don't re-reopen a still-recovering card in a tight loop
   _audioWatchdogTimer = setInterval(async () => {
     try {
       if (!audiodClient.isConnected()) return;
-      if (Date.now() - _lastDaemonAudioAt < 6000) return;     // audio is (or just was) flowing — healthy
-      if (Date.now() - _lastAudioReloadAt < 60000) return;    // cooldown — never loop on a still-dead device
-      // Output has been silent ≥6s. Confirm a deck is actually SUPPOSED to be playing before we act,
-      // so genuine idle/off-air silence never triggers a reload. Check the on-air stations (or s1).
       const sids = _automationIntent.size > 0 ? [..._automationIntent.keys()] : [1];
       for (const sid of sids) {
+        // Wedge candidate only if THIS station's levels have been silent a while.
+        if (_stationAudioAgeMs(sid) < 6000) { _wedgeAt.delete(sid); continue; }
         const st = await audiodClient.cmd("getState", { stationId: sid }).catch(() => null);
         const playing = st && [st.deckA, st.deckB, st.deckC].some((d) => d && d.status === "playing");
-        if (playing) {
-          const silentMs = Date.now() - _lastDaemonAudioAt;
-          const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
-          // (b) PRIMARY GATE — never reload a daemon whose engine reports itself LIVE. This is the
-          // decisive, daemon-version-independent fix (works even against a stale daemon): the engine's
-          // own truth overrides the unreliable VU-levels signal. Proven 2026-07-10 (jensj): enginestate
-          // stayed [live,live,live], wraps kept succeeding, the engine self-recovered — the levels
-          // signal just stalled at the deck-C→A segue, and the reload is what cut air.
-          if (_daemonEngineState.get(sid) === "live") {
-            logStartup(`[AUDIO] silent-wedge SUPPRESSED — daemon enginestate=live station ${sid} (levels stale ${silentMs}ms = false positive); NOT reloading (enginestate=[${esSnap}])`);
-            _lastDaemonAudioAt = Date.now();
-            break;
-          }
-          // SECONDARY GATE (active once the daemon is re-staged with the cmd): the real cpal output-
-          // callback stamp, independent of the VU pipeline. Fresh callback → audio flowing → suppress.
-          let cbStaleMs = null;
-          try { const cb = Number(await audiodClient.cmd("lastCallbackMs")); if (cb > 0) cbStaleMs = Date.now() - cb; } catch {}
-          if (cbStaleMs !== null && cbStaleMs < 3000) {
-            logStartup(`[AUDIO] silent-wedge SUPPRESSED — levels stale ${silentMs}ms but cpal output callback FRESH (${cbStaleMs}ms) → levels false-positive, NOT reloading (station ${sid}; enginestate=[${esSnap}])`);
-            _lastDaemonAudioAt = Date.now();   // trust the live callback as liveness so we don't re-check every 2s
-            break;
-          }
-          _lastAudioReloadAt = Date.now();
-          // PERMANENT reload-reason receipt (tee'd to the startup log, not console-only).
-          logStartup(`[AUDIO] RELOAD daemon — reason: silent-wedge watchdog (station ${sid} deck=playing, output silent ${silentMs}ms; cpal-callback-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}; on-air=[${[...sids].join(",")}]; daemon-enginestate=[${esSnap}])`);
-          try { audiodClient.reloadDaemon(); } catch {}
-          break;
+        if (!playing) { _wedgeAt.delete(sid); continue; }   // genuinely idle/off-air — not a wedge
+
+        const silentMs = _stationAudioAgeMs(sid);
+        const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
+
+        // AUTHORITATIVE per-station signal: this station's OWN cpal output-callback stamp, independent
+        // of the VU pipeline and of every sibling. Fresh → output genuinely alive → false positive.
+        let cbStaleMs = null;
+        try { const cb = Number(await audiodClient.cmd("lastCallbackMs", { stationId: sid })); if (cb > 0) cbStaleMs = Date.now() - cb; } catch {}
+        if (cbStaleMs !== null && cbStaleMs < 3000) {
+          logStartup(`[AUDIO] wedge SUPPRESSED — station ${sid} cpal callback FRESH (${cbStaleMs}ms) despite levels stale ${silentMs}ms (enginestate=[${esSnap}])`);
+          _noteStationAudio(sid); _wedgeAt.delete(sid);
+          continue;
         }
+
+        // Per-station output stale/unknown = a real wedge. Anchor it (jensj's persistence ceiling) so
+        // enginestate="live" can suppress only briefly, then we escalate regardless of its lie.
+        if (!_wedgeAt.has(sid)) _wedgeAt.set(sid, Date.now());
+        const wedgeMs = Date.now() - _wedgeAt.get(sid);
+        const engineLive = _daemonEngineState.get(sid) === "live";
+        if (engineLive && wedgeMs < WEDGE_CEILING_MS) {
+          logStartup(`[AUDIO] wedge SUPPRESSED — station ${sid} enginestate=live, wedge ${wedgeMs}ms < ceiling (cpal-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}, levels ${silentMs}ms; [${esSnap}])`);
+          continue;   // hold — but keep the anchor so it grows and we escalate
+        }
+
+        // Escalate: recover THIS station only (reopen its own cpal stream). Never touches siblings.
+        if (Date.now() - (_lastReopenAt.get(sid) || 0) < REOPEN_COOLDOWN_MS) continue;
+        _lastReopenAt.set(sid, Date.now());
+        _wedgeAt.delete(sid);
+        logStartup(`[AUDIO] REOPEN station ${sid} output — per-station wedge ${wedgeMs}ms (cpal-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}, levels ${silentMs}ms, enginestate=${engineLive ? "live(lying)" : (_daemonEngineState.get(sid) || "?")}; on-air=[${[...sids].join(",")}])`);
+        try { await audiodClient.cmd("reopenOutput", { stationId: sid }); }
+        catch (e) { logStartup(`[AUDIO] reopenOutput station ${sid} failed: ${e && e.message}`); }
+        // no break: each station is judged and recovered independently
       }
     } catch {}
   }, 2000);
@@ -415,10 +437,10 @@ if (AUDIO_DAEMON_DESIRED) {
         // Forward the whole frame with the station UUID (not the per-machine integer id).
         const lv = scopeLevelsFrame(m, _stationUuidById);
         sendToAllWindows("audio:levels", lv);
-        // Audio-liveness signal (feeds BOTH the stale-daemon reload and the silent-wedge watchdog):
-        // real output keeps this fresh; a wedged daemon (deck claims playing, output silent) stops
-        // updating it because its audio callback has stopped firing → levels freeze at ~0.
-        if (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01) _lastDaemonAudioAt = Date.now();
+        // Per-station audio-liveness signal (DESIGN-TRUTH §2): real output keeps THIS station's clock
+        // fresh; a wedged station (deck claims playing, output silent) stops updating its own clock
+        // because its cpal callback stopped firing → its levels freeze at ~0 while siblings stay fresh.
+        if (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01) _noteStationAudio(m.stationId);
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
@@ -2370,7 +2392,7 @@ function cachedStartupStatus() {
 function buildHealthSnapshot() {
   const now = Date.now();
   let lastCb = 0;
-  try { lastCb = Number(audio.audioLastCallbackMs?.()) || 0; } catch {}
+  try { lastCb = Number(audio.audioLastCallbackMs?.(getActiveStationId())) || 0; } catch {}
   const staleMs = lastCb > 0 ? now - lastCb : null;
   let sync = null;
   try {
@@ -3904,8 +3926,10 @@ ipcMain.handle("studio:rtmp:delete", (_, id) => {
 let ffmpegBin = null;
 try {
   ffmpegBin = require("ffmpeg-static");
-  // When bundled in asar, the binary lives in app.asar.unpacked
-  if (ffmpegBin && ffmpegBin.includes("app.asar") && !ffmpegBin.includes("unpacked")) {
+  // When bundled in asar, the binary lives in app.asar.unpacked. NOTE: guard on "app.asar.unpacked"
+  // exactly — NOT just "unpacked" — because the portable build folder is literally named
+  // "win-unpacked", which false-matched the old guard and skipped this fixup (in-process ffmpeg ENOENT).
+  if (ffmpegBin && ffmpegBin.includes("app.asar") && !ffmpegBin.includes("app.asar.unpacked")) {
     ffmpegBin = ffmpegBin.replace("app.asar", "app.asar.unpacked");
   }
   console.log("[FFMPEG] Binary:", ffmpegBin);
@@ -5139,6 +5163,17 @@ fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
 ipcMain.handle('music:get-dir', () => ({ ok: true, dir: getMusicDir(), default: R2_CACHE_DIR }));
 ipcMain.handle('music:set-dir', (_, dir) => setMusicDir(dir));
 
+// Per-station music folders + Test-sync / Re-sync / Relocate (DESIGN-TRUTH §2 — stations independent).
+try {
+  const { songsUpdateById } = require('./sync/handlers/songs');
+  const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
+  require('./library-folders').register({
+    ipcMain, dialog, getDb, getActiveStationId,
+    getMainWindow: () => mainWindow,
+    songsUpdateById, stationConfigKvUpsertByKey,
+  });
+} catch (e) { console.error('[library-folders] register failed:', e && e.message); }
+
 // Resolve the license key for the signed-in ACCOUNT's cloud operations (DB backup/restore + audio
 // up/download + device management). station_config_kv.license_key is keyed by (station_id, key), so a
 // bare lookup grabs an ARBITRARY station's license — on a multi-license install that addresses the
@@ -5869,6 +5904,23 @@ function _stationRunwaySec(stationId) {
   } catch { return 0; }
 }
 
+// Stations whose degraded (too-sparse) schedule we've already force-regenerated this session — so a
+// clock that genuinely can't fill densely doesn't get hammered every tick.
+const _sparseHealed = new Set();
+
+// A real generated log is dense (tracks are ~3–4 min → ~12–18 rows/hour). A degraded log — e.g. a
+// stale 1-row-per-hour artifact — is <2/hour but can still fill weeks of runway, so the runway check
+// never flags it. Look at the NEXT 6 HOURS: fewer than 12 rows there (avg <2/hr) means the schedule
+// isn't a real playout log. Returns true when the station's near-term schedule needs rebuilding.
+function _scheduleIsSparse(stationId, nowTs) {
+  try {
+    const n = db.prepare(
+      "SELECT COUNT(*) c FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND scheduled_at >= ? AND scheduled_at < ?"
+    ).get(stationId, nowTs, nowTs + 6 * 3600) || { c: 0 };
+    return n.c < 12;
+  } catch { return false; }
+}
+
 function _autoExtendTick() {
   if (!db) return;
   let stations = [];
@@ -5881,6 +5933,18 @@ function _autoExtendTick() {
     if (!hasShow) continue;
     const runwaySec = _stationRunwaySec(st.id);
     try { sseBroadcast("runway", { stationId: st.id, station: st.name, runwaySec, runwayHours: Math.round(runwaySec / 360) / 10 }); } catch {}
+    // Self-heal a degraded (too-sparse) schedule the runway check can't see: rebuild it once through
+    // the real generator (LRP ladder + separation). This is the scheduler correcting a schedule that
+    // "slid wrong" — not a playout patch.
+    if (!_sparseHealed.has(st.id) && _scheduleIsSparse(st.id, nowTs)) {
+      _sparseHealed.add(st.id);
+      try {
+        const r = _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
+        console.log(`[auto-extend] ${st.name}: sparse schedule detected (<2 rows/hr) → regenerated ${r.count} tracks (${r.relaxedPicks} relaxed)`);
+        try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons, sparseHeal: true }); } catch {}
+      } catch (e) { console.error(`[auto-extend] ${st.name} sparse-heal failed:`, e.message); }
+      continue;
+    }
     if (runwaySec >= AUTO_EXTEND_THRESHOLD_H * 3600) continue;
     try {
       const r = _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);

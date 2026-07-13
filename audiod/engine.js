@@ -95,6 +95,31 @@ class DaemonEngine {
   // never gates playout, never throws.
   _log(...a) { try { console.log("[engine s" + this.stationId + "]", ...a); } catch {} }
 
+  // v4.4.46 mix-telemetry heartbeat. One compact `[mix sN]` line every 5s, ONLY while a deck claims
+  // status=playing (no spam when idle). Reads the per-station AudioLevels the mixer callback now
+  // publishes (active-deck count, per-deck source/active/paused/volume/gain, monitor_vol, post-mix
+  // peak, monotonic frames-consumed) and prints the frames DELTA since the last line — a live "is the
+  // callback still pulling PCM while the VU reads silent?" signal for the Class-A wedge. Diagnostic
+  // only: never gates playout, never throws, no engine-state or watchdog interaction.
+  _mixHeartbeat(now, s) {
+    try {
+      const anyPlaying = ["deckA", "deckB", "deckC"].some((d) => s && s[d] && s[d].status === "playing");
+      if (!anyPlaying) return;                                  // idle/stalled → stay quiet
+      if (now - (this._lastMixLogAt || 0) < 5000) return;      // 5s cadence
+      let lv; try { lv = JSON.parse(A.audioGetLevels(this.stationId)); } catch { return; }
+      const df = Math.max(0, (lv.frames_total || 0) - (this._lastMixFrames || 0));
+      this._lastMixFrames = lv.frames_total || 0;
+      this._lastMixLogAt = now;
+      const g = (x) => (x >= 0 ? "+" : "") + (x || 0).toFixed(1);
+      const decks = (lv.decks || [])
+        .map((d) => `${d.id} src=${d.source_present ? 1 : 0} a=${d.active ? 1 : 0} p=${d.paused ? 1 : 0} vol=${(d.volume || 0).toFixed(2)} g=${g(d.gain_db)}`)
+        .join(" | ");
+      console.log(
+        `[mix s${this.stationId}] active=${lv.active_decks || 0} frames=+${df} peak=${(lv.master || 0).toFixed(3)} mon=${(lv.mon_vol || 0).toFixed(2)} | ${decks}`
+      );
+    } catch { /* diagnostic only — never disturb playout */ }
+  }
+
   // ── addon wrappers (synchronous) ──
   _load(deck, fp, title, artist, gainDb) { return A.audioLoad(deck, fp, title || "", artist || "", gainDb ?? 0, this.stationId); }
   _play(deck) { return A.audioPlay(deck, this.stationId); }
@@ -128,6 +153,8 @@ class DaemonEngine {
     const now = Date.now();
     const elapsed = (now - this.lastPollTime) / 1000;
     this.lastPollTime = now;
+
+    this._mixHeartbeat(now, s);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
     const dur = { A: this.stateA.durationSec, B: this.stateB.durationSec, C: this.stateC.durationSec };

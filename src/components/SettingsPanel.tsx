@@ -1628,6 +1628,59 @@ function PublicPageSettings() {
 
 // ── Main Settings Panel ──────────────────────────────────────
 
+// Per-station music folder + Test-sync / Re-sync (DESIGN-TRUTH §2 — each station is independent).
+// Pick THIS station's audio folder, dry-run "Test sync" to see if the files are there, and "Re-sync"
+// to relink them by title from that folder only — returning the list of songs whose file is missing.
+function MusicFolderSection() {
+  const { stationId } = useActiveStation();
+  const [folder, setFolder] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<{ linked?: number; total?: number; matched?: number; folderFiles?: number; missing?: string[] } | null>(null);
+  const [msg, setMsg] = useState("");
+  const api = (window as any).ether.stationFolders;
+  useEffect(() => {
+    let on = true; setResult(null); setMsg("");
+    api.get(stationId).then((r: any) => { if (on) setFolder(r?.folder || null); }).catch(() => {});
+    return () => { on = false; };
+  }, [stationId]);
+  const choose = async () => { const r = await api.choose(stationId); if (r?.ok) { setFolder(r.folder); setMsg("Folder set for this station."); setResult(null); } };
+  const test = async () => {
+    setBusy(true); setMsg("Analyzing…");
+    const r = await api.analyze(stationId); setBusy(false);
+    if (!r?.ok) { setMsg(r?.error || "No folder set"); setResult(null); return; }
+    setResult(r); setMsg(`${r.matched}/${r.total} songs found in the folder (${r.folderFiles} audio files present); ${r.missing.length} missing.`);
+  };
+  const resync = async () => {
+    setBusy(true); setMsg("Re-syncing…");
+    const r = await api.resync(stationId); setBusy(false);
+    if (!r?.ok) { setMsg(r?.error || "No folder set"); setResult(null); return; }
+    setResult(r); setMsg(`Linked ${r.linked}/${r.total}. ${r.missing.length} still missing (skipped so they won't stall the station).`);
+  };
+  const btn: React.CSSProperties = { padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" };
+  return (
+    <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} title="Music Folder & Sync" description="Where THIS station's audio files live. Each station has its own folder — pick it, Test sync to check the files are there, and Re-sync to relink them (missing songs are listed and skipped so they can't cause dead air).">
+      <div style={{ display: "flex", flexDirection: "column" as any, gap: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Folder for this station:</div>
+        <div style={{ fontSize: 13, wordBreak: "break-all", padding: "6px 8px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>{folder || "(not set)"}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as any }}>
+          <button style={btn} onClick={choose} disabled={busy}>Choose folder…</button>
+          <button style={btn} onClick={test} disabled={busy || !folder}>Test sync</button>
+          <button style={{ ...btn, background: "var(--accent-blue)", color: "#fff", border: "none" }} onClick={resync} disabled={busy || !folder}>Re-sync library</button>
+        </div>
+        {msg && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{msg}</div>}
+        {result?.missing && result.missing.length > 0 && (
+          <div style={{ marginTop: 4, padding: "8px 10px", background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)", color: "#f59e0b", fontSize: 12 }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>{result.missing.length} missing — add the file to the folder or fix the song title, then Re-sync:</div>
+            <div style={{ maxHeight: 180, overflowY: "auto", fontSize: 11, opacity: 0.95 }}>
+              {result.missing.map((t, i) => <div key={i}>• {t}</div>)}
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
   const { stationId } = useActiveStation();
   const loadKvVersionRef = useRef(0);
@@ -2290,6 +2343,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           </SettingRow>
         )}
       </Section>
+
+      {/* ── Per-station Music Folder & Sync ── */}
+      <MusicFolderSection />
 
       {/* ── Music Scheduling Rules ── */}
       <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>} title="Music Scheduling Rules" description="Control how songs are selected — how long before the same artist or song can play again">

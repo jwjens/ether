@@ -142,7 +142,9 @@ const handlers = {
   // authoritative "is the output device alive" signal — independent of the VU levels pipeline. The
   // app's silent-wedge watchdog uses this to tell a real output death (callback stopped) from a
   // levels false-positive (callback still firing) before reloading the whole daemon.
-  lastCallbackMs:     ()  => A.audioLastCallbackMs(),
+  lastCallbackMs:     (m) => A.audioLastCallbackMs(m.stationId),
+  // Per-station output recovery (DESIGN-TRUTH §2): reopen ONLY this station's cpal stream.
+  reopenOutput:       (m) => A.audioReopenOutput(m.stationId),
 
   fill:               (m) => { const e = getEngine(m.stationId); return e.refillIfNeeded().then(() => e.getQueue()); },
   getQueue:           (m) => { const e = engines.get(m.stationId); return e ? e.getQueue() : []; },

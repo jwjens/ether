@@ -1,3 +1,35 @@
+## [4.4.46] — 2026-07-13
+
+### Added — native-layer observability (diagnostic only; no playout behaviour change)
+
+- **Native Rust stderr is now captured** into `ether-audiod.log`. The daemon is spawned with its
+  stderr set to an inherited append-fd on the log (chosen over a parent pipe, which goes EPIPE on app
+  exit and would panic Rust `eprintln!` → dead air on every gapless update — proven empirically). The
+  `[cpal]` / `[RUST]` diagnostics (deck-finished, source-exhausted, reload-skipped) are no longer lost.
+- **Per-station `[mix sN]` mix-telemetry heartbeat** every 5 s while a deck is playing: active-deck
+  count, frames-consumed-since-last-line, post-mix peak, monitor volume, and per-deck
+  source/active/paused/volume/gain. Published from the mixer callback with no new lock and no RT-path
+  allocation. See `docs/v4446-observability-build.md`.
+
+## [4.4.45] — 2026-07-11
+
+### Fixed — stations are now fully independent (no more cross-station dead air)
+
+- **Each station now runs as its own separate sound card.** One station's failure can no longer affect
+  another. Previously a single station stumbling at a song transition could silence a *different*
+  station's air — the stations shared hidden internal state (one output-liveness clock, one
+  stream-connection flag) that let one drag down the others. That shared state is gone: every station
+  has its own audio output, its own liveness clock, and its own recovery path.
+- **Stalled stations self-recover in under a second.** If a station's audio output ever stalls, it now
+  reopens its own output automatically — no operator toggle, and without touching the other stations.
+  Measured recovery: ~0.5 s.
+- **The dead-air watchdog is now per-station and honest.** It judges each station on that station's own
+  real output signal (not rotation bookkeeping, which could falsely read "live" during a wedge), and
+  recovers only the affected station instead of reloading the whole engine.
+- Validated: a 2-hour, 3-station soak — 121 song-to-song transitions survived across the stations with
+  zero dead air, including a deliberately injected mid-run output kill that recovered without disturbing
+  the other two stations.
+
 ## [4.3.29] — 2026-06-01
 
 ### Security — dependency advisories cleared

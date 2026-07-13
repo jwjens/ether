@@ -4,15 +4,18 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use ringbuf::{HeapRb, HeapProd, traits::{Producer, Consumer, Observer, Split}};
 
-// ── Audio-thread liveness (Phase 1 HA health signal) ──────────────────────────
-// Stamped on every cpal output callback (any station). A relaxed atomic store —
-// lock-free, safe on the real-time audio thread. Read by the napi getter
-// `audioLastCallbackMs` for the /health endpoint (and, later, the dead-air
-// watchdog). Value = epoch ms of the last output callback; 0 = never fired.
-// The cpal stream callbacks fire continuously while the output stream is alive
-// (even when idle/paused → silence), so this tracks ENGINE-THREAD liveness,
-// independent of play state.
-pub static LAST_AUDIO_CALLBACK_MS: AtomicU64 = AtomicU64::new(0);
+// ── Per-station audio-thread liveness (HA health signal) ──────────────────────
+// Each station stamps ITS OWN clock on every cpal output callback — there is no
+// shared global scalar. A single global stamp masked per-station output death:
+// a surviving station kept the one clock fresh while two stations were dead
+// (2026-07-10 wedge). The clock is a per-station Arc<AtomicU64>, stamped lock-free
+// on the RT audio thread and read by `audioLastCallbackMs(stationId)`. Value =
+// epoch ms of THAT station's last output callback; 0 = never fired. Callbacks fire
+// continuously while a station's output stream is alive (even idle → silence), so
+// this tracks that station's ENGINE-THREAD liveness independent of play state.
+// DESIGN-TRUTH §2: "each station is its own sound card."
+static STATION_CB_MS: std::sync::OnceLock<Mutex<HashMap<u32, Arc<AtomicU64>>>> =
+    std::sync::OnceLock::new();
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -21,16 +24,26 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Stamp "now" as the last audio-callback time. Called from the cpal output
-/// callback — relaxed store only, no locks/allocations in the hot path.
-#[inline]
-pub fn note_audio_callback() {
-    LAST_AUDIO_CALLBACK_MS.store(now_ms(), Ordering::Relaxed);
+/// Get (creating on first reference) station_id's own callback clock. The returned
+/// Arc is cloned into that station's cpal callback and stamped there lock-free; the
+/// map lock is touched only here (at station spawn) and in the getter — never in
+/// the audio hot path. One slot per station ⇒ no cross-station masking.
+fn station_cb_clock(station_id: u32) -> Arc<AtomicU64> {
+    let m = STATION_CB_MS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = m.lock().unwrap();
+    map.entry(station_id)
+        .or_insert_with(|| Arc::new(AtomicU64::new(0)))
+        .clone()
 }
 
-/// Epoch ms of the most recent output callback (0 if none yet). Lock-free read.
-pub fn last_audio_callback_ms() -> f64 {
-    LAST_AUDIO_CALLBACK_MS.load(Ordering::Relaxed) as f64
+/// Epoch ms of station_id's most recent output callback (0 if none yet / unknown
+/// station). Lock-free atomic read behind a brief, uncontended map lock.
+pub fn last_audio_callback_ms(station_id: u32) -> f64 {
+    let Some(m) = STATION_CB_MS.get() else { return 0.0 };
+    let Ok(map) = m.lock() else { return 0.0 };
+    map.get(&station_id)
+        .map(|a| a.load(Ordering::Relaxed) as f64)
+        .unwrap_or(0.0)
 }
 
 // ── Existing public types ─────────────────────────────────────────────────────
@@ -79,6 +92,18 @@ impl DeckMeta {
     }
 }
 
+/// v4.4.46 mix-telemetry: per-deck snapshot for the daemon's `[mix sN]` heartbeat. Read from
+/// BusState.decks under the lock GetLevel already holds — no new state, no hot-path cost.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DeckTel {
+    pub id: String,            // "A" | "B" | "C"
+    pub source_present: bool,  // deck.source.is_some() — a decoder is loaded
+    pub active: bool,          // deck.active — mixer is pulling this deck
+    pub paused: bool,          // deck.paused
+    pub volume: f32,           // linear fader (post-gain)
+    pub gain_db: f32,          // per-deck trim in dB
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AudioLevels {
     pub level_a: f32,
@@ -90,6 +115,21 @@ pub struct AudioLevels {
     /// master EQ analyzer and surfaced for the Master EQ rack's live FFT display.
     #[serde(default)]
     pub spectrum: [f32; 10],
+    // ── v4.4.46 mix telemetry (diagnostic only; all #[serde(default)] so older readers/paths are
+    // unaffected). Populated by the live GetLevel handler from BusState, which it already locks. ──
+    /// Monotonic count of PROGRAM-RATE frames the mixer callback has consumed. The daemon's
+    /// heartbeat logs the DELTA since its last line ("frames consumed since last report").
+    #[serde(default)]
+    pub frames_total: u64,
+    /// Decks currently being mixed (active && !paused && source present) at sample time.
+    #[serde(default)]
+    pub active_decks: u32,
+    /// bus.monitor_vol — the local studio-monitor (device) gain; never the program bus.
+    #[serde(default)]
+    pub mon_vol: f32,
+    /// Per-deck A/B/C telemetry snapshot (source/active/paused/volume/gain).
+    #[serde(default)]
+    pub decks: Vec<DeckTel>,
 }
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
@@ -179,6 +219,9 @@ pub enum AudioCmd {
     StopStream,
     UpdateMetadata { title: String, artist: String },
     SwitchDevice(String),
+    /// Reopen THIS station's output stream on its current device — per-station recovery
+    /// that automates the manual automation toggle, scoped to one card. DESIGN-TRUTH §2.
+    ReopenOutput,
     SetEq(Vec<f32>),
     /// Local studio-monitor output gain (0..4). Affects ONLY the speakers tap — the program
     /// bus → Icecast stream is untouched, so muting the monitor never changes what airs.
@@ -264,10 +307,19 @@ pub struct BusState {
     /// Local studio-monitor gain applied to the DEVICE (speaker) output only — never the
     /// program bus. 1.0 = unity; 0.0 = silent speakers while the station keeps broadcasting.
     pub monitor_vol: f32,
+    /// Per-station program-bus stream-client flag (DESIGN-TRUTH §2). Set by THIS
+    /// station's drain thread on its Icecast client connect/disconnect; read by THIS
+    /// station's mixer callback to gate its own program-bus push. Never shared.
+    pub stream_connected: Arc<AtomicBool>,
+    /// v4.4.46: monotonic count of PROGRAM-RATE frames the mixer callback has consumed. Written
+    /// ONLY by mixer_callback under the lock it already holds (no new lock, no atomic); read by
+    /// GetLevel into AudioLevels.frames_total. The daemon heartbeat logs the delta = a live "is the
+    /// callback still pulling PCM?" signal, distinct from the VU levels and the cpal-callback stamp.
+    pub frames_consumed: u64,
 }
 
 impl BusState {
-    pub fn new(eq: crate::eq::SharedEq, ring_prod: HeapProd<f32>, sample_rate: u32) -> Self {
+    pub fn new(eq: crate::eq::SharedEq, ring_prod: HeapProd<f32>, sample_rate: u32, stream_connected: Arc<AtomicBool>) -> Self {
         BusState {
             decks: [
                 DeckSlot::new(), DeckSlot::new(), DeckSlot::new(),
@@ -281,6 +333,8 @@ impl BusState {
             master_peak: 0.0,
             spectrum:    [0.0; 10],
             monitor_vol: 1.0,
+            stream_connected,
+            frames_consumed: 0,
         }
     }
 }
@@ -474,6 +528,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                                 current_device_name = Some(name);
                                 break;
                             }
+                            AudioCmd::ReopenOutput => { break; } // legacy path: drop stream → 'outer reopens
                             AudioCmd::SetEq(_) => {}
                             AudioCmd::SetMonitorVolume(_) => {}
                         }
@@ -547,9 +602,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
     let (ring_prod, ring_cons) = rb.split();
 
+    // Per-station program-bus stream-client flag (DESIGN-TRUTH §2). One Arc, two holders:
+    // this station's mixer (via BusState) reads it; this station's drain thread writes it.
+    let stream_connected = Arc::new(AtomicBool::new(false));
+
     let shared_eq = crate::eq::new_shared_eq(44100.0);
     let bus_state: SharedBusState = Arc::new(Mutex::new(
-        BusState::new(shared_eq, ring_prod, 44100)
+        BusState::new(shared_eq, ring_prod, 44100, stream_connected.clone())
     ));
     let bus_cmd = bus_state.clone(); // command thread's handle
 
@@ -560,7 +619,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     eprintln!("[RUST] Station {} Program Bus on TCP port {}", station_id, tcp_port);
 
     std::thread::spawn(move || {
-        drain_program_bus(station_id, listener, ring_cons, delay_drain);
+        drain_program_bus(station_id, listener, ring_cons, delay_drain, stream_connected);
     });
 
     // ── Audio dispatch thread ─────────────────────────────────────────────────
@@ -568,6 +627,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         use cpal::traits::{DeviceTrait, StreamTrait};
 
         let mut current_device = device_name;
+        // This station's own liveness clock — stamped in the cpal callback below.
+        let last_cb = station_cb_clock(station_id);
 
         'outer: loop {
             // Find and open output device
@@ -594,15 +655,17 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 buffer_size: cpal::BufferSize::Default,
             };
 
-            let bus_cb  = bus_cmd.clone();
-            let fin_cb  = finished_clone.clone();
-            let play_cb = is_playing_clone.clone();
+            let bus_cb   = bus_cmd.clone();
+            let fin_cb   = finished_clone.clone();
+            let play_cb  = is_playing_clone.clone();
+            let cb_stamp = last_cb.clone();
 
             let stream = device.build_output_stream::<f32, _, _>(
                 &stream_config,
                 move |data: &mut [f32], _| {
                     mixer_callback(data, ch, &bus_cb, &fin_cb, &play_cb);
-                    note_audio_callback();
+                    // Per-station liveness — stamps THIS station's clock only.
+                    cb_stamp.store(now_ms(), Ordering::Relaxed);
                 },
                 |err| eprintln!("[cpal] {}", err),
                 None,
@@ -722,12 +785,39 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.level_cart   = bus.peaks[6];
                                     lvl.level_master = bus.master_peak;
                                     lvl.spectrum     = bus.spectrum;
+                                    // v4.4.46 mix telemetry — snapshot per-deck + counters under the
+                                    // SAME lock (no extra lock; diagnostic only). Fed to `[mix sN]`.
+                                    lvl.frames_total = bus.frames_consumed;
+                                    lvl.mon_vol      = bus.monitor_vol;
+                                    let mut active = 0u32;
+                                    let mut dt = Vec::with_capacity(3);
+                                    for (i, id) in [(0usize, "A"), (1, "B"), (2, "C")] {
+                                        let d = &bus.decks[i];
+                                        let present = d.source.is_some();
+                                        if d.active && !d.paused && present { active += 1; }
+                                        dt.push(DeckTel {
+                                            id: id.to_string(),
+                                            source_present: present,
+                                            active: d.active,
+                                            paused: d.paused,
+                                            volume: d.volume,
+                                            gain_db: d.gain_db,
+                                        });
+                                    }
+                                    lvl.active_decks = active;
+                                    lvl.decks = dt;
                                 }
                             }
                             AudioCmd::SwitchDevice(name) => {
                                 eprintln!("[RUST] Station {} SwitchDevice → {:?}", station_id, name);
                                 current_device = if name.is_empty() { None } else { Some(name) };
                                 break; // drop stream → 'outer reopens device
+                            }
+                            AudioCmd::ReopenOutput => {
+                                // Per-station recovery: drop THIS station's stream so 'outer reopens
+                                // the SAME device. Touches only this card — siblings unaffected.
+                                eprintln!("[RUST] Station {} ReopenOutput — reopening its own output stream", station_id);
+                                break;
                             }
                             AudioCmd::SetEq(gains) => {
                                 if let Ok(bus) = bus_cmd.lock() {
@@ -828,13 +918,8 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
     }
 }
 
-// ── Temporary rate diagnostics — remove after B1 sign-off ────────────────────
-static SAMPLES_PUSHED:           AtomicU64  = AtomicU64::new(0);
-static LAST_REPORT_NS:           AtomicU64  = AtomicU64::new(0);
-static CB_COUNT:                 AtomicU64  = AtomicU64::new(0);
-static CB_REPORT_NS:             AtomicU64  = AtomicU64::new(0);
-static LAST_CB_NS:               AtomicU64  = AtomicU64::new(0);
-static STREAM_CLIENT_CONNECTED:  AtomicBool = AtomicBool::new(false);
+// No global audio state (DESIGN-TRUTH §2): per-station liveness lives in STATION_CB_MS
+// (above); the program-bus stream-client flag is per-station on BusState.stream_connected.
 
 fn mixer_callback(
     data:    &mut [f32],
@@ -843,28 +928,6 @@ fn mixer_callback(
     fin:     &FinishedFlags,
     playing: &Arc<Mutex<bool>>,
 ) {
-    // Callback fires/sec counter + stall detector
-    let now_cb = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64).unwrap_or(0);
-    let count = CB_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    let last_cb = CB_REPORT_NS.load(std::sync::atomic::Ordering::Relaxed);
-    if last_cb == 0 {
-        CB_REPORT_NS.store(now_cb, std::sync::atomic::Ordering::Relaxed);
-    } else if now_cb > last_cb + 1_000_000_000 {
-        eprintln!("[RUST] Callback fires/sec: {}  data.len={}  ch={}  (expected ~100 at 10ms/buf)",
-            count, data.len(), ch);
-        CB_REPORT_NS.store(now_cb, std::sync::atomic::Ordering::Relaxed);
-        CB_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
-    }
-    // Stall detector: log if gap between callbacks exceeds 30ms (expected ~10ms)
-    let last_ts = LAST_CB_NS.swap(now_cb, std::sync::atomic::Ordering::Relaxed);
-    if last_ts > 0 {
-        let gap_ms = (now_cb.saturating_sub(last_ts)) / 1_000_000;
-        if gap_ms > 30 {
-            eprintln!("[RUST] cpal callback gap: {}ms (expected ~10ms) — possible thread starvation", gap_ms);
-        }
-    }
 
     let device_frames = data.len() / ch as usize;
     if device_frames == 0 { return; }
@@ -948,20 +1011,10 @@ fn mixer_callback(
     // Publish the EQ analyzer spectrum (lock already released) for GetLevel → AudioLevels.
     if let Some(spec) = eq_spectrum { bus.spectrum = spec; }
 
-    // Peak diagnostic — confirm mixer is producing audio, not silence
-    static PEAK_REPORT_NS: AtomicU64 = AtomicU64::new(0);
+    // Program/master peak for VU (functional — feeds master_peak below).
     let peak = out_l.iter().chain(out_r.iter())
         .map(|&s| s.abs())
         .fold(0.0f32, f32::max);
-    let now_ns_peak = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64).unwrap_or(0);
-    let last_peak = PEAK_REPORT_NS.load(std::sync::atomic::Ordering::Relaxed);
-    if now_ns_peak > last_peak + 1_000_000_000 {
-        PEAK_REPORT_NS.store(now_ns_peak, std::sync::atomic::Ordering::Relaxed);
-        let active_count = bus.decks.iter().filter(|d| d.active && !d.paused).count();
-        eprintln!("[RUST] Mixer peak: {:.4}  active_decks={}", peak, active_count);
-    }
 
     // Publish REAL VU levels — post-fader peak per deck + post-EQ program (master) peak,
     // with VU release ballistics (instant rise, smooth ~50ms fall). Read by GetLevel.
@@ -969,8 +1022,15 @@ fn mixer_callback(
     for i in 0..7 { bus.peaks[i] = frame_peaks[i].max(bus.peaks[i] * VU_RELEASE); }
     bus.master_peak = peak.max(bus.master_peak * VU_RELEASE);
 
-    // Program Bus: write 44100 Hz samples directly — ffmpeg always reads 44100 Hz
-    if STREAM_CLIENT_CONNECTED.load(Ordering::Relaxed) {
+    // v4.4.46 mix telemetry: advance the frames-consumed counter (single u64 add under the lock we
+    // already hold — no new lock, no atomic, RT-safe). GetLevel surfaces it; the daemon heartbeat
+    // logs the per-interval delta as a live "callback is still pulling PCM" signal.
+    bus.frames_consumed = bus.frames_consumed.wrapping_add(prog_frames as u64);
+
+    // Program Bus: write 44100 Hz samples directly — ffmpeg always reads 44100 Hz.
+    // Per-station stream-client flag (DESIGN-TRUTH §2) — only THIS station's Icecast
+    // client presence gates THIS station's push; never a sibling's.
+    if bus.stream_connected.load(Ordering::Relaxed) {
         for f in 0..prog_frames {
             let _ = bus.ring_prod.try_push(out_l[f]);
             let _ = bus.ring_prod.try_push(out_r[f]);
@@ -1014,21 +1074,6 @@ fn mixer_callback(
 
     if let Ok(mut p) = playing.try_lock() { *p = any_playing; }
 
-    // Rate diagnostic: count samples pushed to ring buffer, log once/sec
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64).unwrap_or(0);
-    let pushed = SAMPLES_PUSHED.fetch_add(
-        prog_frames as u64 * 2, std::sync::atomic::Ordering::Relaxed,
-    ) + prog_frames as u64 * 2;
-    let last = LAST_REPORT_NS.load(std::sync::atomic::Ordering::Relaxed);
-    if now_ns > last + 1_000_000_000 {
-        LAST_REPORT_NS.store(now_ns, std::sync::atomic::Ordering::Relaxed);
-        SAMPLES_PUSHED.store(0, std::sync::atomic::Ordering::Relaxed);
-        let occupancy = PROGRAM_BUS_BUF - bus.ring_prod.vacant_len();
-        eprintln!("[RUST] Program Bus rate: {} samples/sec  device_sr={}  prog_frames={}  device_frames={}  ring_occ={}/{}  (target 88200 = 44100×2ch)",
-            pushed, device_sr, prog_frames, device_frames, occupancy, PROGRAM_BUS_BUF);
-    }
 }
 
 fn drain_program_bus(
@@ -1036,12 +1081,11 @@ fn drain_program_bus(
     listener:   std::net::TcpListener,
     mut cons:   ringbuf::HeapCons<f32>,
     delay:      SharedDelay,
+    stream_connected: Arc<AtomicBool>,   // per-station: only this station's client presence
 ) {
     use std::io::Write;
     use std::collections::VecDeque;
 
-    static DRAIN_BYTES_TOTAL:     AtomicU64 = AtomicU64::new(0);
-    static DRAIN_ZERO_FILL_BYTES: AtomicU64 = AtomicU64::new(0);
 
     // 44100 Hz × 2 ch × 4 bytes/sample = 352800 bytes/sec
     const TARGET_BYTES_PER_SEC: f64 = 44100.0 * 2.0 * 4.0;
@@ -1051,9 +1095,7 @@ fn drain_program_bus(
             Ok((mut stream, addr)) => {
                 eprintln!("[RUST] Station {} stream client connected: {}", station_id, addr);
                 let _ = stream.set_nodelay(true);
-                STREAM_CLIENT_CONNECTED.store(true, Ordering::Relaxed);
-                DRAIN_BYTES_TOTAL.store(0, Ordering::Relaxed);
-                DRAIN_ZERO_FILL_BYTES.store(0, Ordering::Relaxed);
+                stream_connected.store(true, Ordering::Relaxed);
 
                 let wall_start = std::time::Instant::now();
                 let mut bytes_written: u64 = 0;
@@ -1100,13 +1142,12 @@ fn drain_program_bus(
                             out_bytes.clear();
                             for &s in &sample_buf[..popped] { out_bytes.extend_from_slice(&s.to_le_bytes()); }
                             if stream.write_all(&out_bytes).is_err() {
-                                STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                                stream_connected.store(false, Ordering::Relaxed);
                                 break;
                             }
                             let n = out_bytes.len() as u64;
                             bytes_written        += n; // keep the wall clock coherent if delay is armed later
                             real_bytes_since_log += n;
-                            DRAIN_BYTES_TOTAL.fetch_add(n, Ordering::Relaxed);
                         }
                     } else {
                         // ── DELAY ARMED — wall-clock-paced rebuild (unchanged) ───────────────
@@ -1179,15 +1220,13 @@ fn drain_program_bus(
                             delay.buffered_samples.store(delay_fifo.len(), Ordering::Relaxed);
 
                             if stream.write_all(&out_bytes).is_err() {
-                                STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                                stream_connected.store(false, Ordering::Relaxed);
                                 break;
                             }
 
                             bytes_written += deficit as u64;
                             real_bytes_since_log += real_byte_count as u64;
                             zero_bytes_since_log += zero_byte_count as u64;
-                            DRAIN_BYTES_TOTAL.fetch_add(deficit as u64, Ordering::Relaxed);
-                            DRAIN_ZERO_FILL_BYTES.fetch_add(zero_byte_count as u64, Ordering::Relaxed);
                         }
                     }
 
@@ -1209,7 +1248,7 @@ fn drain_program_bus(
 
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                STREAM_CLIENT_CONNECTED.store(false, Ordering::Relaxed);
+                stream_connected.store(false, Ordering::Relaxed);
                 { let mut discard = [0f32; 1024]; while cons.pop_slice(&mut discard) > 0 {} }
                 eprintln!("[RUST] Station {} stream client disconnected", station_id);
             }

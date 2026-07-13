@@ -256,6 +256,7 @@ module.exports = function buildHandlers(ipcRenderer) {
     create:                 (payload)        => ipcRenderer.invoke('songs:create',                     payload),
     update:                 (uuid, patch)    => ipcRenderer.invoke('songs:update',                     uuid, patch),
     updateById:             (intId, patch)   => ipcRenderer.invoke('songs:update-by-id',               intId, patch),
+    markPlayed:             (filePath, atSec)=> ipcRenderer.invoke('songs:mark-played',                filePath, atSec),
     delete:                 (uuid)           => ipcRenderer.invoke('songs:delete',                     uuid),
     deleteById:             (intId)          => ipcRenderer.invoke('songs:delete-by-id',               intId),
     deleteByStation:        (stationId)      => ipcRenderer.invoke('songs:delete-by-station',          stationId),

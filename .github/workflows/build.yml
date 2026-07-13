@@ -43,6 +43,9 @@ jobs:
       - name: Station-identity leak guard (mandatory)
         run: node scripts/test-station-identity-leak.js
 
+      - name: Station audio-isolation guard (DESIGN-TRUTH §2, mandatory)
+        run: node scripts/check-no-global-audio-statics.js
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

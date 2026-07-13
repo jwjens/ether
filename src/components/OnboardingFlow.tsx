@@ -392,11 +392,15 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       return;
     }
     if (stations.length === 0) { setAuthBusy(false); setState('addStation'); return; }  // affirmed empty → create
-    if (stations.length === 1) { await provisionAttached([stations[0].uuid], lk); return; }
+    // Account HAS stations → the RESTORE GATE (DESIGN-TRUTH #1). Show the sync-existing selection
+    // screen: per-station checkboxes + "Create new station" beside it. Picking stations attaches
+    // them (clean-room, monitor role) and gates the app on the CRDT initial pull. We do NOT silently
+    // materialize a station row anymore — that landed a fresh sign-in on an empty-looking station
+    // (the fe46e66 regression this reverses). Single-station included, so it too passes the gate.
     setConnectStations(stations);
     setSyncSel(new Set(stations.map(s => s.uuid))); // default all checked (min one enforced on confirm)
     setAuthBusy(false);
-    setState('placement');
+    setState('cloudSync');
   };
 
   // desktop-activate provisions/returns the license for this account + machine, stores
