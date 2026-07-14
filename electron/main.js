@@ -229,6 +229,9 @@ const VITE_DEV_URL = "http://127.0.0.1:1420";
 // falls back to the in-process engine automatically if the daemon can't connect (no dead air).
 const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
 let AUDIO_DAEMON = false;
+let _health = null;                 // v4.4.50: Health Monitor state — module scope so BOTH the daemon and the in-process paths feed it
+let _inProcessFallback = false;     // v4.4.50: true after a boot-time fallback to the in-process engine (daemon not attached)
+let _handoverWatch = null;          // v4.4.50: song-boundary watcher for a safe in-process → daemon handover
 let audio;
 try {
   audio = require("../native/ether-audio.node");
@@ -468,7 +471,7 @@ if (AUDIO_DAEMON_DESIRED) {
     if (n) _healthNameCache.set(id, n);
     return n;
   };
-  const _health = createHealthMonitor({
+  _health = createHealthMonitor({
     logDir: _healthLogDir,
     broadcast: sendToAllWindows,
     ping: _healthPing,
@@ -476,6 +479,7 @@ if (AUDIO_DAEMON_DESIRED) {
     enginePidProvider: () => _healthReadTail().pid,
     uuidOf: _stationUuidById,
     stationName: _healthStationName,
+    modeProvider: () => AUDIO_DAEMON ? "daemon" : "in-process",   // v4.4.50: playout mode → RED banner in fallback
   });
   _health.start();
   try { ipcMain.handle("health:snapshot", () => { try { return _health.getSnapshot(); } catch { return null; } }); } catch {}
@@ -535,14 +539,47 @@ if (AUDIO_DAEMON_DESIRED) {
   // Trace-B dead-air path, now self-healing). A surviving, still-playing daemon hits the engine's
   // existing alreadyOnAir no-op (audibly silent) — we deliberately lean on that single idempotency
   // path rather than adding a second. The very first connect replays nothing (intent is empty).
+  // v4.4.50: in-process → daemon handover (only used after a boot-time fallback). Never mid-song: wait
+  // for the current in-process song to END (a boundary), then prime the daemon, flip routing, and stop
+  // the (already-ended) in-process decks. HIGHEST-RISK code in this release — activates ONLY in the
+  // fallback-then-reattach path (no effect in normal daemon mode). See the build report for the soak plan.
+  function _doInProcessToDaemonHandover(sid) {
+    if (AUDIO_DAEMON) return;
+    try {
+      logStartup("[AUDIO] HANDOVER (song boundary): in-process → daemon for station " + sid);
+      try { audiodClient.cmd("automationStart", { stationId: sid }).catch(() => {}); } catch {}   // prime the daemon first
+      AUDIO_DAEMON = true; _inProcessFallback = false;                                             // route audio IPC to the daemon
+      for (const d of ["A", "B", "C"]) { try { audio.audioStop(d, sid); } catch {} }               // release the (already-ended) in-process decks
+      try { replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) }); } catch {}
+      if (_handoverWatch) { clearInterval(_handoverWatch); _handoverWatch = null; }
+      logStartup("[AUDIO] HANDOVER complete — playout on daemon (AUDIO_DAEMON=true)");
+    } catch (e) { logStartup("[AUDIO] handover error: " + (e && e.message)); }
+  }
+  function _armInProcessHandover() {
+    if (_handoverWatch) return;
+    logStartup("[AUDIO] daemon attached after in-process fallback — handover ARMED; switching at the next song boundary");
+    let prevPlaying = true;
+    _handoverWatch = setInterval(() => {
+      try {
+        if (AUDIO_DAEMON || !_inProcessFallback) { clearInterval(_handoverWatch); _handoverWatch = null; return; }
+        if (!audiodClient.isConnected()) return;   // daemon dropped again → wait for re-attach
+        const sid = getActiveStationId();
+        let st; try { st = JSON.parse(audio.audioGetState(sid)); } catch { return; }
+        const playing = ["deckA", "deckB", "deckC"].some(d => st && st[d] && st[d].status === "playing");
+        if (prevPlaying && !playing) { _doInProcessToDaemonHandover(sid); return; }
+        prevPlaying = playing;
+      } catch {}
+    }, 500);
+  }
+
   audiodClient.setConnectedHandler(() => {
     // A fresh connection supersedes any pending reload (this connect may BE the reloaded daemon).
-    // Disarm first, then re-evaluate the daemon we're now talking to.
     disarmDaemonReload();
     checkStaleDaemon();
-    // Phase D: replay BOTH automation AND stream intent. A reload used to restore playout+monitor but
-    // NOT the Icecast stream → every reload = listener dead air until a manual restart. Now streams
-    // auto-restore (delayed so the program bus is warm), turning a reload into a blip, not silence.
+    // v4.4.50: if we FELL BACK to in-process at boot and the daemon has now attached, do NOT drive the
+    // daemon here (that would double up with the live in-process audio). Arm a song-boundary handover.
+    if (_inProcessFallback && !AUDIO_DAEMON) { _armInProcessHandover(); return; }
+    // Phase D: replay BOTH automation AND stream intent so a reload restores playout AND the Icecast stream.
     replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) });
   });
 
@@ -563,19 +600,25 @@ async function setupAudioBackend() {
   const napSleep = (ms) => new Promise((r) => setTimeout(r, ms));
   try {
     if (AUDIO_DAEMON_DESIRED) {
+      try { audiodClient.setLog(logStartup); } catch {}   // v4.4.50: daemon-client decisions → ether-startup.log (was console-only → hid the silent fallback)
+      logStartup("[AUDIO] backend decision: daemon desired — ensure() called, waiting up to 5s for connect");
       audiodClient.ensure();   // spawns + connects; the client self-retries on failure (debounced)
       const t0 = Date.now();
       while (!audiodClient.isConnected() && Date.now() - t0 < 5000) { await napSleep(150); }
       if (audiodClient.isConnected()) {
         AUDIO_DAEMON = true;
         console.log("[AUDIO] daemon ACTIVE — out-of-process engine (ether-audiod)");
+        logStartup("[AUDIO] daemon ACTIVE — out-of-process engine (connected in " + (Date.now() - t0) + "ms)");
       } else {
         AUDIO_DAEMON = false;
-        console.warn("[AUDIO] daemon unreachable after 5s — FALLING BACK to the in-process engine (no dead air)");
-        // Terminal fallback: stop the client's spawn/reconnect loop so it doesn't keep respawning
-        // detached daemons in the background (the PID storm) after we've committed to in-process.
-        try { audiodClient.stop(); } catch {}
-        try { audio.initAudioEngine(); } catch (e) { console.error("[AUDIO] in-process init failed:", e.message); }
+        _inProcessFallback = true;
+        console.warn("[AUDIO] daemon unreachable in the boot window — FALLING BACK to the in-process engine (no dead air)");
+        logStartup("[AUDIO] daemon UNREACHABLE in the boot window — in-process fallback; client KEPT RECONNECTING (v4.4.50 non-terminal). Will hand playout to the daemon at a song boundary once it attaches.");
+        // v4.4.50: do NOT stop the client. It is now non-terminal — probe-only after the spawn cap (its
+        // own MAX_SPAWN_ATTEMPTS storm-guard already prevents a PID storm), so a late/externally-started
+        // daemon is picked up and setConnectedHandler arms the song-boundary handover. The old terminal
+        // audiodClient.stop() is what stranded the app in-process for the whole session (docs/inprocess-*).
+        try { audio.initAudioEngine(); } catch (e) { console.error("[AUDIO] in-process init failed:", e.message); logStartup("[AUDIO] in-process init failed: " + e.message); }
       }
     } else {
       try { audio.initAudioEngine(); console.log("[AUDIO] in-process engine (daemon not enabled)"); }
@@ -2198,7 +2241,9 @@ app.whenReady().then(() => {
         // uuid filter renders it — otherwise uuid-scoped meters go dark when the daemon isn't connected.
         // scopeLevelsFrame computes master (post-EQ, else max-of-decks) and swaps the integer id for uuid.
         const sid = getActiveStationId();
-        const levels = scopeLevelsFrame({ ...JSON.parse(audio.audioGetLevels(sid)), stationId: sid }, _stationUuidById);
+        const raw = JSON.parse(audio.audioGetLevels(sid));
+        try { if (_health) _health.noteLevels(sid, raw); } catch {}   // v4.4.50: feed the health monitor in in-process mode too (same addon → same frames_total/decks telemetry)
+        const levels = scopeLevelsFrame({ ...raw, stationId: sid }, _stationUuidById);
         sendToAllWindows("audio:levels", levels);
       } catch {}
     }, 33);

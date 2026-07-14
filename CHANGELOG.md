@@ -1,3 +1,25 @@
+## [4.4.50] — 2026-07-14
+
+### Fixed — silent in-process fallback + Health Monitor blind spot
+
+- **The daemon-client fallback is no longer terminal.** On boot, if the daemon isn't reachable within
+  the window the app falls back to the in-process engine (as before, no dead air) — but it now **keeps
+  probing** for the daemon instead of calling the terminal `audiodClient.stop()`. The spawn cap
+  (`MAX_SPAWN_ATTEMPTS`) still prevents a PID storm (it stops *spawning* but keeps *probing*). This
+  fixes the case where a slow post-install daemon restart stranded the app in-process for the whole
+  session even after the daemon came up.
+- **Automatic in-process → daemon handover at a song boundary.** When the daemon attaches after a
+  fallback, playout hands over to it **at the next song boundary (never mid-song)**: the daemon is
+  primed, audio routing flips, and the (already-ended) in-process decks are released.
+- **Health Monitor is fed from the in-process path too** — never blind. Where daemon-only fields are
+  absent it degrades gracefully (peak + engine activity). In-process meters only the active station.
+- **Impossible-to-miss RED banner** on the Health Monitor page and mini panel whenever playout is on
+  the in-process fallback ("PLAYOUT ON IN-PROCESS FALLBACK — daemon not attached").
+- **Permanent observability of the backend decision.** The daemon-client's connect/spawn/give-up
+  decisions and `setupAudioBackend`'s daemon-ACTIVE-vs-FALLBACK choice now log to `ether-startup.log`
+  (they were `console.*`-only, which hid the silent fallback). See
+  `docs/inprocess-fallback-rootcause-2026-07-14.md`.
+
 ## [4.4.49] — 2026-07-13
 
 ### Added — Health Monitor (live audio-health system; display + event-logging only)

@@ -17,6 +17,7 @@ export interface HealthStation {
 export interface HealthEvent { ts: string; stationUuid: string; stationName?: string; level: HealthLevel; prevLevel: HealthLevel; reason: string; metrics?: any; }
 export interface HealthSnapshot {
   ts: string;
+  mode?: "daemon" | "in-process" | string;   // v4.4.50: playout mode — drives the RED fallback banner
   engine: { pid: number | null; uptimeSec: number | null; restartCount: number; pingMs: number | null };
   stations: HealthStation[];
   recentEvents: HealthEvent[];
@@ -83,6 +84,25 @@ export function HealthStyles() {
   );
 }
 
+// v4.4.50: impossible-to-miss RED banner whenever playout is running on the in-process fallback.
+export function HealthModeBanner({ mode, compact }: { mode?: string; compact?: boolean }) {
+  if (mode !== "in-process") return null;
+  return (
+    <div style={{
+      background: "rgba(239,68,68,0.15)", border: `1px solid ${LEVEL_COLOR.RED}`, color: LEVEL_COLOR.RED,
+      padding: compact ? "4px 8px" : "9px 12px", margin: compact ? "2px 0 6px" : "0 0 12px",
+      fontSize: compact ? 11 : 13, fontWeight: 800, borderRadius: 2, display: "flex", alignItems: "center", gap: 8,
+      animation: "ether-health-pulse 1.6s infinite",
+    }}>
+      <HealthStyles />
+      <HealthDot level="RED" />
+      {compact
+        ? "IN-PROCESS FALLBACK — daemon not attached"
+        : "⚠ PLAYOUT ON IN-PROCESS FALLBACK — daemon not attached; only the active station is airing. Relaunch to restore daemon mode."}
+    </div>
+  );
+}
+
 function fmtUptime(sec: number | null): string {
   if (sec == null) return "—";
   const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -106,6 +126,7 @@ export function LiveHealthMonitor() {
   return (
     <div>
       <HealthStyles />
+      <HealthModeBanner mode={snap.mode} />
       {/* Engine */}
       <div style={{ paddingTop: 12, marginBottom: 12 }}>
         <div style={hdr}>Engine</div>

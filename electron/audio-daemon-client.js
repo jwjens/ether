@@ -72,11 +72,17 @@ let sock = null, connected = false, buf = "", nextId = 1;
 const pending = new Map();
 let onEvent = () => {};            // main sets this → forwards events to windows
 let onConnected = () => {};        // main sets this → fired on every fresh attach (auto-resume replay)
+// v4.4.50 observability: main injects a durable logger (→ ether-startup.log) so the daemon-client's
+// connect/spawn/give-up DECISIONS are never invisible again (they were console-only, which hid the
+// silent in-process fallback). Alongside console; a logging failure must never affect the client.
+let _log = () => {};
+function setLog(fn) { _log = typeof fn === "function" ? fn : (() => {}); }
 let reconnectTimer = null;
 let stopped = false;
 let lastSpawnAt = 0;               // debounce — never spawn more than once per 2s (storm guard)
 let spawnAttempts = 0;            // consecutive spawn-without-successful-connect cycles
-const MAX_SPAWN_ATTEMPTS = 5;     // after this, give up — in-process fallback is terminal (no PID storm)
+const MAX_SPAWN_ATTEMPTS = 5;     // after this, stop SPAWNING (no PID storm) — but keep PROBING (v4.4.50)
+let spawnGivenUp = false;         // v4.4.50: hit the spawn cap → probe-only (non-terminal); reset on connect
 
 function setEventHandler(fn) { onEvent = typeof fn === "function" ? fn : (() => {}); }
 function setConnectedHandler(fn) { onConnected = typeof fn === "function" ? fn : (() => {}); }
@@ -91,7 +97,12 @@ function spawnDaemon() {
   // own DB open on a broken/redirected profile), give up so the in-process fallback is terminal
   // rather than an unbounded PID storm. Reset to 0 on a successful connect (attach()).
   if (spawnAttempts >= MAX_SPAWN_ATTEMPTS) {
-    if (!stopped) { stopped = true; console.warn(`[audiod-client] daemon unreachable after ${MAX_SPAWN_ATTEMPTS} spawns — giving up; in-process fallback is terminal this session`); }
+    // v4.4.50 NON-TERMINAL: stop spawning (no PID storm) but keep PROBING via scheduleReconnect, so a
+    // daemon that comes up later (e.g. a slow post-install restart) is attached and playout can hand
+    // over. Previously this set stopped=true (terminal) → the app was stranded in-process for the
+    // whole session even once the daemon was listening.
+    if (!spawnGivenUp) { spawnGivenUp = true; const m = `[audiod-client] daemon unreachable after ${MAX_SPAWN_ATTEMPTS} spawns — STOP spawning (no PID storm), KEEP probing for an externally-started daemon (non-terminal)`; console.warn(m); try { _log(m); } catch {} }
+    if (!stopped) scheduleReconnect();
     return;
   }
   spawnAttempts++;
@@ -135,12 +146,13 @@ function spawnDaemon() {
     });
     if (errFd != null) { try { fs.closeSync(errFd); } catch {} }  // child owns its inherited handle now
     child.unref();
-    console.log(`[audiod-client] spawned daemon (${dev ? "dev, dies-with-app" : "detached"}) pid`, child.pid, "—", tag, errFd != null ? "(+native stderr→log)" : "");
-  } catch (e) { console.error("[audiod-client] spawn failed:", e.message); }
+    const sm = `[audiod-client] spawned daemon (${dev ? "dev, dies-with-app" : "detached"}) pid ${child.pid} — ${tag}${errFd != null ? " (+native stderr→log)" : ""} [attempt ${spawnAttempts}/${MAX_SPAWN_ATTEMPTS}]`;
+    console.log(sm); try { _log(sm); } catch {}
+  } catch (e) { console.error("[audiod-client] spawn failed:", e.message); try { _log("[audiod-client] spawn failed: " + e.message); } catch {} }
 }
 
 function attach(s) {
-  spawnAttempts = 0;   // reached a live daemon — reset the give-up counter
+  spawnAttempts = 0; spawnGivenUp = false;   // reached a live daemon — reset the give-up + probe-only state
   sock = s; buf = "";
   sock.on("data", (d) => {
     buf += d.toString("utf8");
@@ -175,7 +187,9 @@ function attach(s) {
 
 function scheduleReconnect() {
   if (reconnectTimer || stopped) return;
-  reconnectTimer = setTimeout(() => { reconnectTimer = null; ensure(); }, 1000);
+  // v4.4.50: once we've stopped spawning (probe-only), poll slowly (8s) so we quietly pick up a
+  // late/externally-started daemon without a busy loop; normal reconnect stays fast (1s).
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; ensure(); }, spawnGivenUp ? 8000 : 1000);
 }
 
 // Ensure the daemon is running + connected. Probe the pipe; if it's not answering, spawn the
@@ -183,15 +197,15 @@ function scheduleReconnect() {
 function ensure() {
   if (connected || sock || stopped) return;
   const probe = net.connect(PIPE);
-  probe.once("connect", () => { connected = true; attach(probe); console.log("[audiod-client] connected to daemon"); });
+  probe.once("connect", () => { connected = true; attach(probe); console.log("[audiod-client] connected to daemon"); try { _log("[audiod-client] connected to daemon (probe)"); } catch {} });
   probe.once("error", () => {
     try { probe.destroy(); } catch {}
     spawnDaemon();
     setTimeout(() => {
       if (connected || sock || stopped) return;
       const s2 = net.connect(PIPE);
-      s2.once("connect", () => { connected = true; attach(s2); console.log("[audiod-client] connected to daemon (after spawn)"); });
-      s2.once("error", () => { try { s2.destroy(); } catch {} scheduleReconnect(); });
+      s2.once("connect", () => { connected = true; attach(s2); console.log("[audiod-client] connected to daemon (after spawn)"); try { _log("[audiod-client] connected to daemon (after spawn)"); } catch {} });
+      s2.once("error", () => { try { s2.destroy(); } catch {} try { _log("[audiod-client] post-spawn connect failed — scheduling reconnect"); } catch {} scheduleReconnect(); });
     }, 800);
   });
 }
@@ -218,4 +232,4 @@ function reloadDaemon() {
   try { if (connected && sock) sock.write(JSON.stringify({ cmd: "shutdown" }) + "\n"); } catch {}
 }
 
-module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, isConnected, stop, reloadDaemon };
+module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, stop, reloadDaemon };

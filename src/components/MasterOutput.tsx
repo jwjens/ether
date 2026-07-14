@@ -8,7 +8,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
 import MasterEQRack from "./MasterEQRack";
-import { useAudioHealth, HealthDot, HealthStyles, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
+import { useAudioHealth, HealthDot, HealthStyles, HealthModeBanner, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -980,6 +980,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
             </div>
             {healthOpen && (
               <div style={{ padding: "4px 12px 8px" }}>
+                <HealthModeBanner mode={healthSnap?.mode} compact />
                 {(healthSnap?.stations || []).length === 0 && (
                   <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>waiting for health feed…</div>
                 )}

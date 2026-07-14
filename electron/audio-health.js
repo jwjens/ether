@@ -38,6 +38,7 @@ function createHealthMonitor(opts) {
     stationName = () => "",              // (stationId) => display name
     uuidOf = (id) => String(id),         // (stationId) => station UUID (identity)
     enginePidProvider = () => null,      // () => current daemon pid (read-only; drives uptime/restart)
+    modeProvider = () => "daemon",       // () => "daemon" | "in-process" — playout mode (for the RED banner)
     tickMs = 1000,
   } = opts || {};
 
@@ -127,8 +128,9 @@ function createHealthMonitor(opts) {
 
   // ── state machine (per station, per tick) ─────────────────────────────────────
   function evaluate(r, t) {
-    // GREY — automation off
-    if (r.enginestate === "off") return { level: "GREY", reason: "automation off" };
+    // GREY — genuinely idle (no engine, no decks, no frames). NOTE: in-process playout emits no
+    // enginestate events, so we must NOT treat "off" alone as GREY — infer activity from decks/frames.
+    if (r.enginestate === "off" && r.activeDecks === 0 && r.framesPerSec <= 1) return { level: "GREY", reason: "automation off" };
     const playing = r.activeDecks > 0 || r.enginestate === "live";
     // frozen detection
     const framesStaleMs = r.lastFramesAdvanceAt ? (t - r.lastFramesAdvanceAt) : 0;
@@ -189,8 +191,10 @@ function createHealthMonitor(opts) {
   }
 
   function snapshot(t = nowMs()) {
+    let mode = "daemon"; try { mode = modeProvider() || "daemon"; } catch {}
     return {
       ts: iso(t),
+      mode,   // v4.4.50: "daemon" | "in-process" — the Health Monitor shows a RED banner when in-process
       engine: { pid: enginePid, uptimeSec: engineStartedAt ? Math.round((t - engineStartedAt)/1000) : null, restartCount, pingMs: lastPingMs },
       stations: [...stations.values()].map(r => ({
         uuid: r.uuid, stationId: r.stationId, name: r.name, level: r.level, reason: r.level === "GREEN" ? "" : r.reason,
