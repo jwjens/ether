@@ -44,6 +44,9 @@ if (process.env.ETHER_AUDIOD_DIE === "1") { console.error("[audiod] ETHER_AUDIOD
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const { DaemonEngine } = require("./engine");
 const { StreamSupervisor } = require("./stream");
+// v4.4.51: approximate the daemon process start (for the Health Monitor's uptime/restart, reported in
+// the ping reply so main doesn't have to scrape the rotating log for the pid).
+const DAEMON_STARTED_AT = Date.now() - Math.round((process.uptime && process.uptime() || 0) * 1000);
 
 // Stations we're metering (added on first init/load), so the event loop knows what to poll.
 const stations = new Set();
@@ -118,7 +121,7 @@ const handlers = {
   dump:               (m) => A.audioDump(m.stationId),
   broadcastDelayState:(m) => JSON.parse(A.audioBroadcastDelayState(m.stationId)),
   watchdogSet:        (m) => A.watchdogSet(m.active, m.thresholdSec, m.stationId),
-  ping:               ()  => "pong",
+  ping:               ()  => ({ pong: true, pid: process.pid, startedAt: DAEMON_STARTED_AT }),
   // The app version this daemon was spawned with (passed via env). Lets the app detect a stale
   // daemon left running across an update and reload it (the dead-air-on-update gotcha).
   version:            ()  => process.env.ETHER_DAEMON_VERSION || "0",

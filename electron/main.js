@@ -442,14 +442,20 @@ if (AUDIO_DAEMON_DESIRED) {
   const _healthLogDir = path.join(app.getPath("userData"), "logs");
   const _healthDaemonLog = path.join(_healthLogDir, "ether-audiod.log");
   let _healthTail = { at: 0, drain: {}, pid: null };
+  function _readLastBytes(p, n) {
+    try { const st = fs.statSync(p); const start = Math.max(0, st.size - n); const fd = fs.openSync(p, "r"); const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd); return buf.toString("utf8"); } catch { return ""; }
+  }
   function _healthReadTail() {
     const now = Date.now();
     if (now - _healthTail.at < 900) return _healthTail;
     try {
-      const st = fs.statSync(_healthDaemonLog); const start = Math.max(0, st.size - 65536);
-      const fd = fs.openSync(_healthDaemonLog, "r"); const buf = Buffer.alloc(st.size - start);
-      fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd);
-      const text = buf.toString("utf8"); const drain = {}; let pid = _healthTail.pid;
+      // v4.4.51: after a daemon-log rotation, Rust stderr (the inherited fd) keeps writing to the
+      // RENAMED .1 file while daemon-log.js writes JS to the fresh .log — so drain-rate tailing went
+      // blind. Read BOTH tails. Order .1 then .log; the last match per station wins: post-rotation the
+      // fresh [RUST] drain is in .1 (.log has none), pre-rotation it's in .log. (Daemon re-opening its
+      // own fd 2 on rotation isn't feasible in pure Node on Windows — no dup2 — so this is the safe one.)
+      const text = _readLastBytes(_healthDaemonLog + ".1", 65536) + "\n" + _readLastBytes(_healthDaemonLog, 65536);
+      const drain = {}; let pid = _healthTail.pid;
       let m2; const dre = /Station (\d+) drain: real=([\d.]+)/g;
       while ((m2 = dre.exec(text))) drain[m2[1]] = Math.round(parseFloat(m2[2]));
       const pids = text.match(/sink open .*\(pid (\d+)/g);
@@ -458,10 +464,14 @@ if (AUDIO_DAEMON_DESIRED) {
     } catch {}
     return _healthTail;
   }
+  let _daemonPingInfo = { pid: null, startedAt: null };   // v4.4.51: from the daemon's ping reply
   const _healthPing = async () => {
     const t0 = Date.now();
-    try { await Promise.race([ audiodClient.cmd("ping"), new Promise((_, rej) => setTimeout(() => rej(new Error("t")), 2000)) ]); return Date.now() - t0; }
-    catch { return null; }
+    try {
+      const r = await Promise.race([ audiodClient.cmd("ping"), new Promise((_, rej) => setTimeout(() => rej(new Error("t")), 2000)) ]);
+      if (r && typeof r === "object" && r.pid) _daemonPingInfo = { pid: r.pid, startedAt: r.startedAt || null };
+      return Date.now() - t0;
+    } catch { return null; }
   };
   const _healthNameCache = new Map();
   const _healthStationName = (id) => {
@@ -476,7 +486,11 @@ if (AUDIO_DAEMON_DESIRED) {
     broadcast: sendToAllWindows,
     ping: _healthPing,
     drainRate: (id) => { const d = _healthReadTail().drain[String(id)]; return typeof d === "number" ? d : null; },
-    enginePidProvider: () => _healthReadTail().pid,
+    // v4.4.51: when connected, take the pid/uptime straight from the daemon's ping reply (robust to log
+    // rotation); fall back to the log-tail scrape only in in-process fallback mode. Restart detection
+    // (pid change) comes along free — the module bumps restartCount when the reported pid changes.
+    enginePidProvider: () => (AUDIO_DAEMON && _daemonPingInfo.pid) ? _daemonPingInfo.pid : _healthReadTail().pid,
+    engineStartedAtProvider: () => (AUDIO_DAEMON && _daemonPingInfo.startedAt) ? _daemonPingInfo.startedAt : null,
     uuidOf: _stationUuidById,
     stationName: _healthStationName,
     modeProvider: () => AUDIO_DAEMON ? "daemon" : "in-process",   // v4.4.50: playout mode → RED banner in fallback
@@ -528,6 +542,7 @@ if (AUDIO_DAEMON_DESIRED) {
         sendToAllWindows("stream:status:global", { anyLive: liveCount > 0, liveCount });
         _persistOnAir(liveCount > 0);
         sseAirstate(liveCount > 0, liveCount);
+        try { if (_health) _health.noteStreamStatus(m.stationId, m.state); } catch {}   // v4.4.51: Health Monitor streaming ▲ + drain B/s
       } else if (m.event === "error" && m.where === "play-skip") {
         try { _health.notePlaySkip(m.stationId); } catch {}
       }

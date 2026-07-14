@@ -1,3 +1,23 @@
+## [4.4.51] — 2026-07-14
+
+### Fixed / tuned — Health Monitor maintenance (5 items)
+
+- **Streaming status now reaches the monitor.** The daemon `stream` event branch now calls
+  `_health.noteStreamStatus`, so live streams show ▲ + drain B/s instead of "stream off".
+- **Drain-rate tailing survives log rotation.** After a daemon-log rotation, Rust stderr (the inherited
+  fd) keeps writing to the renamed `.1` file. The health tail now reads **both** the current log and
+  `.1` (daemon-side fd re-open isn't feasible in pure Node on Windows), so drain B/s doesn't go blind.
+- **Quiet ≠ no data.** A station no longer flaps to YELLOW on a single frames/s sampling dip while
+  audio is demonstrably flowing (levels stream fresh). Plus a **5 s hysteresis** before a worse level
+  surfaces in the UI (recovery is immediate) — the `health-events.jsonl` feed keeps every raw
+  transition at full fidelity.
+- **Banner wording corrected:** in-process fallback **airs all stations**; only the metering is
+  single-station. Banner now reads "All stations are still airing; the Health Monitor meters only the
+  active station."
+- **Engine uptime/pid are robust.** The daemon now reports `{pid, startedAt}` in its `ping` reply; the
+  health module uses that when connected (no more log-tail scrape that broke after rotation), falling
+  back to the log tail only in in-process mode. Restart detection (pid change) comes along free.
+
 ## [4.4.50] — 2026-07-14
 
 ### Fixed — silent in-process fallback + Health Monitor blind spot

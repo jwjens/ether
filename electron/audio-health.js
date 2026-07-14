@@ -38,9 +38,11 @@ function createHealthMonitor(opts) {
     stationName = () => "",              // (stationId) => display name
     uuidOf = (id) => String(id),         // (stationId) => station UUID (identity)
     enginePidProvider = () => null,      // () => current daemon pid (read-only; drives uptime/restart)
+    engineStartedAtProvider = () => null,// v4.4.51: () => daemon process startedAt ms (from its ping reply)
     modeProvider = () => "daemon",       // () => "daemon" | "in-process" — playout mode (for the RED banner)
     tickMs = 1000,
   } = opts || {};
+  const DISPLAY_HYSTERESIS_MS = 5000;    // v4.4.51: a WORSE level must hold this long before the UI shows it (JSONL logs raw)
 
   const stations = new Map();            // uuid -> record
   const recentEvents = [];               // last N YELLOW/RED transitions (newest first)
@@ -68,6 +70,7 @@ function createHealthMonitor(opts) {
         refill0At: 0, playSkipAt: 0,
         degradedSince: 0, frozenSince: 0,
         level: "GREY", levelSince: nowMs(), reason: "init",
+        displayLevel: "GREY", worseSince: 0,   // v4.4.51: debounced level shown in the UI (5s hysteresis)
       };
       stations.set(uuid, r);
     }
@@ -149,15 +152,17 @@ function createHealthMonitor(opts) {
     if (playing && r.lastNonSilentAt && silentMs > SILENT_YELLOW_MS) return { level: "YELLOW", reason: `silent ${Math.round(silentMs/1000)}s while playing` };
     if (r.trackLeftMs != null && r.trackLeftMs < NEXT_DECK_TRACK_LEFT_MS && !r.nextDeckReady) return { level: "YELLOW", reason: "next deck not ready, <30s left" };
     if (lastPingMs != null && lastPingMs > PING_LAG_MS) return { level: "YELLOW", reason: `event-loop lag ${lastPingMs}ms` };
-    if (r.framesPerSec > 1 && r.framesPerSec < GREEN_FRAME_FLOOR) {
-      if (!r.degradedSince) r.degradedSince = t;
-      if (t - r.degradedSince > DEGRADED_MS) return { level: "YELLOW", reason: `degraded frame rate ${Math.round(r.framesPerSec/1000)}k/s` };
-    } else { r.degradedSince = 0; }
-    // GREEN — automation on, frames >90%, peak >0.01 within 10s
-    if (r.framesPerSec >= GREEN_FRAME_FLOOR && r.lastNonSilentAt && (t - r.lastNonSilentAt) < 10000) return { level: "GREEN", reason: "healthy" };
-    // automation on but not yet clearly green (e.g. between tracks) — hold GREEN if frames advancing
-    if (r.framesPerSec >= GREEN_FRAME_FLOOR) return { level: "GREEN", reason: "frames advancing" };
-    return { level: "YELLOW", reason: "starting / no fresh audio" };
+    // GREEN — frames at full rate (the clearest healthy signal)
+    if (r.framesPerSec >= GREEN_FRAME_FLOOR) { r.degradedSince = 0; return { level: "GREEN", reason: "healthy" }; }
+    // quiet ≠ no data (v4.4.51): if the levels STREAM is still ARRIVING, PCM is flowing even if this
+    // sample's frames/s dipped (getLevels delta jitter) or the peak is merely low — do NOT flap to
+    // YELLOW. Real freezes are still caught above (frames-frozen RED via lastFramesAdvanceAt); this only
+    // suppresses the single-sample "no fresh audio" false positives while audio is demonstrably flowing.
+    const levelsFresh = r.framesAt && (t - r.framesAt) < 2500;
+    if (levelsFresh) { r.degradedSince = 0; return { level: "GREEN", reason: "healthy" }; }
+    // sustained sub-rate WITH a stale levels stream = a genuine early warning
+    if (r.framesPerSec > 1) { if (!r.degradedSince) r.degradedSince = t; if (t - r.degradedSince > DEGRADED_MS) return { level: "YELLOW", reason: "degraded frame rate" }; }
+    return { level: "YELLOW", reason: "no fresh audio (levels stale)" };
   }
 
   function tick() {
@@ -169,35 +174,51 @@ function createHealthMonitor(opts) {
       if (r.trackStartAt && r.trackDurMs != null) r.trackLeftMs = Math.max(0, r.trackDurMs - (t - r.trackStartAt));
       if (r.streaming) { try { const d = drainRate(r.stationId); if (typeof d === "number") r.drainBps = d; } catch {} } else { r.drainBps = null; }
       const ev = evaluate(r, t);
-      if (ev.level !== r.level) {
-        const prev = r.level; r.level = ev.level; r.levelSince = t; r.reason = ev.reason;
-        onTransition(r, prev, t);
-      } else { r.reason = ev.reason; }
+      // RAW level → JSONL (Iris feed): full fidelity, logged immediately on every transition.
+      if (ev.level !== r.level) { const prev = r.level; r.level = ev.level; r.levelSince = t; r.reason = ev.reason; logJsonl(r, prev, t); }
+      else { r.reason = ev.reason; }
+      // DISPLAY level → 5s hysteresis: a WORSE level must hold that long before it surfaces in the UI;
+      // recovery (improvement) surfaces immediately. Kills the sub-5s GREEN↔YELLOW flapping in the UI
+      // while the JSONL keeps every raw transition.
+      const rawRank = RANK[r.level], dispRank = RANK[r.displayLevel];
+      if (rawRank <= dispRank) {
+        r.worseSince = 0;
+        if (r.displayLevel !== r.level) { const prevD = r.displayLevel; r.displayLevel = r.level; pushRecent(r, prevD, t); }
+      } else {
+        if (!r.worseSince) r.worseSince = t;
+        if (t - r.worseSince >= DISPLAY_HYSTERESIS_MS) { const prevD = r.displayLevel; r.displayLevel = r.level; r.worseSince = 0; pushRecent(r, prevD, t); }
+      }
     }
     broadcastSnapshot(t);
   }
 
-  function onTransition(r, prevLevel, t) {
-    const metrics = {
-      framesPerSec: Math.round(r.framesPerSec), peak: +(+r.peak).toFixed(3), activeDecks: r.activeDecks,
+  function _metrics(r) {
+    return { framesPerSec: Math.round(r.framesPerSec), peak: +(+r.peak).toFixed(3), activeDecks: r.activeDecks,
       queueDepth: r.queueDepth, nextDeckReady: r.nextDeckReady, trackLeftSec: r.trackLeftMs != null ? Math.round(r.trackLeftMs/1000) : null,
-      enginestate: r.enginestate, streaming: r.streaming, drainBps: r.drainBps, pingMs: lastPingMs, enginePid,
-    };
-    const ev = { ts: iso(t), stationUuid: r.uuid, stationName: r.name, level: r.level, prevLevel, reason: r.reason, metrics };
-    // Iris feed: append JSONL (guarded — a logging failure must never affect anything)
+      enginestate: r.enginestate, streaming: r.streaming, drainBps: r.drainBps, pingMs: lastPingMs, enginePid };
+  }
+  // JSONL (Iris feed) — RAW transition, full fidelity.
+  function logJsonl(r, prevLevel, t) {
+    const ev = { ts: iso(t), stationUuid: r.uuid, stationName: r.name, level: r.level, prevLevel, reason: r.reason, metrics: _metrics(r) };
     try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
-    // in-memory ring for the live event feed (YELLOW/RED transitions, newest first)
-    if (r.level === "YELLOW" || r.level === "RED") { recentEvents.unshift(ev); if (recentEvents.length > MAX_RECENT) recentEvents.length = MAX_RECENT; }
+  }
+  // UI event ring — DEBOUNCED (display) transition, so the on-screen feed doesn't flap on sub-5s blips.
+  function pushRecent(r, prevLevel, t) {
+    if (r.displayLevel !== "YELLOW" && r.displayLevel !== "RED") return;
+    const ev = { ts: iso(t), stationUuid: r.uuid, stationName: r.name, level: r.displayLevel, prevLevel, reason: r.reason, metrics: _metrics(r) };
+    recentEvents.unshift(ev); if (recentEvents.length > MAX_RECENT) recentEvents.length = MAX_RECENT;
   }
 
   function snapshot(t = nowMs()) {
     let mode = "daemon"; try { mode = modeProvider() || "daemon"; } catch {}
+    let startedAt = null; try { startedAt = engineStartedAtProvider(); } catch {}   // v4.4.51: prefer the daemon's reported start
+    if (!startedAt) startedAt = engineStartedAt;
     return {
       ts: iso(t),
       mode,   // v4.4.50: "daemon" | "in-process" — the Health Monitor shows a RED banner when in-process
-      engine: { pid: enginePid, uptimeSec: engineStartedAt ? Math.round((t - engineStartedAt)/1000) : null, restartCount, pingMs: lastPingMs },
+      engine: { pid: enginePid, uptimeSec: startedAt ? Math.round((t - startedAt)/1000) : null, restartCount, pingMs: lastPingMs },
       stations: [...stations.values()].map(r => ({
-        uuid: r.uuid, stationId: r.stationId, name: r.name, level: r.level, reason: r.level === "GREEN" ? "" : r.reason,
+        uuid: r.uuid, stationId: r.stationId, name: r.name, level: r.displayLevel, reason: r.displayLevel === "GREEN" ? "" : r.reason,
         framesPerSec: Math.round(r.framesPerSec), peak: +(+r.peak).toFixed(3), activeDecks: r.activeDecks,
         queueDepth: r.queueDepth, nextDeckReady: r.nextDeckReady, track: r.track,
         trackLeftSec: r.trackLeftMs != null ? Math.round(r.trackLeftMs/1000) : null,

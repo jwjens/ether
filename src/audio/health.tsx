@@ -97,8 +97,8 @@ export function HealthModeBanner({ mode, compact }: { mode?: string; compact?: b
       <HealthStyles />
       <HealthDot level="RED" />
       {compact
-        ? "IN-PROCESS FALLBACK — daemon not attached"
-        : "⚠ PLAYOUT ON IN-PROCESS FALLBACK — daemon not attached; only the active station is airing. Relaunch to restore daemon mode."}
+        ? "IN-PROCESS FALLBACK — metering active station only"
+        : "⚠ IN-PROCESS FALLBACK — daemon not attached. All stations are still airing; the Health Monitor meters only the active station. Relaunch to restore daemon telemetry."}
     </div>
   );
 }
