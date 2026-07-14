@@ -8,6 +8,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
 import MasterEQRack from "./MasterEQRack";
+import { useAudioHealth, HealthDot, HealthStyles, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -525,6 +526,10 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   const [showProgressOpen, setShowProgressOpen] = useState<boolean>(() => {
     try { return localStorage.getItem("ether_show_progress_collapsed") !== "1"; } catch { return true; }
   });
+  const [healthOpen, setHealthOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem("ether_health_mini_collapsed") !== "1"; } catch { return true; }
+  });
+  const healthSnap = useAudioHealth();   // MINI Health Monitor feed (shared with the full page)
   const [nextBreak,  setNextBreak]  = useState("—");
   const [onAir,      setOnAir]      = useState(false);
   const [uptime,     setUptime]     = useState("0:00");
@@ -652,6 +657,9 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   useEffect(() => {
     try { localStorage.setItem("ether_show_progress_collapsed", showProgressOpen ? "0" : "1"); } catch {}
   }, [showProgressOpen]);
+  useEffect(() => {
+    try { localStorage.setItem("ether_health_mini_collapsed", healthOpen ? "0" : "1"); } catch {}
+  }, [healthOpen]);
 
   // Query next show boundary
   useEffect(() => {
@@ -957,6 +965,34 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
                 ) : (
                   <div style={{ fontSize: 13, color: "var(--text-tertiary)", fontStyle: "italic" }}>No active show</div>
                 )}
+              </div>
+            )}
+          </div>
+
+          {/* HEALTH MONITOR (mini) — live per-station health, directly under Show Progress */}
+          <div style={{ flexShrink: 0 }}>
+            <HealthStyles />
+            <div onClick={() => setHealthOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", cursor: "pointer" }}>
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" style={{ transform: healthOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", color: "var(--text-tertiary)" }}>
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+              <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--text-secondary)" }}>Health Monitor</span>
+            </div>
+            {healthOpen && (
+              <div style={{ padding: "4px 12px 8px" }}>
+                {(healthSnap?.stations || []).length === 0 && (
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>waiting for health feed…</div>
+                )}
+                {(healthSnap?.stations || []).map(s => (
+                  <div key={s.uuid} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", fontSize: 12 }}>
+                    <HealthDot level={s.level} />
+                    <span style={{ minWidth: 90, color: "var(--text-primary)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name || `Station ${s.stationId}`}</span>
+                    <span style={{ color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{rateLabel(s.framesPerSec)} {peakLabel(s.peak)}</span>
+                    {s.level !== "GREEN" && s.reason && (
+                      <span style={{ marginLeft: "auto", color: LEVEL_COLOR[s.level], fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 130 }}>{s.reason}</span>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>

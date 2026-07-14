@@ -1,4 +1,4 @@
-// haRollup.ts — pure HA rollup-status derivation for the System Health panel and
+// haRollup.ts — pure HA rollup-status derivation for the Health Monitor panel and
 // the footer dot. Kept free of React/electron imports so it can be unit-tested in
 // isolation (see haRollup.test.ts). Mirrors the ha:dashboard IPC payload shape
 // built in electron/main.js (buildHealthSnapshot + the ha control-plane block).

@@ -431,6 +431,55 @@ function _stationUuidById(id) {
 }
 
 if (AUDIO_DAEMON_DESIRED) {
+  // ── Health Monitor (display + event-logging ONLY; pure consumer of existing signals) ──────────
+  // One source of truth. Reads the daemon event stream below + a read-only ping RTT; never mutates
+  // audio state, never triggers recovery. Two display-only signals the daemon emits only to its log
+  // (per-station drain B/s, daemon pid) are read from a cheap tail of ether-audiod.log.
+  const { createHealthMonitor } = require("./audio-health");
+  const _healthLogDir = path.join(app.getPath("userData"), "logs");
+  const _healthDaemonLog = path.join(_healthLogDir, "ether-audiod.log");
+  let _healthTail = { at: 0, drain: {}, pid: null };
+  function _healthReadTail() {
+    const now = Date.now();
+    if (now - _healthTail.at < 900) return _healthTail;
+    try {
+      const st = fs.statSync(_healthDaemonLog); const start = Math.max(0, st.size - 65536);
+      const fd = fs.openSync(_healthDaemonLog, "r"); const buf = Buffer.alloc(st.size - start);
+      fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd);
+      const text = buf.toString("utf8"); const drain = {}; let pid = _healthTail.pid;
+      let m2; const dre = /Station (\d+) drain: real=([\d.]+)/g;
+      while ((m2 = dre.exec(text))) drain[m2[1]] = Math.round(parseFloat(m2[2]));
+      const pids = text.match(/sink open .*\(pid (\d+)/g);
+      if (pids && pids.length) { const pm = /\(pid (\d+)/.exec(pids[pids.length - 1]); if (pm) pid = parseInt(pm[1], 10); }
+      _healthTail = { at: now, drain, pid };
+    } catch {}
+    return _healthTail;
+  }
+  const _healthPing = async () => {
+    const t0 = Date.now();
+    try { await Promise.race([ audiodClient.cmd("ping"), new Promise((_, rej) => setTimeout(() => rej(new Error("t")), 2000)) ]); return Date.now() - t0; }
+    catch { return null; }
+  };
+  const _healthNameCache = new Map();
+  const _healthStationName = (id) => {
+    if (_healthNameCache.has(id)) return _healthNameCache.get(id);
+    let n = "";
+    try { n = getDb().prepare("SELECT name FROM stations WHERE id = ?").get(id)?.name || ""; } catch {}
+    if (n) _healthNameCache.set(id, n);
+    return n;
+  };
+  const _health = createHealthMonitor({
+    logDir: _healthLogDir,
+    broadcast: sendToAllWindows,
+    ping: _healthPing,
+    drainRate: (id) => { const d = _healthReadTail().drain[String(id)]; return typeof d === "number" ? d : null; },
+    enginePidProvider: () => _healthReadTail().pid,
+    uuidOf: _stationUuidById,
+    stationName: _healthStationName,
+  });
+  _health.start();
+  try { ipcMain.handle("health:snapshot", () => { try { return _health.getSnapshot(); } catch { return null; } }); } catch {}
+
   audiodClient.setEventHandler((m) => {
     try {
       if (m.event === "levels") {
@@ -441,20 +490,25 @@ if (AUDIO_DAEMON_DESIRED) {
         // fresh; a wedged station (deck claims playing, output silent) stops updating its own clock
         // because its cpal callback stopped firing → its levels freeze at ~0 while siblings stay fresh.
         if (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01) _noteStationAudio(m.stationId);
+        try { _health.noteLevels(m.stationId, m); } catch {}
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
         sendToAllWindows("audio:daemon-deck", { stationId: m.stationId, deck: m.deck, state: m.state, ready: m.ready });
+        try { _health.noteDeck(m.stationId, m.deck, m.ready, m.state); } catch {}
       } else if (m.event === "queue") {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
+        try { _health.noteQueue(m.stationId, m.items, m.source); } catch {}
       } else if (m.event === "enginestate") {
         // Honest engine-state truth layer (Slice 1): live | stalled | off from the daemon → renderer,
         // which folds it into the now-playing payload + silent keepalive so a stalled station reports
         // its real state instead of going quiet (→ "offline").
         sendToAllWindows("audio:daemon-enginestate", { stationId: m.stationId, state: m.state });
         _daemonEngineState.set(m.stationId, m.state);   // corroborates the silent-wedge watchdog reload-reason log
+        try { _health.noteEngineState(m.stationId, m.state); } catch {}
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
+        try { _health.notePlayStart(m.stationId, m.title, m.artist); } catch {}
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
         // just ended). The no-audio timer covers wedged/idle daemons that never reach here.
         if (_daemonReloadArmed) fireDaemonReload("song boundary");
@@ -470,6 +524,8 @@ if (AUDIO_DAEMON_DESIRED) {
         sendToAllWindows("stream:status:global", { anyLive: liveCount > 0, liveCount });
         _persistOnAir(liveCount > 0);
         sseAirstate(liveCount > 0, liveCount);
+      } else if (m.event === "error" && m.where === "play-skip") {
+        try { _health.notePlaySkip(m.stationId); } catch {}
       }
     } catch {}
   });

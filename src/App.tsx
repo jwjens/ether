@@ -2959,7 +2959,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
               } catch { window.open(`${ETHER_BACKEND_URL}/dashboard`, "_blank"); }
             }} />
           : <Item label="🔒 Remote Dashboard"  onClick={() => window.dispatchEvent(new CustomEvent("ether:open-subscription"))} />}
-        <Item label="System Health"        onClick={() => set("health")} />
+        <Item label="Health Monitor"       onClick={() => set("health")} />
       </Menu>
     ),
     help: (

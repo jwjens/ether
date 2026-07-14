@@ -4,6 +4,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 import { deriveHaRollup, type HaDashboard, type HaRollupLevel } from "../lib/haRollup";
 import { PopoutBtn } from "./PopoutShell";
+import { LiveHealthMonitor } from "../audio/health";
 
 // ═══════════════════════════════════════════════════════════════
 // 1. ERROR BOUNDARY
@@ -378,7 +379,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-green)", boxShadow: "0 0 8px var(--accent-green)" }} />
             <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "-0.03em", color: "var(--text-primary)" }}>
-              System Health
+              Health Monitor
             </h2>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -387,11 +388,19 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--text-tertiary)" }}>
-          Session uptime: {uptimeStr} · Health auto-refreshes every 5 seconds
+          Session uptime: {uptimeStr} · Live per-station health updates every second
         </p>
       </div>
 
       <div style={{ flex: 1, overflowY: "auto" as const, padding: "0 32px" }}>
+        {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
+        <LiveHealthMonitor />
+
+        {/* ── Legacy diagnostics — slow-refresh session/HA panels; may be stale ── */}
+        <div style={{ paddingTop: 18, marginTop: 12, borderTop: "2px solid var(--border-primary)" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 2 }}>Legacy diagnostics — may be stale</div>
+          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, fontStyle: "italic" }}>The live per-station signal above is authoritative. These older session/HA panels refresh slowly and can lag reality.</div>
+        </div>
         {/* HA rollup banner */}
         <HaRollupBanner dash={dash} />
 
@@ -591,7 +600,7 @@ export function HealthStatusDot({ onClick, compact = false, height }: { onClick:
   return (
     <button
       onClick={onClick}
-      title={`System Health: ${label}`}
+      title={`Health Monitor: ${label}`}
       style={{
         display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
         background: "none", border: "none", cursor: "pointer",

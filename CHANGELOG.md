@@ -1,3 +1,22 @@
+## [4.4.49] — 2026-07-13
+
+### Added — Health Monitor (live audio-health system; display + event-logging only)
+
+- **One source of truth for per-station audio health**, computed in the main process every second
+  from the signals it already receives (the v4.4.46 `frames_total`/per-deck telemetry, enginestate,
+  deck/queue events, a read-only ping, and a read-only tail of the daemon log for drain B/s + pid).
+  Four states: GREEN / YELLOW (early warning) / RED / GREY, per the agreed thresholds.
+- **Every level transition is appended as a structured event** to `logs/health-events.jsonl`
+  ({ts, stationUuid, level, prevLevel, reason, metrics}) — the sensory feed for Iris.
+- **Three surfaces, one feed:** a MINI collapsible in the right panel under Show Progress
+  (dot + name + "231k/s pk .61" + reason); the **Health Monitor** page under Tools, now **live and
+  updating every second** (per-station frames/peak meters, queue depth, next-deck-ready, current
+  track + time remaining, streaming + drain B/s; engine uptime/restarts/ping; rolling last-20
+  YELLOW/RED event feed) with the old static panels relabeled "Legacy diagnostics — may be stale."
+- Renamed **"System Health" → "Health Monitor"** everywhere (page, popout, Tools menu).
+- Display + event-logging only: no watchdog/recovery/playout/native/daemon changes; strictly
+  main→renderer; identity by station UUID. See `docs/audio-health-build-2026-07-13.md`.
+
 ## [4.4.48] — 2026-07-13
 
 ### Fixed — Bug A: source-wipe race caused silent dead air at song rotation
