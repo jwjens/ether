@@ -1,4 +1,23 @@
-## [4.4.52] — 2026-07-14
+## [4.4.53] — 2026-07-14
+
+### Changed — categories/programming mirror moved onto the proven rails
+
+- **Desktop→web CC push now fires on edit + a 60s refresh.** The license-keyed `pushCcTable` →
+  `POST /api/account/data/sync` → `station_cc_data` push (the same rail as the now-playing heartbeat /
+  library snapshot, read by the dashboard's `/data`) previously only ran on station/user switch, so
+  dashboard categories/programming went stale (backend 9 vs install 11). It now re-fires immediately
+  after every CC-table `db:apply` (`execCmd`) and on a light 60s interval.
+- Pairs with the dashboard change (`ether-dashboard`) routing category/programming edits over the live
+  command bus (`db:apply` create/update/delete via `/api/cmd` → SSE) instead of the staged pipeline.
+
+### Deprecated
+
+- The **staged pipeline** (`importStagedProgramming`, `/api/account/station/:uuid/staged*`) and the
+  `sync_enabled` mutation push are **deprecated for categories / programming / clocks**. The staged pull
+  forced `op:"create"` (updates/renames no-op'd, rows marked-imported unapplied → silent loss). Left in
+  place, not flipped; superseded by command-bus (web→desktop) + license-keyed CC push (desktop→web).
+
+
 
 ### Fixed — stale-alert lifecycle (item 1)
 

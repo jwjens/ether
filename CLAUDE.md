@@ -109,3 +109,28 @@ identity or station identity. Don't conflate "user login / profile select" with
 
 - **Fresh-install crash (addressed v4.3.81):** app opened the SQLite DB without creating the `com.ether.radio` parent folder → SQLITE_CANTOPEN on a clean machine. Fix: `mkdir` recursive before open in both the main app and `ether-audiod.js`; engine now resolves the DB path the same way the main app does.
 - **Fresh install shows UserLogin instead of account sign-in (OPEN / IN PROGRESS):** on a no-account install the app renders the profile-select (UserLogin) screen instead of account sign-in. This violates the account-is-the-root rule above. The account session must be the unconditional gate for the entire app — until a valid account session exists, the ONLY renderable screen is account sign-in. A v4.3.80 station-scoping change (get-active returns null with no account) contributed to a routing hang. The real fix is structural: account session gates everything; profile-select lives behind it.
+
+---
+
+## Project map (permanent ground truth — verified 2026-07-14)
+
+Local dir → what it is → deploy target → domain. **Web UIs deploy via `wrangler`; the desktop app releases via GitHub Actions (`.github/workflows/build.yml` publishes installers on push).** Do not confuse these repos — each is a separate tree.
+
+- `C:\openair` → **EtherCast desktop app** — repo `github.com/jwjens/ether`. Releases: GitHub Actions `build.yml` (installers on push).
+- `C:\ether-dashboard` → **web control UI "Ether Control Center"** — repo `jwjens/ether-dashboard` → wrangler Pages project **`ether-dashboard`** → **app.ether-technologies.com**.
+- `C:\ether-cast` → **listener PWA** ("Ethercast"; not a git repo) → wrangler Pages project **`ether-cast`** (deploy: `C:\openair\ec-deploy.sh` = `wrangler pages deploy . --project-name ether-cast`).
+- `C:\ether-listener` → **listen.ether-technologies.com** — repo `jwjens/ether-listener` ("Ether Radio").
+- **Backend:** Railway (`ether-backend-production.up.railway.app`) — **stays, no migration.**
+
+> Caveat (cast vs listener domain): the only *local* reference to `listen.ether-technologies.com` is in `C:\ether-cast`'s `index.html`; `C:\ether-listener` carries no domain marker in-tree. The `ether-listener → listen.*` mapping is per the operator / Cloudflare custom-domain config (authoritative). Confirm the cast/listener domain split against the Pages dashboard before relying on it.
+
+---
+
+## Categories/programming mirror — the rails (2026-07-14, v4.4.53)
+
+Categories / programming / clocks mirror between the dashboard and the install over **two proven, license-keyed / command-bus channels** — NOT the staged pipeline or `sync_enabled`:
+
+- **Web→desktop (edits):** dashboard `CategoriesPanel`/`ProgrammingPanel` run in **live mode** (`staged={false}`, `ether-dashboard StationDetail.tsx`) → `db:apply` create/update/delete over `POST /api/cmd` → SSE `/api/cmd-stream` → install `execCmd` → `applyDbMutation`.
+- **Desktop→web (display):** install `pushCcTable` → `POST /api/account/data/sync` (**`x-license-key`**) → `station_cc_data`, read by the dashboard's `/data`. Fires on every CC `db:apply` + a 60s refresh (`App.tsx`).
+
+**DEPRECATED for these tables** (left in place, do not flip/fix): the **staged pipeline** (`importStagedProgramming`, `/api/account/station/:uuid/staged*`) and the **`sync_enabled`** mutation push. The staged pull forced `op:"create"` so updates/renames no-op'd and rows were marked-imported unapplied (silent loss). The `account_jwt`/`lk` token is unrelated to this mirror (it only gates the dashboard's account-scoped *reads*); routing the desktop sign-in through owner-login is a separate backlog item.

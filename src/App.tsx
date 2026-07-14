@@ -843,12 +843,19 @@ export default function App() {
   // apiKeyRef.current (same reliable source as the now-playing push), not the per-pass
   // license_key, which only exists under station 1's config. (Phase 2b read-path fix.)
   useEffect(() => {
-    if (firstRunChecked && apiKeyRef.current && stationUuid && currentUser) {
+    if (!(firstRunChecked && apiKeyRef.current && stationUuid && currentUser)) return;
+    const push = () => {
       for (const t of ["categories", "clocks", "clock_slots", "shows", "spots"]) {
         pushCcTable(apiKeyRef.current, stationUuid, stationId, t);
       }
       pushLibrary(apiKeyRef.current, stationUuid, stationId);
-    }
+    };
+    push();
+    // Light periodic refresh: keep the dashboard's license-keyed store (station_cc_data) current
+    // without the deprecated staged pipeline / sync_enabled push. Edits also push immediately on
+    // db:apply (see execCmd); this catches desktop-local edits between command-bus applies.
+    const id = setInterval(push, 60_000);
+    return () => clearInterval(id);
   }, [stationId, stationUuid, firstRunChecked, currentUser]);
 
   // Push play history for analytics (Phase 3a): catch up on boot, then every 3 min so
@@ -1188,6 +1195,17 @@ export default function App() {
           // ── License-scoped — install-wide, NEVER gated by station_uuid ──
           case "db:apply":
             await applyDbMutation(apiKeyRef.current, data);
+            // Leg 2: after a CC-table edit applies, reconcile it UP the license-keyed CC push
+            // (POST /api/account/data/sync -> station_cc_data), the same rail the dashboard reads —
+            // NOT the deprecated staged pipeline / sync_enabled mutation backlog. Best-effort; the
+            // 60s periodic refresh backstops it.
+            if (data?.table && ["categories", "clocks", "clock_slots", "shows", "spots"].includes(data.table) && data.station_uuid) {
+              try {
+                const ccStations = await query<{ id: number; uuid: string | null }>("SELECT id, uuid FROM stations");
+                const ccSid = ccStations.find(s => s.uuid === data.station_uuid)?.id;
+                if (ccSid != null) await pushCcTable(apiKeyRef.current, data.station_uuid, ccSid, data.table);
+              } catch { /* best-effort; periodic refresh will catch up */ }
+            }
             break;
           case "library:addSong":
             await addLibrarySong(apiKeyRef.current, data);
