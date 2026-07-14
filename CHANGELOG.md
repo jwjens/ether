@@ -1,3 +1,27 @@
+## [4.4.52] — 2026-07-14
+
+### Fixed — stale-alert lifecycle (item 1)
+
+- **Stream errors now clear on recovery.** The per-station stream-status cache (`App.tsx`) only recorded
+  failures ("sticky: kept until a newer error") and never cleared them, so a transient Icecast blip left
+  the web-remote "Auth failed (401)" / "Streaming failed…" banner stuck for hours. A confirmed-live
+  `stream:status` now nulls `lastError`/`lastErrorAt`.
+- **The stream supervisor no longer permanently disarms itself.** After 3 rapid ffmpeg restarts, both the
+  daemon (`audiod/stream.js`) and the in-process encoder (`electron/main.js`) used to set `armed=false`
+  and stop — so no "recovered" event could ever fire and the banner was immortal. They now surface the
+  error, stay armed, and retry on a 30 s cooldown so a transient outage self-heals (and clears the banner).
+- **HealthMonitor last-error TTL + auto-clear.** A persisted `last_error` older than 15 min (or older than
+  90 s once core subsystems are healthy again) is auto-removed instead of showing forever behind a manual
+  Dismiss — this also retires the stale `onSpeaking` TypeError left on the box.
+
+### Added — remote transport controls wired (item 4)
+
+- **Five remote commands now act instead of falling through to `default`:** `deck:cue`, `deck:crossfade`,
+  `queue:remove`, `queue:move`, `queue:clear`. They route daemon-direct to the target station over the
+  existing command path (SSE license-key auth → `execCmd` → `audio:daemon` → pipe → daemon), so they work
+  for a non-active station too. Daemon verbs and `STATION_SCOPED` routing already existed — no protocol
+  change; renderer wiring only.
+
 ## [4.4.51] — 2026-07-14
 
 ### Fixed / tuned — Health Monitor maintenance (5 items)

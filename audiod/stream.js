@@ -110,9 +110,15 @@ class StreamSupervisor {
       if (this.failureCount === 0) this.firstFailureTime = now;
       this.failureCount++;
       if (this.failureCount >= 3) {
-        this.armed = false; this.failureCount = 0; this.statusState = "error";
+        // Repeated rapid failures: surface the error but DON'T permanently disarm. Keep the supervisor
+        // armed and retry on a long cooldown so a transient Icecast outage self-heals — the next
+        // successful connect emits "live" (errorMsg=null), which clears the sticky banner. (Previously:
+        // armed=false + return → no recovery event could ever fire, so the banner stuck forever.)
+        this.failureCount = 0; this.firstFailureTime = 0; this.statusState = "error";
         this.errorMsg = "Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.";
-        this._emit(); return;
+        this._emit();
+        setTimeout(() => { if (this.armed) this._spawn(this.getPort()); }, 30000);
+        return;
       }
       this.statusState = "connecting"; this._emit();
       setTimeout(() => { if (this.armed) this._spawn(this.getPort()); }, 500);

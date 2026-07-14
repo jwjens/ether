@@ -6325,9 +6325,11 @@ function _spawnStream(stationId, args, label) {
     state.failureCount++;
 
     if (state.failureCount >= 3) {
-      console.error(`[stream/${stationId}] ffmpeg failed ${state.failureCount}x in 10s — giving up`);
-      state.armed        = false;
+      // Surface the error but DON'T permanently disarm (parity with audiod/stream.js): keep armed and
+      // retry on a long cooldown so a transient outage self-heals and a later "live" clears the banner.
+      console.error(`[stream/${stationId}] ffmpeg failed ${state.failureCount}x in 10s — cooling down 30s (still armed)`);
       state.failureCount = 0;
+      state.firstFailureTime = 0;
       state.statusState  = 'error';
       state.errorMsg     = 'Streaming failed after repeated ffmpeg restarts. Check Icecast server URL and credentials.';
       _emitDestStatus(`icecast:${stationId}`, state);
@@ -6335,6 +6337,9 @@ function _spawnStream(stationId, args, label) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('stream:status', { stationId, live: false, error: state.errorMsg });
       }
+      setTimeout(() => {
+        if (state.armed) _spawnStream(stationId, args, label);
+      }, 30000);
       return;
     }
 

@@ -1155,6 +1155,36 @@ export default function App() {
             break;
           }
 
+          // ── Explicit-intent transport (Stage 2 wiring) — daemon-direct to the TARGET station, so they
+          //    work for a non-active station too (unlike deck:load/queue:enqueue, which need the renderer's
+          //    queue state). Daemon verbs are tolerant: a stale/unknown intent is a quiet no-op. Routing
+          //    entries already declared in cmd-routing.ts STATION_SCOPED. ──
+          case "deck:cue": {
+            const deck = String((data as any).deck || "").toUpperCase();
+            if (!["A", "B", "C"].includes(deck)) break;
+            const songRef = (data as any).songRef ?? (data as any).song_ref ??
+              (((data as any).song_id != null || (data as any).file_key != null)
+                ? { songId: (data as any).song_id, fileKey: (data as any).file_key } : {});
+            if (useDaemon) await dcmd("deck:cue", { deck, songRef });
+            else console.log("[RemoteCmd] deck:cue needs the daemon — skipped (in-process)");
+            break;
+          }
+          case "deck:crossfade":
+            if (useDaemon) await dcmd("deck:crossfade", { from: String((data as any).from || "A").toUpperCase(), to: String((data as any).to || "B").toUpperCase() });
+            else console.log("[RemoteCmd] deck:crossfade needs the daemon — skipped (in-process)");
+            break;
+          case "queue:remove":
+            if ((data as any).qid == null) break;
+            if (useDaemon) await dcmd("queue:remove", { qid: String((data as any).qid) });
+            break;
+          case "queue:move":
+            if ((data as any).qid == null) break;
+            if (useDaemon) await dcmd("queue:move", { qid: String((data as any).qid), where: (data as any).where ?? (data as any).toIndex ?? (data as any).to_index });
+            break;
+          case "queue:clear":
+            if (useDaemon) await dcmd("queue:clear");
+            break;
+
           // ── License-scoped — install-wide, NEVER gated by station_uuid ──
           case "db:apply":
             await applyDbMutation(apiKeyRef.current, data);
@@ -1858,7 +1888,11 @@ export default function App() {
       if (!s || s.stationId == null) return;
       const cur = streamStatusRef.current.get(s.stationId) || { live: false, lastError: null, lastErrorAt: null };
       const next = { ...cur, live: !!s.live };
-      if (s.error) { next.lastError = String(s.error); next.lastErrorAt = Date.now(); } // sticky: kept until a newer error
+      if (s.error) {
+        next.lastError = String(s.error); next.lastErrorAt = Date.now();   // record the newest failure
+      } else if (s.live) {
+        next.lastError = null; next.lastErrorAt = null;                    // clear-on-recovery: a confirmed-live status retires the sticky error so the web-remote banner can't outlive the condition
+      }
       streamStatusRef.current.set(s.stationId, next);
     });
     return () => { try { ether.off?.("stream:status", h); } catch { /* ignore */ } };

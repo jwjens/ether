@@ -306,8 +306,17 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       if (lastErrorRow) {
         try {
           const parsed = JSON.parse(lastErrorRow.value);
-          const minsAgo = Math.round((Date.now() - parsed.time) / 60000);
-          errorMsg = `${parsed.message} (${minsAgo}m ago)`;
+          const ageMs = Date.now() - (parsed.time || 0);
+          const STALE_TTL_MS = 15 * 60_000;    // stale-alert lifecycle: retire any last_error older than 15m…
+          const RECOVERED_GRACE_MS = 90_000;   // …or, once core subsystems are healthy again, one older than 90s
+          const recovered = engineOk && !!dbTest;
+          if (ageMs > STALE_TTL_MS || (recovered && ageMs > RECOVERED_GRACE_MS)) {
+            // Auto-clear (no manual Dismiss needed) — covers the sticky "onSpeaking" TypeError and any
+            // error left behind after its condition recovered.
+            try { await (window as any).ether.stationConfigKv.removeByKey(stationId, 'last_error'); } catch {}
+          } else {
+            errorMsg = `${parsed.message} (${Math.round(ageMs / 60000)}m ago)`;
+          }
         } catch {}
       }
 
