@@ -13,7 +13,7 @@ export interface HealthStation {
   queueDepth: number | null; nextDeckReady: boolean;
   track: string | null; trackLeftSec: number | null;
   streaming: boolean; drainBps: number | null; enginestate: string; levelSince: string;
-  jingle?: { state: string; title: string | null; categoryId: number | null; since: number } | null;   // JINGLES v1
+  jingle?: { state: string; title: string | null; categoryId: number | null; contentClass?: string | null; since: number } | null;   // JINGLES v1/v2
 }
 export interface HealthEvent { ts: string; stationUuid: string; stationName?: string; level: HealthLevel; prevLevel: HealthLevel; reason: string; metrics?: any; }
 export interface HealthSnapshot {
@@ -156,12 +156,12 @@ export function LiveHealthMonitor() {
             <div style={{ overflow: "hidden" }}>
               <div style={{ fontSize: 12, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.track || "—"}
                 {s.jingle && (
-                  <span title={s.jingle.title || "jingle"} style={{
+                  <span title={s.jingle.title || "overlay"} style={{
                     marginLeft: 6, padding: "0 5px", borderRadius: 3, fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
                     color: s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff",
                     border: `1px solid ${s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff"}`,
                     background: s.jingle.state === "FIRING" ? "rgba(255,233,59,0.16)" : "rgba(255,255,255,0.12)",
-                  }}>{s.jingle.state === "FIRING" ? "JIN ▶" : "JIN ◈"}</span>
+                  }}>{`${s.jingle.contentClass === "SWP" ? "SWP" : "JIN"} ${s.jingle.state === "FIRING" ? "▶" : "◈"}`}</span>
                 )}
               </div>
               <div style={cell}>{s.trackLeftSec != null ? `-${fmtLeft(s.trackLeftSec)}` : ""} {s.nextDeckReady ? <span style={{ color: LEVEL_COLOR.GREEN }}>· next ✓</span> : <span style={{ color: "var(--text-tertiary)" }}>· next …</span>}</div>

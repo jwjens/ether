@@ -548,7 +548,7 @@ if (AUDIO_DAEMON_DESIRED) {
       } else if (m.event === "jingle") {
         // JINGLES overlay v1: daemon ARMED/FIRING/ARMED_CANCELLED/CLEARED → renderer (deck indicators +
         // seam chip) + the Health Monitor (jingle cell + ledger event). Observed states only.
-        sendToAllWindows("audio:daemon-jingle", { stationId: m.stationId, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, leadInSec: m.leadInSec, underlapSec: m.underlapSec, ts: m.ts });
+        sendToAllWindows("audio:daemon-jingle", { stationId: m.stationId, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, contentClass: m.contentClass, leadInSec: m.leadInSec, underlapSec: m.underlapSec, ts: m.ts });
         try { _health.noteJingle(m.stationId, m); } catch {}
       }
     } catch {}
@@ -5788,74 +5788,92 @@ function _lrpFallback(candidates, usedSongIds, songLastTs) {
   return pool.reduce((a, b) => (lrp(b) < lrp(a) ? b : a));
 }
 
-// JINGLES overlay v1 (D1=A′ — SELECTION lives in the ONE scheduler; scheduler-rework #4 / ether-v2 §26).
-// AFTER the music/spot rows are laid down, place transition-attached JIN rows at music→music seams per
-// each jingle category's cadence, selecting the least-recently-played jingle from that category
-// (station-scoped play_log LRP). A JIN row carries content_class='JIN' + channel='CART' + lead_in/underlap
-// (snapshot of the category) + jingle_category_id; its scheduled_at is the seam (the incoming music row's
-// start). It references the jingle via song_id and holds NO deck. The daemon only READS these placements
-// and orchestrates the real-time overlay fire — no in-daemon jingle selection ("two schedulers" forbidden).
-// Fail-safe: no jingle_categories table (pre-v30) or no assigned JIN songs → no placements, byte-identical
-// prior behavior. Never throws into Generate.
+// JINGLES/SWEEPERS v2 (D1=A′ — SELECTION lives in the ONE scheduler; scheduler-rework #4 / ether-v2 §26).
+// v2 supersedes v1 cadence with per-MUSIC-CATEGORY ASSIGNMENT: each music category names EITHER a specific
+// overlay item OR a rotating pool, with its own lead-in/underlap + active hours. This runs AFTER the
+// music/spot rows are laid down. v2 is LEADING imaging — the overlay introduces the song being placed, so
+// the assignment is keyed on the INCOMING song's category and the placement's scheduled_at is that song's
+// seam (unchanged placement-row shape). A placement carries content_class ('JIN'|'SWP') + channel='CART' +
+// lead_in/underlap + jingle_category_id (the pool, or null for a specific item) + song_id. The daemon only
+// READS these — no in-daemon selection. Fail-safe: pre-v32 DB / no assignment + no fallback → no placement
+// (a clean dead segue is a deliberate programming choice, NEVER an error). Never throws into Generate.
 function _placeJingles(db, stationId, rows) {
-  if (!rows || rows.length < 2) return;
-  let cats;
+  if (!rows || !rows.length) return;
+  // Station-level generic fallback pool for unassigned categories (optional). None set → clean dead segue.
+  let fallbackCatId = null;
   try {
-    cats = db.prepare(
-      `SELECT id, name, color, lead_in_sec, underlap_sec, cadence_every_n, sort_order
-         FROM jingle_categories
-        WHERE station_id = ? AND deleted_at IS NULL AND COALESCE(cadence_every_n, 0) > 0
-        ORDER BY sort_order, id`).all(stationId);
-  } catch { return; }                       // pre-v30 DB / no table → no jingles, unchanged behavior
-  if (!cats.length) return;
-  let stmtJin;
+    const fb = db.prepare("SELECT value FROM station_config_kv WHERE key='overlay_fallback_category_id' AND station_id = ? AND deleted_at IS NULL").get(stationId);
+    if (fb && fb.value) fallbackCatId = parseInt(fb.value, 10) || null;
+  } catch {}
+  // Prepared reads (defensive — a pre-v32 DB lacks the overlay columns → skip, byte-identical prior behavior).
+  let stmtAssign, stmtItem, stmtPoolType, stmtPool;
   try {
-    stmtJin = db.prepare(
-      `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms
-         FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-        WHERE s.content_class = 'JIN' AND s.jingle_category_id = ? AND s.file_path IS NOT NULL
-          AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-        ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
-                 WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, s.id ASC`);
+    stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_underlap_sec, overlay_active_hours FROM categories WHERE id = ?");
+    stmtItem = db.prepare("SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('JIN','SWP')");
+    stmtPoolType = db.prepare("SELECT type FROM jingle_categories WHERE id = ? AND deleted_at IS NULL");
+    stmtPool = db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class
+       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+      WHERE s.jingle_category_id = ? AND s.content_class = ? AND s.file_path IS NOT NULL
+        AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+      ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
+               WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, s.id ASC`);
   } catch { return; }
-  // Music sequence in schedule order (spots/other rows don't take a jingle seam in v1).
   const music = rows.filter(r => (r.content_class || 'MUSIC') === 'MUSIC' && r.song_id)
                     .slice().sort((a, b) => a.scheduled_at - b.scheduled_at);
-  if (music.length < 2) return;
-  const counters = new Map();               // categoryId → transitions counted toward its cadence
-  const usedByCat = new Map();              // categoryId → Set of jingle ids used this run (LRP anti-repeat)
+  if (!music.length) return;
+  const usedByPool = new Map();            // poolId → Set of overlay-song ids used this run (LRP anti-repeat)
+  const DEFAULTS = { JIN: { lead: 5, under: 2 }, SWP: { lead: 2, under: 1 } };
+  const resolvePool = (poolId) => {
+    let type = 'JIN'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
+    let cands; try { cands = stmtPool.all(poolId, type, stationId); } catch { cands = []; }
+    if (!cands.length) return null;
+    let used = usedByPool.get(poolId); if (!used) { used = new Set(); usedByPool.set(poolId, used); }
+    let pick = cands.find(x => !used.has(x.id));
+    if (!pick) { used.clear(); pick = cands[0]; }   // rotated through the pool → start over
+    used.add(pick.id);
+    return pick;
+  };
   const jinRows = [];
   try {
-    for (let i = 0; i < music.length - 1; i++) {
-      let fired = null;
-      for (const c of cats) {
-        const n = (counters.get(c.id) || 0) + 1; counters.set(c.id, n);
-        if (fired) continue;                             // one jingle per seam
-        const cadence = c.cadence_every_n || 4;
-        if (n % cadence !== 0) continue;                 // not due at this seam
-        let cands; try { cands = stmtJin.all(c.id, stationId); } catch { cands = []; }
-        if (!cands.length) continue;
-        let used = usedByCat.get(c.id); if (!used) { used = new Set(); usedByCat.set(c.id, used); }
-        let pick = cands.find(x => !used.has(x.id));
-        if (!pick) { used.clear(); pick = cands[0]; }    // rotated through → start over
-        used.add(pick.id);
-        fired = { cat: c, pick };
+    for (const incoming of music) {
+      const catId = incoming.category_id;
+      if (catId == null) continue;
+      let a = null; try { a = stmtAssign.get(catId); } catch {}
+      let kind = a && a.overlay_kind ? a.overlay_kind : null;
+      let poolId = a ? a.overlay_category_id : null;
+      const itemId = a ? a.overlay_song_id : null;
+      let leadOverride = a ? a.overlay_lead_in_sec : null;
+      let underOverride = a ? a.overlay_underlap_sec : null;
+      let activeHours = (a && a.overlay_active_hours != null) ? a.overlay_active_hours : 16777215;
+      // Unassigned → station fallback pool (no hours gate), else a clean dead segue (deliberate, not an error).
+      if (!kind) {
+        if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; underOverride = null; activeHours = 16777215; }
+        else continue;
       }
-      if (!fired) continue;
-      const incoming = music[i + 1];                     // the JIN bridges the seam INTO this row
-      const { cat, pick } = fired;
+      // Active-hours gate — the seam's LOCAL hour must be enabled (keeps imaging out of hours it shouldn't be in).
+      const seamHour = new Date(incoming.scheduled_at * 1000).getHours();
+      if (((activeHours >> seamHour) & 1) !== 1) continue;
+      // Resolve the overlay item: a specific song, or LRP rotation within the assigned pool.
+      let pick = null;
+      if (kind === 'item' && itemId != null) { try { pick = stmtItem.get(itemId); } catch { pick = null; } }
+      else if (kind === 'pool' && poolId != null) { pick = resolvePool(poolId); }
+      if (!pick || !pick.file_path) continue;
+      const cls = pick.content_class === 'SWP' ? 'SWP' : 'JIN';
+      const def = DEFAULTS[cls];
       jinRows.push({
         scheduled_at: incoming.scheduled_at, song_id: pick.id,
         title: pick.title, artist: pick.artist_name || '',
         file_key: pick.file_path ? path.basename(pick.file_path) : '',
         duration_s: pick.duration_ms ? Math.round(pick.duration_ms / 1000) : 0,
         category_id: null, clock_id: incoming.clock_id ?? null,
-        content_class: 'JIN', channel: 'CART',
-        lead_in_sec: cat.lead_in_sec ?? 5, underlap_sec: cat.underlap_sec ?? 2, jingle_category_id: cat.id,
+        content_class: cls, channel: 'CART',
+        lead_in_sec: leadOverride != null ? leadOverride : def.lead,
+        underlap_sec: underOverride != null ? underOverride : def.under,
+        jingle_category_id: kind === 'pool' ? poolId : null,
       });
     }
-  } catch (e) { console.error('[schedule] jingle placement error (music unaffected):', e.message); return; }
-  if (jinRows.length) { rows.push(...jinRows); console.log(`[schedule] placed ${jinRows.length} jingle overlay(s) across ${music.length} music elements`); }
+  } catch (e) { console.error('[schedule] overlay placement error (music unaffected):', e.message); return; }
+  if (jinRows.length) { rows.push(...jinRows); console.log(`[schedule] placed ${jinRows.length} overlay(s) (jingles/sweepers) across ${music.length} music elements`); }
 }
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).

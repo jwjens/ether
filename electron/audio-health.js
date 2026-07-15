@@ -130,9 +130,9 @@ function createHealthMonitor(opts) {
       const t = nowMs(); const state = m && m.state;
       if (!state) return;
       if (state === "CLEARED" || state === "ARMED_CANCELLED") r.jingle = null;
-      else r.jingle = { state, title: (m.title || null), categoryId: (m.categoryId ?? null), since: t };
+      else r.jingle = { state, title: (m.title || null), categoryId: (m.categoryId ?? null), contentClass: (m.contentClass || "JIN"), since: t };
       const ev = { ts: iso(t), type: "jingle", stationUuid: r.uuid, stationName: r.name, state,
-        deck: (m.deck || null), title: (m.title || null), categoryId: (m.categoryId ?? null),
+        deck: (m.deck || null), title: (m.title || null), categoryId: (m.categoryId ?? null), contentClass: (m.contentClass || "JIN"),
         leadInSec: (m.leadInSec ?? null), underlapSec: (m.underlapSec ?? null) };
       try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
     } catch {}

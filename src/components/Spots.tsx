@@ -27,7 +27,7 @@ function titleFromFile(p: string) { return (p.split(/[\\/]/).pop() || p).replace
 // Class-color audit (jingles v1 D3): JIN uses the canonical teal token; commercial stays amber.
 const TYPE_COLORS: Record<string, string> = {
   promo: "var(--accent-blue)", psa: "#34d399", jingle: "#14e0c8",
-  liner: "#fb923c", sweeper: "#f472b6", commercial: "#fbbf24", imaging: "var(--accent-cyan)",
+  liner: "#fb923c", sweeper: "#4f46e5", commercial: "#fbbf24", imaging: "var(--accent-cyan)",
 };
 
 export default function Spots() {

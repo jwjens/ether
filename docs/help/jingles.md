@@ -1,72 +1,88 @@
 ---
 feature: jingles
-title: Jingles
-summary: Station IDs, stingers and sweepers that rotate on their own and fire as an overlay on the seam between songs.
-where: Settings → Programming → Jingles
-since: 4.4.55
+title: Jingles & Sweepers
+summary: Station IDs, stingers and sweepers that fire as an overlay on the seam between songs — assigned per music category.
+where: Settings → Programming → Jingles & Sweepers
+since: 4.4.57
 audience: operator
 tour: true
 ---
 
-# Jingles
+# Jingles & Sweepers
 
-> **Help corpus template.** This is the first entry in EtherCast's built-in help. Every feature ships with a
-> `docs/help/<feature>.md` written this way — plain language, step-by-step, no jargon — because the Iris tour
-> layer reads these verbatim to walk an operator through a feature. Keep the section order below.
+> **Help corpus template.** First entry in EtherCast's built-in help — plain language, step-by-step, no
+> jargon — the format the Iris tour layer reads verbatim. Every feature ships a `docs/help/<feature>.md`
+> written this way. Keep the section order below.
 
 ## What it is
 
-A **jingle** is a short piece of imaging — a station ID, stinger, sweeper, or "you're listening to…" drop.
-In EtherCast, jingles don't sit on a deck and they don't interrupt the music. They **rotate on their own**
-(least-recently-played, so the same one doesn't repeat too soon) and **fire as an overlay** right on the
-seam between two songs: the jingle rides over the tail of the outgoing song and the head of the incoming one.
-Nothing stops, nothing skips.
+**Jingles** and **sweepers** are short imaging — station IDs, stingers, "you're listening to…" drops. They
+don't sit on a deck and never interrupt the music: they **fire as an overlay** on the seam between two songs,
+riding over the tail of the outgoing song and the head of the incoming one. Nothing stops, nothing skips.
+(Jingle = teal, Sweeper = indigo — same idea, two labels for how you produce them.)
+
+The v2 model is **assignment by category**: you decide, per music category, whether songs in it get imaging —
+a **specific** cut ("always THIS ID on the Power Gold") or a **rotating pool** (variety, no burnout). Some
+categories get a jingle, some a sweeper, some nothing.
 
 ## When to use it
 
-Use jingles for anything you want to hear *between* songs on a regular cadence — top-of-set IDs, quick
-sweepers, seasonal drops. If it's a full commercial or a scheduled break, that's a **Spot**, not a jingle.
+Imaging between songs on a per-category basis. A full commercial or scheduled break is a **Spot**, not this.
 
-## Set it up (3 steps)
+## Set it up (Settings → Programming → Jingles & Sweepers)
 
-You'll find everything under **Settings → Programming → Jingles**. (On the live screen, the **JINGLES**
-fader also shows a **"Set up jingles →"** link when nothing is set up yet — click it to jump here.)
+The **JINGLES** fader on the live screen also shows **"Set up jingles →"** when nothing is set up — it jumps
+you here.
 
-1. **Create a pool.** A pool is a group of jingles that rotate together — for example "Station IDs". Type a
-   name and click **Add pool**.
-2. **Tag your jingles.** Go to the **Library**, right-click a sting/ID/sweeper, and choose
-   **"Mark as Jingle (JIN)"**. Every tagged jingle then shows up in the list at the bottom of the Jingles
-   page. Pick a **pool** for each one from the dropdown.
-3. **Set the cadence and timing** on the pool, then **Generate** your schedule (Calendar → Generate). That's
-   when jingles get placed onto the song seams. On air, they fire automatically.
+1. **Tag your imaging.** In the **Library**, right-click a cut and choose **"Mark as Jingle (JIN)"** or
+   **"Mark as Sweeper (SWP)"**. Tagged items appear in this panel.
+2. **Build pools (optional but recommended).** On the **JINGLES / SWEEPERS** tabs, add a pool (e.g. "Station
+   IDs") and drop several tagged cuts into it. A pool **rotates least-recently-played**, so the same cut
+   doesn't repeat too soon — that's your burnout protection. Give each pool a **lead-in** and **underlap**.
+3. **Assign per category — the core.** In **Category assignments**, each music category has an **Overlay**
+   dropdown: pick **None**, a **specific** jingle/sweeper, or a **pool**. Set **Active hours** (default
+   Always) to keep imaging out of hours where it doesn't belong.
+4. **Generate.** Jingles/sweepers are placed on the song seams when you Generate the schedule (Calendar →
+   Generate). On air they fire automatically.
 
-## The three numbers on each pool
+## The two timing numbers
 
-- **Lead-in (seconds)** — how far *before* the outgoing song ends the jingle starts. Default **5s**.
-- **Underlap (seconds)** — how far *before* the jingle ends the next song starts. Default **2s**.
-- **Every N** — cadence: fire one jingle from this pool every **N** song transitions. Default **4**.
+- **Lead-in (seconds)** — how far *before* the outgoing song ends the overlay starts. Default: jingle **5s**,
+  sweeper **2s**.
+- **Underlap (seconds)** — how far *before* the overlay ends the next song starts. Default: jingle **2s**,
+  sweeper **1s**.
 
-Bigger lead-in = the jingle starts earlier over the song's tail. Bigger underlap = the next song comes in
-sooner under the jingle's tail. Tune by ear on air.
+## Fallback (optional)
+
+Set a **station-level fallback pool** for any category you didn't assign. Leave it **None** and unassigned
+categories play a **clean segue** — silence between songs is a legitimate programming choice here, **never an
+error**. Nothing warns you; nothing is placed.
 
 ## How it behaves on air
 
-- On the deck strip, the deck the jingle is bridging shows a small indicator: **white = armed** (a jingle is
-  lined up for the next transition), **yellow = firing** (the jingle is actually playing).
+- The deck bridging the overlay shows a small indicator — **white = armed**, **yellow = firing** — labelled
+  with the class (**JIN** or **SWP**).
 - The **Health Monitor** shows the same armed/firing state per station.
-- Jingles are logged in Play History but are **kept out of your music reports and rotation math** — they never
-  count as a "song play" or block an artist.
+- Overlays are logged in Play History but **kept out of music reports and rotation math** — they never count
+  as a song play or block an artist.
 
-## If you don't see any jingles
+## If you don't see any imaging
 
-- **No pool yet?** The feature does nothing until a pool exists — go back to step 1.
-- **No tagged jingles?** Nothing was marked JIN in the Library (step 2), or nothing is assigned to a pool.
-- **Cadence too slow?** "Every N" of 8 on a short show may not come around — lower N.
-- **Did you Generate?** Jingles are placed when you Generate the schedule. Regenerate after changing a pool.
-- Jingles fire in normal (daemon) playout. If a jingle is armed but the song is skipped or the hour hard-cuts
-  at the top of the hour, the jingle cancels itself cleanly and re-arms for the next seam — that's expected.
+- **Nothing assigned?** A category with **Overlay = None** and no station fallback plays a clean segue by
+  design.
+- **No tagged cuts / empty pool?** Tag JIN/SWP in the Library and put cuts in the pool.
+- **Wrong hour?** Check the category's **Active hours** — it may be gated out of the current hour.
+- **Did you Generate?** Placements happen at Generate time. Regenerate after changing an assignment.
+- If an overlay is armed but the song is skipped or the hour hard-cuts at :00, it cancels cleanly and re-arms
+  for the next seam — that's expected.
+
+## Not in this version (by design)
+
+- **Trailing links** — v2 is *Leading* imaging (introduces what's next). Outro-over-the-tail comes later.
+- **Produced / semi / dry variants** — a production practice: drop the different cuts into one pool and
+  rotation handles the variety. No separate setting.
 
 ## Related
 
-- **Spots** — scheduled commercials/breaks (different from jingles).
-- **Clocks / Generate** — where the schedule (and jingle placements) are built.
+- **Spots** — scheduled commercials/breaks (different from imaging).
+- **Clocks / Generate** — where the schedule (and overlay placements) are built.

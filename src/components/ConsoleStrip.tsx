@@ -33,6 +33,8 @@ interface Props {
   role?: "playing" | "next" | "third";
   /** JINGLES overlay v1: 'ARMED' (white) or 'FIRING' (yellow) when a jingle bridges this deck's seam. */
   jingle?: string | null;
+  /** Overlay class ('JIN' | 'SWP') so the indicator names what's armed/firing (v2). */
+  jingleClass?: string | null;
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -53,7 +55,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third", jingle = null,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third", jingle = null, jingleClass = null,
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
@@ -232,6 +234,7 @@ export default function ConsoleStrip({
   const jingleArmed = jingle === "ARMED";
   const jingleFiring = jingle === "FIRING";
   const jingleColor = jingleFiring ? "#ffe93b" : jingleArmed ? "#ffffff" : null;
+  const jingleTag = (jingleClass === "SWP" ? "SWP" : "JIN");   // v2: indicator names the class
 
   return (
     <div style={{
@@ -255,7 +258,7 @@ export default function ConsoleStrip({
           }}>
           <span style={{ width: 5, height: 5, borderRadius: "50%", background: jingleColor,
             boxShadow: jingleFiring ? `0 0 5px ${jingleColor}` : "none" }} />
-          {jingleFiring ? "JIN" : "JIN·ARM"}
+          {jingleFiring ? jingleTag : `${jingleTag}·ARM`}
         </div>
       )}
 

@@ -2349,7 +2349,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       <MusicFolderSection />
 
       {/* ── Jingles (overlay v1) ── */}
-      <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>} title="Jingles" description="Jingle pools that fire as an overlay on the seam between songs — rotation, timing, and cadence">
+      <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>} title="Jingles & Sweepers" description="Overlay imaging on the seam between songs — assign a jingle or sweeper (specific or a rotating pool) per music category, with active hours">
         {stationId != null && <JinglesPanel stationId={stationId} />}
       </Section>
 

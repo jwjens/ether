@@ -578,7 +578,7 @@ export default function App() {
   const [deckC, setDeckC] = useState<DeckState | null>(null);
   // JINGLES overlay v1: live overlay state for the ACTIVE station, from the daemon (observed, not claimed).
   // { deck: the deck whose seam the jingle bridges, state: 'ARMED'|'FIRING', title }. null when idle.
-  const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null } | null>(null);
+  const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null; contentClass: string | null } | null>(null);
   // Discoverability (4.4.56): does this station have any jingle pool? Drives the "Set up jingles →"
   // affordance on the JINGLES fader when the feature is unconfigured (its owner couldn't find it).
   const [hasJinglePool, setHasJinglePool] = useState<boolean>(true);   // assume yes until known → no flash
@@ -1928,7 +1928,7 @@ export default function App() {
     const h = au.onJingle((m: any) => {
       if (!m || m.stationId !== stationId) return;
       if (m.state === "CLEARED" || m.state === "ARMED_CANCELLED") setJingleOverlay(null);
-      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null });
+      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null, contentClass: m.contentClass ?? "JIN" });
     });
     return () => { try { au.offJingle?.(h); } catch { /* ignore */ } };
   }, [stationId]);
@@ -3393,7 +3393,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   handleXfade: () => void;
   onOpenCarts: () => void;
   libraryDock: JSX.Element;
-  jingleOverlay: { deck: string | null; state: string; title: string | null } | null;
+  jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null } | null;
   hasJinglePool: boolean;
   onOpenJingleSettings: () => void;
 }) {
@@ -3776,6 +3776,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     hideLabel={["A","B","C"].includes(slot)}
                     role={["A","B","C"].includes(slot) ? computeDeckRole(slot as "A"|"B"|"C", { A: deckA, B: deckB, C: deckC }) : "third"}
                     jingle={["A","B","C"].includes(slot) && jingleOverlay?.deck === slot ? jingleOverlay.state : null}
+                    jingleClass={["A","B","C"].includes(slot) && jingleOverlay?.deck === slot ? jingleOverlay.contentClass : null}
                     isPlaying={deck?.status === "playing"}
                     isOn={true}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
@@ -4935,6 +4936,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           {[
             { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
             { label: ctxMenu.song.content_class === "JIN" ? "Unmark Jingle (→ Music)" : "Mark as Jingle (JIN)", action: async () => { const next = ctxMenu.song.content_class === "JIN" ? "MUSIC" : "JIN"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
+            { label: ctxMenu.song.content_class === "SWP" ? "Unmark Sweeper (→ Music)" : "Mark as Sweeper (SWP)", action: async () => { const next = ctxMenu.song.content_class === "SWP" ? "MUSIC" : "SWP"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
             { label: ctxMenu.song.cart_id ? `Cart # — ${ctxMenu.song.cart_id}` : "Enter Cart #", action: () => openCartId(ctxMenu.song) },
             { label: "Load to Deck A", action: () => { onLoadA(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
@@ -5148,6 +5150,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     )}
                     {s.content_class === "JIN" && (
                       <span title="Jingle — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#14e0c8", background: "rgba(20, 224, 200, 0.12)", border: "1px solid rgba(20, 224, 200, 0.35)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>JIN</span>
+                    )}
+                    {s.content_class === "SWP" && (
+                      <span title="Sweeper — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#4f46e5", background: "rgba(79, 70, 229, 0.14)", border: "1px solid rgba(79, 70, 229, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SWP</span>
                     )}
                     {isInlineTitle
                       ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />

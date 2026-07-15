@@ -818,7 +818,7 @@ class DaemonEngine {
 
   _emitJingle(state, j) {
     try { this.emit("jingle", { stationId: this.stationId, state, deck: j ? j.deck : null,
-      title: j ? j.title : null, categoryId: j ? j.categoryId : null,
+      title: j ? j.title : null, categoryId: j ? j.categoryId : null, contentClass: j ? j.contentClass : null,
       leadInSec: j ? j.leadIn : null, underlapSec: j ? j.underlap : null, ts: Date.now() }); } catch {}
   }
   _noteFiredRow(rowId) { if (rowId == null) return; this._firedJinRows.push(rowId); if (this._firedJinRows.length > 300) this._firedJinRows.splice(0, this._firedJinRows.length - 300); }
@@ -854,11 +854,12 @@ class DaemonEngine {
     this._jingle = {
       phase: "armed", rowId: jin.rowId, filePath: jin.filePath, title: jin.title, artist: jin.artist,
       jinDur: (jin.durationMs || 0) / 1000, leadIn: jin.leadInSec, underlap: jin.underlapSec,
-      categoryId: jin.jingleCategoryId, deck, airGen: this._airGen, deckGen: this.deckGen[deck],
+      categoryId: jin.jingleCategoryId, contentClass: jin.contentClass === 'SWP' ? 'SWP' : 'JIN',
+      deck, airGen: this._airGen, deckGen: this.deckGen[deck],
       firedAt: 0, firingConfirmedAt: 0, nextStart: 0, outgoingEndedAt: 0,
     };
     this._noteFiredRow(jin.rowId);   // consume the placement so we don't re-arm it if the seam recomputes
-    this._log(`jingle ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s underlap=${jin.underlapSec}s)`);
+    this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s underlap=${jin.underlapSec}s)`);
     this._emitJingle("ARMED", this._jingle);
   }
 
@@ -882,7 +883,7 @@ class DaemonEngine {
   _logJinglePlay(j) {
     try {
       playlog.logPlay(this.db, { stationId: this.stationId, title: j.title, artist: j.artist, deck: "CART",
-        durationMs: Math.round((j.jinDur || 0) * 1000), sessionId: SESSION, filePath: j.filePath, contentClass: "JIN" });
+        durationMs: Math.round((j.jinDur || 0) * 1000), sessionId: SESSION, filePath: j.filePath, contentClass: j.contentClass || "JIN" });
     } catch {}
   }
 

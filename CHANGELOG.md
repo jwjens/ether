@@ -1,3 +1,27 @@
+## [4.4.57] — 2026-07-15
+
+### Changed — JINGLES/SWEEPERS v2: category-assignment model (supersedes cadence)
+
+- **Sweepers (`SWP`)** join jingles (`JIN`) as a first-class overlay class — "Mark as Sweeper (SWP)" in the
+  Library, excluded from music/affidavit math exactly like JIN. SWP color = deep indigo `#4F46E5` (distinct
+  from JIN teal, SPOT amber, and brand purple).
+- **Assignment replaces cadence.** Each **music category** now names its overlay: a **specific** jingle/
+  sweeper ("THIS exact cut for THIS category") **or** a **rotating pool** (least-recently-played, burnout-
+  safe), with per-assignment **lead-in/underlap** (jingle 5/2, sweeper 2/1) and **active hours** (daypart
+  gating). Some categories get imaging, some don't. The old "every N songs" cadence is retired.
+- **Optional station fallback pool** for unassigned categories; none set = **clean dead segue** — silence is
+  a deliberate programming choice, never an error.
+- **Generate** resolves each song's category assignment (specific item, pool rotation, or fallback) + the
+  active-hours gate and attaches the same transition-attached placement rows as v1 — a **selection-rule
+  change only**, still ONE-scheduler. The daemon orchestration, Bug-A guards, and observed FIRING are
+  unchanged, now **class-aware** (SWP fires and logs identically to JIN).
+- **UI**: the Jingles panel is now an overlay-library manager with **JINGLES/SWEEPERS tabs**, per-category
+  **assignment table** (dropdown + active hours) and the fallback selector; per-deck WHITE=armed/YELLOW=firing
+  indicator names the class; color audit extended to SWP. Schema **v32** (`jingle_categories.type` +
+  `categories.overlay_*`), verified on a copy.
+- **Deferred by design:** trailing links (v2 is *Leading* imaging); produced/semi/dry variants (a production
+  practice — one pool, rotation handles variety). Help rewritten: `docs/help/jingles.md`.
+
 ## [4.4.56] — 2026-07-14
 
 ### Fixed — renderer crash on boot (`jingleOverlay is not defined`)

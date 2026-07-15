@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'categories';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["code","name","color","spins_per_hour","priority","updated_at"];
+const PATCHABLE          = ["code","name","color","spins_per_hour","priority","updated_at","overlay_kind","overlay_song_id","overlay_category_id","overlay_lead_in_sec","overlay_underlap_sec","overlay_active_hours"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 

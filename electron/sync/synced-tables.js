@@ -140,6 +140,13 @@ const REGISTRY = {
       color:          'scalar',
       spins_per_hour: 'scalar',
       priority:       'scalar',
+      // JINGLES/SWEEPERS v2 (v32) — per-music-category overlay assignment (item OR pool + timing + hours).
+      overlay_kind:        'scalar',   // NULL | 'item' | 'pool'
+      overlay_song_id:     'scalar',   // specific JIN/SWP song (kind='item')
+      overlay_category_id: 'scalar',   // overlay pool (kind='pool') → jingle_categories.id
+      overlay_lead_in_sec:  'scalar',
+      overlay_underlap_sec: 'scalar',
+      overlay_active_hours: 'scalar',  // 24-bit daypart mask (16777215 = always)
       station_id:     'scalar',
       uuid:           'scalar',
       created_at:     'scalar',
@@ -173,9 +180,10 @@ const REGISTRY = {
       id:              'scalar',
       name:            'scalar',
       color:           'scalar',
+      type:            'scalar',   // v2 (v32): 'JIN' | 'SWP' — types the overlay pool
       lead_in_sec:     'scalar',
       underlap_sec:    'scalar',
-      cadence_every_n: 'scalar',
+      cadence_every_n: 'scalar',   // RETIRED in v2 (dead column, kept for back-compat)
       sort_order:      'scalar',
       station_id:      'scalar',
       uuid:            'scalar',

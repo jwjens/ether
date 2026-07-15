@@ -17,7 +17,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'jingle_categories';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["name", "color", "lead_in_sec", "underlap_sec", "cadence_every_n", "sort_order", "updated_at"];
+const PATCHABLE          = ["name", "color", "type", "lead_in_sec", "underlap_sec", "cadence_every_n", "sort_order", "updated_at"];
 
 function validateScope() {
   const entry = REGISTRY[TABLE];
@@ -46,6 +46,7 @@ function jingleCategoriesCreate(db, payload) {
   const uuid = payload.uuid ?? crypto.randomUUID();
   const row  = {
     ...payload,
+    type:            payload.type === 'SWP' ? 'SWP' : 'JIN',
     lead_in_sec:     payload.lead_in_sec ?? 5,
     underlap_sec:    payload.underlap_sec ?? 2,
     cadence_every_n: payload.cadence_every_n ?? 4,
@@ -58,11 +59,11 @@ function jingleCategoriesCreate(db, payload) {
     station_id: payload.station_id, actor_id: payload.actor_id ?? null,
   }, () => {
     if (payload.id != null) {
-      db.prepare(`INSERT INTO ${TABLE} (id, name, color, lead_in_sec, underlap_sec, cadence_every_n, sort_order, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(payload.id, row.name, row.color, row.lead_in_sec, row.underlap_sec, row.cadence_every_n, row.sort_order, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      db.prepare(`INSERT INTO ${TABLE} (id, name, color, type, lead_in_sec, underlap_sec, cadence_every_n, sort_order, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(payload.id, row.name, row.color, row.type, row.lead_in_sec, row.underlap_sec, row.cadence_every_n, row.sort_order, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
     } else {
-      db.prepare(`INSERT INTO ${TABLE} (name, color, lead_in_sec, underlap_sec, cadence_every_n, sort_order, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(row.name, row.color, row.lead_in_sec, row.underlap_sec, row.cadence_every_n, row.sort_order, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      db.prepare(`INSERT INTO ${TABLE} (name, color, type, lead_in_sec, underlap_sec, cadence_every_n, sort_order, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(row.name, row.color, row.type, row.lead_in_sec, row.underlap_sec, row.cadence_every_n, row.sort_order, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
     }
   });
   return jingleCategoriesGet(db, uuid);
