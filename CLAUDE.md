@@ -110,6 +110,8 @@ npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (
 - Physical deck positions are sacred — Deck X UI always shows what Rust deck X is decoding; Esc never kills audio.
 - Take Jeff's prior troubleshooting at face value; root-cause over workarounds. Don't revisit closed avenues.
 - Files made in chat only exist in chat until Jeff downloads and places them in the repo — Claude Code can't pull files from chat.
+- **TEMPORARY TOOLING EXPIRES.** Any watcher, poller, scheduled task, or background process created for diagnosis must be (1) logged in `docs/backlog.md` with a teardown note when created, and (2) torn down when its purpose completes or its replacement ships. Never leave diagnostic persistence armed on any machine. This machine is NOT Ether's permanent home — nothing here should assume permanence.
+- **BUILD THE SENSE, NOT THE SCAFFOLD.** Every feature ships with its own built-in observability: honest state (observed, never claimed), health events to the ledger, and visibility in the Health Monitor — in v1, not bolted on later. If a diagnosis ever seems to need a temporary watcher/poller/task, that is a product gap: propose the permanent built-in sense instead. No diagnostic persistence on any machine, ever.
 
 ## Engineering bar
 
