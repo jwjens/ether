@@ -1,3 +1,27 @@
+## [4.4.61] — 2026-07-15
+
+### Fixed — jingles stood down (maiden CART overlay crashed a mixer thread) + carries the 4.4.60 respawn fix
+
+- **Jingle kill-switch.** The first live jingle overlay played a CART source to natural end and tripped a
+  latent native out-of-bounds (`audio.rs:988` — `DECK_LETTERS` len 6 indexed at the CART slot 6) that
+  **panicked and killed a station's `cpal_wasapi_out` output thread → permanent dead air**. Until the native
+  guard ships and is proven, jingles **stand down universally**: `audiod/loggen.js readJingleForSeam` returns
+  null (`JINGLES_ENABLED=false`), so the daemon never arms/fires — the CART-exhaustion path is unreachable.
+  Selection/placement in Generate is harmless and unchanged; only the FIRE (the crash surface) is gated.
+- **Carries 4.4.60**: persisted per-station on-air intent + observed-live registration (a daemon reload
+  replays EVERY airing station), `automationStart` refuses to adopt a silent deck (audio observed, not
+  claimed), and the Health frames double-count fix.
+
+> **Install is the double acceptance test:** the update restarts the daemon → revives the dead output thread
+> AND all three stations must come back **audible, unattended** (respawn fix). Jingles are off, so nothing
+> can re-panic.
+
+### Next / backlog (same family)
+- Native `audio.rs:988` CART-exhaustion guard (CART slot handled by its own key, never `DECK_LETTERS`),
+  proven by a CART-plays-to-natural-end test → then re-enable jingles.
+- Dead-thread recovery: a panic that kills a mixer/output thread must not equal permanent dead air — detect
+  thread death and rebuild the stream (AUTO-cycling / the liveness watchman can't revive a dead thread).
+
 ## [4.4.60] — 2026-07-15
 
 ### Fixed — daemon-respawn resume: all on-air stations come back audibly (silent-while-playing incident)
