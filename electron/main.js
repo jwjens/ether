@@ -275,6 +275,30 @@ const _automationIntent = new Map();
 const _streamIntent = new Map();
 const { replayIntents } = require('./daemon-auto-resume');
 
+// DURABLE on-air intent (2026-07-15 silent-while-playing fix). _automationIntent is IN-MEMORY, so an app
+// RELAUNCH (every version update) resets it to empty — then only the renderer's boot auto-start (the active
+// station) is in the map, and a daemon reload replays just THAT one station while the others sit silent
+// (the incident: 4.4.59 update → reload → only Open Format resumed). Persist the exact on-air set to disk on
+// every automationStart/Stop, and SEED it back on boot BEFORE the first command, so replayIntents resumes
+// EVERY station that was intentionally airing — no privileged/active station, no inference.
+function _automationIntentPath() { try { return path.join(app.getPath("userData"), "automation-intent.json"); } catch { return null; } }
+function _persistAutomationIntent() {
+  const p = _automationIntentPath(); if (!p) return;
+  try { fs.writeFileSync(p, JSON.stringify([..._automationIntent.keys()])); } catch (e) { /* best-effort */ }
+}
+let _intentSeeded = false;
+function _seedAutomationIntentFromDisk() {
+  if (_intentSeeded) return; _intentSeeded = true;
+  const p = _automationIntentPath(); if (!p) return;
+  try {
+    const arr = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (Array.isArray(arr)) {
+      for (const sid of arr) if (typeof sid === "number" && !_automationIntent.has(sid)) _automationIntent.set(sid, { stationId: sid });
+      if (arr.length) logStartup(`[AUDIO] auto-resume: seeded persisted on-air intent — stations [${arr.join(",")}]`);
+    }
+  } catch { /* no file yet / unreadable → empty intent, unchanged behavior */ }
+}
+
 // Stale-daemon auto-reload (Item 10 follow-up — closes the dead-air-on-update gotcha). The daemon
 // is detached so it survives an app update gaplessly; the downside is a daemon left running OLD
 // code (or wedged) after the app updates — the renderer is new, the daemon is a zombie, and that
@@ -523,6 +547,15 @@ if (AUDIO_DAEMON_DESIRED) {
         // its real state instead of going quiet (→ "offline").
         sendToAllWindows("audio:daemon-enginestate", { stationId: m.stationId, state: m.state });
         _daemonEngineState.set(m.stationId, m.state);   // corroborates the silent-wedge watchdog reload-reason log
+        // Capture on-air intent from OBSERVED reality: any station the daemon reports genuinely LIVE is on
+        // air — register + persist its intent if the in-memory map missed it (e.g. after an app relaunch
+        // where the renderer only auto-started the active station but the surviving daemon kept the others
+        // airing). Not inference/guessing — the daemon says it's live. This makes the reload replay resume
+        // EVERY airing station, including on the very first install of this fix. (2026-07-15 incident.)
+        if (m.state === "live" && m.stationId != null && !_automationIntent.has(m.stationId)) {
+          _automationIntent.set(m.stationId, { stationId: m.stationId }); _persistAutomationIntent();
+          logStartup(`[AUDIO] auto-resume: registered on-air intent for station ${m.stationId} (observed live)`);
+        }
         try { _health.noteEngineState(m.stationId, m.state); } catch {}
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
@@ -596,6 +629,7 @@ if (AUDIO_DAEMON_DESIRED) {
     // A fresh connection supersedes any pending reload (this connect may BE the reloaded daemon).
     disarmDaemonReload();
     checkStaleDaemon();
+    _seedAutomationIntentFromDisk();   // ensure the persisted on-air set is loaded before we replay intents (boot + respawn)
     // v4.4.50: if we FELL BACK to in-process at boot and the daemon has now attached, do NOT drive the
     // daemon here (that would double up with the live in-process audio). Arm a song-boundary handover.
     if (_inProcessFallback && !AUDIO_DAEMON) { _armInProcessHandover(); return; }
@@ -2256,6 +2290,12 @@ app.whenReady().then(() => {
     if (levelPushId) clearInterval(levelPushId);
     if (!AUDIO_DAEMON) levelPushId = setInterval(() => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
+      // ONE-WRITER-WINS (2026-07-15 health double-count fix): this interval is CREATED at boot when
+      // AUDIO_DAEMON is false (in-process fallback). After the in-process→daemon handover AUDIO_DAEMON
+      // flips true and the daemon forward starts feeding _health.noteLevels — but this interval keeps
+      // running and ALSO fed noteLevels for the active station, so its frames/s read ~2×. Bail the moment
+      // the daemon is authoritative: the daemon forward (event handler above) is the sole levels writer.
+      if (AUDIO_DAEMON) return;
       try {
         // In-process fallback (single active engine). Tag with the ACTIVE station's uuid so the renderer's
         // uuid filter renders it — otherwise uuid-scoped meters go dark when the daemon isn't connected.
@@ -2963,14 +3003,16 @@ ipcMain.handle("audio:daemonEnabled", async () => { await audioBackendReady; ret
 // Only meaningful when AUDIO_DAEMON; the in-process engine owns the queue otherwise.
 ipcMain.handle("audio:daemon", async (_, cmd, args) => {
   if (!AUDIO_DAEMON) return { ok: false, error: "audio daemon disabled" };
+  _seedAutomationIntentFromDisk();   // seed BEFORE the first command so a boot automationStart can't clobber the persisted set
   // Track automation intent for auto-resume: set on automationStart, cleared ONLY on an explicit
   // automationStop (a deliberate operator stop is never auto-resumed). Disconnect/respawn never
-  // touches this map — the whole point is that it survives a daemon death.
+  // touches this map — the whole point is that it survives a daemon death. Persisted to disk so it also
+  // survives an APP relaunch (the update case that caused the silent-while-playing incident).
   try {
     const sid = args && args.stationId;
     if (sid != null) {
-      if (cmd === "automationStart") _automationIntent.set(sid, args);
-      else if (cmd === "automationStop") { _automationIntent.delete(sid); _streamIntent.delete(sid); }
+      if (cmd === "automationStart") { _automationIntent.set(sid, args); _persistAutomationIntent(); }
+      else if (cmd === "automationStop") { _automationIntent.delete(sid); _streamIntent.delete(sid); _persistAutomationIntent(); }
       else if (cmd === "startStream") _streamIntent.set(sid, args);
       else if (cmd === "stopStream") _streamIntent.delete(sid);
     }

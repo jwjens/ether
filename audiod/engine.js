@@ -776,14 +776,30 @@ class DaemonEngine {
     // top of it (that caused the double-play overlap). _maintain() keeps the idle decks cued.
     const order = ["A", "B", "C"];
     const live = this._state();
-    const alreadyOnAir = order.some(d => this._deckState(d).status === "playing")
+    const claimsOnAir = order.some(d => this._deckState(d).status === "playing")
       || (live && [live.deckA, live.deckB, live.deckC].some(d => d && d.status === "playing"));
+    // OBSERVED, not claimed (2026-07-15 silent-while-playing incident fix): a deck can report status
+    // "playing" while the output is dead silent (the cpal/source wedge, or a stale deck adopted after a
+    // daemon respawn). ADOPTING that leaves the station silent forever ("adopting running playout" →
+    // nothing restarts). So only adopt when audio is ACTUALLY flowing; otherwise hard-clear and force a
+    // fresh deck below. _isAudiblyOnAir samples the master peak over ~400ms so a between-song gap doesn't
+    // false-trip a force-restart.
+    const alreadyOnAir = claimsOnAir && await this._isAudiblyOnAir();
+    if (claimsOnAir && !alreadyOnAir) {
+      this._log("automationStart: decks claim playing but output is SILENT (observed) — NOT adopting; force-starting a fresh deck");
+      this.emit("error", { stationId: this.stationId, where: "automationStart", error: "silent-while-playing on adopt — force-starting a fresh deck" });
+      this._stop("A"); this._stop("B"); this._stop("C");
+      this._setDeck("A", { status: "ended" }); this._setDeck("B", { status: "ended" }); this._setDeck("C", { status: "ended" });
+      this.deckReady.clear(); this.manualCue.clear(); this.endTriggered.clear();
+      this._airGen++;
+      await new Promise(r => setTimeout(r, 80));   // let the stops reach the backend before loading A
+    }
     if (alreadyOnAir) {
       // Adopt the running deck (never restart it — that caused the double-play overlap), but STILL
       // cue the two idle decks so the rotation can advance. The app reissues automationStart while a
       // deck is already playing (gapless update / reconnect / boot auto-resume); without cueing the
       // standby decks here they stay empty and the song never transitions until a manual AUTO reset.
-      this._log("automationStart: already on air → adopting running playout + cueing idle decks");
+      this._log("automationStart: already on air (audible) → adopting running playout + cueing idle decks");
       const livePlaying = (d) => this._deckState(d).status === "playing"
         || (live && [live.deckA, live.deckB, live.deckC][order.indexOf(d)] && [live.deckA, live.deckB, live.deckC][order.indexOf(d)].status === "playing");
       const idle = order.filter(d => !livePlaying(d));
@@ -822,6 +838,18 @@ class DaemonEngine {
       leadInSec: j ? j.leadIn : null, underlapSec: j ? j.underlap : null, ts: Date.now() }); } catch {}
   }
   _noteFiredRow(rowId) { if (rowId == null) return; this._firedJinRows.push(rowId); if (this._firedJinRows.length > 300) this._firedJinRows.splice(0, this._firedJinRows.length - 300); }
+
+  // Is this station ACTUALLY producing audio (not just a deck claiming status="playing")? Samples the
+  // post-mix master peak a few times over ~400ms so a brief between-song gap can't false-negative. Used
+  // by automationStart to refuse adopting a silent/wedged deck (2026-07-15 silent-while-playing fix).
+  async _isAudiblyOnAir(samples = 4, gapMs = 100) {
+    const EPS = 0.002;   // healthy audio peaks ~0.9; silent wedge reads 0.000 — clean separation
+    for (let i = 0; i < samples; i++) {
+      try { const lv = JSON.parse(A.audioGetLevels(this.stationId)); if ((lv.master || 0) > EPS) return true; } catch {}
+      if (i < samples - 1) await new Promise(r => setTimeout(r, gapMs));
+    }
+    return false;
+  }
 
   // Are samples actually flowing on the CART overlay bus RIGHT NOW? Observed truth, never a claim.
   _cartFlowing() {

@@ -1,3 +1,26 @@
+## [4.4.60] — 2026-07-15
+
+### Fixed — daemon-respawn resume: all on-air stations come back audibly (silent-while-playing incident)
+
+- **Persisted on-air intent.** The auto-resume intent map was in-memory, so an app relaunch (every version
+  update) reset it — a daemon reload then replayed only the renderer's boot-started active station while the
+  others sat silent (the 4.4.59-update incident: only Open Format resumed). Intent is now persisted to disk
+  on every automationStart/Stop and seeded back on boot **before** the first command, so the reload replays
+  **every** station that was intentionally airing — no privileged/active station, no inference. Additionally,
+  any station the daemon reports genuinely **live** registers its intent from observed reality (covers the
+  first install of this fix, where prior versions never persisted).
+- **automationStart no longer adopts a silent deck.** A deck can report `status="playing"` while output is
+  dead silent (cpal/source wedge, or a stale deck adopted after a respawn). Adopting it left the station
+  silent forever. `automationStart` now verifies audio is **actually flowing** (samples the master peak over
+  ~400ms — observed, not claimed) before adopting; otherwise it hard-clears and force-starts a fresh deck.
+- **Health frames double-count fixed.** The in-process levels interval survived the boot-fallback→daemon
+  handover and double-fed the Health Monitor (frames/s read ~2×, e.g. Open Format ~81k). It now bails the
+  moment the daemon is authoritative — one levels writer wins.
+
+> **Install verification IS the acceptance test (irony gate):** installing 4.4.60 triggers the very
+> stale-daemon reload it fixes. With 3 stations airing, all 3 should be **audibly playing within seconds of
+> the update, no AUTO presses needed.**
+
 ## [4.4.59] — 2026-07-15
 
 ### Changed — JINGLES push-up: one imaging home
