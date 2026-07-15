@@ -1,3 +1,26 @@
+## [4.4.58] — 2026-07-15
+
+### Added — Reel Splitter (jingle/sweeper reel → library)
+
+- A dedicated one-screen workflow (**Tools → Reel Splitter…**, and **Cut a reel →** on the Jingles &
+  Sweepers panel) to slice a long imaging reel into individual, tagged, pooled library items — not a DAW.
+- **Open** (drag-drop / file-pick) → decode → **auto-cut** on silence (a JS RMS silence-gap detector,
+  `src/audio/silenceRegions.ts`) into numbered waveform regions → **keyboard-first review** (Space =
+  audition, ←/→ = move, Delete = remove; drag region edges; split / merge / delete) → **batch commit**
+  (Jingles/Sweepers + optional pool + editable per-region names).
+- Each region is rendered (`OfflineAudioContext`-free slice → `encodeWav` → `ffmpeg.writeAudio`, the verified
+  write path) and registered through the **normal shipped import** (`songs.create` + `updateById`) — tagged
+  JIN/SWP and pooled in one step. No side doors.
+- **Built on verified rails only.** A read-only capability inventory (in the build report) confirmed what
+  actually works vs. renders-only before any code: `ffmpeg.writeAudio` writes (used), `ether.fs.writeFile`
+  is a dead stub (avoided), the native cue detector can't emit regions (built the JS one), and StudioPro's
+  export-to-disk is dead (its "Export selection to Library" is **deferred** to the honest-UI cleanup, per
+  its own "only if the export path verifies as real" condition). Dead controls the inventory exposed are
+  logged in `docs/backlog.md` to be wired or removed.
+- Content-hash identity remains the deferred `songs_v2` cutover; Reel Splitter imports use the shipped
+  file_path pipeline and will join that cutover when it lands (backlog).
+- Help: `docs/help/reel-splitter.md` — "Cutting a jingle reel."
+
 ## [4.4.57] — 2026-07-15
 
 ### Changed — JINGLES/SWEEPERS v2: category-assignment model (supersedes cadence)

@@ -88,7 +88,15 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
 
   return (
     <div style={{ padding: 16, color: "var(--text-primary)", maxWidth: 900 }}>
-      <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "0.08em", color: accent, textTransform: "uppercase", marginBottom: 4 }}>Jingles &amp; Sweepers</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "0.08em", color: accent, textTransform: "uppercase" }}>Jingles &amp; Sweepers</div>
+        <div style={{ flex: 1 }} />
+        <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-reel-splitter"))}
+          title="Slice a long imaging reel into tagged library items"
+          style={{ padding: "5px 12px", borderRadius: 4, border: `1px solid ${accent}`, background: "transparent", color: accent, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+          Cut a reel →
+        </button>
+      </div>
       <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 16, lineHeight: 1.5 }}>
         Overlay imaging fires on the seam between songs (over master). Assign a <b>specific</b> jingle/sweeper
         or a <b>rotating pool</b> to each music category below — some categories get imaging, some don't. Mark

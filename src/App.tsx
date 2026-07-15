@@ -45,6 +45,7 @@ import BroadcastCalendar from "./components/BroadcastCalendar";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
+import ReelSplitter from "./components/ReelSplitter";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine, getAllEngines } from "./audio/engine-registry";
@@ -119,7 +120,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help" | "reelsplitter";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -940,7 +941,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:reelsplitter":"reelsplitter" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
@@ -985,6 +986,13 @@ export default function App() {
     const handler = () => setPanel("subscription");
     window.addEventListener("ether:open-subscription", handler);
     return () => window.removeEventListener("ether:open-subscription", handler);
+  }, []);
+
+  // Reel Splitter — openable from the Jingles & Sweepers panel (it lives inside Settings, a different panel).
+  useEffect(() => {
+    const handler = () => setPanel("reelsplitter");
+    window.addEventListener("ether:open-reel-splitter", handler);
+    return () => window.removeEventListener("ether:open-reel-splitter", handler);
   }, []);
 
   // Open the Manage Devices panel via custom event — fired from SubscriptionPanel
@@ -2493,6 +2501,7 @@ export default function App() {
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
               {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} />}
+              {panel === "reelsplitter" && <ReelSplitter stationId={stationId} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}
