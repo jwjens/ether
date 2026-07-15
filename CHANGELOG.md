@@ -1,3 +1,25 @@
+## [4.4.62] — 2026-07-15
+
+### Fixed — the CART-exhaustion crash (native), jingles re-enabled and PROVEN
+
+- **Root-cause native fix.** The mixer's "source exhausted" cleanup indexed `DECK_LETTERS` (len 6, decks
+  A–F) with the deck-slot number, but slot **6 is the CART overlay channel** — so when a CART source played
+  to natural end (first done by the maiden jingle fire), `DECK_LETTERS[6]` panicked and killed the
+  `cpal_wasapi_out` output thread → permanent dead air. Fixed at `native/src/audio.rs:988`: the CART slot is
+  handled by its own **`"CART"` finished key** via a bounds-safe `deck_finished_key(i)` — never indexes
+  `DECK_LETTERS`. Native addon rebuilt.
+- **Proven off-air before ship (no live daemon touched).** A Rust unit test (`cargo test deck_finished_key`)
+  proves the bounds; the isolated harness `scripts/test-cart-exhaustion.js` (its own daemon on a DB copy,
+  monitor muted) plays a source to natural end on CART and confirms **no panic, output thread alive (frames
+  advancing), cpal callback fresh, CART finished-flag set, station keeps rotating — ALL PASS.**
+- **Jingles re-enabled** (`audiod/loggen.js JINGLES_ENABLED = true`) in the same release.
+
+> **Install = the zero-interruption test:** the only air transition is the update's own daemon restart —
+> nothing else touches playout. All airing stations must resume unattended within seconds (the 4.4.60/61
+> respawn machinery). **Then the maiden fire, take two:** the first assigned-category seam fires the jingle,
+> the CART source runs to natural end, the thread survives, the station keeps rotating — jingles' permanent
+> clearance.
+
 ## [4.4.61] — 2026-07-15
 
 ### Fixed — jingles stood down (maiden CART overlay crashed a mixer thread) + carries the 4.4.60 respawn fix

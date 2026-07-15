@@ -191,17 +191,18 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
 // and the incoming row's scheduled_at (beforeTs), return the JIN placement bridging THIS seam — resolving
 // the jingle's file via the songs join (like readGeneratedSchedule). excludeIds skips already-fired rows.
 // Returns null on any miss / SQL error (never throws — a jingle miss never disturbs playout).
-// KILL-SWITCH (2026-07-15, v4.4.61): jingles stand down universally until the CART-exhaustion native crash
-// is fixed + proven. The maiden overlay fire played a CART source to natural end, tripping a latent Rust
-// out-of-bounds (audio.rs:988 — DECK_LETTERS len 6 indexed at the CART slot 6) that killed a mixer/output
-// thread → permanent dead air. With this false, readJingleForSeam always returns null → the daemon never
-// finds a seam placement → never arms/fires → the CART-exhaustion path is unreachable. Flip back to true
-// ONLY after the audio.rs:988 guard ships and a CART-plays-to-natural-end test passes. Selection/placement
-// in Generate is harmless (rows still get written); this gates the FIRE, which is the crash surface.
-const JINGLES_ENABLED = false;
+// KILL-SWITCH — re-ENABLED in v4.4.62 now the CART-exhaustion crash is fixed + PROVEN. History: the maiden
+// jingle overlay (v4.4.59) played a CART source to natural end, tripping a latent Rust out-of-bounds
+// (audio.rs:988 — DECK_LETTERS len 6 indexed at the CART slot 6) that killed the cpal output thread →
+// permanent dead air; 4.4.61 stood jingles down (this flag false). v4.4.62 ships the audio.rs:988 guard
+// (CART slot handled by its own "CART" key) and PROVED it off-air: `node scripts/test-cart-exhaustion.js`
+// (isolated daemon, DB copy, muted) — CART plays to natural end, no panic, output thread alive (frames
+// advancing), CART finished-flag set, station keeps rotating. ALL PASS. So jingles fire again. To disable
+// again in an emergency, flip this to false (gates only the FIRE; Generate placement is harmless).
+const JINGLES_ENABLED = true;
 
 function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
-  if (!JINGLES_ENABLED) return null;   // kill-switch — jingles stood down (see comment above)
+  if (!JINGLES_ENABLED) return null;   // kill-switch — see comment above
   if (afterTs == null || beforeTs == null || beforeTs <= afterTs) return null;
   const ex = Array.isArray(excludeIds) ? excludeIds.filter(n => Number.isFinite(n)) : [];
   const notIn = ex.length ? ` AND gs.id NOT IN (${ex.map(() => "?").join(",")})` : "";

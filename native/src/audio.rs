@@ -575,6 +575,29 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
 // Called from lib.rs get_or_create_engine after this lands in Step D.
 
 const DECK_LETTERS:   [&str; 6] = ["A", "B", "C", "D", "E", "F"];
+
+// Finished-flag key for a mixer deck slot. Slots 0–5 are the assignable decks (A–F); slot 6 is the CART
+// overlay channel, which is NOT in DECK_LETTERS. This is bounds-safe for any i (returns "CART" for the cart
+// slot and anything ≥ DECK_LETTERS.len()), so a CART source exhausting can never index out of bounds — the
+// crash that killed the cpal output thread on the maiden jingle fire (2026-07-15).
+#[inline]
+fn deck_finished_key(i: usize) -> &'static str {
+    if i < DECK_LETTERS.len() { DECK_LETTERS[i] } else { "CART" }
+}
+
+#[cfg(test)]
+mod deck_finished_key_tests {
+    use super::deck_finished_key;
+    // Proves the CART-exhaustion out-of-bounds is gone: the mixer has 7 deck slots (0–6, slot 6 = CART),
+    // DECK_LETTERS has 6 — so the old `DECK_LETTERS[i]` panicked at i=6 when a CART source exhausted.
+    #[test]
+    fn cart_slot_is_bounds_safe_and_keyed_cart() {
+        assert_eq!(deck_finished_key(0), "A");
+        assert_eq!(deck_finished_key(5), "F");
+        assert_eq!(deck_finished_key(6), "CART");   // the crash index — now safe
+        assert_eq!(deck_finished_key(99), "CART");  // any out-of-range slot never panics
+    }
+}
 const PROGRAM_RATE:   u32       = 44100;
 const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
 
@@ -985,8 +1008,14 @@ fn mixer_callback(
         if *done {
             bus.decks[i].source = None;
             bus.decks[i].active = false;
-            fin.set(DECK_LETTERS[i]);
-            eprintln!("[RUST] Deck {} finished (source exhausted)", DECK_LETTERS[i]);
+            // Slot 6 is the CART overlay channel and is NOT in DECK_LETTERS (len 6, A–F). Before this
+            // guard, a CART source playing to NATURAL END (first done by the maiden jingle overlay, 2026-07-15)
+            // ran `DECK_LETTERS[6]` → index-out-of-bounds panic on the cpal output thread → the thread died →
+            // permanent dead air. Handle the CART slot by its own "CART" finished key (the same key
+            // lib.rs takes as fin_cart), never index DECK_LETTERS. See docs/incident-jingle-cart-panic-2026-07-15.md.
+            let key = deck_finished_key(i);
+            fin.set(key);
+            eprintln!("[RUST] Deck {} finished (source exhausted)", key);
         }
     }
 
