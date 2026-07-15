@@ -24,8 +24,9 @@ const AUDIO_EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
 function isAudio(n: string) { return AUDIO_EXTS.some(e => n.toLowerCase().endsWith(e)); }
 function titleFromFile(p: string) { return (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " "); }
 
+// Class-color audit (jingles v1 D3): JIN uses the canonical teal token; commercial stays amber.
 const TYPE_COLORS: Record<string, string> = {
-  promo: "var(--accent-blue)", psa: "#34d399", jingle: "#a78bfa",
+  promo: "var(--accent-blue)", psa: "#34d399", jingle: "#14e0c8",
   liner: "#fb923c", sweeper: "#f472b6", commercial: "#fbbf24", imaging: "var(--accent-cyan)",
 };
 

@@ -1,3 +1,30 @@
+## [4.4.55] — 2026-07-14
+
+### Added — JINGLES overlay v1 (jingles rotate + fire as a CART overlay on the song seam)
+
+- **Jingles are a first-class overlay.** A JIN-tagged song rotates least-recently-played within a **jingle
+  pool** and fires on the existing **CART channel** (over master, slot 6) at a song transition — never
+  consuming a deck or advancing rotation. Per-pool timing: **lead-in** (jingle starts this long before the
+  outgoing song ends) and **underlap** (next song starts this long before the jingle ends); **cadence**
+  fires one every N transitions. Managed under **Settings → Programming → Jingles** (schema v30
+  `jingle_categories`).
+- **ONE scheduler (log-reader architecture).** Selection lives in **Generate**: it applies the cadence and
+  writes transition-attached JIN placement rows into `generated_schedule` (schema v31). The daemon stays a
+  log-reader that only orchestrates the real-time overlay fire — no in-daemon jingle selector.
+- **Bug-A immune orchestration.** Arming/firing is **poll-driven with no naked timers**, serialized on the
+  advance chain, and generation-guarded like the 4.4.48 fix: if the armed transition is superseded by any
+  advance / skip / manual action / top-of-hour cut, the jingle **cancels silently and re-arms** the next
+  segue. The seam bridge is watchdog-aware so it is never mistaken for a stall.
+- **Observed, not claimed.** ARMED = scheduled; **FIRING = samples actually flowing on CART** (`level_cart`).
+  The play-log stamps `content_class='JIN'` **only on real fire**; an armed-but-cancelled jingle leaves no
+  log row and emits an `ARMED_CANCELLED` health event. Jingle plays are excluded from music/affidavit math
+  (Phase-1b isolation re-verified through the new path).
+- **Visibility.** Per-deck indicator under the deck (WHITE = armed, YELLOW = firing); a jingle cell + ledger
+  events in the Health Monitor; and a class-color audit standardizing **JIN = teal `#14e0c8`** / **SPOT =
+  amber `#fbbf24`** across the queue, up-next, spots, and clock editor.
+- The v1 overlay rides the CART **logical channel** and is routing-agnostic, leaving a clean seam for the
+  future B1–B5 separate-bus work rather than building against it.
+
 ## [4.4.54] — 2026-07-14
 
 ### Fixed — single now-playing poster (kills dashboard ghost/flicker)

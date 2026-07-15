@@ -156,7 +156,8 @@ function readGeneratedSchedule(db, count, stationId) {
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
-       WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL ${catClause}
+       WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL
+         AND (gs.content_class IS NULL OR gs.content_class != 'JIN') ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
   } catch { return []; }
   if (rows.length) _schedCursor = rows[rows.length - 1].row_id;
@@ -175,12 +176,44 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
-       WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL ${catClause}
+       WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL
+         AND (gs.content_class IS NULL OR gs.content_class != 'JIN') ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
   } catch { return []; }
   const playable = rows.filter(r => r.file_path);
   if (playable.length) _schedCursor = playable[playable.length - 1].row_id;
   return playable.map(toItem);
+}
+
+// ── JINGLES overlay v1: read the transition-attached JIN placement for the upcoming seam ──────────────
+// The daemon is a LOG-READER (D1=A′): Generate placed JIN rows in generated_schedule bound to the seam
+// (scheduled_at = the incoming music row's start). Given the currently-playing row's scheduled_at (afterTs)
+// and the incoming row's scheduled_at (beforeTs), return the JIN placement bridging THIS seam — resolving
+// the jingle's file via the songs join (like readGeneratedSchedule). excludeIds skips already-fired rows.
+// Returns null on any miss / SQL error (never throws — a jingle miss never disturbs playout).
+function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
+  if (afterTs == null || beforeTs == null || beforeTs <= afterTs) return null;
+  const ex = Array.isArray(excludeIds) ? excludeIds.filter(n => Number.isFinite(n)) : [];
+  const notIn = ex.length ? ` AND gs.id NOT IN (${ex.map(() => "?").join(",")})` : "";
+  try {
+    const row = db.prepare(
+      `SELECT gs.id AS row_id, gs.scheduled_at, gs.title, gs.artist,
+              COALESCE(gs.file_path, s.file_path) AS file_path,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms,
+              gs.lead_in_sec, gs.underlap_sec, gs.jingle_category_id
+         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+        WHERE gs.station_id = ? AND gs.content_class = 'JIN' AND gs.deleted_at IS NULL
+          AND gs.scheduled_at > ? AND gs.scheduled_at <= ?${notIn}
+        ORDER BY gs.scheduled_at ASC LIMIT 1`).get(stationId, afterTs, beforeTs, ...ex);
+    if (!row || !row.file_path) return null;
+    return {
+      rowId: row.row_id, filePath: row.file_path, title: row.title || "", artist: row.artist || "",
+      durationMs: row.duration_ms || 0, scheduledAt: row.scheduled_at,
+      leadInSec: row.lead_in_sec != null ? row.lead_in_sec : 5,
+      underlapSec: row.underlap_sec != null ? row.underlap_sec : 2,
+      jingleCategoryId: row.jingle_category_id ?? null,
+    };
+  } catch { return null; }
 }
 
 // ── Main: fill `count` tracks. Never-empty priority ladder (see DESIGN LAW at top). ──
@@ -234,4 +267,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem) };
 }
 
-module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig };
+module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam };

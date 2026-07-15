@@ -49,9 +49,10 @@ export async function fetchArt(title: string, artist: string): Promise<string | 
 
 interface Props { queueLen: number; onQueueChange: () => void; }
 
+// Class-color audit (jingles v1 D3): JIN teal + SPOT amber use the canonical tokens; others unchanged.
 const CATEGORY_COLORS: Record<string, string> = {
   A: "#ef4444", B: "#f59e0b", C: "#22c55e", D: "#3b82f6",
-  spot: "#a855f7", liner: "#ec4899", jingle: "#14b8a6", news: "#6366f1",
+  spot: "#fbbf24", liner: "#ec4899", jingle: "#14e0c8", news: "#6366f1",
 };
 
 export default function UpNext({ queueLen, onQueueChange }: Props) {

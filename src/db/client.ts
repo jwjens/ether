@@ -123,7 +123,7 @@ export function getSessionId(): string {
   return _sessionId;
 }
 
-export async function logPlay(title: string, artist: string, deck: string, durationMs: number | undefined, stationId: number, filePath?: string | null): Promise<void> {
+export async function logPlay(title: string, artist: string, deck: string, durationMs: number | undefined, stationId: number, filePath?: string | null, contentClass?: string | null): Promise<void> {
   await (window as any).ether.playLog.create({
     station_id:  stationId,
     title,
@@ -136,6 +136,7 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     played_at:   Math.floor(Date.now() / 1000),
     session_id:  getSessionId(),
     file_path:   filePath ?? null,   // v19: the audio that aired — affidavit join key
+    content_class: contentClass ?? 'MUSIC',   // jingles v1: JIN stamped here too so a renderer-path play never leaks as MUSIC
   });
 
   // Stamp the library row so rotation separation + LRP actually work. The whole engine (live picker

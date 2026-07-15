@@ -171,15 +171,20 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
   if (!rows.length) return { ok: true, inserted: 0 };
   const now = new Date().toISOString();
   const stmtInsert = db.prepare(
-    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, content_class, channel, lead_in_sec, underlap_sec, jingle_category_id, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   db.transaction(() => {
     for (const r of rows) {
       const uuid = crypto.randomUUID();
+      // JINGLES overlay v1 (v31): a transition-attached JIN placement carries content_class='JIN' +
+      // channel='CART' + lead_in_sec/underlap_sec/jingle_category_id. Music/spot rows default to
+      // MUSIC/NULL — byte-identical to prior behavior, so the daemon's "exclude JIN from the deck
+      // queue" filter is well-defined and nothing else changes.
       const row  = { ...r, station_id: stationId, uuid, created_at: now, updated_at: now, deleted_at: null };
       stmtInsert.run(
         row.scheduled_at, row.song_id, row.title, row.artist, row.file_key, row.file_path ?? null,
         row.duration_s, row.category_id, row.clock_id, row.generated_at ?? null,
+        row.content_class ?? 'MUSIC', row.channel ?? null, row.lead_in_sec ?? null, row.underlap_sec ?? null, row.jingle_category_id ?? null,
         row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at
       );
       logMutation(db, {

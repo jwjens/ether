@@ -13,6 +13,7 @@ export interface HealthStation {
   queueDepth: number | null; nextDeckReady: boolean;
   track: string | null; trackLeftSec: number | null;
   streaming: boolean; drainBps: number | null; enginestate: string; levelSince: string;
+  jingle?: { state: string; title: string | null; categoryId: number | null; since: number } | null;   // JINGLES v1
 }
 export interface HealthEvent { ts: string; stationUuid: string; stationName?: string; level: HealthLevel; prevLevel: HealthLevel; reason: string; metrics?: any; }
 export interface HealthSnapshot {
@@ -153,7 +154,16 @@ export function LiveHealthMonitor() {
               <div style={{ ...cell, marginTop: 3 }}>{peakLabel(s.peak)} <MeterBar frac={s.peak} color="#38bdf8" width={80} /></div>
             </div>
             <div style={{ overflow: "hidden" }}>
-              <div style={{ fontSize: 12, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.track || "—"}</div>
+              <div style={{ fontSize: 12, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.track || "—"}
+                {s.jingle && (
+                  <span title={s.jingle.title || "jingle"} style={{
+                    marginLeft: 6, padding: "0 5px", borderRadius: 3, fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
+                    color: s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff",
+                    border: `1px solid ${s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff"}`,
+                    background: s.jingle.state === "FIRING" ? "rgba(255,233,59,0.16)" : "rgba(255,255,255,0.12)",
+                  }}>{s.jingle.state === "FIRING" ? "JIN ▶" : "JIN ◈"}</span>
+                )}
+              </div>
               <div style={cell}>{s.trackLeftSec != null ? `-${fmtLeft(s.trackLeftSec)}` : ""} {s.nextDeckReady ? <span style={{ color: LEVEL_COLOR.GREEN }}>· next ✓</span> : <span style={{ color: "var(--text-tertiary)" }}>· next …</span>}</div>
             </div>
             <div style={cell}>q {s.queueDepth ?? "—"}</div>

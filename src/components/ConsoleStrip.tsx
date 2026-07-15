@@ -31,6 +31,8 @@ interface Props {
   hideLabel?: boolean;
   /** Rotation role for the color strip: playing rides a progress fill, next pulses, third is solid. */
   role?: "playing" | "next" | "third";
+  /** JINGLES overlay v1: 'ARMED' (white) or 'FIRING' (yellow) when a jingle bridges this deck's seam. */
+  jingle?: string | null;
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -51,7 +53,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third",
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third", jingle = null,
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
@@ -224,13 +226,38 @@ export default function ConsoleStrip({
   const vuH = vuHeight(isOn ? level : level * 0.05);
   const vuColor = vuZoneColor(level, color);
 
+  // JINGLES overlay v1: WHITE = a jingle is ARMED on this deck's upcoming seam; YELLOW = FIRING (samples
+  // flowing on the CART overlay). Shades chosen to NOT collide with the deck countdown's ending (orange)
+  // or critical (red) colors, nor SPOT amber. A tiny chip pinned under the deck label/time.
+  const jingleArmed = jingle === "ARMED";
+  const jingleFiring = jingle === "FIRING";
+  const jingleColor = jingleFiring ? "#ffe93b" : jingleArmed ? "#ffffff" : null;
+
   return (
     <div style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
       backgroundColor: "var(--panel-bg, #0e0e13)",
       borderRight: "var(--panel-border, 1px solid rgba(255,255,255,0.05))",
-      userSelect: "none", overflow: "hidden",
+      userSelect: "none", overflow: "hidden", position: "relative",
     }}>
+
+      {jingleColor && (
+        <div title={jingleFiring ? "Jingle firing (overlay on air)" : "Jingle armed for this transition"}
+          style={{
+            position: "absolute", top: 2, right: 3, zIndex: 5,
+            display: "flex", alignItems: "center", gap: 3,
+            padding: "1px 5px", borderRadius: 3,
+            background: jingleFiring ? "rgba(255,233,59,0.16)" : "rgba(255,255,255,0.12)",
+            border: `1px solid ${jingleColor}`,
+            fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: jingleColor,
+            boxShadow: jingleFiring ? "0 0 8px rgba(255,233,59,0.45)" : "none",
+            animation: jingleFiring ? "none" : undefined,
+          }}>
+          <span style={{ width: 5, height: 5, borderRadius: "50%", background: jingleColor,
+            boxShadow: jingleFiring ? `0 0 5px ${jingleColor}` : "none" }} />
+          {jingleFiring ? "JIN" : "JIN·ARM"}
+        </div>
+      )}
 
       {/* ── Channel label ── */}
       {!hideLabel ? (

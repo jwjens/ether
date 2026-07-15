@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'play_log';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["title","artist","deck","deck_id","duration_ms","session_id","played_at","scheduled_log_id","show_name","category_code","updated_at","programming_row_id"];
+const PATCHABLE          = ["title","artist","deck","deck_id","duration_ms","session_id","played_at","scheduled_log_id","show_name","category_code","updated_at","programming_row_id","content_class"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ function playLogCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path ?? null);
+      `INSERT INTO ${TABLE} (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path, content_class) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path ?? null, row.content_class ?? 'MUSIC');
     // Spot accounting: if the aired file is a spot, count the spin (no-op for songs). Direct
     // UPDATE — high-churn local telemetry, mirrors how songs.last_played_at is bumped on air.
     if (row.file_path) {

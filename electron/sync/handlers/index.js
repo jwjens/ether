@@ -44,6 +44,7 @@ const { installStationProgrammingMoods } = require('./station_programming_moods'
 // integer-id API, stations:get-active and stations:switch not in the generated
 // handler). Calling installStations here would throw a duplicate-handler error.
 const { installVoiceTracks } = require('./voice_tracks');
+const { installJingleCategories } = require('./jingle_categories');
 
 function installAll(ipcMain, db) {
   installStationProgramming(ipcMain, db);
@@ -82,6 +83,7 @@ function installAll(ipcMain, db) {
   installInstallConfigKv(ipcMain, db);
   installStationProgrammingMoods(ipcMain, db);
   installVoiceTracks(ipcMain, db);
+  installJingleCategories(ipcMain, db);
 }
 
 module.exports = { installAll };

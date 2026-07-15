@@ -67,6 +67,7 @@ function createHealthMonitor(opts) {
         queueDepth: null, nextDeckReady: false,
         track: null, trackLeftMs: null, trackDurMs: null, trackStartAt: 0,
         streaming: false, drainBps: null,
+        jingle: null,   // JINGLES v1: { state:'ARMED'|'FIRING', title, categoryId, since } or null
         refill0At: 0, playSkipAt: 0,
         degradedSince: 0, frozenSince: 0,
         level: "GREY", levelSince: nowMs(), reason: "init",
@@ -120,6 +121,22 @@ function createHealthMonitor(opts) {
       r.trackStartAt = nowMs(); if (typeof durationMs === "number") r.trackDurMs = durationMs; } catch {}
   }
   function noteStreamStatus(stationId, state) { try { const r = rec(uuidOf(stationId)); r.streaming = state === "live" || state === "connecting"; } catch {} }
+  // JINGLES overlay v1: ARMED/FIRING/ARMED_CANCELLED/CLEARED from the daemon overlay orchestrator. Both a
+  // live per-station cell (snapshot) AND a ledger event (rider #2: an armed-but-cancelled jingle emits
+  // ARMED_CANCELLED here and leaves NO play_log row). Observed states — FIRING means samples were flowing.
+  function noteJingle(stationId, m) {
+    try {
+      const r = rec(uuidOf(stationId)); r.stationId = stationId; r.name = stationName(stationId);
+      const t = nowMs(); const state = m && m.state;
+      if (!state) return;
+      if (state === "CLEARED" || state === "ARMED_CANCELLED") r.jingle = null;
+      else r.jingle = { state, title: (m.title || null), categoryId: (m.categoryId ?? null), since: t };
+      const ev = { ts: iso(t), type: "jingle", stationUuid: r.uuid, stationName: r.name, state,
+        deck: (m.deck || null), title: (m.title || null), categoryId: (m.categoryId ?? null),
+        leadInSec: (m.leadInSec ?? null), underlapSec: (m.underlapSec ?? null) };
+      try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+    } catch {}
+  }
   function noteEnginePid(pid) {
     try {
       if (pid && pid !== enginePid) {
@@ -223,6 +240,7 @@ function createHealthMonitor(opts) {
         queueDepth: r.queueDepth, nextDeckReady: r.nextDeckReady, track: r.track,
         trackLeftSec: r.trackLeftMs != null ? Math.round(r.trackLeftMs/1000) : null,
         streaming: r.streaming, drainBps: r.drainBps, enginestate: r.enginestate, levelSince: iso(r.levelSince),
+        jingle: r.jingle,   // JINGLES v1: live overlay state (null when idle)
       })),
       recentEvents: recentEvents.slice(0, MAX_RECENT),
     };
@@ -239,7 +257,7 @@ function createHealthMonitor(opts) {
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
 
   return {
-    noteLevels, noteEngineState, noteDeck, noteQueue, notePlaySkip, notePlayStart, noteStreamStatus, noteEnginePid,
+    noteLevels, noteEngineState, noteDeck, noteQueue, notePlaySkip, notePlayStart, noteStreamStatus, noteEnginePid, noteJingle,
     start, stop, getSnapshot: () => snapshot(), getRecentEvents: (n = MAX_RECENT) => recentEvents.slice(0, n),
   };
 }

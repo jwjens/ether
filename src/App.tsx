@@ -576,6 +576,9 @@ export default function App() {
   const [deckA, setDeckA] = useState<DeckState | null>(null);
   const [deckB, setDeckB] = useState<DeckState | null>(null);
   const [deckC, setDeckC] = useState<DeckState | null>(null);
+  // JINGLES overlay v1: live overlay state for the ACTIVE station, from the daemon (observed, not claimed).
+  // { deck: the deck whose seam the jingle bridges, state: 'ARMED'|'FIRING', title }. null when idle.
+  const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null } | null>(null);
   // AUTO state persists across restarts — broadcasters expect their automation
   // to remain in whatever state they left it in, especially after a power cycle
   // or app restart. Default false on first install.
@@ -1913,6 +1916,19 @@ export default function App() {
     });
     return () => { try { ether.off?.("stream:status", h); } catch { /* ignore */ } };
   }, []);
+
+  // JINGLES overlay v1: subscribe to the daemon's overlay state for the ACTIVE station. ARMED/FIRING set
+  // the per-deck indicator (white/yellow) + seam chip; CLEARED/ARMED_CANCELLED retire it. Observed only.
+  useEffect(() => {
+    const au = (window as any).ether?.audio;
+    if (!au?.onJingle) return;
+    const h = au.onJingle((m: any) => {
+      if (!m || m.stationId !== stationId) return;
+      if (m.state === "CLEARED" || m.state === "ARMED_CANCELLED") setJingleOverlay(null);
+      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null });
+    });
+    return () => { try { au.offJingle?.(h); } catch { /* ignore */ } };
+  }, [stationId]);
 
   // Public listener page: forward live now-playing to MAIN on a heartbeat; main owns the
   // single /api/now-playing poster (4.4.54). This effect runs in EVERY renderer window
@@ -3737,6 +3753,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     deckId={slot}
                     hideLabel={["A","B","C"].includes(slot)}
                     role={["A","B","C"].includes(slot) ? computeDeckRole(slot as "A"|"B"|"C", { A: deckA, B: deckB, C: deckC }) : "third"}
+                    jingle={["A","B","C"].includes(slot) && jingleOverlay?.deck === slot ? jingleOverlay.state : null}
                     isPlaying={deck?.status === "playing"}
                     isOn={true}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}

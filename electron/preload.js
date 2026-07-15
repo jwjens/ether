@@ -39,6 +39,10 @@ contextBridge.exposeInMainWorld("ether", {
     // Honest engine-state truth layer (Slice 1): the daemon's live | stalled | off → renderer.
     onEngineState:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-enginestate", h); return h; },
     offEngineState: (h)  => ipcRenderer.removeListener("audio:daemon-enginestate", h),
+    // JINGLES overlay v1: the daemon's ARMED/FIRING/ARMED_CANCELLED/CLEARED overlay state → renderer
+    // (per-deck white/yellow indicator + seam chip). Observed states only.
+    onJingle:       (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:daemon-jingle", h); return h; },
+    offJingle:      (h)  => ipcRenderer.removeListener("audio:daemon-jingle", h),
   },
   theme: {
     export: (presetId, vars, font) => ipcRenderer.invoke("theme:export", { presetId, vars, font }),
@@ -340,6 +344,7 @@ contextBridge.exposeInMainWorld("ether", {
     setLocalFilePath: (id, fp) => ipcRenderer.invoke("songs:set-local-file-path", id, fp),
   },
   spotCategories:            handlers.spotCategories,
+  jingleCategories:          handlers.jingleCategories,
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
   stationProgramming:        handlers.stationProgramming,

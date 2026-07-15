@@ -90,6 +90,15 @@ class DaemonEngine {
     this._engineState = "off";
     this._lastHourCut = new Date().getHours();  // top-of-hour hard cut: hour we last fired for. Seeded to the
                                          // current hour so a mid-hour daemon start never fires until the next :00.
+    // ── JINGLES overlay v1 (daemon = log-reader that orchestrates the CART overlay fire) ──────────────
+    // _airGen: on-air generation, bumped every time ANY deck goes live (_fireStart). The Bug-A-immunity
+    // token: an armed jingle captures it; ANY advance/skip/manual/top-of-hour cut goes through _fireStart,
+    // bumps it, and the armed jingle is auto-superseded → cancels silently, re-arms next segue. No naked
+    // timers anywhere — arming/firing is driven by poll() and serialized on the _advance chain.
+    this._airGen = 0;
+    this._jingle = null;                 // the current jingle lifecycle object, or null (one at a time)
+    this._firedJinRows = [];             // generated_schedule row_ids already fired/consumed (bounded) — never re-arm
+    this._jingleCartGen = 0;             // CART load generation (fresh fire invalidates a stale bridge close)
     this.pollTimer = null;
     this.lastPollTime = Date.now();
   }
@@ -183,6 +192,9 @@ class DaemonEngine {
     this.checkEnd("C", pos.C, dur.C, prev.C, rustEnded.C);
     this.processingEnd = false;
     this._maintain();
+    this._jingleTick(now);   // JINGLES v1: arm/fire/bridge the CART overlay (poll-driven; runs BEFORE the
+                             // watchdog so a confirmed FIRING jingle bumps _lastPlayingAt → the intentional
+                             // seam bridge is never mistaken for a stall).
     this._checkTopOfHour();
     this._watchdog();
     this._emitEngineState();
@@ -200,6 +212,9 @@ class DaemonEngine {
     if (!this._started) return "off";
     const order = ["A", "B", "C"];
     if (order.some(d => this._deckState(d).status === "playing")) return "live";
+    // A confirmed-FIRING jingle bridging the seam IS live audio (over master), even with all A/B/C idle
+    // for the underlap window. Observed, not claimed: only counts when samples are actually flowing on CART.
+    if (this._jingle && this._jingle.firingConfirmedAt && this._cartFlowing()) return "live";
     // Nobody playing under automation. Ride out only a brief handoff out of a live state; anything
     // longer than the watchdog's stall window — or any non-live origin — is an honest stall.
     if (this._engineState === "live" && (Date.now() - this._lastPlayingAt) < STALL_MS) return "live";
@@ -403,6 +418,13 @@ class DaemonEngine {
         return;
       }
       this._setDeck(deckId, { status: "ended" });
+
+      // JINGLES v1 seam bridge: if a CONFIRMED-FIRING jingle governs this deck's seam AND the incoming
+      // song should start AFTER this deck ends (jingle long enough to bridge the gap), DEFER the rotation
+      // — _jingleTick starts the incoming deck at the underlap point (before the jingle ends). Defers ONLY
+      // on OBSERVED firing (samples flowing), so a non-firing / failed jingle can never cause a bridge or
+      // dead air; the normal rotation below proceeds unchanged in every other case.
+      if (this._jingleShouldBridge(deckId)) { this._jingleBeginBridge(deckId); return; }
 
       // Stage 3a: decide rotate-vs-load-next against FRESH native state, not the per-tick snapshot
       // (this.stateX), so a momentarily-stale "playing" flag can't make us skip the advance. deckReady
@@ -608,6 +630,9 @@ class DaemonEngine {
 
   _fireStart(deckId) {
     const st = this._deckState(deckId);
+    this._airGen++;   // JINGLES v1: a new deck went live → any jingle armed against the prior on-air
+                      // generation is now superseded (see _jingleSuperseded). Bumps for EVERY go-live
+                      // path (rotate / load-next / skip / play-now / top-of-hour / resume).
     this.emit("playstart", { stationId: this.stationId, deck: deckId, title: st.title, artist: st.artist, filePath: st.filePath });
     // Item 10 Phase 2 Step 4: the daemon owns play logging in daemon-driven mode (the
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
@@ -780,6 +805,183 @@ class DaemonEngine {
     this._log("automationStart: deck A LIVE — " + (this.stateA.title || "(untitled)"));
     setTimeout(async () => { await this.preload("B", 0); setTimeout(() => this.preload("C", 1), 400); }, 800);
     return true;
+  }
+
+  // ── JINGLES overlay v1 — CART overlay orchestration (daemon = log-reader; Generate placed the row) ──
+  // Poll-driven, no naked timers, generation-guarded (mirrors the 4.4.48 deckGen Bug-A fix). Lifecycle:
+  //   ARMED   — a JIN placement is identified for the upcoming seam; captured on-air + deck generation.
+  //   FIRING  — CART audioPlay issued AND samples observed flowing (level_cart); play-log stamped HERE.
+  //   BRIDGING— outgoing deck ended; incoming deferred until (jingle end − underlap); jingle bridges.
+  //   CLEARED — incoming deck live again.  ARMED_CANCELLED — superseded/failed before firing (no log row).
+  static get _ARM_WINDOW_S() { return 30; }       // only look for a seam jingle within this of the end
+  static get _FIRE_CONFIRM_MS() { return 900; }    // fired but no samples within this → failed, cancel
+
+  _emitJingle(state, j) {
+    try { this.emit("jingle", { stationId: this.stationId, state, deck: j ? j.deck : null,
+      title: j ? j.title : null, categoryId: j ? j.categoryId : null,
+      leadInSec: j ? j.leadIn : null, underlapSec: j ? j.underlap : null, ts: Date.now() }); } catch {}
+  }
+  _noteFiredRow(rowId) { if (rowId == null) return; this._firedJinRows.push(rowId); if (this._firedJinRows.length > 300) this._firedJinRows.splice(0, this._firedJinRows.length - 300); }
+
+  // Are samples actually flowing on the CART overlay bus RIGHT NOW? Observed truth, never a claim.
+  _cartFlowing() {
+    try {
+      const lv = JSON.parse(A.audioGetLevels(this.stationId));
+      if ((lv.cart || lv.level_cart || 0) > 0.0001) return true;
+      const cd = (lv.decks || []).find(d => d && (d.id === "CART" || d.id === 6));
+      return !!(cd && cd.source_present && cd.active && !cd.paused);
+    } catch { return false; }
+  }
+
+  // Supersession (Bug-A immunity) — only meaningful while ARMED (pre-fire). A firing jingle is real audio
+  // already on air; we never cancel it mid-play.
+  _jingleSuperseded(j) {
+    if (this._airGen !== j.airGen) return true;                    // a new deck went live since arm
+    if (this._deckState(j.deck).status !== "playing") return true; // armed deck no longer playing
+    if (this.deckGen[j.deck] !== j.deckGen) return true;           // armed deck re-loaded (fresh source)
+    return false;
+  }
+
+  _nextRotateDeck(fromDeck) {
+    const order = ["A", "B", "C"]; const i = order.indexOf(fromDeck);
+    const n1 = order[(i + 1) % 3], n2 = order[(i + 2) % 3];
+    if (this.deckReady.has(n1)) return n1;
+    if (this.deckReady.has(n2)) return n2;
+    return null;
+  }
+
+  _armJingle(jin, deck) {
+    this._jingle = {
+      phase: "armed", rowId: jin.rowId, filePath: jin.filePath, title: jin.title, artist: jin.artist,
+      jinDur: (jin.durationMs || 0) / 1000, leadIn: jin.leadInSec, underlap: jin.underlapSec,
+      categoryId: jin.jingleCategoryId, deck, airGen: this._airGen, deckGen: this.deckGen[deck],
+      firedAt: 0, firingConfirmedAt: 0, nextStart: 0, outgoingEndedAt: 0,
+    };
+    this._noteFiredRow(jin.rowId);   // consume the placement so we don't re-arm it if the seam recomputes
+    this._log(`jingle ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s underlap=${jin.underlapSec}s)`);
+    this._emitJingle("ARMED", this._jingle);
+  }
+
+  // Cancel an ARMED (or fired-but-silent) jingle: emit ARMED_CANCELLED, stop CART defensively, NO play-log.
+  _cancelJingle(reason) {
+    const j = this._jingle; if (!j) return;
+    if (j.firedAt) { this._stop("CART"); }
+    this._log(`jingle ARMED_CANCELLED (${reason}) — "${j.title}"`);
+    this._emitJingle("ARMED_CANCELLED", j);
+    this._jingle = null;
+  }
+  _clearJingle(reason) {
+    const j = this._jingle; if (!j) return;
+    this._log(`jingle CLEARED (${reason}) — "${j.title}"`);
+    this._emitJingle("CLEARED", j);
+    this._jingle = null;
+  }
+
+  // Stamp the jingle play — ONLY on observed firing (rider #2), stamped content_class='JIN' so Phase-1b
+  // isolation excludes it from music math / affidavit. deck="CART" (overlay, not a rotation deck).
+  _logJinglePlay(j) {
+    try {
+      playlog.logPlay(this.db, { stationId: this.stationId, title: j.title, artist: j.artist, deck: "CART",
+        durationMs: Math.round((j.jinDur || 0) * 1000), sessionId: SESSION, filePath: j.filePath, contentClass: "JIN" });
+    } catch {}
+  }
+
+  // Should this deck's end DEFER to a bridging jingle? Only if the jingle is confirmed firing on THIS
+  // deck's seam and the incoming start (jingle end − underlap) lands AFTER this deck ends (now).
+  _jingleShouldBridge(deckId) {
+    const j = this._jingle;
+    if (!j || j.deck !== deckId || !j.firingConfirmedAt || !j.firedAt) return false;
+    const jingleEnd = j.firedAt + j.jinDur * 1000;
+    const nextStart = jingleEnd - j.underlap * 1000;
+    return nextStart > Date.now() + 150;   // enough bridge to be worth deferring (else normal rotate)
+  }
+  _jingleBeginBridge(deckId) {
+    const j = this._jingle; if (!j) return;
+    const now = Date.now();
+    const jingleEnd = j.firedAt + j.jinDur * 1000;
+    // Incoming starts at (jingle end − underlap), clamped: never before this deck ended (outgoing holds
+    // full level to its natural end), never after the jingle ends (no dead-air gap).
+    j.nextStart = Math.max(now, Math.min(jingleEnd - j.underlap * 1000, jingleEnd - 100));
+    j.outgoingEndedAt = now;
+    j.phase = "bridging";
+    this._log(`jingle BRIDGING — deck ${deckId} ended; incoming starts in ${Math.round(j.nextStart - now)}ms (underlap ${j.underlap}s before jingle end)`);
+  }
+
+  // The one poll-driven jingle brain. Never throws into playout.
+  _jingleTick(now) {
+    try {
+      if (!this._started) { if (this._jingle) this._clearJingle("automation-stopped"); return; }
+      const order = ["A", "B", "C"];
+      const j = this._jingle;
+
+      if (j) {
+        if (j.phase === "armed") {
+          if (this._jingleSuperseded(j)) { this._cancelJingle("superseded"); return; }
+          const st = this._deckState(j.deck);
+          const remaining = (st.durationSec || 0) - (st.positionSec || 0);
+          if (remaining <= j.leadIn) this._fireJingle(j);   // FIRE on the advance chain
+          return;
+        }
+        // firing / bridging
+        const flowing = this._cartFlowing();
+        if (flowing) {
+          this._lastPlayingAt = now;                        // watchdog: the bridge is NOT a stall
+          if (!j.firingConfirmedAt) { j.firingConfirmedAt = now; this._emitJingle("FIRING", j); this._logJinglePlay(j); this._log(`jingle FIRING (samples flowing) — "${j.title}"`); }
+        }
+        // If we NEVER observe flow, we simply never confirm FIRING: no health/log stamp (observed-only) and
+        // no seam bridge (_jingleShouldBridge requires firingConfirmedAt) → the NORMAL rotation proceeds and
+        // the jingle audio just plays out unlogged. We deliberately do NOT stop CART on non-observation —
+        // that would truncate a jingle whose flow our conservative detector merely missed. The entry clears
+        // at jingleDoneMs below.
+        if (j.phase === "bridging" && now >= j.nextStart) {
+          // Start the incoming deck now (underlap before the jingle ends). Reuse the proven rotate paths.
+          const to = this._nextRotateDeck(j.deck);
+          if (to) this.handleRotate(j.deck, to); else this.handleLoadNext(order[(order.indexOf(j.deck) + 1) % 3]);
+          j.phase = "closing";
+        }
+        // Clear once a rotation deck is live again (incoming took over) OR the jingle audio is well past end.
+        const jingleDoneMs = j.firedAt ? j.firedAt + j.jinDur * 1000 + 500 : now;
+        if (order.some(d => this._deckState(d).status === "playing") && (j.phase === "closing" || now >= jingleDoneMs)) {
+          this._clearJingle("done");
+        }
+        return;
+      }
+
+      // No active jingle → consider arming for the upcoming seam.
+      const P = order.find(d => this._deckState(d).status === "playing");
+      if (!P) return;
+      const st = this._deckState(P);
+      const remaining = (st.durationSec || 0) - (st.positionSec || 0);
+      if (!(remaining > 0 && remaining <= DaemonEngine._ARM_WINDOW_S)) return;
+      const afterTs = this.deckSched[P];
+      if (afterTs == null) return;                           // playing a non-scheduled row → no jingle seam
+      const nextDeck = this._nextRotateDeck(P);
+      const beforeTs = (nextDeck && this.deckSched[nextDeck] != null)
+        ? this.deckSched[nextDeck]
+        : (afterTs + Math.ceil(remaining) + 2);
+      const jin = loggen.readJingleForSeam(this.db, this.stationId, afterTs, beforeTs, this._firedJinRows.slice(-100));
+      if (!jin) return;
+      if (!this._fileOk(jin.filePath)) { this._noteFiredRow(jin.rowId); return; }  // dead jingle file → skip, don't arm
+      this._armJingle(jin, P);
+    } catch (e) { this._log("jingleTick error (playout unaffected): " + String(e)); }
+  }
+
+  // Fire the armed jingle on CART — serialized on the advance chain (no naked timer), re-validated inside.
+  _fireJingle(j) {
+    this._advance("jingle-fire", async () => {
+      if (this._jingle !== j || j.phase !== "armed") return;         // superseded/cleared while queued
+      if (this._jingleSuperseded(j)) { this._cancelJingle("superseded-at-fire"); return; }
+      let ok;
+      try { ok = this._load("CART", j.filePath, j.title, j.artist, 0); }
+      catch (e) { this._cancelJingle("load-error"); return; }
+      if (ok === false) { this._cancelJingle("load-failed"); return; }
+      this._play("CART");
+      const d = this._dur(j.filePath); if (d > 0) j.jinDur = d;
+      j.firedAt = Date.now();
+      j.phase = "firing";
+      this._jingleCartGen++;
+      this._log(`jingle FIRE issued — "${j.title}" on CART (dur=${(j.jinDur || 0).toFixed(1)}s); confirming samples…`);
+    });
   }
 
   // Force-advance to the next queued track (operator skip / show-clock jump) — independent of

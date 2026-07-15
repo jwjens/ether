@@ -545,6 +545,11 @@ if (AUDIO_DAEMON_DESIRED) {
         try { if (_health) _health.noteStreamStatus(m.stationId, m.state); } catch {}   // v4.4.51: Health Monitor streaming ▲ + drain B/s
       } else if (m.event === "error" && m.where === "play-skip") {
         try { _health.notePlaySkip(m.stationId); } catch {}
+      } else if (m.event === "jingle") {
+        // JINGLES overlay v1: daemon ARMED/FIRING/ARMED_CANCELLED/CLEARED → renderer (deck indicators +
+        // seam chip) + the Health Monitor (jingle cell + ledger event). Observed states only.
+        sendToAllWindows("audio:daemon-jingle", { stationId: m.stationId, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, leadInSec: m.leadInSec, underlapSec: m.underlapSec, ts: m.ts });
+        try { _health.noteJingle(m.stationId, m); } catch {}
       }
     } catch {}
   });
@@ -5684,6 +5689,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
       }
     }
 
+    _placeJingles(db, activeStationId, generatedRows);
     generatedScheduleBulkCreate(db, activeStationId, generatedRows);
     console.log(`[schedule:generate] Generated ${generatedRows.length} tracks over ${days} days`);
     return { ok: true, count: generatedRows.length };
@@ -5780,6 +5786,76 @@ function _lrpFallback(candidates, usedSongIds, songLastTs) {
   const pool = fresh.length ? fresh : candidates;   // Tier 2 (unused-this-hour) then Tier 3 (allow reuse)
   if (!pool.length) return null;
   return pool.reduce((a, b) => (lrp(b) < lrp(a) ? b : a));
+}
+
+// JINGLES overlay v1 (D1=A′ — SELECTION lives in the ONE scheduler; scheduler-rework #4 / ether-v2 §26).
+// AFTER the music/spot rows are laid down, place transition-attached JIN rows at music→music seams per
+// each jingle category's cadence, selecting the least-recently-played jingle from that category
+// (station-scoped play_log LRP). A JIN row carries content_class='JIN' + channel='CART' + lead_in/underlap
+// (snapshot of the category) + jingle_category_id; its scheduled_at is the seam (the incoming music row's
+// start). It references the jingle via song_id and holds NO deck. The daemon only READS these placements
+// and orchestrates the real-time overlay fire — no in-daemon jingle selection ("two schedulers" forbidden).
+// Fail-safe: no jingle_categories table (pre-v30) or no assigned JIN songs → no placements, byte-identical
+// prior behavior. Never throws into Generate.
+function _placeJingles(db, stationId, rows) {
+  if (!rows || rows.length < 2) return;
+  let cats;
+  try {
+    cats = db.prepare(
+      `SELECT id, name, color, lead_in_sec, underlap_sec, cadence_every_n, sort_order
+         FROM jingle_categories
+        WHERE station_id = ? AND deleted_at IS NULL AND COALESCE(cadence_every_n, 0) > 0
+        ORDER BY sort_order, id`).all(stationId);
+  } catch { return; }                       // pre-v30 DB / no table → no jingles, unchanged behavior
+  if (!cats.length) return;
+  let stmtJin;
+  try {
+    stmtJin = db.prepare(
+      `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms
+         FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+        WHERE s.content_class = 'JIN' AND s.jingle_category_id = ? AND s.file_path IS NOT NULL
+          AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
+        ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
+                 WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, s.id ASC`);
+  } catch { return; }
+  // Music sequence in schedule order (spots/other rows don't take a jingle seam in v1).
+  const music = rows.filter(r => (r.content_class || 'MUSIC') === 'MUSIC' && r.song_id)
+                    .slice().sort((a, b) => a.scheduled_at - b.scheduled_at);
+  if (music.length < 2) return;
+  const counters = new Map();               // categoryId → transitions counted toward its cadence
+  const usedByCat = new Map();              // categoryId → Set of jingle ids used this run (LRP anti-repeat)
+  const jinRows = [];
+  try {
+    for (let i = 0; i < music.length - 1; i++) {
+      let fired = null;
+      for (const c of cats) {
+        const n = (counters.get(c.id) || 0) + 1; counters.set(c.id, n);
+        if (fired) continue;                             // one jingle per seam
+        const cadence = c.cadence_every_n || 4;
+        if (n % cadence !== 0) continue;                 // not due at this seam
+        let cands; try { cands = stmtJin.all(c.id, stationId); } catch { cands = []; }
+        if (!cands.length) continue;
+        let used = usedByCat.get(c.id); if (!used) { used = new Set(); usedByCat.set(c.id, used); }
+        let pick = cands.find(x => !used.has(x.id));
+        if (!pick) { used.clear(); pick = cands[0]; }    // rotated through → start over
+        used.add(pick.id);
+        fired = { cat: c, pick };
+      }
+      if (!fired) continue;
+      const incoming = music[i + 1];                     // the JIN bridges the seam INTO this row
+      const { cat, pick } = fired;
+      jinRows.push({
+        scheduled_at: incoming.scheduled_at, song_id: pick.id,
+        title: pick.title, artist: pick.artist_name || '',
+        file_key: pick.file_path ? path.basename(pick.file_path) : '',
+        duration_s: pick.duration_ms ? Math.round(pick.duration_ms / 1000) : 0,
+        category_id: null, clock_id: incoming.clock_id ?? null,
+        content_class: 'JIN', channel: 'CART',
+        lead_in_sec: cat.lead_in_sec ?? 5, underlap_sec: cat.underlap_sec ?? 2, jingle_category_id: cat.id,
+      });
+    }
+  } catch (e) { console.error('[schedule] jingle placement error (music unaffected):', e.message); return; }
+  if (jinRows.length) { rows.push(...jinRows); console.log(`[schedule] placed ${jinRows.length} jingle overlay(s) across ${music.length} music elements`); }
 }
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
@@ -5994,6 +6070,7 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(activeStationId, effStart, dayEnd);
     const ctx = _buildScheduleCtx(activeStationId);
     _generateDayRows(dayBase, ctx, effStart);
+    _placeJingles(db, activeStationId, ctx.generatedRows);
     generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
     // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
     // calendar can tell the operator exactly what's missing instead of flickering silently.
@@ -6044,6 +6121,7 @@ function _generateRange(stationId, fromTs, toTs) {
     db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(stationId, effStart, dayEnd);
     _generateDayRows(dayBase, ctx, effStart);
   }
+  _placeJingles(db, stationId, ctx.generatedRows);
   generatedScheduleBulkCreate(db, stationId, ctx.generatedRows);
   const dg = ctx.diag, reasons = [];
   if (dg.emptyCats.size) reasons.push("Empty/over-filtered categories: " + [...dg.emptyCats].map(id => (db.prepare("SELECT code FROM categories WHERE id = ?").get(id) || {}).code || ("#" + id)).join(", "));

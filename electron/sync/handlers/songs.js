@@ -13,7 +13,7 @@ const { withMutation, logMutation, serializePayload } = require('../mutation-wri
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE    = 'songs';
-const PATCHABLE = ["title","file_path","file_key","artist_id","album_id","category_id","genre","duration_ms","bpm","energy","mood","gender","rotation_status","daypart_mask","no_repeat_hours","lufs_measured","peak_db","gain_db","is_processed","cue_in","cue_out","cue_in_ms","cue_out_ms","intro_end","outro_start","intro_end_ms","outro_start_ms","intro_version_path","has_intro","last_played_at","play_count","is_explicit","updated_at","raw_metadata","spotify_uri","cart_id","content_class"];
+const PATCHABLE = ["title","file_path","file_key","artist_id","album_id","category_id","genre","duration_ms","bpm","energy","mood","gender","rotation_status","daypart_mask","no_repeat_hours","lufs_measured","peak_db","gain_db","is_processed","cue_in","cue_out","cue_in_ms","cue_out_ms","intro_end","outro_start","intro_end_ms","outro_start_ms","intro_version_path","has_intro","last_played_at","play_count","is_explicit","updated_at","raw_metadata","spotify_uri","cart_id","content_class","jingle_category_id"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 

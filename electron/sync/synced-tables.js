@@ -25,6 +25,7 @@ const SYNCED_TABLES = [
   'generated_schedule',
   'install_config_kv',
   'install_secrets_kv',
+  'jingle_categories',
   'liner_cards',
   'macros',
   'metadata_definitions',
@@ -164,6 +165,26 @@ const REGISTRY = {
     },
   },
 
+  jingle_categories: {
+    tableName: 'jingle_categories',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:              'scalar',
+      name:            'scalar',
+      color:           'scalar',
+      lead_in_sec:     'scalar',
+      underlap_sec:    'scalar',
+      cadence_every_n: 'scalar',
+      sort_order:      'scalar',
+      station_id:      'scalar',
+      uuid:            'scalar',
+      created_at:      'scalar',
+      updated_at:      'scalar',
+      deleted_at:      'scalar',
+    },
+  },
+
   clock_breaks: {
     tableName: 'clock_breaks',
     primaryKey: ['id'],
@@ -283,6 +304,11 @@ const REGISTRY = {
       category_id:  'scalar',
       clock_id:     'scalar',
       generated_at: 'scalar',
+      content_class:      'scalar',   // jingles overlay v1 (v31) — 'JIN' marks a transition-attached jingle placement
+      channel:            'scalar',   // 'CART' for a JIN overlay row; NULL for music/spot
+      lead_in_sec:        'scalar',
+      underlap_sec:       'scalar',
+      jingle_category_id: 'scalar',
       station_id:   'scalar',
       uuid:         'scalar',
       created_at:   'scalar',
@@ -717,6 +743,7 @@ const REGISTRY = {
       gender:              'scalar',
       rotation_status:     'scalar',
       content_class:       'scalar',   // jingles design 1b — MUSIC/JIN/SPOT (v29)
+      jingle_category_id:  'scalar',   // jingles overlay v1 — which jingle pool a JIN song belongs to (v30); plain scalar like category_id
       daypart_mask:        'scalar',
       no_repeat_hours:     'scalar',
       lufs_measured:       'scalar',
