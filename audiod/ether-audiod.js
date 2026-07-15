@@ -174,6 +174,9 @@ const handlers = {
   "deck:playNow":     (m) => getEngine(m.stationId).intentPlayNow(m.songRef || null),
   setAutoAdvance:     (m) => { getEngine(m.stationId).autoAdvance = !!m.value; return true; },
   setContinuous:      (m) => { getEngine(m.stationId).continuous = !!m.value; return true; },
+  // Routine segue crossfade seconds (0 = hard cut). Distinct from the manual X-key crossfade; delivered
+  // from the app on connect + whenever the Settings → Audio slider changes.
+  setSegueCrossfade:  (m) => { getEngine(m.stationId).segueCrossfade = Math.max(0, Math.min(10, Number(m.seconds) || 0)); return true; },
   setShuffle:         (m) => { getEngine(m.stationId).shuffle = !!m.value; return true; },
 };
 

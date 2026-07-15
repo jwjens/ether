@@ -228,13 +228,10 @@ export default function ConsoleStrip({
   const vuH = vuHeight(isOn ? level : level * 0.05);
   const vuColor = vuZoneColor(level, color);
 
-  // JINGLES overlay v1: WHITE = a jingle is ARMED on this deck's upcoming seam; YELLOW = FIRING (samples
-  // flowing on the CART overlay). Shades chosen to NOT collide with the deck countdown's ending (orange)
-  // or critical (red) colors, nor SPOT amber. A tiny chip pinned under the deck label/time.
-  const jingleArmed = jingle === "ARMED";
-  const jingleFiring = jingle === "FIRING";
-  const jingleColor = jingleFiring ? "#ffe93b" : jingleArmed ? "#ffffff" : null;
-  const jingleTag = (jingleClass === "SWP" ? "SWP" : "JIN");   // v2: indicator names the class
+  // JINGLES indicator moved OUT of the fader strip (4.4.63): the jingle's NAME + time now lives as a third
+  // line under the playing song's duration in the Up Next deck row (UpNext.tsx). The `jingle`/`jingleClass`
+  // props are retained (ignored) so callers don't break; nothing is rendered here.
+  void jingle; void jingleClass;
 
   return (
     <div style={{
@@ -243,24 +240,6 @@ export default function ConsoleStrip({
       borderRight: "var(--panel-border, 1px solid rgba(255,255,255,0.05))",
       userSelect: "none", overflow: "hidden", position: "relative",
     }}>
-
-      {jingleColor && (
-        <div title={jingleFiring ? "Jingle firing (overlay on air)" : "Jingle armed for this transition"}
-          style={{
-            position: "absolute", top: 2, right: 3, zIndex: 5,
-            display: "flex", alignItems: "center", gap: 3,
-            padding: "1px 5px", borderRadius: 3,
-            background: jingleFiring ? "rgba(255,233,59,0.16)" : "rgba(255,255,255,0.12)",
-            border: `1px solid ${jingleColor}`,
-            fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: jingleColor,
-            boxShadow: jingleFiring ? "0 0 8px rgba(255,233,59,0.45)" : "none",
-            animation: jingleFiring ? "none" : undefined,
-          }}>
-          <span style={{ width: 5, height: 5, borderRadius: "50%", background: jingleColor,
-            boxShadow: jingleFiring ? `0 0 5px ${jingleColor}` : "none" }} />
-          {jingleFiring ? jingleTag : `${jingleTag}·ARM`}
-        </div>
-      )}
 
       {/* ── Channel label ── */}
       {!hideLabel ? (

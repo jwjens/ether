@@ -73,6 +73,16 @@ class DaemonEngine {
     this.continuous = true;      // refill from the scheduler when the queue empties
     this.shuffle = false;
     this.crossfadeDuration = 3;
+    // ── Routine segue crossfade (auto song→song), DISTINCT from crossfadeDuration (the manual X-key
+    // gesture). Governs EVERY automatic segue: as the outgoing deck nears its end it fades to 0 over
+    // this many seconds while the incoming deck starts at full — the standard radio segue overlap.
+    // 0 = hard cut (legacy behaviour). One fade policy: a jingle seam rides the SAME fade (the jingle
+    // and the incoming stay full; only the outgoing deck ramps). Delivered from the app via
+    // setSegueCrossfade; the daemon default matches the app default so an un-pushed value still segues.
+    this.segueCrossfade = 3;
+    this.segueTriggered = new Set();     // decks whose early segue-rotate has begun (double-trigger guard)
+    this._fadedDecks = new Set();        // decks whose outgoing fade ramp has begun (once per song)
+    this._segueRamps = {};               // deckId → setInterval handle for an in-flight fade ramp
     this.advanceP = Promise.resolve();
     // Stage 3b: stall-recovery watchdog state. The invariant it enforces: content present + nobody
     // playing ⇒ somebody playing within ~1s. Without this, an "all decks stopped" state had no
@@ -135,8 +145,11 @@ class DaemonEngine {
 
   // ── addon wrappers (synchronous) ──
   _load(deck, fp, title, artist, gainDb) { return A.audioLoad(deck, fp, title || "", artist || "", gainDb ?? 0, this.stationId); }
-  _play(deck) { return A.audioPlay(deck, this.stationId); }
-  _stop(deck) { try { return A.audioStop(deck, this.stationId); } catch {} }
+  // A deck always starts a song at FULL fader — reset the volume (a prior segue may have faded THIS
+  // deck to 0 on its last turn) and clear its segue flags so the next end can fade/rotate again.
+  _play(deck) { this._clearSegueRamp(deck); try { A.audioSetVolume(deck, 1, this.stationId); } catch {} this._fadedDecks.delete(deck); this.segueTriggered.delete(deck); return A.audioPlay(deck, this.stationId); }
+  _stop(deck) { this._clearSegueRamp(deck); try { return A.audioStop(deck, this.stationId); } catch {} }
+  _clearSegueRamp(deck) { if (this._segueRamps[deck]) { clearInterval(this._segueRamps[deck]); delete this._segueRamps[deck]; } }
   _state() { try { return JSON.parse(A.audioGetState(this.stationId)); } catch { return null; } }
   _dur(fp) { try { return A.getFileDuration(fp); } catch { return 0; } }
 
@@ -195,6 +208,8 @@ class DaemonEngine {
     this._jingleTick(now);   // JINGLES v1: arm/fire/bridge the CART overlay (poll-driven; runs BEFORE the
                              // watchdog so a confirmed FIRING jingle bumps _lastPlayingAt → the intentional
                              // seam bridge is never mistaken for a stall).
+    this._segueTick(now);    // Routine segue crossfade: fade the outgoing + start the incoming (reads the
+                             // jingle state set above, so a jingle seam defers the incoming to the bridge).
     this._checkTopOfHour();
     this._watchdog();
     this._emitEngineState();
@@ -260,6 +275,7 @@ class DaemonEngine {
       this._stop("A"); this._stop("B"); this._stop("C");
       this._setDeck("A", { status: "ended" }); this._setDeck("B", { status: "ended" }); this._setDeck("C", { status: "ended" });
       this.deckReady.clear(); this.manualCue.clear(); this.endTriggered.clear();
+      this.segueTriggered.clear(); this._fadedDecks.clear(); for (const d of ["A", "B", "C"]) this._clearSegueRamp(d);
       this.clearQueue();
       this.queue.push(...items);
       this.emit("queue", { stationId: this.stationId, source: "top-of-hour", items: this.queue });
@@ -791,6 +807,7 @@ class DaemonEngine {
       this._stop("A"); this._stop("B"); this._stop("C");
       this._setDeck("A", { status: "ended" }); this._setDeck("B", { status: "ended" }); this._setDeck("C", { status: "ended" });
       this.deckReady.clear(); this.manualCue.clear(); this.endTriggered.clear();
+      this.segueTriggered.clear(); this._fadedDecks.clear(); for (const d of ["A", "B", "C"]) this._clearSegueRamp(d);
       this._airGen++;
       await new Promise(r => setTimeout(r, 80));   // let the stops reach the backend before loading A
     }
@@ -835,7 +852,7 @@ class DaemonEngine {
   _emitJingle(state, j) {
     try { this.emit("jingle", { stationId: this.stationId, state, deck: j ? j.deck : null,
       title: j ? j.title : null, categoryId: j ? j.categoryId : null, contentClass: j ? j.contentClass : null,
-      leadInSec: j ? j.leadIn : null, underlapSec: j ? j.underlap : null, ts: Date.now() }); } catch {}
+      leadInSec: j ? j.leadIn : null, underlapSec: j ? j.underlap : null, jinDurSec: j ? (j.jinDur || 0) : null, ts: Date.now() }); } catch {}
   }
   _noteFiredRow(rowId) { if (rowId == null) return; this._firedJinRows.push(rowId); if (this._firedJinRows.length > 300) this._firedJinRows.splice(0, this._firedJinRows.length - 300); }
 
@@ -921,19 +938,66 @@ class DaemonEngine {
     const j = this._jingle;
     if (!j || j.deck !== deckId || !j.firingConfirmedAt || !j.firedAt) return false;
     const jingleEnd = j.firedAt + j.jinDur * 1000;
-    const nextStart = jingleEnd - j.underlap * 1000;
-    return nextStart > Date.now() + 150;   // enough bridge to be worth deferring (else normal rotate)
+    return jingleEnd > Date.now() + 150;   // still jingle tail left to weave the incoming under
   }
   _jingleBeginBridge(deckId) {
     const j = this._jingle; if (!j) return;
     const now = Date.now();
-    const jingleEnd = j.firedAt + j.jinDur * 1000;
-    // Incoming starts at (jingle end − underlap), clamped: never before this deck ended (outgoing holds
-    // full level to its natural end), never after the jingle ends (no dead-air gap).
-    j.nextStart = Math.max(now, Math.min(jingleEnd - j.underlap * 1000, jingleEnd - 100));
+    // Continuous weave (music never stops): the outgoing has already faded to 0 under the jingle (the
+    // segue fade), so the instant it ends the incoming enters at full and rides UNDER the jingle's
+    // remaining tail. No jingle-alone gap — outgoing-tail(fading) · jingle · incoming-head overlap.
+    j.nextStart = now;
     j.outgoingEndedAt = now;
     j.phase = "bridging";
-    this._log(`jingle BRIDGING — deck ${deckId} ended; incoming starts in ${Math.round(j.nextStart - now)}ms (underlap ${j.underlap}s before jingle end)`);
+    this._log(`jingle BRIDGING — deck ${deckId} ended; incoming enters now under the jingle tail (continuous weave)`);
+  }
+
+  // Ramp a deck's fader 1 → 0 over `seconds` (native audioSetVolume, ~50ms steps). Used for the routine
+  // segue crossfade AND under a jingle seam — ONE fade policy. The outgoing deck's source ends naturally
+  // at the same moment, so the fade lands on silence; _play resets the fader to full for its next song.
+  _fadeOutDeck(deckId, seconds) {
+    this._clearSegueRamp(deckId);
+    const ms = Math.max(200, seconds * 1000), stepMs = 50, steps = Math.max(1, Math.ceil(ms / stepMs));
+    let i = 0;
+    this._log(`segue fade: deck ${deckId} ${seconds.toFixed(1)}s → 0`);
+    this._segueRamps[deckId] = setInterval(() => {
+      i++;
+      const v = Math.max(0, 1 - i / steps);
+      try { A.audioSetVolume(deckId, v, this.stationId); } catch {}
+      if (i >= steps) this._clearSegueRamp(deckId);
+    }, stepMs);
+  }
+
+  // Routine segue crossfade brain (poll-driven, never throws into playout). As the playing deck nears its
+  // end: (1) fade it out over its remaining time — ALWAYS, so a jingle seam rides the same fade; (2) on a
+  // PLAIN seam (no jingle owning this deck) start the incoming now so it crosses up while the outgoing
+  // fades down. On a jingle seam the incoming entry is left to the jingle bridge (continuous weave under
+  // the tail). segueCrossfade=0 → disabled (legacy hard cut at end).
+  _segueTick(now) {
+    try {
+      if (!this._started || !(this.segueCrossfade > 0)) return;
+      const P = ["A", "B", "C"].find(d => this._deckState(d).status === "playing");
+      if (!P) return;
+      const st = this._deckState(P);
+      const remaining = (st.durationSec || 0) - (st.positionSec || 0);
+      if (!(remaining > 0 && remaining <= this.segueCrossfade)) return;
+      const nextDeck = this._nextRotateDeck(P);
+      const nextReady = !!(nextDeck && this.deckReady.has(nextDeck));
+      const jingleHere = !!(this._jingle && this._jingle.deck === P);
+      // (1) Fade the outgoing — only when something follows (a ready deck, or a jingle bridging the seam),
+      //     so we never fade into silence.
+      if ((nextReady || jingleHere) && !this._fadedDecks.has(P)) {
+        this._fadedDecks.add(P);
+        this._fadeOutDeck(P, remaining);
+      }
+      // (2) Plain seam: start the incoming now (crossfade up while the outgoing fades down). Jingle seam:
+      //     skip — the bridge owns the incoming entry.
+      if (!jingleHere && nextReady && !this.segueTriggered.has(P)) {
+        this.segueTriggered.add(P);
+        this._log(`segue: crossfade ${P}→${nextDeck} (${this.segueCrossfade}s)`);
+        this.handleRotate(P, nextDeck);
+      }
+    } catch (e) { this._log("segueTick error (playout unaffected): " + String(e)); }
   }
 
   // The one poll-driven jingle brain. Never throws into playout.

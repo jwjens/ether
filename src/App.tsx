@@ -579,7 +579,7 @@ export default function App() {
   const [deckC, setDeckC] = useState<DeckState | null>(null);
   // JINGLES overlay v1: live overlay state for the ACTIVE station, from the daemon (observed, not claimed).
   // { deck: the deck whose seam the jingle bridges, state: 'ARMED'|'FIRING', title }. null when idle.
-  const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null; contentClass: string | null } | null>(null);
+  const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null>(null);
   // Discoverability (4.4.56): does this station have any jingle pool? Drives the "Set up jingles →"
   // affordance on the JINGLES fader when the feature is unconfigured (its owner couldn't find it).
   const [hasJinglePool, setHasJinglePool] = useState<boolean>(true);   // assume yes until known → no flash
@@ -1382,6 +1382,17 @@ export default function App() {
     localStorage.setItem("ether_xfade_duration", String(v));
     engine.crossfadeDuration = v;
   };
+  // Routine segue crossfade (auto song→song) — distinct from the manual X-key crossfade above. 0 = hard cut.
+  const [segueCrossfade, setSegueCrossfadeState] = useState(() => {
+    try { const v = parseInt(localStorage.getItem("ether_segue_crossfade") ?? "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(0, v)); } catch { return 3; }
+  });
+  const setSegueCrossfade = (v: number) => {
+    setSegueCrossfadeState(v);
+    localStorage.setItem("ether_segue_crossfade", String(v));
+    (engine as any).setSegueCrossfade?.(v);
+  };
+  // Push the persisted segue setting into the engine on mount (and thus to the daemon once connected).
+  useEffect(() => { (engine as any).setSegueCrossfade?.(segueCrossfade); }, [engine]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -1929,7 +1940,7 @@ export default function App() {
     const h = au.onJingle((m: any) => {
       if (!m || m.stationId !== stationId) return;
       if (m.state === "CLEARED" || m.state === "ARMED_CANCELLED") setJingleOverlay(null);
-      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null, contentClass: m.contentClass ?? "JIN" });
+      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null, contentClass: m.contentClass ?? "JIN", jinDurSec: m.jinDurSec ?? null });
     });
     return () => { try { au.offJingle?.(h); } catch { /* ignore */ } };
   }, [stationId]);
@@ -2495,7 +2506,7 @@ export default function App() {
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
-              {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} />}
+              {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} segueCrossfade={segueCrossfade} setSegueCrossfade={setSegueCrossfade} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}
@@ -3396,7 +3407,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   handleXfade: () => void;
   onOpenCarts: () => void;
   libraryDock: JSX.Element;
-  jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null } | null;
+  jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;
   hasJinglePool: boolean;
   onOpenJingleSettings: () => void;
   onCloseDock: () => void;
@@ -3727,7 +3738,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
           >{collapseChevron}</button>
           {/* ── Queue ── */}
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflowY: "auto" }}>
-            <UpNext queueLen={queueLen} onQueueChange={() => window.dispatchEvent(new CustomEvent('ether:queue-changed'))} />
+            <UpNext queueLen={queueLen} onQueueChange={() => window.dispatchEvent(new CustomEvent('ether:queue-changed'))} jingleOverlay={jingleOverlay} />
           </div>
         </>
       )}
@@ -3780,8 +3791,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     deckId={slot}
                     hideLabel={["A","B","C"].includes(slot)}
                     role={["A","B","C"].includes(slot) ? computeDeckRole(slot as "A"|"B"|"C", { A: deckA, B: deckB, C: deckC }) : "third"}
-                    jingle={["A","B","C"].includes(slot) && jingleOverlay?.deck === slot ? jingleOverlay.state : null}
-                    jingleClass={["A","B","C"].includes(slot) && jingleOverlay?.deck === slot ? jingleOverlay.contentClass : null}
                     isPlaying={deck?.status === "playing"}
                     isOn={true}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}

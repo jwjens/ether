@@ -1681,7 +1681,7 @@ function MusicFolderSection() {
   );
 }
 
-export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void }) {
+export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, segueCrossfade = 3, setSegueCrossfade }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void; segueCrossfade?: number; setSegueCrossfade?: (v: number) => void }) {
   const { stationId } = useActiveStation();
   const loadKvVersionRef = useRef(0);
   // Active category — persisted via URL hash so deep links + reloads stay
@@ -2329,7 +2329,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
           ↻ Rescan Devices
         </button>
         {setXfadeDuration && (
-          <SettingRow label="Crossfade Duration" hint="How long a crossfade takes — triggered by X key or AUTO-X">
+          <SettingRow label="Manual crossfade (X key)" hint="How long a crossfade takes when YOU trigger it — the X key or AUTO-X. Does not affect automatic segues.">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <input
                 type="range" min={1} max={10} step={1} value={xfadeDuration}
@@ -2338,6 +2338,20 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
               />
               <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#a78bfa", minWidth: 28, textAlign: "right" as const }}>
                 {xfadeDuration}s
+              </span>
+            </div>
+          </SettingRow>
+        )}
+        {setSegueCrossfade && (
+          <SettingRow label="Segue crossfade (auto)" hint="Every automatic song-to-song transition: the outgoing song fades over this many seconds while the next starts. 0 = hard cut. A jingle seam rides the same fade.">
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <input
+                type="range" min={0} max={10} step={1} value={segueCrossfade}
+                onChange={e => setSegueCrossfade(Number(e.target.value))}
+                style={{ width: 110, accentColor: "#14e0c8", cursor: "pointer" }}
+              />
+              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#14e0c8", minWidth: 40, textAlign: "right" as const }}>
+                {segueCrossfade === 0 ? "hard" : `${segueCrossfade}s`}
               </span>
             </div>
           </SettingRow>

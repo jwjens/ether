@@ -47,7 +47,13 @@ export async function fetchArt(title: string, artist: string): Promise<string | 
 
 // ── UpNext (main component) ────────────────────────────────────
 
-interface Props { queueLen: number; onQueueChange: () => void; }
+interface Props {
+  queueLen: number;
+  onQueueChange: () => void;
+  // JINGLES indicator (4.4.63): the armed/firing jingle for a deck's upcoming seam. Rendered as a third
+  // line under that deck's duration — solid white = ARMED, blinking yellow = FIRING. Class-aware (JIN/SWP).
+  jingleOverlay?: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;
+}
 
 // Class-color audit (jingles v1 D3): JIN teal + SPOT amber use the canonical tokens; others unchanged.
 const CATEGORY_COLORS: Record<string, string> = {
@@ -55,7 +61,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   spot: "#fbbf24", liner: "#ec4899", jingle: "#14e0c8", sweeper: "#4f46e5", news: "#6366f1",
 };
 
-export default function UpNext({ queueLen, onQueueChange }: Props) {
+export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }: Props) {
   const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
@@ -296,7 +302,8 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
 
       {/* Flash keyframe — pulses the deck color over a row during the last 10s so a DJ
           knows to start talking. Color-agnostic (the overlay's bg is set per-deck inline). */}
-      <style>{`@keyframes deck-row-flash { 0%,100% { opacity: 0.06; } 50% { opacity: 0.5; } }`}</style>
+      <style>{`@keyframes deck-row-flash { 0%,100% { opacity: 0.06; } 50% { opacity: 0.5; } }
+        @keyframes jingle-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }`}</style>
 
       {/* ── Stacked A / B / C deck rows — color-coded, animated, flash in last 10s ── */}
       <div style={{ flexShrink: 0, borderBottom: "2px solid rgba(255,255,255,0.07)" }}>
@@ -371,6 +378,28 @@ export default function UpNext({ queueLen, onQueueChange }: Props) {
                   </div>
                 )}
               </div>
+              {/* JINGLES third line (4.4.63) — the jingle's NAME + time under THIS deck's duration.
+                  Solid white = ARMED, blinking yellow = FIRING. Class-aware (JIN/SWP). The countdown
+                  colors above are untouched — the name is the label, nothing shared with the countdown. */}
+              {jingleOverlay && jingleOverlay.deck === id && jingleOverlay.state && (() => {
+                const firing = jingleOverlay.state === "FIRING";
+                const col = firing ? "#ffe93b" : "#ffffff";
+                const tag = jingleOverlay.contentClass === "SWP" ? "SWP" : "JIN";
+                const jdur = jingleOverlay.jinDurSec || 0;
+                return (
+                  <div className={firing ? "jingle-blink" : ""} style={{
+                    position: "absolute", left: 101, right: 14, bottom: 6, zIndex: 2,
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+                    fontFamily: "'DM Mono', monospace", pointerEvents: "none",
+                  }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, color: col }}>
+                      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", padding: "1px 4px", borderRadius: 2, border: `1px solid ${col}`, flexShrink: 0 }}>{tag}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{jingleOverlay.title || "jingle"}</span>
+                    </span>
+                    {jdur > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: col, flexShrink: 0 }}>{fmtSec(jdur)}</span>}
+                  </div>
+                );
+              })()}
             </div>
           );
         });
