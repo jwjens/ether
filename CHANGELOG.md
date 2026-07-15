@@ -1,36 +1,38 @@
 ## [4.4.63] — 2026-07-15
 
-### Added — routine segue crossfade + jingle polish (one fade policy everywhere)
+### Added — routine segue overlap (auto) + jingle polish (NO fades — the next song just starts early)
 
-- **Segue crossfade (auto).** A new **Settings → Audio** slider — *"Segue crossfade (auto)"* (0–10s, default
-  3, `0` = hard cut) — governs **every automatic song-to-song transition**: as the outgoing song nears its
-  end its fader ramps to 0 over N seconds while the incoming song starts at full — the standard radio segue
-  overlap. The old slider is relabelled **"Manual crossfade (X key)"** so the two can't be confused: it still
-  governs only the manual X-key / AUTO-X gesture, unchanged. The setting is delivered to the daemon and
-  re-pushed on every daemon (re)connect (so it survives the update/crash respawn).
-- **Real fade, no native change.** The daemon previously "crossfaded" by overlap-play + deferred-stop
-  triggered only within 0.3s of the song's end — so the outgoing hard-ended into silence. It now fades the
-  outgoing deck via `audioSetVolume` (which already existed) starting `segueCrossfade` seconds before the end.
-  A deck always returns to full fader on its next song; the fade is guarded against double-trigger.
-- **One fade policy for jingle seams.** A jingle seam rides the **same** fade — the outgoing song fades under
-  the jingle (jingle and incoming stay full). Continuous weave: the incoming enters the instant the outgoing
-  ends, riding under the jingle's remaining tail — **no more song → jingle-alone → song gap** (the "three
-  events" from the maiden fire). The old bridge started the incoming at `jingleEnd − underlap`, which left a
-  `jinDur − leadIn − underlap` silence for any jingle longer than 7s.
+- **Segue overlap (auto).** A new **Settings → Audio** slider — *"Segue overlap (auto)"* (0–10s, default 3,
+  `0` = off) — sets **how many seconds the next song starts before the current one ends**. Both play over the
+  outgoing song's **own natural tail**, so there's no dead air. The old slider is relabelled **"Manual
+  crossfade (X key)"** so the two can't be confused: it still governs only the manual X-key / AUTO-X gesture,
+  unchanged. The setting is delivered to the daemon and re-pushed on every (re)connect (survives the
+  update/crash respawn).
+- **NO fader automation — ever.** Automation never moves a deck fader (those are operator controls); songs
+  carry their own mastered fade-outs. The daemon simply starts the incoming deck at full when the outgoing has
+  ≤ N seconds left and the next deck is ready; the outgoing plays its full tail and ends on its own. No
+  `audioSetVolume` in the segue path at all.
+- **Jingle seams overlap too.** The next song starts early over the outgoing's tail **under the firing
+  jingle** (the early start waits only until an armed jingle has fired, so it can't supersede it) — the jingle
+  no longer plays alone before the next song. No fades anywhere.
+
+> Supersedes an earlier build-day attempt that implemented the fade as fader automation — it visibly yanked
+> the console faders down and fought the operator's hand. Removed entirely per Jeff: automation must never
+> move a fader.
 
 ### Changed — jingle indicator
 
 - The jingle indicator moved **out of the fader strip chip** into the **Up Next deck row**: a third line under
   the playing song's duration shows the jingle's **name + time** — **solid white = ARMED, blinking yellow =
-  FIRING**, class-aware (JIN/SWP). The deck **countdown colors are untouched** (the earlier chip is gone; the
-  name is the label, nothing shared with the countdown).
+  FIRING**, class-aware (JIN/SWP). The deck **countdown colors are untouched**.
 
 ### Proof
 
-- Off-air isolation harness `scripts/test-segue-crossfade.js` (own daemon, DB copy, monitor muted): outgoing
-  fader ramped **1 → 0.200** before it ended, incoming entered, **both decks audible together** (overlap), the
-  master program level **never hit silence across the seam** (min 0.244), no panic. Daemon receipts:
-  `segue fade: deck A 3.0s → 0` · `segue: crossfade A→B (3s)` · `segue: deck B LIVE`. The jingle-seam weave is
+- Off-air isolation harness `scripts/test-segue-overlap.js` (own daemon, DB copy, monitor muted): incoming
+  deck started **early** (both decks played together — real overlap), master program level **never hit silence
+  across the seam** (min 0.244), the outgoing **ended on its own** (played to 9.9/10s), and — the correction —
+  **deck faders never moved from 1.0** (`max |vol−1.0| = 0.0000`), no panic. Receipt:
+  `segue overlap: A→B — incoming starts 3s early over A's tail (no fade)`. The jingle-seam overlap is
   code-level + the operator ear-test gate (a plain segue AND a jingle seam signed before ship).
 
 ## [4.4.62] — 2026-07-15

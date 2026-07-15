@@ -110,7 +110,7 @@ export class AudioEngine {
   continuous = false;
   outroCrossfade = false;
   crossfadeDuration = 3;                 // manual X-key / AUTO-X crossfade (in-process path)
-  segueCrossfade = 3;                    // routine auto song→song segue fade (seconds, 0 = hard cut) — daemon-side
+  segueOverlap = 3;                      // routine auto segue OVERLAP (seconds the next song starts early, 0 = off) — daemon-side, no fades
   // advancePromise serializes advance operations. Any handler chains onto this promise
   // so that concurrent same-tick callers await the in-flight advance rather than
   // spawning a second one.
@@ -167,9 +167,9 @@ export class AudioEngine {
   private attachDaemonEvents() {
     const a = (window as any).ether?.audio;
     if (!a) return;
-    // Re-push the routine segue crossfade — the daemon resets to its default on respawn, so a
+    // Re-push the routine segue overlap — the daemon resets to its default on respawn, so a
     // (re)connect (incl. the update/crash respawn) must restore the operator's setting.
-    this.pushSegueCrossfade();
+    this.pushSegueOverlap();
     // Mirror the daemon's queue so getQueue() (the Up Next UI) stays current. Stage 0: carry the
     // daemon's per-entry qid so the mirror can address an exact entry (Stage 2 intent commands).
     if (a.onQueue) {
@@ -260,7 +260,7 @@ export class AudioEngine {
    *  go-on-air calls this instead of starting playback locally when daemon-driven. */
   async startDaemonAutomation(): Promise<boolean> {
     if (!this.daemonDriven) return false;
-    this.pushSegueCrossfade();   // ensure the daemon has the operator's segue setting before it airs
+    this.pushSegueOverlap();   // ensure the daemon has the operator's segue setting before it airs
     try { const r = await (window as any).ether?.audio?.daemon?.("automationStart", { stationId: this.stationId }); return !!(r && r.ok); }
     catch { return false; }
   }
@@ -309,14 +309,14 @@ export class AudioEngine {
   queueClearPending(): Promise<any> { return this.daemonCmd("queue:clear", {}); }
   deckCue(deck: DeckId, songRef: { filePath: string; title: string; artist: string; gainDb?: number; durationMs?: number; chainType?: "segue" | "stop" }): Promise<any> { return this.daemonCmd("deck:cue", { deck, songRef }); }
   deckCrossfade(from?: DeckId, to?: DeckId): Promise<any> { return this.daemonCmd("deck:crossfade", { from, to }); }
-  // Routine segue crossfade (auto). Stored locally + pushed to the daemon (the daemon resets to its
+  // Routine segue overlap (auto). Stored locally + pushed to the daemon (the daemon resets to its
   // default on respawn, so this is re-pushed on every daemon (re)connect + automation start).
-  setSegueCrossfade(seconds: number): Promise<any> | void {
-    this.segueCrossfade = Math.max(0, Math.min(10, seconds || 0));
-    if (this.daemonDriven) return this.daemonCmd("setSegueCrossfade", { seconds: this.segueCrossfade });
+  setSegueOverlap(seconds: number): Promise<any> | void {
+    this.segueOverlap = Math.max(0, Math.min(10, seconds || 0));
+    if (this.daemonDriven) return this.daemonCmd("setSegueOverlap", { seconds: this.segueOverlap });
   }
-  private pushSegueCrossfade(): void {
-    if (this.daemonDriven) { try { this.daemonCmd("setSegueCrossfade", { seconds: this.segueCrossfade }); } catch {} }
+  private pushSegueOverlap(): void {
+    if (this.daemonDriven) { try { this.daemonCmd("setSegueOverlap", { seconds: this.segueOverlap }); } catch {} }
   }
 
   private async poll() {

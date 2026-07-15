@@ -1681,7 +1681,7 @@ function MusicFolderSection() {
   );
 }
 
-export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, segueCrossfade = 3, setSegueCrossfade }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void; segueCrossfade?: number; setSegueCrossfade?: (v: number) => void }) {
+export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, segueOverlap = 3, setSegueOverlap }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void; segueOverlap?: number; setSegueOverlap?: (v: number) => void }) {
   const { stationId } = useActiveStation();
   const loadKvVersionRef = useRef(0);
   // Active category — persisted via URL hash so deep links + reloads stay
@@ -2342,16 +2342,16 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
             </div>
           </SettingRow>
         )}
-        {setSegueCrossfade && (
-          <SettingRow label="Segue crossfade (auto)" hint="Every automatic song-to-song transition: the outgoing song fades over this many seconds while the next starts. 0 = hard cut. A jingle seam rides the same fade.">
+        {setSegueOverlap && (
+          <SettingRow label="Segue overlap (auto)" hint="How many seconds the next song starts before the current one ends — both play over the outgoing's own tail, so there's no dead air. 0 = wait for the end. No fades (songs carry their own mastered fade-outs).">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <input
-                type="range" min={0} max={10} step={1} value={segueCrossfade}
-                onChange={e => setSegueCrossfade(Number(e.target.value))}
+                type="range" min={0} max={10} step={1} value={segueOverlap}
+                onChange={e => setSegueOverlap(Number(e.target.value))}
                 style={{ width: 110, accentColor: "#14e0c8", cursor: "pointer" }}
               />
               <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#14e0c8", minWidth: 40, textAlign: "right" as const }}>
-                {segueCrossfade === 0 ? "hard" : `${segueCrossfade}s`}
+                {segueOverlap === 0 ? "off" : `${segueOverlap}s`}
               </span>
             </div>
           </SettingRow>

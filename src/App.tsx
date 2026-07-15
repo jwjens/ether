@@ -1382,17 +1382,18 @@ export default function App() {
     localStorage.setItem("ether_xfade_duration", String(v));
     engine.crossfadeDuration = v;
   };
-  // Routine segue crossfade (auto song→song) — distinct from the manual X-key crossfade above. 0 = hard cut.
-  const [segueCrossfade, setSegueCrossfadeState] = useState(() => {
-    try { const v = parseInt(localStorage.getItem("ether_segue_crossfade") ?? "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(0, v)); } catch { return 3; }
+  // Routine segue overlap (auto song→song) — seconds the next song starts before the current ends
+  // (0 = wait for the end). Distinct from the manual X-key crossfade above. No fades.
+  const [segueOverlap, setSegueOverlapState] = useState(() => {
+    try { const v = parseInt(localStorage.getItem("ether_segue_overlap") ?? "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(0, v)); } catch { return 3; }
   });
-  const setSegueCrossfade = (v: number) => {
-    setSegueCrossfadeState(v);
-    localStorage.setItem("ether_segue_crossfade", String(v));
-    (engine as any).setSegueCrossfade?.(v);
+  const setSegueOverlap = (v: number) => {
+    setSegueOverlapState(v);
+    localStorage.setItem("ether_segue_overlap", String(v));
+    (engine as any).setSegueOverlap?.(v);
   };
   // Push the persisted segue setting into the engine on mount (and thus to the daemon once connected).
-  useEffect(() => { (engine as any).setSegueCrossfade?.(segueCrossfade); }, [engine]);
+  useEffect(() => { (engine as any).setSegueOverlap?.(segueOverlap); }, [engine]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -2506,7 +2507,7 @@ export default function App() {
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
-              {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} segueCrossfade={segueCrossfade} setSegueCrossfade={setSegueCrossfade} />}
+              {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} segueOverlap={segueOverlap} setSegueOverlap={setSegueOverlap} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}

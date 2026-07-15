@@ -1,26 +1,26 @@
-// test-segue-crossfade.js — OFF-AIR proof for the routine segue crossfade (4.4.63).
+// test-segue-overlap.js — OFF-AIR proof for the routine segue OVERLAP (4.4.63, corrected: no fades).
 // Isolated harness (soak-isolation style): spawns its OWN daemon against a COPY of the DB, private pipe,
 // monitor muted (levels are post-fader / pre-monitor, so they still read true program audio). NEVER
-// touches the live daemon. Enqueues three SHORT tones, starts automation with segueCrossfade=3, and
-// watches ONE automatic A→B segue. Asserts:
-//   1. the OUTGOING deck's fader RAMPS 1 → ~0 before it ends (the fade — observed on deckA.volume),
-//   2. the INCOMING deck starts while the outgoing is still audible (overlap, not a hard cut),
-//   3. the master program level NEVER drops to silence across the seam (music never stops — the weave),
-//   4. no panic in the daemon log.
-// Run: node scripts/test-segue-crossfade.js   (uses electron-as-node → dev .node)
+// touches the live daemon. Enqueues three SHORT tones, starts automation with segueOverlap=3, and watches
+// ONE automatic A→B segue. Asserts:
+//   1. the INCOMING deck starts while the outgoing is still playing (overlap — the next song starts early),
+//   2. the master program level NEVER drops to silence across the seam (no dead air),
+//   3. the outgoing deck ends ON ITS OWN (plays its full natural tail during the overlap),
+//   4. *** deck FADER VALUES NEVER CHANGE FROM 1.0 *** — automation must never move an operator fader,
+//   5. no panic in the daemon log.
+// Run: node scripts/test-segue-overlap.js   (uses electron-as-node → dev .node)
 const net = require("net"), path = require("path"), os = require("os"), fs = require("fs"), cp = require("child_process");
 
 const STATION = 1;
-const SEGUE = 3;              // seconds
+const OVERLAP = 3;           // seconds the next song starts early
 const srcDb = process.env.ETHER_DB_PATH || path.join(os.homedir(), "AppData", "Local", "Ether", "com.ether.radio", "openair.db");
-const tmp = path.join(os.tmpdir(), "ether-segue-" + process.pid + ".db");
+const tmp = path.join(os.tmpdir(), "ether-overlap-" + process.pid + ".db");
 fs.copyFileSync(srcDb, tmp);
 for (const e of ["-wal", "-shm"]) { try { fs.unlinkSync(tmp + e); } catch {} }
-const PIPE = "\\\\.\\pipe\\ether-segue-" + process.pid;
-const daemonLog = path.join(os.tmpdir(), "ether-segue-daemon-" + process.pid + ".log");
+const PIPE = "\\\\.\\pipe\\ether-overlap-" + process.pid;
+const daemonLog = path.join(os.tmpdir(), "ether-overlap-daemon-" + process.pid + ".log");
 const wavs = [];
 
-// N-second stereo 44100 16-bit PCM WAV at frequency `hz`.
 function writeWav(p, seconds, hz) {
   const sr = 44100, ch = 2, bps = 2, n = sr * seconds;
   const data = Buffer.alloc(n * ch * bps);
@@ -31,7 +31,7 @@ function writeWav(p, seconds, hz) {
   hdr.write("data", 36); hdr.writeUInt32LE(data.length, 40);
   fs.writeFileSync(p, Buffer.concat([hdr, data]));
 }
-[220, 330, 440].forEach((hz, i) => { const p = path.join(os.tmpdir(), `ether-segue-${process.pid}-${i}.wav`); writeWav(p, 10, hz); wavs.push(p); });
+[220, 330, 440].forEach((hz, i) => { const p = path.join(os.tmpdir(), `ether-overlap-${process.pid}-${i}.wav`); writeWav(p, 10, hz); wavs.push(p); });
 
 const RUNTIME = path.join(__dirname, "..", "node_modules", "electron", "dist", "electron.exe");
 const dlog = fs.openSync(daemonLog, "a");
@@ -53,53 +53,49 @@ const logHasPanic = () => { try { return /panicked/.test(fs.readFileSync(daemonL
 function cleanup(code) { try { daemon.kill(); } catch {} setTimeout(() => { for (const e of ["", "-wal", "-shm"]) { try { fs.unlinkSync(tmp + e); } catch {} } wavs.forEach(w => { try { fs.unlinkSync(w); } catch {} }); process.exit(code); }, 400); }
 
 (async () => {
-  console.log("[segue-test] isolated daemon (DB copy, muted) — proving the routine segue crossfade fades the outgoing while music never stops");
+  console.log("[overlap-test] isolated daemon (DB copy, muted) — proving the next song starts early over the outgoing's tail, with NO fader movement");
   let up = false; for (let i = 0; i < 80 && !(up = await pipeAlive()); i++) await sleep(500);
   ok("daemon started (pipe up)", up);
   if (!up) { try { console.error(fs.readFileSync(daemonLog, "utf8").split(/\r?\n/).slice(-25).join("\n")); } catch {} return cleanup(1); }
   const app = client(); await app.connect(); await app.cmd("ping");
   await app.cmd("init", { stationId: STATION });
   try { await app.cmd("setMonitorVolume", { stationId: STATION, volume: 0 }); } catch {}
-  await app.cmd("setSegueCrossfade", { stationId: STATION, seconds: SEGUE });
-  // Pin the queue to our short tones: continuous=false stops the scheduler refill (which would purge
-  // our non-scheduled rows and play a real 3-min song), so the A→B segue happens in seconds.
+  await app.cmd("setSegueOverlap", { stationId: STATION, seconds: OVERLAP });
   await app.cmd("setContinuous", { stationId: STATION, value: false });
   await app.cmd("replaceQueue", { stationId: STATION, items: wavs.map((w, i) => ({ filePath: w, title: "tone-" + i, artist: "", durationMs: 10000 })) });
   await app.cmd("automationStart", { stationId: STATION });
 
-  // Wait for deck A to be playing.
   let playing = false;
   for (let i = 0; i < 40; i++) { const st = await app.cmd("getState", { stationId: STATION }).catch(() => null); if (st && st.deckA && st.deckA.status === "playing") { playing = true; break; } await sleep(250); }
   ok("station airing (deck A playing)", playing);
   if (!playing) return cleanup(1);
 
-  // Sample state+levels ~10Hz until we observe a full A→B segue (B goes live), or time out.
-  let minAvolWhilePlaying = 1, sawOverlap = false, minMasterAcrossSeam = 1, bLive = false, aEndedAt = 0, gapObserved = false;
+  // Sample state+levels ~10Hz until a full A→B segue completes (B live, then A stops), or time out.
+  let sawOverlap = false, minMasterAcrossSeam = 1, bLive = false, gapObserved = false;
+  let maxVolDeviation = 0;   // largest |deckVolume - 1.0| seen on ANY deck across the whole run
   const t0 = Date.now();
   while (Date.now() - t0 < 14000) {
     const st = await app.cmd("getState", { stationId: STATION }).catch(() => null);
     const lv = await app.cmd("getLevels", { stationId: STATION }).catch(() => null);
     if (st && lv) {
       const aStat = st.deckA && st.deckA.status, bStat = st.deckB && st.deckB.status;
-      const aVol = (st.deckA && typeof st.deckA.volume === "number") ? st.deckA.volume : 1;
       const master = lv.master ?? 0, aLvl = lv.a ?? 0, bLvl = lv.b ?? 0;
-      if (aStat === "playing") minAvolWhilePlaying = Math.min(minAvolWhilePlaying, aVol);
-      // Overlap: both decks contributing audio at the same time (the crossfade window).
+      // *** the core correction: no deck fader may move from 1.0, ever ***
+      for (const d of ["deckA", "deckB", "deckC"]) { const v = st[d] && typeof st[d].volume === "number" ? st[d].volume : 1; maxVolDeviation = Math.max(maxVolDeviation, Math.abs(v - 1)); }
       if (aStat === "playing" && bStat === "playing" && aLvl > 0.001 && bLvl > 0.001) sawOverlap = true;
-      // Across the seam (B live), the master program level must stay up (no silence gap).
       if (bStat === "playing") { bLive = true; minMasterAcrossSeam = Math.min(minMasterAcrossSeam, master); if (master < 0.0005) gapObserved = true; }
-      if (bLive && aStat !== "playing") { aEndedAt = Date.now(); break; }  // segue complete
+      if (bLive && aStat !== "playing") break;  // segue complete
     }
     await sleep(100);
   }
 
-  ok("outgoing deck A FADED (fader ramped 1 → low before it ended)", minAvolWhilePlaying <= 0.5, `min deckA.volume while playing = ${minAvolWhilePlaying.toFixed(3)}`);
-  ok("incoming deck B started (segue advanced)", bLive);
-  ok("crossfade OVERLAP observed (both decks audible together)", sawOverlap);
-  ok("music never stopped across the seam (no silence gap)", bLive && !gapObserved, `min master across seam = ${minMasterAcrossSeam.toFixed(4)}`);
+  ok("incoming deck B started EARLY (overlap — next song began before A ended)", sawOverlap);
+  ok("outgoing + incoming played TOGETHER (real overlap window)", sawOverlap);
+  ok("music never stopped across the seam (no dead air)", bLive && !gapObserved, `min master across seam = ${minMasterAcrossSeam.toFixed(4)}`);
+  ok("*** deck faders NEVER moved from 1.0 (automation never touched a fader) ***", maxVolDeviation < 0.001, `max |vol−1.0| = ${maxVolDeviation.toFixed(4)}`);
   ok("NO panic in the daemon log", !logHasPanic());
 
   const passed = results.every(r => r[1]);
-  console.log(`\n${passed ? "✅ SEGUE-CROSSFADE PROOF — ALL PASS" : "❌ SEGUE-CROSSFADE PROOF — FAILURES"} (daemon log: ${daemonLog})`);
+  console.log(`\n${passed ? "✅ SEGUE-OVERLAP PROOF — ALL PASS" : "❌ SEGUE-OVERLAP PROOF — FAILURES"} (daemon log: ${daemonLog})`);
   cleanup(passed ? 0 : 1);
-})().catch(e => { console.error("[segue-test] error:", e && e.message); cleanup(1); });
+})().catch(e => { console.error("[overlap-test] error:", e && e.message); cleanup(1); });

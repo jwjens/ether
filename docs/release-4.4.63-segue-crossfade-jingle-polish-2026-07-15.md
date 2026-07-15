@@ -1,76 +1,71 @@
-# Release 4.4.63 — Routine segue crossfade + jingle polish (2026-07-15)
+# Release 4.4.63 — Routine segue overlap (auto) + jingle polish (2026-07-15)
 
-One release, three parts, built exactly as proposed (GO: option **(a) continuous weave**). Off-air proof
-obtained; **ear-test gate pending** — Jeff signs the sound of one plain segue AND one jingle seam before it
-ships. **STOP before install.**
+**Corrected build.** The feature is an **early start of the next song**, NOT a fade. Automation **never moves a
+deck fader** — an earlier build-day attempt implemented "fade" as fader automation, which visibly yanked the
+console faders down and fought the operator's hand (drag up → it pulled back down). That was removed entirely.
+Off-air proof obtained; **ear-test gate pending** (Jeff signs one plain segue AND one jingle seam). STOP before
+install.
 
-## A · Routine segue crossfade (new setting + real fade)
+## A · Segue overlap (auto) — the whole feature
 - **Settings → Audio, two labelled sliders** (`src/components/SettingsPanel.tsx`):
-  - **"Manual crossfade (X key)"** — the existing slider, relabelled; unchanged behaviour (manual X / AUTO-X).
-  - **"Segue crossfade (auto)"** — NEW, `0–10s`, default 3, `0 = hard cut`. Teal accent, shows "hard" at 0.
+  - **"Manual crossfade (X key)"** — existing slider, relabelled; unchanged (manual X / AUTO-X).
+  - **"Segue overlap (auto)"** — NEW, `0–10s`, default 3, `0 = off`. "How many seconds the next song starts
+    before the current one ends."
 - **Persist + deliver** (`src/App.tsx`, `src/audio/engine-rodio.ts`, `audiod/ether-audiod.js`): stored in
-  `localStorage.ether_segue_crossfade`; pushed to the daemon via a new `setSegueCrossfade` command, and
-  **re-pushed on every daemon (re)connect + automation start** (survives the update/crash respawn — the
-  daemon resets to its default on a fresh engine).
-- **Real fade in the daemon** (`audiod/engine.js`): a new `_segueTick(now)` runs each poll. When the playing
-  deck reaches `remaining ≤ segueCrossfade` and the next deck is ready, it (1) ramps the outgoing deck's
-  fader **1 → 0** over its remaining time via `audioSetVolume` (`_fadeOutDeck`, ~50ms steps) and (2) starts
-  the incoming deck now (reusing the proven `handleRotate`), so the incoming crosses up while the outgoing
-  fades down. `_play` resets a deck's fader to full + clears its segue flags (a deck faded on its last turn
-  returns at full). Double-trigger guarded (`segueTriggered` / `_fadedDecks` sets). `segueCrossfade = 0`
-  keeps the legacy hard cut. **No native rebuild** — `audioSetVolume` already existed.
+  `localStorage.ether_segue_overlap`; pushed via `setSegueOverlap`; re-pushed on every daemon (re)connect +
+  automation start (survives the update/crash respawn).
+- **Daemon** (`audiod/engine.js`, `_segueTick`): when the playing deck has `remaining ≤ segueOverlap` and the
+  next deck is ready, start the incoming NOW at full over the outgoing's natural tail (reusing `handleRotate`).
+  Both play; the outgoing **ends on its own** (handleRotate's deferred stop already no-ops while the deck is
+  still playing, so the full tail is preserved). Double-trigger guarded (`segueTriggered`).
+- **NO fader automation.** The fade ramp, `_fadeOutDeck`, `_segueRamps`, `_fadedDecks`, `_clearSegueRamp`, and
+  the `_play` volume-reset are all **removed**. There is **no `audioSetVolume` anywhere in the daemon** now —
+  automation never touches a fader.
 
-## B · Jingle rides the same fade + gap closed (continuous weave)
-- On a jingle seam `_segueTick` still fades the outgoing (one fade policy) but **skips the early rotate** —
-  the jingle bridge owns the incoming entry.
-- `_jingleBeginBridge` now sets `nextStart = now`: the instant the (already-faded) outgoing ends, the
-  incoming enters at full and rides **under the jingle's remaining tail**. `_jingleShouldBridge` bridges
-  whenever there's >150ms of jingle left. This closes the old `jinDur − leadIn − underlap` silence gap (the
-  8.4s Transition 14 → ~1.4s jingle-alone "three events" from the maiden fire).
+## B · Jingle seams overlap too (no fades)
+- `_segueTick` runs on jingle seams as well: the next song starts early **under the firing jingle**. It waits
+  only while a jingle on this deck is still **ARMED** (starting the incoming would bump the on-air generation
+  and supersede the not-yet-fired jingle); once the jingle is **FIRING**, the early start proceeds and overlaps
+  the jingle tail.
+- The jingle bridge (`_jingleBeginBridge`, for the `overlap=0` case) is guarded by `!segueTriggered` so the
+  early overlap owns the seam when enabled. No fades on the jingle path.
 
-## C · Indicator rebuilt (per Jeff's screenshots)
-- The **fader-strip chip is gone** (`src/components/ConsoleStrip.tsx` — props retained, ignored).
-- The jingle indicator is now a **third line under the playing deck's duration** in the Up Next deck row
-  (`src/components/UpNext.tsx`): the jingle's **name + time**, **solid white = ARMED, blinking yellow =
-  FIRING**, class-aware (JIN/SWP). The **countdown colors are untouched**. Payload carries the jingle
-  duration now (`jinDurSec` added through `audiod/engine.js` → `electron/main.js` → `src/App.tsx`).
+## C · Indicator (unchanged from the first 4.4.63 build, kept)
+- Fader-strip chip gone; the jingle's **name + time** is a third line under the playing deck's duration in the
+  Up Next row (`src/components/UpNext.tsx`): **solid white = ARMED, blinking yellow = FIRING**, class-aware
+  (JIN/SWP). Countdown colors untouched.
 
 ## Proof (off-air, isolation harness — no live daemon touched)
-`node scripts/test-segue-crossfade.js` (own daemon, DB copy, monitor muted, pinned short tones):
+`node scripts/test-segue-overlap.js` (own daemon, DB copy, monitor muted, pinned short tones):
 ```
-PASS outgoing deck A FADED (fader ramped 1 → low before it ended) — min deckA.volume while playing = 0.200
-PASS incoming deck B started (segue advanced)
-PASS crossfade OVERLAP observed (both decks audible together)
-PASS music never stopped across the seam (no silence gap) — min master across seam = 0.2441
+PASS incoming deck B started EARLY (overlap — next song began before A ended)
+PASS outgoing + incoming played TOGETHER (real overlap window)
+PASS music never stopped across the seam (no dead air) — min master across seam = 0.2441
+PASS *** deck faders NEVER moved from 1.0 (automation never touched a fader) *** — max |vol−1.0| = 0.0000
 PASS NO panic in the daemon log
-✅ SEGUE-CROSSFADE PROOF — ALL PASS
+✅ SEGUE-OVERLAP PROOF — ALL PASS
 ```
-Daemon receipts: `segue fade: deck A 3.0s → 0` · `segue: crossfade A→B (3s)` · `segue: deck B LIVE — tone-1` ·
-`deck A ended (pos=9.9/10s …)` (A still played to its end = the overlap).
-
-The **jingle-seam** continuous-weave is code-level (above) + the operator **ear-test gate** — as Jeff
-specified: he signs the sound of one plain segue AND one jingle seam before ship.
+Receipt: `segue overlap: A→B — incoming starts 3s early over A's tail (no fade)` · `deck B LIVE — tone-1` ·
+`deck A ended (pos=9.9/10s …)` (A played its full tail). The jingle-seam overlap is code-level + the operator
+**ear-test gate** (one plain segue AND one jingle seam signed before ship).
 
 ## Gates
-- `npx tsc --noEmit`: only the three known pre-existing errors (App.tsx:4911, OnboardingFlow, PhoneDesk) —
-  **zero new** in any changed file.
-- `node --check` clean on `audiod/engine.js` + `audiod/ether-audiod.js`.
+- `node --check` clean on `audiod/engine.js` + `audiod/ether-audiod.js`; **no `audioSetVolume` in engine.js**.
+- `npx tsc --noEmit`: only the known pre-existing errors (App.tsx:4911, OnboardingFlow, PhoneDesk) — zero new.
 - `npm run build` + installer `--publish never`.
 
 ## Files
 `audiod/engine.js` · `audiod/ether-audiod.js` · `src/audio/engine-rodio.ts` · `src/App.tsx` ·
 `src/components/SettingsPanel.tsx` · `src/components/UpNext.tsx` · `src/components/ConsoleStrip.tsx` ·
-`electron/main.js` · `scripts/test-segue-crossfade.js` (new) · `docs/help-segue-crossfade.md` (new) ·
-`package.json` · `CHANGELOG.md`.
+`electron/main.js` · `scripts/test-segue-overlap.js` (new; old test-segue-crossfade.js removed) ·
+`docs/help-segue-overlap.md` (new; old help-segue-crossfade.md removed) · `package.json` · `CHANGELOG.md`.
 
 ## Architecture compliance
-- **ONE scheduler / log-reader untouched** — the segue is a playout-transition concern (deck faders +
-  rotate), not a selection change; no scheduler, queue-source, or generated_schedule logic touched.
-- **Honest UI** — the indicator reflects OBSERVED daemon jingle state (ARMED/FIRING), same event stream as
-  before; the fade airs on the real program bus (post-fader), so what you see/hear is what airs.
-- **Deck positions sacred** — decks A/B/C still show what the daemon plays; the fade only moves faders, never
-  reassigns decks. `_play` restoring full fader keeps a reused deck honest.
-- **No native change** — reused the existing `audio_set_volume`.
+- **Deck faders are operator controls** — automation now provably never moves them (harness: `max |vol−1.0| =
+  0.0000`). This is the core correction.
+- **ONE scheduler / log-reader untouched** — the overlap is a playout-transition trigger, no selection change.
+- **Honest UI** — the overlap airs on the real program bus; the indicator reflects OBSERVED daemon jingle state.
+- **No native change** — the overlap reuses the existing `handleRotate`; no `audioSetVolume` at all.
 
 ## Not in this release (scoped separately)
 - **MIC source-audit** (source × [device] × [program bus]) — still its own deliverable.
