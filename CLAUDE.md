@@ -98,7 +98,7 @@ npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (
 
 - Output lands in `C:\openair\dist-electron\Ether Setup <version>.exe` (config: `electron-builder.json` → `directories.output: dist-electron`, `productName: Ether`, nsis default artifact name). E.g. `C:\openair\dist-electron\Ether Setup 4.4.54.exe`.
 - **Always pass `--publish never`** — a local build must not push to the GitHub release. Report the exact `.exe` path when done. **STOP before install** — Jeff installs manually.
-- **Every feature ships with its help entry.** A new/changed user-facing feature is not done until it has a plain-language, step-by-step `docs/help/<feature>.md` written to the template in `docs/help/jingles.md` (the built-in help corpus the Iris tour layer consumes verbatim). Discoverability counts: a feature its own owner can't find is a bug — wire an in-app affordance to it. Note the help entry in the build report.
+- **Every feature ships with its help entry.** A new/changed user-facing feature is not done until it has a plain-language, step-by-step help doc written to the template in `docs/help-jingles.md` (the built-in help corpus the Iris tour layer consumes verbatim). **Flat naming, NO subfolders** — `docs/help-<feature>.md` (e.g. `docs/help-reel-splitter.md`), a loose named file in `docs/`. Do NOT create `docs/help/` or any nested folders — everything lives directly in `docs/` with a clear filename. Discoverability counts: a feature its own owner can't find is a bug — wire an in-app affordance to it. Note the help entry in the build report.
 
 ## Workflow & division of labor
 
