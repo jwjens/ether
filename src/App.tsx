@@ -568,8 +568,6 @@ export default function App() {
   const durQueried = useRef(new Set<string>());
   const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
-  const lastNowPlaySig = useRef<Map<number, string>>(new Map()); // per-station dedupe of now-playing POSTs
-  const lastNowPlayPostAt = useRef<Map<number, number>>(new Map()); // per-station last POST time → keepalive
   // Slice 2: source-machine attribution + last error. This machine's id (= client_identity.client_id),
   // and per-station stream live/last-error from the existing stream:status events (keyed by stationId).
   const machineIdRef = useRef<string | null>(null);
@@ -1916,18 +1914,18 @@ export default function App() {
     return () => { try { ether.off?.("stream:status", h); } catch { /* ignore */ } };
   }, []);
 
-  // Public listener page: POST live now-playing to the backend on a heartbeat.
-  // Reads LIVE engine state (not React deck snapshots) so playing/title can't
-  // latch a stale handoff-gap value, and any transient self-corrects within one
-  // tick. Deduped on a content signature so steady playback / idle don't spam the
-  // backend (position is derived from started_at server-side, so it's excluded
-  // from the signature). Only the backend fetch is on the heartbeat — the local
-  // companion + metadata fan-out stay on the per-track cadence (effect below) so
+  // Public listener page: forward live now-playing to MAIN on a heartbeat; main owns the
+  // single /api/now-playing poster (4.4.54). This effect runs in EVERY renderer window
+  // (main + popouts), so it must NOT POST to the backend directly — that produced a
+  // last-write-wins ping-pong on the single backend row and a ghost track that never aired.
+  // Instead each window forwards its per-station payloads to main over 'nowplaying:state';
+  // main accepts them ONLY from the elected primary window and runs the one dedup+keepalive
+  // POST loop. Reads LIVE engine state (not React deck snapshots) so playing/title can't
+  // latch a stale handoff-gap value, and any transient self-corrects within one tick. The
+  // local companion + metadata fan-out stay on the per-track cadence (effect below) so
   // Icecast/Shoutcast pushes aren't re-fired every tick.
   useEffect(() => {
     const push = async () => {
-      const nowMs = Date.now();
-      const KEEPALIVE_MS = 20_000;
       // Publish now-playing for EVERY running station's engine (not just the active one) so all
       // concurrently-streaming stations keep a fresh cloud now-playing and their listener cards show
       // live art. Previously only the active station reported, so background stations went stale within
@@ -1961,32 +1959,13 @@ export default function App() {
         });
       } catch { /* main not ready / not in electron — ignore */ }
       // Embedded cover art of the on-air file → R2 public (primary listener artwork).
-      // Cached URL returns immediately, or null while the upload is in flight; it's part
-      // of the signature so the next heartbeat re-POSTs once the art is ready.
+      // Cached URL returns immediately, or null while the upload is in flight; the next
+      // heartbeat forwards it once the art is ready (main's dedup sig includes art_url).
       try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(st.uuid, payload.filePath)) || null; } catch { /* ignore */ }
-      const sig = [
-        payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url, payload.engine_state,
-        payload.source_machine_id, payload.last_error,
-        payload.queue.map(q => q.title).join(""),
-      ].join("");
-      // Slice 1 — heartbeat-even-when-silent: the dedupe alone makes a stalled/idle station stop
-      // POSTing (unchanged sig) → heartbeat goes stale → backend reads it "offline", hiding a real
-      // stall. So skip ONLY when content is unchanged AND we POSTed within the keepalive window; past
-      // that, re-POST the same payload to keep engine_heartbeat_at fresh (backend stamps it NOW() each
-      // report). 20s ≈ 4 beats inside the backend's 90s stale window — healthy stations still POST on
-      // every real change exactly as before (engine_state is in the sig, so a stall POSTs at once).
-      if (sig === lastNowPlaySig.current.get(st.id) && (nowMs - (lastNowPlayPostAt.current.get(st.id) || 0)) < KEEPALIVE_MS) continue;
-      lastNowPlaySig.current.set(st.id, sig);
-      lastNowPlayPostAt.current.set(st.id, nowMs);
-      console.log(`[NOWPLAY] POST ${st.name} playing=${payload.playing} state=${payload.engine_state} title=${JSON.stringify(payload.title)} q=${payload.queue.length}`);
-      fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(apiKeyRef.current ? { "x-license-key": apiKeyRef.current } : {}),
-        },
-        body: JSON.stringify(payload),
-      }).catch(() => {});
+      // Forward this station's payload to main (payload carries station_uuid). Main is the ONLY
+      // backend poster now: it accepts 'nowplaying:state' from the elected primary window only, then
+      // runs the single dedup + 20s keepalive + [NOWPLAY] POST loop. No backend fetch here (4.4.54).
+      try { (window as any).ether?.emit?.("nowplaying:state", payload); } catch { /* main not ready / not in electron */ }
       }
     };
     push();

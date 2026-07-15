@@ -4610,6 +4610,61 @@ ipcMain.on("iris:state", (_evt, s) => {
   if (qSig !== _sseQSig) { _sseQSig = qSig; sseBroadcast("queue", { upNext }); }
 });
 
+// ── Single now-playing poster (4.4.54) ───────────────────────────────────────
+// The now-playing heartbeat used to POST /api/now-playing from EVERY renderer window
+// (main + each popout), each off its own engine mirror → last-write-wins ping-pong on
+// the single backend row, surfacing a ghost track that never aired. Now the renderer
+// only FORWARDS its per-station payloads to main over 'nowplaying:state', and main is
+// the ONE poster per machine: it accepts payloads from the ELECTED primary window only
+// (mainWindow — popouts are ignored), accumulates the latest per station_uuid, and runs
+// a single dedup + 20s keepalive POST loop. Payloads are renderer-built because the
+// native/daemon engine has neither position nor queue (see iris live-wire above).
+const nowPlayingByUuid = new Map();       // station_uuid -> latest forwarded payload
+const _npLastSig = new Map();             // station_uuid -> last POSTed content signature
+const _npLastPostAt = new Map();          // station_uuid -> last POST time (ms)
+ipcMain.on("nowplaying:state", (evt, payload) => {
+  // Accept ONLY from the elected primary window; popouts run the same effect but must not post.
+  // Re-resolved live each event so a recreated mainWindow (new webContents) still wins.
+  try {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.webContents) return;
+    if (evt.sender.id !== mainWindow.webContents.id) return;
+  } catch { return; }
+  if (!payload || !payload.station_uuid) return;
+  nowPlayingByUuid.set(payload.station_uuid, payload);
+});
+
+// The single POST loop — the ONLY [NOWPLAY] source on the machine. Same dedup signature
+// (position excluded — backend derives it from started_at) + 20s keepalive that used to
+// live in the renderer: skip only when content is unchanged AND we POSTed within 20s;
+// past that, re-POST to keep engine_heartbeat_at fresh (backend stamps it NOW() each report).
+setInterval(() => {
+  if (!nowPlayingByUuid.size) return;
+  let licenseKey = null;
+  try { licenseKey = accountLicenseKey(); } catch { /* db not ready */ }
+  const nowMs = Date.now();
+  const KEEPALIVE_MS = 20_000;
+  for (const payload of nowPlayingByUuid.values()) {
+    const uuid = payload.station_uuid;
+    const sig = [
+      payload.playing, payload.title, payload.artist, payload.deck, payload.station_uuid, payload.art_url,
+      payload.engine_state, payload.source_machine_id, payload.last_error,
+      (payload.queue || []).map(q => q && q.title).join(""),
+    ].join("");
+    if (sig === _npLastSig.get(uuid) && (nowMs - (_npLastPostAt.get(uuid) || 0)) < KEEPALIVE_MS) continue;
+    _npLastSig.set(uuid, sig);
+    _npLastPostAt.set(uuid, nowMs);
+    console.log(`[NOWPLAY] POST ${payload.station_name || uuid} playing=${payload.playing} state=${payload.engine_state} title=${JSON.stringify(payload.title)} q=${(payload.queue || []).length}`);
+    fetch(`${ETHER_BACKEND_URL}/api/now-playing`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(licenseKey ? { "x-license-key": licenseKey } : {}),
+      },
+      body: JSON.stringify(payload),
+    }).catch(() => {});
+  }
+}, 3000);
+
 // ── Iris chat channel (operator ↔ Iris over the same :3400 link) ──────────────
 // Prompt DOWN: the renderer's Iris panel sends operator text → pushed to Iris on the SSE as a `chat`
 // event. Reply + speaking UP: Iris POSTs /iris/reply and /iris/speaking (in the HTTP server below) →

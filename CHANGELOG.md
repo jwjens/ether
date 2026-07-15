@@ -1,3 +1,18 @@
+## [4.4.54] — 2026-07-14
+
+### Fixed — single now-playing poster (kills dashboard ghost/flicker)
+
+- **Moved the `/api/now-playing` heartbeat out of the per-window renderer loop into one
+  main-process poster fed by the elected primary window.** The heartbeat effect lives in the
+  shared `App` component, so the main window AND every popout each ran their own 3s poster off
+  their own engine mirror → last-write-wins ping-pong on the single backend now-playing row,
+  surfacing a **ghost track that never aired** and flickering Deck A on the dashboard.
+- The renderer now only **forwards** each station's payload to main over a new `nowplaying:state`
+  IPC channel. Main accepts payloads from the **elected primary window only** (popouts ignored),
+  accumulates the latest per `station_uuid`, and runs the single dedup + 20s keepalive
+  `[NOWPLAY] POST` loop (`x-license-key` from the account license). Exactly one poster per machine,
+  surviving popout/window churn. Backend unchanged (single-row `ON CONFLICT` upsert was already correct).
+
 ## [4.4.53] — 2026-07-14
 
 ### Changed — categories/programming mirror moved onto the proven rails
