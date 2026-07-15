@@ -82,6 +82,18 @@ identity or station identity. Don't conflate "user login / profile select" with
 - **OV** = Opportunity Village (Las Vegas nonprofit), Windows, managed corporate box with McAfee. First client deployment. Roaming AppData redirected to network `H:\`.
 - **USPH** = US Phenomenon, macOS.
 
+### Standard final step of EVERY release — build the installer locally (do it without being asked)
+
+After the version bump + commit + push, always build the Windows installer locally so Jeff has the artifact in hand:
+
+```
+npm run build                              # vite renderer (dist/) — prerequisite
+npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (never publishes)
+```
+
+- Output lands in `C:\openair\dist-electron\Ether Setup <version>.exe` (config: `electron-builder.json` → `directories.output: dist-electron`, `productName: Ether`, nsis default artifact name). E.g. `C:\openair\dist-electron\Ether Setup 4.4.54.exe`.
+- **Always pass `--publish never`** — a local build must not push to the GitHub release. Report the exact `.exe` path when done. **STOP before install** — Jeff installs manually.
+
 ## Workflow & division of labor
 
 - **Jeff** architects and reviews. He is the sole developer.
