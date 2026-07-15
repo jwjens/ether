@@ -2,7 +2,7 @@
 feature: reel-splitter
 title: Reel Splitter — cutting a jingle reel
 summary: Slice a long imaging reel (stacked jingles/sweepers) into individual, tagged, pooled library items in one screen.
-where: Tools → Reel Splitter…  (also "Cut a reel →" in Settings → Programming → Jingles & Sweepers)
+where: Bottom bar → JINGLES → “Add imaging — cut a reel” tab
 since: 4.4.58
 audience: operator
 tour: true
@@ -26,7 +26,7 @@ them normally and tag them in **Jingles & Sweepers**.
 
 ## Do it (one screen)
 
-1. **Open.** Tools → **Reel Splitter…** (or **Cut a reel →** on the Jingles & Sweepers page). **Drag the
+1. **Open.** Bottom bar → **JINGLES** → the **“Add imaging — cut a reel”** tab. **Drag the
    reel onto the drop zone**, or click **Open reel…**.
 2. **Auto-cut.** The splitter finds the silent gaps and pre-slices the reel into **numbered regions** on the
    waveform. Too many / too few cuts? Drag the **Silence threshold** slider and hit **Re-cut** — lower

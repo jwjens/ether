@@ -1,3 +1,26 @@
+## [4.4.59] — 2026-07-15
+
+### Changed — JINGLES push-up: one imaging home
+
+- **New JINGLES button in the bottom bar** (next to CATEGORIES) opens a push-up panel that is the **single
+  home for the whole imaging workflow**: JIN/SWP **pools** (create, fill, per-pool timing), per-**category
+  assignments** (overlay dropdown + active hours) + station **fallback**, and the **Reel Splitter** as an
+  "Add imaging — cut a reel" tab — drop a full reel OR a single cut, auto-cut, keyboard review, batch commit
+  (tag JIN/SWP → pool), all in one place.
+- **Consolidated entry points**: removed the Settings → Programming "Jingles & Sweepers" section and the
+  Tools → Reel Splitter menu item. This push-up is the one home. The live-screen "Set up jingles →"
+  affordance now opens it.
+- **Fixed a latent crash** surfaced by the typecheck gate: the Phone push-up's close button called
+  `setProgPanel` from outside its scope (same class as the 4.4.55 boot crash) — now routed through a proper
+  `onCloseDock` callback. tsc dropped 7 → 3 pre-existing errors (4 fixed, 0 new).
+- CLAUDE.md records the surface architecture: JINGLES push-up = the imaging management home; StudioPro = the
+  single production surface; one region engine worn by both; no new standalone editors. Help docs updated.
+
+### Coming next (this directive, split for speed)
+- StudioPro DAW refocus (import → chop → send to Deck/Jingle/Sweeper/Library; radio-first chrome; shared
+  region engine) and the imaging fast-follows (Categories-row dropdown, seam chip, Up-Next connector,
+  OnAirDeck indicator) land in the immediately-following release.
+
 ## [4.4.58] — 2026-07-15
 
 ### Added — Reel Splitter (jingle/sweeper reel → library)

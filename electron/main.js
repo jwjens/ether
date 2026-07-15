@@ -1728,7 +1728,6 @@ function buildMenu() {
       { label: "Show+",  click: () => send("nav:videostudio") },
       { label: "Cue Editor", click: () => send("nav:trackedit") },
       { label: "Clip Editor", click: () => send("nav:clipeditor") },
-      { label: "Reel Splitter...", click: () => send("nav:reelsplitter") },
       { type: "separator" },
       { label: "Import Library...", click: () => send("nav:importlibrary") },
       { type: "separator" },

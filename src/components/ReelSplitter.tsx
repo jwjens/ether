@@ -19,7 +19,7 @@ const ether = () => (window as any).ether;
 const slug = (s: string) => (s || "reel").replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "") || "reel";
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}.${String(Math.floor((s % 1) * 10))}`;
 
-export default function ReelSplitter({ stationId }: { stationId: number }) {
+export default function ReelSplitter({ stationId, embedded, onCommitted }: { stationId: number; embedded?: boolean; onCommitted?: () => void }) {
   const [buffer, setBuffer] = useState<AudioBuffer | null>(null);
   const [fileName, setFileName] = useState("");
   const [reelName, setReelName] = useState("");
@@ -161,6 +161,7 @@ export default function ReelSplitter({ stationId }: { stationId: number }) {
         setCommitState({ busy: true, done: i + 1, total: regions.length, err: null });
       }
       setCommitState({ busy: false, done: regions.length, total: regions.length, err: null });
+      try { onCommitted?.(); } catch {}
     } catch (e) { setCommitState(s => ({ busy: false, done: s?.done || 0, total: regions.length, err: (e as Error).message })); }
   };
 
@@ -183,8 +184,8 @@ export default function ReelSplitter({ stationId }: { stationId: number }) {
         <div onDragOver={e => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)}
           onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) openBuffer(f); }}
           style={{ flex: 1, margin: 24, border: `2px dashed ${dragOver ? accent : "var(--border-primary)"}`, borderRadius: 10, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, color: "var(--text-tertiary)", background: dragOver ? "rgba(20,224,200,0.05)" : "transparent" }}>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>Drop an imaging reel here</div>
-          <div style={{ fontSize: 12 }}>or <button onClick={pickFile} style={{ background: "none", border: "none", color: accent, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>pick a file</button> — one long file of stacked jingles/sweepers</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>Drop a reel — or a single cut — here</div>
+          <div style={{ fontSize: 12 }}>or <button onClick={pickFile} style={{ background: "none", border: "none", color: accent, cursor: "pointer", textDecoration: "underline", fontSize: 12 }}>pick a file</button> — a long reel of stacked imaging, or one jingle/sweeper to import + tag</div>
         </div>
       ) : (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>

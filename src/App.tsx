@@ -45,7 +45,7 @@ import BroadcastCalendar from "./components/BroadcastCalendar";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
-import ReelSplitter from "./components/ReelSplitter";
+import JinglesPanel from "./components/JinglesPanel";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine, getAllEngines } from "./audio/engine-registry";
@@ -120,7 +120,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help" | "reelsplitter";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -600,7 +600,7 @@ export default function App() {
   const [showCarts, setShowCarts] = useState(false);
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
-  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone">(null);
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles">(null);
   // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
   // operator can dump before audio airs; DUMP becomes active once the buffer is full.
   const DELAY_SEC = 8;
@@ -941,7 +941,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:reelsplitter":"reelsplitter" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
@@ -986,13 +986,6 @@ export default function App() {
     const handler = () => setPanel("subscription");
     window.addEventListener("ether:open-subscription", handler);
     return () => window.removeEventListener("ether:open-subscription", handler);
-  }, []);
-
-  // Reel Splitter — openable from the Jingles & Sweepers panel (it lives inside Settings, a different panel).
-  useEffect(() => {
-    const handler = () => setPanel("reelsplitter");
-    window.addEventListener("ether:open-reel-splitter", handler);
-    return () => window.removeEventListener("ether:open-reel-splitter", handler);
   }, []);
 
   // Open the Manage Devices panel via custom event — fired from SubscriptionPanel
@@ -2075,6 +2068,7 @@ export default function App() {
     { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
     { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
     { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
+    { label: "JINGLES",    active: progPanel === "jingles",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "jingles" ? null : "jingles"); } },
     { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
     { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
     { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
@@ -2437,7 +2431,8 @@ export default function App() {
                   deckA={deckA} deckB={deckB} deckC={deckC}
                   jingleOverlay={jingleOverlay}
                   hasJinglePool={hasJinglePool}
-                  onOpenJingleSettings={() => { try { window.location.hash = "#settings/programming"; } catch { /* ignore */ } setPanel("settings"); }}
+                  onOpenJingleSettings={() => { setPanel("live"); setShowCarts(false); setProgPanel("jingles"); }}
+                  onCloseDock={() => setProgPanel(null)}
                   autoAdv={autoAdv} shuffle={shuffle}
                   toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
                   queueLen={queueLen} showCarts={showCarts}
@@ -2501,7 +2496,6 @@ export default function App() {
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
               {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} />}
-              {panel === "reelsplitter" && <ReelSplitter stationId={stationId} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}
@@ -3377,12 +3371,12 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
-  progPanel: null | "shows" | "categories" | "clocks" | "library";
+  progPanel: null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles";
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
@@ -3405,8 +3399,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null } | null;
   hasJinglePool: boolean;
   onOpenJingleSettings: () => void;
+  onCloseDock: () => void;
 }) {
   const engine = useAudioEngine();
+  const { stationId: lpStationId } = useActiveStation();   // for the JINGLES push-up (imaging home)
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();
   // Resizable bottom dock (carts / programming panels): drag the divider against the
@@ -3925,10 +3921,13 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 : progPanel === "calendar"
                   ? <BroadcastCalendar />
                   : progPanel === "phone"
-                    ? <PhoneDesk onClose={() => setProgPanel(null)} />
-                    : progPanel
-                      ? <Scheduler defaultTab={progPanel} embedded />
-                      : <BoutiqueCartWall deckSlot="C" variant="strip" />}
+                    ? <PhoneDesk onClose={onCloseDock} />
+                    : progPanel === "jingles"
+                      // Imaging home: pools + assignments + reel splitter, all in one push-up.
+                      ? <JinglesPanel stationId={lpStationId} />
+                      : progPanel
+                        ? <Scheduler defaultTab={progPanel} embedded />
+                        : <BoutiqueCartWall deckSlot="C" variant="strip" />}
             </div>
           </>
         );

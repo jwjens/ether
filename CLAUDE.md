@@ -155,3 +155,12 @@ Categories / programming / clocks mirror between the dashboard and the install o
 - **Desktop→web (display):** install `pushCcTable` → `POST /api/account/data/sync` (**`x-license-key`**) → `station_cc_data`, read by the dashboard's `/data`. Fires on every CC `db:apply` + a 60s refresh (`App.tsx`).
 
 **DEPRECATED for these tables** (left in place, do not flip/fix): the **staged pipeline** (`importStagedProgramming`, `/api/account/station/:uuid/staged*`) and the **`sync_enabled`** mutation push. The staged pull forced `op:"create"` so updates/renames no-op'd and rows were marked-imported unapplied (silent loss). The `account_jwt`/`lk` token is unrelated to this mirror (it only gates the dashboard's account-scoped *reads*); routing the desktop sign-in through owner-login is a separate backlog item.
+
+---
+
+## Imaging & production surfaces — one region engine, two surfaces (2026-07-15, v4.4.59)
+
+- **The JINGLES push-up (bottom bar, next to CATEGORIES) is the ONE imaging management home.** Pools (JIN/SWP), per-category assignments + active hours + station fallback, AND the Reel Splitter (cut a reel / import a single cut → tag → pool) all live there (`src/components/JinglesPanel.tsx` MANAGE / ADD-IMAGING tabs). There is NO Settings→Programming jingles entry and NO Tools→Reel Splitter entry — removed; this panel is the single home.
+- **StudioPro (Show+ DAW) is the single PRODUCTION surface** — quick import → chop → SEND TO [Deck | Jingle | Sweeper | Library] as first-class region exits; radio-first chrome (BPM/multitrack/session hidden from the default view). Send-to-deck must ride the real deck-load path or be omitted — never decorative (the honest-UI principle).
+- **One region engine, worn by both.** The Reel Splitter's region model (`src/audio/silenceRegions.ts` + the region/audition mechanics) is SHARED between the push-up and the DAW — one engine, two surfaces, never a copy.
+- **No new standalone editors.** Imaging management → the JINGLES push-up; production (import/chop/send) → StudioPro. Don't build a third surface.

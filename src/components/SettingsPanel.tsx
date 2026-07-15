@@ -14,7 +14,6 @@ import PairMobileApp from "./PairMobileApp";
 import BetaProgram from "./BetaProgram";
 import { validateSlug, slugify } from "../lib/slug";
 import { fetchMyMemberships, type Membership } from "../lib/memberships";
-import JinglesPanel from "./JinglesPanel";
 
 // ── Settings categories ──────────────────────────────────────
 // 6 buckets that cover all 18 Section components without any one category
@@ -2348,10 +2347,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration }: {
       {/* ── Per-station Music Folder & Sync ── */}
       <MusicFolderSection />
 
-      {/* ── Jingles (overlay v1) ── */}
-      <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>} title="Jingles & Sweepers" description="Overlay imaging on the seam between songs — assign a jingle or sweeper (specific or a rotating pool) per music category, with active hours">
-        {stationId != null && <JinglesPanel stationId={stationId} />}
-      </Section>
+      {/* Jingles & Sweepers moved to its own bottom-bar push-up (JINGLES) — the one imaging home (4.4.59). */}
 
       {/* ── Music Scheduling Rules ── */}
       <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>} title="Music Scheduling Rules" description="Control how songs are selected — how long before the same artist or song can play again">

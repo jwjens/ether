@@ -8,6 +8,7 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { query } from "../db/client";
 import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
+import ReelSplitter from "./ReelSplitter";
 
 interface Pool { id: number; uuid: string; name: string; color: string | null; type: string; lead_in_sec: number; underlap_sec: number; sort_order: number; }
 interface OverlaySong { id: number; title: string; artist_name: string | null; content_class: string; jingle_category_id: number | null; }
@@ -35,6 +36,7 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
   const [fallbackId, setFallbackId] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<"manage" | "create">("manage");   // push-up: Manage vs Add imaging (reel splitter)
 
   const reload = useCallback(async () => {
     try { const r = await ether()?.jingleCategories?.list(stationId); setPools(((r?.rows || []) as Pool[])); } catch { setPools([]); }
@@ -87,16 +89,20 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
   const swpItems = songs.filter(s => s.content_class === "SWP");
 
   return (
-    <div style={{ padding: 16, color: "var(--text-primary)", maxWidth: 900 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "0.08em", color: accent, textTransform: "uppercase" }}>Jingles &amp; Sweepers</div>
-        <div style={{ flex: 1 }} />
-        <button onClick={() => window.dispatchEvent(new CustomEvent("ether:open-reel-splitter"))}
-          title="Slice a long imaging reel into tagged library items"
-          style={{ padding: "5px 12px", borderRadius: 4, border: `1px solid ${accent}`, background: "transparent", color: accent, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-          Cut a reel →
-        </button>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", color: "var(--text-primary)", minHeight: 0 }}>
+      {/* Mode tabs — Manage the imaging library vs. Add imaging (reel splitter / single cut) */}
+      <div style={{ display: "flex", gap: 4, padding: "8px 16px 0", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+        {(["manage", "create"] as const).map(m => (
+          <button key={m} onClick={() => { setMode(m); if (m === "manage") reload(); }} style={{
+            padding: "6px 14px", background: "transparent", border: "none", borderBottom: `2px solid ${mode === m ? accent : "transparent"}`,
+            color: mode === m ? accent : "var(--text-tertiary)", fontWeight: 800, fontSize: 12, letterSpacing: "0.04em", cursor: "pointer",
+          }}>{m === "manage" ? "MANAGE" : "ADD IMAGING — CUT A REEL"}</button>
+        ))}
       </div>
+      {mode === "create" ? (
+        <div style={{ flex: 1, minHeight: 0 }}><ReelSplitter stationId={stationId} embedded onCommitted={reload} /></div>
+      ) : (
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16, maxWidth: 900 }}>
       <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 16, lineHeight: 1.5 }}>
         Overlay imaging fires on the seam between songs (over master). Assign a <b>specific</b> jingle/sweeper
         or a <b>rotating pool</b> to each music category below — some categories get imaging, some don't. Mark
@@ -212,6 +218,8 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
             </div>
           ))}
         </div>
+      )}
+      </div>
       )}
     </div>
   );

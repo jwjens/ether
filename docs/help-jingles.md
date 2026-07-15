@@ -2,7 +2,7 @@
 feature: jingles
 title: Jingles & Sweepers
 summary: Station IDs, stingers and sweepers that fire as an overlay on the seam between songs — assigned per music category.
-where: Settings → Programming → Jingles & Sweepers
+where: Bottom bar → JINGLES (next to Categories)
 since: 4.4.57
 audience: operator
 tour: true
@@ -29,9 +29,9 @@ categories get a jingle, some a sweeper, some nothing.
 
 Imaging between songs on a per-category basis. A full commercial or scheduled break is a **Spot**, not this.
 
-## Set it up (Settings → Programming → Jingles & Sweepers)
+## Set it up (bottom bar → JINGLES)
 
-The **JINGLES** fader on the live screen also shows **"Set up jingles →"** when nothing is set up — it jumps
+The **JINGLES** button in the bottom bar (next to Categories) opens this home. The JINGLES fader on the live screen also shows **"Set up jingles →"** when unconfigured — it jumps
 you here.
 
 1. **Tag your imaging.** In the **Library**, right-click a cut and choose **"Mark as Jingle (JIN)"** or
