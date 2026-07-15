@@ -67,6 +67,18 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
         <b> cadence</b> = fire one from this pool every N song transitions. Mark songs "JIN" in the Library, then assign them below.
       </div>
 
+      {/* First-run walkthrough — plain-language 3 steps (shown until the first pool exists). */}
+      {cats.length === 0 && (
+        <div style={{ border: "1px solid rgba(20,224,200,0.35)", background: "rgba(20,224,200,0.06)", borderRadius: 6, padding: "12px 14px", marginBottom: 18 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: JIN_TEAL, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 8 }}>Set up jingles — 3 steps</div>
+          <ol style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.7 }}>
+            <li><b>Create a pool</b> below (e.g. “Station IDs”). A pool is a group of jingles that rotate together.</li>
+            <li><b>Tag songs as jingles.</b> In the <b>Library</b>, right-click a sting / ID / sweeper and choose <b>“Mark as Jingle (JIN)”</b>. Tagged jingles then appear in the list at the bottom of this page — assign each to your pool.</li>
+            <li><b>Set the cadence</b> on the pool (“every N songs”) plus lead-in and underlap seconds. Then <b>Generate</b> your schedule — jingles are placed automatically on the song seams and fire as an overlay on air.</li>
+          </ol>
+        </div>
+      )}
+
       {/* Categories */}
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Pools</div>
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>

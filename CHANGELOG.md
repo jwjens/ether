@@ -10,6 +10,16 @@
   zero NEW type errors in changed code (pre-existing App.tsx/Scheduler.tsx/OnboardingFlow/PhoneDesk errors
   are known).
 
+### Fixed — jingles were undiscoverable
+
+- The **JINGLES fader** now shows a subtle **"Set up jingles →"** affordance when the station has no jingle
+  pool, deep-linking to **Settings → Programming → Jingles**.
+- That panel's **empty state** now walks the three steps in plain words: create a pool → tag songs "JIN" in
+  the Library → set the cadence and Generate.
+- Added **`docs/help/jingles.md`** — the first entry in the built-in help corpus (plain-language,
+  step-by-step; the template the Iris tour layer will consume). New checklist rule in `CLAUDE.md`: every
+  feature ships with its `docs/help/<feature>.md` entry, and a feature its owner can't find is a bug.
+
 ## [4.4.55] — 2026-07-14
 
 ### Added — JINGLES overlay v1 (jingles rotate + fire as a CART overlay on the song seam)
