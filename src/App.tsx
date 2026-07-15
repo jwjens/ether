@@ -2411,6 +2411,7 @@ export default function App() {
               ) : (
                 <LivePanel
                   deckA={deckA} deckB={deckB} deckC={deckC}
+                  jingleOverlay={jingleOverlay}
                   autoAdv={autoAdv} shuffle={shuffle}
                   toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
                   queueLen={queueLen} showCarts={showCarts}
@@ -3349,7 +3350,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts, libraryDock }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts, libraryDock, jingleOverlay }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3374,6 +3375,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   handleXfade: () => void;
   onOpenCarts: () => void;
   libraryDock: JSX.Element;
+  jingleOverlay: { deck: string | null; state: string; title: string | null } | null;
 }) {
   const engine = useAudioEngine();
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };

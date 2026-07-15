@@ -1,3 +1,15 @@
+## [4.4.56] — 2026-07-14
+
+### Fixed — renderer crash on boot (`jingleOverlay is not defined`)
+
+- The 4.4.55 jingles per-deck indicator read `jingleOverlay` inside `LivePanel`, but that state lives in the
+  top-level `App` component and was never passed down — a `ReferenceError` on first render (white screen).
+  Fix: thread `jingleOverlay` from `App` into `LivePanel` as a prop (type + destructure + call-site).
+- **Process gate:** added `npx tsc --noEmit` to the release checklist (`CLAUDE.md`). `vite build` uses
+  esbuild, which strips types without typechecking, so it never caught this; the typecheck does. The bar is
+  zero NEW type errors in changed code (pre-existing App.tsx/Scheduler.tsx/OnboardingFlow/PhoneDesk errors
+  are known).
+
 ## [4.4.55] — 2026-07-14
 
 ### Added — JINGLES overlay v1 (jingles rotate + fire as a CART overlay on the song seam)

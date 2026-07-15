@@ -87,6 +87,11 @@ identity or station identity. Don't conflate "user login / profile select" with
 After the version bump + commit + push, always build the Windows installer locally so Jeff has the artifact in hand:
 
 ```
+npx tsc --noEmit                           # TYPECHECK — vite/esbuild STRIPS types and never typechecks;
+                                           # this is the ONLY gate that catches a "not defined"/prop-type
+                                           # crash before it ships. Known pre-existing errors live in
+                                           # App.tsx / Scheduler.tsx / OnboardingFlow.tsx / PhoneDesk.tsx;
+                                           # the bar is ZERO NEW errors in the code you changed.
 npm run build                              # vite renderer (dist/) — prerequisite
 npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (never publishes)
 ```
