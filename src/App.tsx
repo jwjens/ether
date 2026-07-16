@@ -57,6 +57,7 @@ import StreamStatusToast from "./components/StreamStatusToast";
 import DMCANotice from "./components/DMCANotice";
 import JockStrip from "./components/JockStrip";
 import UpNext from "./components/UpNext";
+import InlineNameEditor from "./components/InlineNameEditor";
 import Scheduler from "./components/Scheduler";
 import ProgramLog from "./components/ProgramLog";
 import PlayLog from "./components/PlayLog";
@@ -5151,14 +5152,13 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
               <div role="gridcell" style={{ padding: "10px 6px", fontSize: 13, color: "var(--text-tertiary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
                 {i + 1}
               </div>
-              {/* Title */}
+              {/* Title — explicit EDIT → field → SAVE/CANCEL (no double-click ambiguity). Writes the normal
+                   songs.updateById path, so the rename propagates everywhere (decks, pools, placements). */}
               {hasTitleCol && (() => {
-                const isInlineTitle = inlineEdit?.id === s.id && inlineEdit?.col === 'title';
                 return (
                   <div
                     role="gridcell"
-                    style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", cursor: "text", borderRight: "1px solid var(--border-primary)" }}
-                    onDoubleClick={() => setInlineEdit({ id: s.id, col: 'title', value: s.title || "" })}
+                    style={{ padding: "10px 12px", color: "var(--text-primary)", fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}
                   >
                     {s.file_path && watermarkedPaths.has(s.file_path) && (
                       <span title="Content provenance watermark embedded" style={{ marginRight: 5, fontSize: 11, color: "#00c8a8", flexShrink: 0 }}>🛡</span>
@@ -5172,9 +5172,11 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     {s.content_class === "SWP" && (
                       <span title="Sweeper — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#4f46e5", background: "rgba(79, 70, 229, 0.14)", border: "1px solid rgba(79, 70, 229, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SWP</span>
                     )}
-                    {isInlineTitle
-                      ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
-                      : <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title || "—"}</span>}
+                    <InlineNameEditor
+                      value={s.title || ""}
+                      readOnly={libraryBorrowed}
+                      onSave={async (next) => { await (window as any).ether.songs.updateById(s.id, { title: next }); load(); }}
+                    />
                   </div>
                 );
               })()}

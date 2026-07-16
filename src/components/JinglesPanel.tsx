@@ -9,6 +9,7 @@ import { useEffect, useState, useCallback, Fragment } from "react";
 import { query } from "../db/client";
 import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
 import ReelSplitter from "./ReelSplitter";
+import InlineNameEditor from "./InlineNameEditor";
 
 interface Pool { id: number; uuid: string; name: string; color: string | null; type: string; lead_in_sec: number; underlap_sec: number; sort_order: number; }
 interface OverlaySong { id: number; title: string; artist_name: string | null; content_class: string; jingle_category_id: number | null; }
@@ -210,7 +211,11 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
           {tabSongs.map(s => (
             <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: 4 }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
-              <span style={{ flex: 1, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>
+              <InlineNameEditor
+                value={s.title}
+                display={<span style={{ fontSize: 13 }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>}
+                onSave={async (next) => { try { await ether()?.songs?.updateById(s.id, { title: next }); await reload(); } catch {} }}
+              />
               <select value={s.jingle_category_id ?? ""} onChange={e => assignSong(s, e.target.value ? Number(e.target.value) : null)} style={sel}>
                 <option value="">— unassigned —</option>
                 {tabPools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}

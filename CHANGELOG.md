@@ -20,6 +20,24 @@
 > the console faders down and fought the operator's hand. Removed entirely per Jeff: automation must never
 > move a fader.
 
+### Fixed — the fader exorcism (automation never moves a deck fader)
+
+- Audited every deck-volume writer across the daemon and renderer. The daemon playout path has **zero**
+  `audioSetVolume` calls. The remaining automatic writer was **MasterOutput**, whose "Master" fader wrote
+  `audioSetVolume('A'|'B'|'C', masterVol)` on every change — yanking the deck faders down on their own.
+  Removed: the master value is now exposed for read-scaling only and **never writes a deck fader**. Deck
+  faders sit at unity unless a human drags that specific fader.
+- Harness receipt (`scripts/test-fader-invariant.js`): across **10 automatic segues + 2 jingle (CART) fires**,
+  every deck fader read **exactly 1.0** across all 1212 samples (`worst = 1.0000`), no panic.
+
+### Added — explicit name editor (Library · Jingles · Reel Splitter)
+
+- Each item row gets an explicit **EDIT** button → title field with **SAVE** and **CANCEL** (no double-click /
+  blur-to-save ambiguity), via a shared `InlineNameEditor`. In the Library and Jingles panel, Save writes the
+  normal `songs.updateById({ title })` path so the rename propagates everywhere (decks, pools, dropdowns,
+  placements, the on-air indicator). The Reel Splitter's pre-commit region list uses the same affordance to
+  name each cut before it's committed.
+
 ### Changed — jingle indicator
 
 - The jingle indicator moved **out of the fader strip chip** into the **Up Next deck row**: a third line under

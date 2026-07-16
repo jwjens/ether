@@ -630,16 +630,13 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     setOnAir(masterLevel > 0.03);
   }, [masterLevel]);
 
-  // Master fader — controls overall output gain across all decks
+  // Master fader — expose the value for read-scaling ONLY. It must NEVER write the deck faders:
+  // automation/UI never moves a deck fader (those are operator controls; a deck sits at unity unless a
+  // human drags THAT fader). Deck strips that want to scale against master read __etherMasterVol at the
+  // moment a human moves them (see MixerChannelStrip). Previously this wrote audioSetVolume('A'|'B'|'C')
+  // on every master change, which yanked the deck faders down on their own — removed.
   useEffect(() => {
-    try {
-      const ether = (window as any).ether;
-      ether.audio.setVolume('A', masterVol);
-      ether.audio.setVolume('B', masterVol);
-      ether.audio.setVolume('C', masterVol);
-      // Expose globally so deck faders can scale against it
-      (window as any).__etherMasterVol = masterVol;
-    } catch {}
+    (window as any).__etherMasterVol = masterVol;
   }, [masterVol]);
 
   useEffect(() => {

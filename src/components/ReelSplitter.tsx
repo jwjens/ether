@@ -10,6 +10,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { encodeWav } from "../audio/wavEdit";
 import { detectSilenceRegions, type Region } from "../audio/silenceRegions";
 import { query } from "../db/client";
+import InlineNameEditor from "./InlineNameEditor";
 import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
 
 type Cls = "JIN" | "SWP";
@@ -225,8 +226,11 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
             {regions.map((r, i) => (
               <div key={i} onClick={() => setSel(i)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 8px", borderRadius: 4, marginBottom: 3, background: i === sel ? `${accent}22` : "var(--bg-secondary)", cursor: "pointer" }}>
                 <span style={{ width: 22, fontSize: 11, fontWeight: 800, color: accent }}>{i + 1}</span>
-                <input value={r.name} onChange={e => setRegions(rs => rs.map((x, k) => k === i ? { ...x, name: e.target.value } : x))} onClick={e => e.stopPropagation()}
-                  style={{ flex: 1, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 3, padding: "3px 6px", color: "var(--text-primary)", fontSize: 12 }} />
+                <InlineNameEditor
+                  value={r.name}
+                  compact
+                  onSave={(next) => setRegions(rs => rs.map((x, k) => k === i ? { ...x, name: next } : x))}
+                />
                 <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", width: 56 }}>{fmtDur(r.end - r.start)}</span>
                 <button onClick={e => { e.stopPropagation(); setSel(i); playRegion(i); }} title="Audition" style={btn}>▶</button>
                 <button onClick={e => { e.stopPropagation(); splitSel(i); }} title="Split in half" style={btn}>⌥</button>
