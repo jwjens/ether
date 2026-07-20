@@ -317,6 +317,13 @@ const REGISTRY = {
       lead_in_sec:        'scalar',
       underlap_sec:       'scalar',
       jingle_category_id: 'scalar',
+      // Log-Reader Flip v33 (Phase 0) — playout lifecycle / playhead. LOCAL-ONLY: the always-on local
+      // engine owns these per-machine; excluded from sync payloads BOTH directions so a playhead flip
+      // never CRDT-merges (avoids the peer-sync last-write-wins fight — see project_peer_sync_station_uuid).
+      // Pushed for display via now-playing, never pulled back as truth. Design §5.
+      state:        'local-only',   // 'pending' | 'playing' | 'played' | 'skipped' — playhead = the 'playing' row
+      played_at:    'local-only',   // unix seconds the row actually aired (engine-stamped, Phase 1)
+      seq:          'local-only',   // local play-order (decoupled from scheduled_at); sync treatment revisited at Phase 4 reorder
       station_id:   'scalar',
       uuid:         'scalar',
       created_at:   'scalar',

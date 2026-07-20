@@ -182,7 +182,7 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
   } catch { return []; }
   const playable = rows.filter(r => r.file_path);
   if (playable.length) _schedCursor = playable[playable.length - 1].row_id;
-  return playable.map(toItem);
+  return playable.map(r => ({ ...toItem(r), schedId: r.row_id }));   // schedId for the Phase 1 shadow playhead writer
 }
 
 // ── JINGLES overlay v1: read the transition-attached JIN placement for the upcoming seam ──────────────
@@ -235,7 +235,10 @@ function fillQueue(db, stationId, count = 12) {
   // Tier 0: pre-generated log (loop back to start once exhausted).
   let sched = readGeneratedSchedule(db, count, stationId);
   if (!sched.length && _schedCursor > 0) { _schedCursor = 0; sched = readGeneratedSchedule(db, count, stationId); }
-  if (sched.length) return { source: "generated_schedule", tier: 0, formatCats: [], items: sched.map(toItem) };
+  // Carry schedId (the generated_schedule row id) on log-sourced items so the Phase 1 shadow playhead
+  // writer can stamp that exact row when it goes on air. Live-picked items (Tiers 1-4 below) omit it —
+  // that absence IS the off-log divergence signal.
+  if (sched.length) return { source: "generated_schedule", tier: 0, formatCats: [], items: sched.map(r => ({ ...toItem(r), schedId: r.row_id })) };
 
   const { rulesOn, artistSepSec } = sepConfig(db, stationId);
   const clock = getActiveShowClock(db, stationId);

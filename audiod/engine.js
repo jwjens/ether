@@ -51,6 +51,9 @@ class DaemonEngine {
     // generated_schedule scheduled_at of the row on each deck — emitted with deck events so the
     // renderer/Calendar matches the exact row (single source). Survives native state rebuilds.
     this.deckSched = {};
+    // Log-Reader Flip Phase 1 (SHADOW): generated_schedule.id of the row on each deck, so _fireStart
+    // can stamp that row's LOCAL-ONLY lifecycle (state/played_at). null = an off-log (live-picked) item.
+    this.deckSchedId = {};
     this.deckChainType = { A: "segue", B: "segue", C: "segue" };
     this.deckReady = new Set();
     // Bug A fix (source-wipe race): per-deck LOAD GENERATION — bumped on every fresh loadToDeck. A
@@ -642,6 +645,7 @@ class DaemonEngine {
     if (ok === false) return false;
     this.deckGen[id] = (this.deckGen[id] || 0) + 1;   // Bug A: fresh source loaded → invalidate any pending deferred stop for this deck
     this.deckSched[id] = item.scheduledAt ?? null;   // remember this deck's schedule-row identity
+    this.deckSchedId[id] = item.schedId ?? null;     // Phase 1 shadow: the generated_schedule row id (null = off-log)
     this._setDeck(id, { title: item.title || "", artist: item.artist || "", filePath: item.filePath, positionSec: 0, durationSec: (item.durationMs ?? 0) / 1000, status: "idle", volume: 1 });
     this.endTriggered.delete(id);
     const d = this._dur(item.filePath);
@@ -660,6 +664,36 @@ class DaemonEngine {
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
     // throws into the playout path.
     try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION, filePath: st.filePath }); } catch {}
+    // Log-Reader Flip Phase 1 — SHADOW playhead writer. Stamp the generated_schedule row's local-only
+    // lifecycle as this deck goes live. OBSERVATIONAL ONLY — changes no playout/queue behavior.
+    this._shadowStampPlayhead(this.deckSchedId[deckId]);
+  }
+
+  // Log-Reader Flip Phase 1 — SHADOW playhead writer (design §7 Phase 1). As each deck goes live, record
+  // the true playhead in generated_schedule's LOCAL-ONLY lifecycle columns (never synced, §5) so a later
+  // phase can read the playout position straight from the log — and so we can verify, over a burn-in, that
+  // the stamped playhead matches play_log. This is a direct local write on the daemon's own DB handle
+  // (same pattern as playlog.logPlay); it does NOT go through the sync mutation path. It changes NO
+  // playout behavior. A live-picked (off-log) item has no schedId → retire the prior playhead and count
+  // the divergence (the exact decks-vs-calendar mismatch the flip eliminates). Never throws into playout.
+  _shadowStampPlayhead(schedId) {
+    try {
+      const now = Math.floor(Date.now() / 1000);
+      if (schedId != null) {
+        // New playhead: this row is 'playing'; any other 'playing' row for this station is now 'played'.
+        this.db.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing' AND id!=?").run(this.stationId, schedId);
+        this.db.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=? AND station_id=?").run(now, schedId, this.stationId);
+        if (this._playheadOffLog) console.log(`[PLAYHEAD] station ${this.stationId}: back ON-LOG (row ${schedId}).`);
+        this._playheadOffLog = false;
+      } else {
+        // Off-log content on air — the calendar has no row for what's playing. Retire the prior playhead
+        // and record the divergence (logged once per off-log run so a long stretch stays visible).
+        this.db.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing'").run(this.stationId);
+        this._offLogPlays = (this._offLogPlays || 0) + 1;
+        if (!this._playheadOffLog) console.warn(`[PLAYHEAD] station ${this.stationId}: OFF-LOG on air (no generated_schedule row) — decks/queue diverged from the calendar. offLogPlays=${this._offLogPlays}`);
+        this._playheadOffLog = true;
+      }
+    } catch (e) { /* shadow write must NEVER perturb playout */ }
   }
 
   // ── operator/queue API (called from daemon command handlers) ──
