@@ -226,6 +226,31 @@ export class AudioEngine {
     // "off" engine-state seed until the next mutation. Pull both once now; poll()/events converge.
     void this.resyncDaemonQueue();
     void this.resyncDaemonEngineState();
+    void this.resyncDaemonDecks();
+  }
+
+  /** One-shot pull of the daemon's authoritative per-deck fader volume on (re)attach, so a stale value
+   *  left in renderer state by a prior session / in-process fallback can never persist on screen (the
+   *  honest-UI rule: the fader shows the engine's observed volume, not a remembered position). Only the
+   *  volume is merged — status/title/position stay owned by the onDeck event stream. */
+  private async resyncDaemonDecks(): Promise<void> {
+    const a = (window as any).ether?.audio;
+    if (!a?.daemon) return;
+    try {
+      const r = await a.daemon("getState", { stationId: this.stationId });
+      const s = (r && typeof r === "object" && "result" in r) ? (r as any).result : r;
+      if (!s) return;
+      (["A", "B", "C"] as DeckId[]).forEach(id => {
+        const ds = id === "A" ? s.deckA : id === "B" ? s.deckB : s.deckC;
+        if (!ds) return;
+        const vol = makeState(id, ds).volume;   // defaults to unity when the daemon omits it
+        if (id === "A") this.stateA = { ...this.stateA, volume: vol };
+        else if (id === "B") this.stateB = { ...this.stateB, volume: vol };
+        else this.stateC = { ...this.stateC, volume: vol };
+        const st = id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC;
+        this.listeners.forEach(l => l(id, st));
+      });
+    } catch { /* daemon not answering yet — the next deck event resyncs it */ }
   }
 
   /** One-shot pull of the daemon's current engine state (live|stalled|off) so a freshly-attached

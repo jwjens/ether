@@ -1,3 +1,42 @@
+## [4.4.64] — 2026-07-20
+
+### Added — Show+ DAW: chop & send (quick import → cut → send to deck / jingle / sweeper / library)
+
+- **Quick import** into StudioPro — drag & drop audio onto a lane (already real) plus a new **＋ Import**
+  file-pick in the toolbar. The two dead toolbar buttons (📤 "send to cart wall", 📡 "stream this mix" —
+  they dispatched events no one listened to) were **removed** (honest-UI: no decoration).
+- **Chop** — open a region in the Editor, frame it with the real trim handles, and **▶ Audition** the
+  selection (DAW-only; never on air).
+- **Send — four first-class exits on the selection:** **→ Library** (plain song), **→ Jingle** (JIN + pool),
+  **→ Sweeper** (SWP + pool), **→ Deck** (loads onto Deck A/B/C via the **real** deck-load command path —
+  `deckCue`/`loadToDeck`, the same path the Library A/B/C buttons use; an on-air deck is protected).
+- **One region engine, two surfaces (never a copy).** The audition, render→write, and library-commit logic
+  is now shared modules (`regionAudition.ts`, `imagingCommit.ts`) with a shared commit-form atom
+  (`ClassPoolSelect.tsx`); the **Reel Splitter** was refactored onto them. Built only on verified rails
+  (`ffmpeg.writeAudio`, `songs.create`+`updateById` — the `fs.writeFile`/blob-download dead paths avoided).
+- Help: `docs/help-studiopro-chop-send.md` — "Cut and send from the Show+ DAW."
+
+### Fixed — deck fader shows engine truth (no more stale 2/3 fader)
+
+- **Faders render observed state, never a remembered position.** After the 4.4.63 fader exorcism a deck
+  fader could still *display* at ~2/3 while the engine's real gain was unity — a stale renderer value that
+  nothing resynced (native truth was confirmed 1.0; automation provably never writes a deck fader). The UI
+  now resyncs each deck's displayed fader to the daemon's authoritative volume on **event / connect / load**,
+  defaulting to unity, so a stale fractional value is impossible. The daemon also re-emits a deck event on any
+  volume change so the UI can never lag the truth. Display/state only — no audio path touched.
+
+### Added — persistent jingle indicator: SCHEDULED (grey) → ARMED (white) → FIRING (yellow)
+
+- The deck's third-line jingle indicator now appears **from the moment the song starts** as **grey =
+  SCHEDULED** (a read-ahead: a jingle is placed for this song's upcoming seam), promoting to **white = ARMED**
+  inside the ~30s seam window and **blinking yellow = FIRING** on air. Class-aware (JIN/SWP). The read-ahead
+  is a display hint only — one DB read per song, never per poll tick, and it never touches playout.
+
+### Fixed — a comment that lied
+
+- `_jingleBeginBridge` claimed the outgoing deck "already faded to 0 under the jingle (the segue fade)". There
+  is no fade — the outgoing rides its own mastered tail. Comment corrected to match the code.
+
 ## [4.4.63] — 2026-07-15
 
 ### Added — routine segue overlap (auto) + jingle polish (NO fades — the next song just starts early)

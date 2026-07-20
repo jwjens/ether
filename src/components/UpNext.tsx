@@ -50,8 +50,9 @@ export async function fetchArt(title: string, artist: string): Promise<string | 
 interface Props {
   queueLen: number;
   onQueueChange: () => void;
-  // JINGLES indicator (4.4.63): the armed/firing jingle for a deck's upcoming seam. Rendered as a third
-  // line under that deck's duration — solid white = ARMED, blinking yellow = FIRING. Class-aware (JIN/SWP).
+  // JINGLES indicator: the scheduled/armed/firing jingle for a deck's upcoming seam. Rendered as a third
+  // line under that deck's duration — grey = SCHEDULED (read-ahead from song start), solid white = ARMED,
+  // blinking yellow = FIRING. Class-aware (JIN/SWP).
   jingleOverlay?: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;
 }
 
@@ -378,12 +379,14 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                   </div>
                 )}
               </div>
-              {/* JINGLES third line (4.4.63) — the jingle's NAME + time under THIS deck's duration.
-                  Solid white = ARMED, blinking yellow = FIRING. Class-aware (JIN/SWP). The countdown
-                  colors above are untouched — the name is the label, nothing shared with the countdown. */}
+              {/* JINGLES third line — the jingle's NAME + time under THIS deck's duration. Grey = SCHEDULED
+                  (read-ahead from song start), solid white = ARMED, blinking yellow = FIRING. Class-aware
+                  (JIN/SWP). The countdown colors above are untouched — nothing shared with the countdown. */}
               {jingleOverlay && jingleOverlay.deck === id && jingleOverlay.state && (() => {
                 const firing = jingleOverlay.state === "FIRING";
-                const col = firing ? "#ffe93b" : "#ffffff";
+                const scheduled = jingleOverlay.state === "SCHEDULED";
+                // SCHEDULED (read-ahead, from song start) = grey · ARMED (seam imminent) = white · FIRING = yellow.
+                const col = firing ? "#ffe93b" : scheduled ? "#8b909b" : "#ffffff";
                 const tag = jingleOverlay.contentClass === "SWP" ? "SWP" : "JIN";
                 const jdur = jingleOverlay.jinDurSec || 0;
                 return (

@@ -7,17 +7,16 @@
 //   • import: shipped normal pipeline — songs.create({file_path,…}) + songs.updateById({content_class,jingle_category_id})
 // NOT used: ether.fs.writeFile (dead, no handler); content-hash/songs_v2 (not shipped — file_path identity).
 import { useState, useRef, useCallback, useEffect } from "react";
-import { encodeWav } from "../audio/wavEdit";
 import { detectSilenceRegions, type Region } from "../audio/silenceRegions";
-import { query } from "../db/client";
+import { auditionRegion } from "../audio/regionAudition";
+import { commitRegionToLibrary, imagingSlug as slug } from "../audio/imagingCommit";
 import InlineNameEditor from "./InlineNameEditor";
+import ClassPoolSelect, { useImagingPools } from "./ClassPoolSelect";
 import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
 
 type Cls = "JIN" | "SWP";
 interface Reg extends Region { name: string }
-interface Pool { id: number; name: string; type: string }
 const ether = () => (window as any).ether;
-const slug = (s: string) => (s || "reel").replace(/\.[^.]+$/, "").replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "") || "reel";
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}.${String(Math.floor((s % 1) * 10))}`;
 
 export default function ReelSplitter({ stationId, embedded, onCommitted }: { stationId: number; embedded?: boolean; onCommitted?: () => void }) {
@@ -29,7 +28,7 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
   const [threshold, setThreshold] = useState(-45);
   const [cls, setCls] = useState<Cls>("JIN");
   const [poolId, setPoolId] = useState<number | null>(null);
-  const [pools, setPools] = useState<Pool[]>([]);
+  const pools = useImagingPools(stationId);
   const [playing, setPlaying] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [commitState, setCommitState] = useState<{ busy: boolean; done: number; total: number; err: string | null } | null>(null);
@@ -41,10 +40,6 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
   const waveRef = useRef<HTMLDivElement | null>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const ctx = () => (ctxRef.current ||= new (window.AudioContext || (window as any).webkitAudioContext)());
-
-  useEffect(() => { (async () => {
-    try { const r = await ether()?.jingleCategories?.list(stationId); setPools(((r?.rows || []) as Pool[])); } catch { setPools([]); }
-  })(); }, [stationId]);
 
   // ── open + decode ──
   const openBuffer = useCallback(async (file: File) => {
@@ -78,9 +73,8 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
   const playRegion = (i: number) => {
     if (!buffer) return; stop();
     const r = regions[i]; if (!r) return;
-    const src = ctx().createBufferSource(); src.buffer = buffer; src.connect(ctx().destination);
-    src.onended = () => { if (srcRef.current === src) { srcRef.current = null; setPlaying(false); } };
-    src.start(0, r.start, Math.max(0.02, r.end - r.start)); srcRef.current = src; setPlaying(true);
+    const src = auditionRegion(ctx(), buffer, r.start, r.end, () => { if (srcRef.current === src) { srcRef.current = null; setPlaying(false); } });
+    srcRef.current = src; setPlaying(true);
   };
   const togglePlay = () => { if (playing) stop(); else playRegion(sel); };
 
@@ -135,30 +129,14 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
     window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
   };
 
-  // ── commit ──
-  const sliceBuffer = (start: number, end: number): AudioBuffer => {
-    const sr = buffer!.sampleRate; const s = Math.floor(start * sr), e = Math.floor(end * sr); const len = Math.max(1, e - s);
-    const out = ctx().createBuffer(buffer!.numberOfChannels, len, sr);
-    for (let c = 0; c < buffer!.numberOfChannels; c++) out.getChannelData(c).set(buffer!.getChannelData(c).subarray(s, e));
-    return out;
-  };
+  // ── commit ── (render+write+import via the ONE shared imaging engine — imagingCommit.ts)
   const commit = async () => {
     if (!buffer || !regions.length) return;
     setCommitState({ busy: true, done: 0, total: regions.length, err: null });
     try {
-      const appDir = await ether().system.getAppDataDir();
-      const folder = `${appDir}/imaging/${slug(reelName)}`;
       for (let i = 0; i < regions.length; i++) {
         const r = regions[i];
-        const wav = new Uint8Array(encodeWav(sliceBuffer(r.start, r.end)));
-        const safe = (r.name || `${reelName}_${i + 1}`).replace(/[^\w.-]+/g, "_");
-        const filePath = `${folder}/${safe}.wav`;
-        const res = await ether().ffmpeg.writeAudio(wav, filePath);
-        if (!res?.ok) throw new Error(`write failed for "${r.name}"`);
-        const created = await ether().songs.create({ title: r.name, file_path: filePath, duration_ms: Math.round((r.end - r.start) * 1000) });
-        let id = created?.row?.id;
-        if (!id) { try { const rows = await query<{ id: number }>("SELECT rowid AS id FROM songs WHERE file_path = ?", [filePath]); id = rows?.[0]?.id; } catch {} }
-        if (id) await ether().songs.updateById(id, { content_class: cls, jingle_category_id: poolId ?? null });
+        await commitRegionToLibrary(buffer, r.start, r.end, { name: r.name, cls, poolId, reelSlug: reelName });
         setCommitState({ busy: true, done: i + 1, total: regions.length, err: null });
       }
       setCommitState({ busy: false, done: regions.length, total: regions.length, err: null });
@@ -168,8 +146,6 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
 
   const accent = cls === "SWP" ? SWP_INDIGO : JIN_TEAL;
   const dur = buffer?.duration || 1;
-  const selReg = regions[sel];
-  const tabPools = pools.filter(p => (p.type || "JIN") === cls);
 
   return (
     <div ref={rootRef} tabIndex={0} style={{ height: "100%", display: "flex", flexDirection: "column", outline: "none", color: "var(--text-primary)", background: "var(--bg-primary)" }}
@@ -242,18 +218,7 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
 
           {/* Commit form */}
           <div style={{ borderTop: "1px solid var(--border-primary)", padding: "12px 16px", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["JIN", "SWP"] as const).map(c => (
-                <button key={c} onClick={() => { setCls(c); setPoolId(null); }} style={{ padding: "5px 12px", borderRadius: 4, border: `1px solid ${cls === c ? (c === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--border-primary)"}`, background: cls === c ? `${c === "SWP" ? SWP_INDIGO : JIN_TEAL}22` : "transparent", color: cls === c ? (c === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--text-secondary)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{c === "SWP" ? "Sweepers" : "Jingles"}</button>
-              ))}
-            </div>
-            <label style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 6 }}>
-              Pool
-              <select value={poolId ?? ""} onChange={e => setPoolId(e.target.value ? Number(e.target.value) : null)} style={{ background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: 4, padding: "3px 6px", fontSize: 12 }}>
-                <option value="">— unassigned —</option>
-                {tabPools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
-            </label>
+            <ClassPoolSelect cls={cls} poolId={poolId} pools={pools} onCls={setCls} onPool={setPoolId} />
             <div style={{ flex: 1 }} />
             {commitState && (commitState.busy ? <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Committing {commitState.done}/{commitState.total}…</span>
               : commitState.err ? <span style={{ fontSize: 12, color: "var(--accent-red)" }}>Failed: {commitState.err}</span>

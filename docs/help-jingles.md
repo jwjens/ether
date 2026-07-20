@@ -60,8 +60,12 @@ error**. Nothing warns you; nothing is placed.
 
 ## How it behaves on air
 
-- The deck bridging the overlay shows a small indicator — **white = armed**, **yellow = firing** — labelled
-  with the class (**JIN** or **SWP**).
+- The deck bridging the overlay shows a small third-line indicator, labelled with the class (**JIN** or
+  **SWP**), that tells you exactly where the imaging is in its lifecycle:
+  - **Grey = scheduled** — shown from the moment the song starts, a read-ahead that a jingle is placed for
+    this song's upcoming seam.
+  - **White = armed** — the seam is imminent (within ~30s of the end); the jingle is loaded and ready.
+  - **Yellow (blinking) = firing** — the jingle is on air right now.
 - The **Health Monitor** shows the same armed/firing state per station.
 - Overlays are logged in Play History but **kept out of music reports and rotation math** — they never count
   as a song play or block an artist.

@@ -107,6 +107,12 @@ class DaemonEngine {
     this._jingle = null;                 // the current jingle lifecycle object, or null (one at a time)
     this._firedJinRows = [];             // generated_schedule row_ids already fired/consumed (bounded) — never re-arm
     this._jingleCartGen = 0;             // CART load generation (fresh fire invalidates a stale bridge close)
+    // Read-ahead SCHEDULED hint: the seam jingle identified from the playing song's START (before the
+    // 30s arm window), shown as a persistent grey third-row indicator that promotes to ARMED (white) →
+    // FIRING (yellow). Display-only — never touches playout. Re-queried only when the seam identity
+    // (_scheduledSig) changes, so it costs at most one DB read per song, not one per poll tick.
+    this._scheduled = null;
+    this._scheduledSig = "";
     this.pollTimer = null;
     this.lastPollTime = Date.now();
   }
@@ -385,7 +391,8 @@ class DaemonEngine {
   _changed(prev, next) {
     if (!prev) return true;
     return prev.status !== next.status || prev.filePath !== next.filePath || prev.title !== next.title ||
-      Math.floor(prev.positionSec) !== Math.floor(next.positionSec) || prev.durationSec !== next.durationSec;
+      Math.floor(prev.positionSec) !== Math.floor(next.positionSec) || prev.durationSec !== next.durationSec ||
+      prev.volume !== next.volume;   // fader truth: re-emit on any volume change so the UI can never lag it
   }
   _maybeEmitDeck(id) {
     const st = this._deckState(id);
@@ -941,9 +948,9 @@ class DaemonEngine {
   _jingleBeginBridge(deckId) {
     const j = this._jingle; if (!j) return;
     const now = Date.now();
-    // Continuous weave (music never stops): the outgoing has already faded to 0 under the jingle (the
-    // segue fade), so the instant it ends the incoming enters at full and rides UNDER the jingle's
-    // remaining tail. No jingle-alone gap — outgoing-tail(fading) · jingle · incoming-head overlap.
+    // Continuous weave (music never stops): automation NEVER fades a deck — the outgoing rides its own
+    // mastered tail to its natural end under the jingle, and the instant it ends the incoming enters at
+    // full UNDER the jingle's remaining tail. No jingle-alone gap — outgoing-tail · jingle · incoming-head.
     j.nextStart = now;
     j.outgoingEndedAt = now;
     j.phase = "bridging";
@@ -978,7 +985,7 @@ class DaemonEngine {
   // The one poll-driven jingle brain. Never throws into playout.
   _jingleTick(now) {
     try {
-      if (!this._started) { if (this._jingle) this._clearJingle("automation-stopped"); return; }
+      if (!this._started) { if (this._jingle) this._clearJingle("automation-stopped"); this._clearScheduled("automation-stopped"); return; }
       const order = ["A", "B", "C"];
       const j = this._jingle;
 
@@ -1015,23 +1022,67 @@ class DaemonEngine {
         return;
       }
 
-      // No active jingle → consider arming for the upcoming seam.
+      // No active jingle → maintain the read-ahead SCHEDULED hint, and arm once inside the window.
       const P = order.find(d => this._deckState(d).status === "playing");
-      if (!P) return;
+      if (!P) { this._clearScheduled("no-deck"); return; }
       const st = this._deckState(P);
       const remaining = (st.durationSec || 0) - (st.positionSec || 0);
-      if (!(remaining > 0 && remaining <= DaemonEngine._ARM_WINDOW_S)) return;
       const afterTs = this.deckSched[P];
-      if (afterTs == null) return;                           // playing a non-scheduled row → no jingle seam
+      if (!(remaining > 0) || afterTs == null) { this._clearScheduled("unscheduled"); return; }  // non-scheduled row → no seam
       const nextDeck = this._nextRotateDeck(P);
       const beforeTs = (nextDeck && this.deckSched[nextDeck] != null)
         ? this.deckSched[nextDeck]
         : (afterTs + Math.ceil(remaining) + 2);
-      const jin = loggen.readJingleForSeam(this.db, this.stationId, afterTs, beforeTs, this._firedJinRows.slice(-100));
-      if (!jin) return;
-      if (!this._fileOk(jin.filePath)) { this._noteFiredRow(jin.rowId); return; }  // dead jingle file → skip, don't arm
-      this._armJingle(jin, P);
+
+      if (remaining <= DaemonEngine._ARM_WINDOW_S) {
+        // Inside the arm window: hand the read-ahead off to the armed lifecycle with a FRESH read (truth
+        // beats a possibly-stale hint if the schedule changed since song start). Promotion, not a retire —
+        // null the hint WITHOUT a CLEARED so the indicator flips grey → white in the same tick, no gap.
+        const jin = loggen.readJingleForSeam(this.db, this.stationId, afterTs, beforeTs, this._firedJinRows.slice(-100));
+        if (!jin) { this._clearScheduled("no-seam"); return; }
+        if (!this._fileOk(jin.filePath)) { this._noteFiredRow(jin.rowId); this._clearScheduled("dead-file"); return; }  // dead jingle file → skip, don't arm
+        this._scheduled = null; this._scheduledSig = "";
+        this._armJingle(jin, P);
+        return;
+      }
+
+      // Outside the arm window: persistent SCHEDULED (grey) read-ahead. Re-query only when the seam
+      // identity (deck + window bounds) changes — at most one DB read per song, never per tick.
+      const sig = `${P}:${afterTs}:${beforeTs}`;
+      if (this._scheduledSig !== sig) {
+        this._scheduledSig = sig;
+        const jin = loggen.readJingleForSeam(this.db, this.stationId, afterTs, beforeTs, this._firedJinRows.slice(-100));
+        if (jin && this._fileOk(jin.filePath)) this._setScheduled(jin, P);
+        else this._clearScheduledEmitOnly("none");   // keep sig (don't re-query) but retire any shown hint
+      }
     } catch (e) { this._log("jingleTick error (playout unaffected): " + String(e)); }
+  }
+
+  // Read-ahead SCHEDULED (grey) indicator — display-only, never touches playout. Emits once per identity.
+  _setScheduled(jin, deck) {
+    const prev = this._scheduled;
+    if (prev && prev.rowId === jin.rowId && prev.deck === deck) return;   // unchanged → no re-emit
+    this._scheduled = {
+      rowId: jin.rowId, deck, title: jin.title, artist: jin.artist,
+      contentClass: jin.contentClass === "SWP" ? "SWP" : "JIN",
+      categoryId: jin.jingleCategoryId, leadIn: jin.leadInSec, underlap: jin.underlapSec,
+      jinDur: (jin.durationMs || 0) / 1000,
+    };
+    this._log(`${this._scheduled.contentClass} SCHEDULED — "${jin.title}" for deck ${deck}'s upcoming seam (read-ahead)`);
+    this._emitJingle("SCHEDULED", this._scheduled);
+  }
+  // Retire a shown SCHEDULED hint AND reset the query signature (so the next tick re-looks-ahead).
+  _clearScheduled(reason) {
+    this._scheduledSig = "";
+    this._clearScheduledEmitOnly(reason);
+  }
+  // Retire a shown SCHEDULED hint but leave the signature intact (caller manages re-query cadence).
+  _clearScheduledEmitOnly(reason) {
+    const had = this._scheduled;
+    if (!had) return;
+    this._scheduled = null;
+    this._log(`jingle SCHEDULED retired (${reason}) — "${had.title}"`);
+    this._emitJingle("CLEARED", had);
   }
 
   // Fire the armed jingle on CART — serialized on the advance chain (no naked timer), re-validated inside.

@@ -579,7 +579,7 @@ export default function App() {
   const [deckB, setDeckB] = useState<DeckState | null>(null);
   const [deckC, setDeckC] = useState<DeckState | null>(null);
   // JINGLES overlay v1: live overlay state for the ACTIVE station, from the daemon (observed, not claimed).
-  // { deck: the deck whose seam the jingle bridges, state: 'ARMED'|'FIRING', title }. null when idle.
+  // { deck: the deck whose seam the jingle bridges, state: 'SCHEDULED'|'ARMED'|'FIRING', title }. null when idle.
   const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null>(null);
   // Discoverability (4.4.56): does this station have any jingle pool? Drives the "Set up jingles →"
   // affordance on the JINGLES fader when the feature is unconfigured (its owner couldn't find it).
@@ -1934,8 +1934,8 @@ export default function App() {
     return () => { try { ether.off?.("stream:status", h); } catch { /* ignore */ } };
   }, []);
 
-  // JINGLES overlay v1: subscribe to the daemon's overlay state for the ACTIVE station. ARMED/FIRING set
-  // the per-deck indicator (white/yellow) + seam chip; CLEARED/ARMED_CANCELLED retire it. Observed only.
+  // JINGLES overlay: subscribe to the daemon's overlay state for the ACTIVE station. SCHEDULED/ARMED/FIRING
+  // set the per-deck indicator (grey/white/yellow) + seam chip; CLEARED/ARMED_CANCELLED retire it. Observed only.
   useEffect(() => {
     const au = (window as any).ether?.audio;
     if (!au?.onJingle) return;
@@ -2485,6 +2485,7 @@ export default function App() {
                   <StudioPro
                     deckAPath={null} deckATitle={undefined}
                     deckBPath={null} deckBTitle={undefined}
+                    stationId={stationId}
                   />
                 </EtherErrorBoundary>
               )}

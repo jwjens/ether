@@ -36,6 +36,7 @@ import React, {
 import { createPortal } from "react-dom";
 import WaveformGL from "./WaveformGL";
 import VoiceTracker from "./VoiceTracker";
+import StudioSendBar from "./StudioSendBar";
 import { execute, query } from "../db/client";
 import { useUser } from "../UserContext";
 
@@ -743,6 +744,7 @@ interface Props {
   deckATitle: string | undefined;
   deckBPath:  string | null;
   deckBTitle: string | undefined;
+  stationId:  number;   // active station — for chop-and-send (imaging pools + the real deck-load path)
 }
 
 type EditTool = "select" | "grab" | "blade" | "trim" | "fade";
@@ -771,7 +773,7 @@ interface TrackAudioParams {
 
 const NOTE_COLORS = ["#f59e0b", "#3b82f6", "#10b981", "#ef4444"];
 
-export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle }: Props) {
+export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle, stationId }: Props) {
   const currentUser = useUser();
   const [state, dispatch] = useReducer(reducer, undefined, () => ({
     tracks: studioCache?.tracks ?? [
@@ -2910,31 +2912,30 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   // ── Send to cart wall + Stream this mix (CustomEvent dispatch) ──
 
-  const sendToCartwall = useCallback(async () => {
-    setStatus("Rendering for cart wall...");
-    const rendered = await renderMixOffline();
-    if (!rendered) return;
-    const wav = encodeWav(rendered);
-    const blob = new Blob([wav], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-    window.dispatchEvent(new CustomEvent("ether:send-to-cartwall", {
-      detail: { filePath: url, title: "StudioPro Mix" },
-    }));
-    setStatus("✓ Sent to cart wall");
-  }, [renderMixOffline]);
+  // Quick import (file-pick) — rides the SAME verified path as the drag-and-drop lane import: a picked
+  // file becomes a blob URL loaded via loadAudio onto a fresh track. Replaces the removed dead "send to
+  // cart wall / stream" buttons (they dispatched CustomEvents no one listened to — decoration, per the
+  // reel-splitter inventory). The real send lives in the region editor's Send bar (StudioSendBar).
+  const importFiles = useCallback((files: File[]) => {
+    if (!files.length) return;
+    files.forEach((f, i) => {
+      dispatch({ type: "ADD_TRACK", name: f.name });
+      const url = URL.createObjectURL(f);
+      setTimeout(() => {
+        const tracks = stateRef.current?.tracks || [];
+        const newest = tracks[tracks.length - files.length + i];
+        if (newest) loadAudio(newest.id, url, { title: f.name });
+      }, 30 * (i + 1));
+    });
+    setStatus(`Importing ${files.length} file${files.length === 1 ? "" : "s"}…`);
+  }, [loadAudio]);
 
-  const streamThisMix = useCallback(async () => {
-    setStatus("Rendering for stream...");
-    const rendered = await renderMixOffline();
-    if (!rendered) return;
-    const wav = encodeWav(rendered);
-    const blob = new Blob([wav], { type: "audio/wav" });
-    const url = URL.createObjectURL(blob);
-    window.dispatchEvent(new CustomEvent("ether:stream-mix", {
-      detail: { filePath: url, title: "StudioPro Mix" },
-    }));
-    setStatus("✓ Sent to stream engine");
-  }, [renderMixOffline]);
+  const pickImport = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file"; input.accept = "audio/*"; input.multiple = true;
+    input.onchange = () => importFiles(Array.from(input.files || []));
+    input.click();
+  }, [importFiles]);
 
   // ── Session Version Control ───────────────────────────────────
 
@@ -3379,8 +3380,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>FX</TBtn>
         <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
         <NormalizeMenu onPick={(t) => autoNormalize(t)} />
-        <TBtn onClick={sendToCartwall} title="Render mix and send to cart wall">📤</TBtn>
-        <TBtn onClick={streamThisMix}  title="Render mix and send to stream engine">📡</TBtn>
+        <TBtn onClick={pickImport} title="Import audio file(s) into the DAW — quick import to chop & send">＋ Import</TBtn>
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         {/* Session name — double-click to rename */}
         {sessionNameEditing ? (
@@ -3879,6 +3879,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             mode={editorMode}
             onMode={setEditorMode}
             ctx={getCtx()}
+            stationId={stationId}
             onClose={() => setEditorOpen(false)}
             onPatchRegion={(patch) => selectedTrack && selectedRegion && dispatch({
               type: "UPDATE_REGION", trackId: selectedTrack.id, regionId: selectedRegion.id, patch,
@@ -4597,7 +4598,7 @@ function EditorHeader({ title, subtitle, accent, mode, onMode, onClose }: {
 }
 
 function RegionEditorDrawer({
-  track, region, playheadMs, mode, onMode, ctx, onClose, onPatchRegion, onPatchTrack, onSeek, getAnalyser,
+  track, region, playheadMs, mode, onMode, ctx, stationId, onClose, onPatchRegion, onPatchTrack, onSeek, getAnalyser,
 }: {
   track: StudioTrack | null;
   region: StudioRegion | null;
@@ -4605,6 +4606,7 @@ function RegionEditorDrawer({
   mode: "wave" | "eq";
   onMode: (m: "wave" | "eq") => void;
   ctx: AudioContext;
+  stationId: number;
   onClose: () => void;
   onPatchRegion: (p: RegionPatch) => void;
   onPatchTrack: (p: TrackPatch) => void;
@@ -4746,6 +4748,17 @@ function RegionEditorDrawer({
         {fadeHandle(fadeInEdge,  (e) => dragHandle(e, setFadeIn),  "Fade in")}
         {fadeHandle(fadeOutEdge, (e) => dragHandle(e, setFadeOut), "Fade out")}
       </div>
+
+      {/* Chop & send — the selection is the region's trimmed span [trimStart,trimEnd] of region.buffer.
+          Four real exits (Library / Jingle / Sweeper / Deck) via the shared imaging engine + real deck path. */}
+      <StudioSendBar
+        buffer={region.buffer}
+        startSec={trimStart / 1000}
+        endSec={trimEnd / 1000}
+        defaultName={(region.filePath ? (region.filePath.split(/[\\/]/).pop() || track.name) : track.name).replace(/\.[^.]+$/, "")}
+        stationId={stationId}
+        ctx={ctx}
+      />
     </div>
   );
 }
