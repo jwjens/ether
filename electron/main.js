@@ -522,6 +522,23 @@ if (AUDIO_DAEMON_DESIRED) {
   _health.start();
   try { ipcMain.handle("health:snapshot", () => { try { return _health.getSnapshot(); } catch { return null; } }); } catch {}
 
+  // ── Library & rotation SENSES (Log-reader Slice A) — R2 prefetch + deterministic senses → JSONL ──
+  // Background: materializes upcoming R2-only rows to their file_path (so the "half the library never
+  // airs" gate can't recur), and computes materialization / pool-health / rotation-eligibility /
+  // prefetch-lag / skipped-at-load into health-events.jsonl + a snapshot for the Health Monitor.
+  try {
+    const _libHealth = require("./library-health").createLibraryHealth({
+      getDb: () => db,
+      backendUrl: ETHER_BACKEND_URL,
+      licenseKeyFn: () => { try { return accountLicenseKey(); } catch { return null; } },
+      broadcast: sendToAllWindows,
+      userDataDir: app.getPath("userData"),
+    });
+    _libHealth.start();
+    ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
+    ipcMain.handle("library-health:eligibility", (_e, stationId) => { try { return _libHealth.eligibilityRows(stationId); } catch { return []; } });
+  } catch (e) { console.error("[library-health] init failed:", e && e.message); }
+
   audiodClient.setEventHandler((m) => {
     try {
       if (m.event === "levels") {
