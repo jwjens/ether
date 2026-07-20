@@ -339,6 +339,10 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authErr, setAuthErr] = useState('');
+  // Trial-expired doorway (4.4.66): when /account/connect answers trial_expired, we show a distinct
+  // "your data is safe — pick a plan" message plus a button to the plan picker (renew_url, external
+  // browser). Non-null only in that case; a bad key keeps the plain contact-support authErr.
+  const [trialRenewUrl, setTrialRenewUrl] = useState<string | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   // Account isolation: the account currently loaded on THIS computer, when it differs from the one
   // signing in — so we offer to switch (swap to that account's own local DB) instead of mixing.
@@ -373,21 +377,51 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     setLicenseKey(lk);
     let stations: OnboardingStation[] = [];
     let connectOk = false;   // did the server AFFIRMATIVELY answer with a station list?
+    let connectStatus = 0;   // 0 = fetch threw (truly offline / DNS / TLS); else the HTTP status
+    let connectErrCode = ''; // backend error code (e.g. invalid_license_key) when it answered
+    let connectRenewUrl = ''; // renew_url the server hands back on trial_expired
+    setTrialRenewUrl(null);   // clear any prior trial-expired state before this attempt
     try {
       const idResp = await (window as any).ether.identity?.get?.().catch(() => null);
       const res = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ license_key: lk, machine_id: idResp?.ok ? idResp.machine_id : '', machine_name: idResp?.ok ? idResp.machine_name : '' }),
       });
+      connectStatus = res.status;
       const data = await res.json().catch(() => ({}));
+      connectErrCode = String(data?.error || '');
+      connectRenewUrl = String(data?.renew_url || '');
       if (res.ok && Array.isArray(data.stations)) { connectOk = true; stations = data.stations as OnboardingStation[]; setConnectAccountName(data.account_name || ''); }
-    } catch { /* connectOk stays false */ }
+    } catch { /* connectStatus stays 0 — a real network/DNS/TLS failure */ }
     // C1–C3 FIX: only "create-your-station" when the server AFFIRMATIVELY says this account has ZERO
     // stations. A connect error / non-OK must NEVER fall through to create — that's how a signed-in
     // account with stations gets wrongly asked to make a NEW (duplicate/Nth) one. On failure: retry, not create.
     if (!connectOk) {
       setAuthBusy(false);
-      setAuthErr("Couldn't reach the server to load your stations. Check your connection and try Sign in again.");
+      // HONEST-UI (4.4.65): name the ACTUAL failure. Only a thrown fetch (status 0) is truly
+      // "couldn't reach". A 401/403/5xx is the server ANSWERING with a rejection — saying "couldn't
+      // reach" for those is a lie that sends the operator chasing their network instead of the real
+      // cause. Closes the documented C1–C3 gap (docs/onboarding-signin-state-table.md).
+      let msg: string;
+      if (connectStatus === 0) {
+        // C1 — truly offline / DNS / TLS: the fetch never got an answer.
+        msg = "Couldn't reach the server to load your stations. Check your connection and try Sign in again.";
+      } else if (connectErrCode === 'trial_expired') {
+        // C3c — lapsed trial. NOT a bad key: the account's data is intact (expiry only gates access,
+        // it never deletes stations/library) and resumes on renewal. Offer the plan picker, not support.
+        msg = "Your free trial has ended. Your stations and library are safe — pick a plan to keep broadcasting.";
+        setTrialRenewUrl(connectRenewUrl || 'https://signup.ether-technologies.com');
+      } else if (connectStatus === 401 || connectErrCode === 'invalid_license_key') {
+        // 401 — the account's license key was rejected by the server (rotated / revoked / mis-stamped).
+        msg = "Your account's license was rejected by the server, so your stations can't load. Please contact support to restore it.";
+      } else if (connectStatus === 403) {
+        // C3 — seat limit: this account's devices are full.
+        msg = "This account's devices are full. Free up a device (Manage Devices), then try Sign in again.";
+      } else {
+        // C2 — mid-deploy / 5xx / any other non-OK: the server answered but not with a station list.
+        msg = `The server couldn't load your stations right now (error ${connectStatus}${connectErrCode ? `: ${connectErrCode}` : ''}). Please try Sign in again in a moment.`;
+      }
+      setAuthErr(msg);
       setState('auth');
       return;
     }
@@ -1171,7 +1205,16 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   </div>
                 </div>
               )}
-              {authErr && <div style={{ fontSize: 12, color: "#f87171" }}>{authErr}</div>}
+              {/* Trial-expired reads as reassurance (not an error): green, with a plan-picker button. */}
+              {authErr && <div style={{ fontSize: 12, color: trialRenewUrl ? "#34d399" : "#f87171" }}>{authErr}</div>}
+              {trialRenewUrl && (
+                <button
+                  onClick={() => { try { (window as any).ether.invoke("open_url", { url: trialRenewUrl }); } catch { /* ignore */ } }}
+                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "transparent", color: "var(--accent-cyan)", border: "1px solid var(--accent-cyan)", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em" }}
+                >
+                  Choose a plan →
+                </button>
+              )}
               <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
                 {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}
               </button>

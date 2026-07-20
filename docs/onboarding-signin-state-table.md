@@ -40,9 +40,11 @@ Source of truth for behavior: `src/components/OnboardingFlow.tsx` (doSignIn + de
 
 | # | State | Trigger | User sees | Path(s) forward | Status |
 |---|-------|---------|-----------|-----------------|--------|
-| C1 | **Server unreachable (flaky network)** | `/account/connect` fetch throws | **currently: falls through to create-a-station (WRONG — duplicate risk)** | should be → "Can't reach the server — Retry / work offline" | ⛔ **OPEN — fix before Monday** |
-| C2 | **Sign-in mid-deploy** | backend 502/restarting → non-OK HTTP | same wrong path as C1 | same fix (treat non-OK ≠ zero stations) | ⛔ **OPEN** (same fix as C1) |
-| C3 | **Seat limit reached** | `/account/connect` 403 | currently swallowed → create-a-station (WRONG) | should be → "This account's devices are full — free one" (Manage Devices) | ⛔ **OPEN** (same fix as C1) |
+| C1 | **Server unreachable (flaky network)** | `/account/connect` fetch throws (status 0) | "Couldn't reach the server to load your stations — try Sign in again" (never falls through to create) | ✅ **FIXED v4.4.65** — status-branched message in `routeAfterAuth` |
+| C2 | **Sign-in mid-deploy** | backend 502/restarting → non-OK HTTP | "The server couldn't load your stations right now (error N) — try again in a moment" | ✅ **FIXED v4.4.65** — 5xx/other non-OK branch (retry, not create) |
+| C3 | **Seat limit reached** | `/account/connect` 403 | "This account's devices are full — free one (Manage Devices)" | ✅ **FIXED v4.4.65** — 403 branch (Manage Devices affordance still backlog) |
+| C3b | **Invalid license key** | `/account/connect` 401 `invalid_license_key` (rotated/revoked/mis-stamped) | "Your account's license was rejected — contact support to restore it" | ✅ **FIXED v4.4.65** — 401 branch. Root-cause diag: `docs/signin-couldnt-reach-server-diagnosis-2026-07-20.md` |
+| C3c | **Trial expired** | `/account/connect` 401 `trial_expired` (license `expires_at` past — a lapsed trial, distinct from a bad key) | "Your free trial has ended. Your stations and library are safe — pick a plan to keep broadcasting." + **Choose a plan** button → `renew_url` (external browser) | ✅ **FIXED v4.4.66** — backend `lookupLicenseDetailed` returns distinct `trial_expired` body; desktop copy+button branch. Data-safety verified (expiry gates access, never deletes). Root cause: `docs/license-trial-expiry-401-rootcause-2026-07-20.md`. Help: `docs/help-trial-ended.md` |
 | C4 | Interrupted provisioning mid-sign-in | attach/reconcile fails after auth | station simply not yet on screen | fail-closed (nothing materialized) → retry on 20s poll; idempotent add-only | ✅ **DEMONSTRATED (Phase 3)** |
 | C5 | Playout held by another machine | (only at go-on-air claim) | under **C**, onboarding attaches monitor → **no collision in onboarding** | D3 graceful "held by \<machine\>" msg + transfer | 🔒 deferred (backend path proven) |
 
