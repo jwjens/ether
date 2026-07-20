@@ -3752,28 +3752,53 @@ const POPOUT_SIZES = {
   "videostudio": { width: 1024, height: 640 },
   "camera":      { width: 640,  height: 480 },
   "health":      { width: 720,  height: 540 },
+  "studiopro":   { width: 1280, height: 800 },  // Show+ DAW — its own window, not a dashboard takeover
 };
 
-ipcMain.handle("window:popout", async (_, panel) => {
+// ── Pop-out window bounds persistence (every pop-out remembers size + position) ──
+const POPOUT_BOUNDS_FILE = path.join(app.getPath("userData"), "popout-bounds.json");
+function loadPopoutBounds() {
+  try { return JSON.parse(require("fs").readFileSync(POPOUT_BOUNDS_FILE, "utf8")); } catch { return {}; }
+}
+function savePopoutBounds(panel, bounds) {
+  try {
+    const all = loadPopoutBounds();
+    all[panel] = bounds;
+    require("fs").writeFileSync(POPOUT_BOUNDS_FILE, JSON.stringify(all));
+  } catch { /* best-effort; a lost bounds write is cosmetic */ }
+}
+// Guard a restored rectangle against a monitor that went away — must overlap some display.
+function boundsOnScreen(b) {
+  try {
+    const { screen } = require("electron");
+    return screen.getAllDisplays().some(d => {
+      const w = d.workArea;
+      return b.x < w.x + w.width && b.x + b.width > w.x && b.y < w.y + w.height && b.y + b.height > w.y;
+    });
+  } catch { return false; }
+}
+
+// Factored so studio:push-track can open/reuse the exact same window.
+function openPopoutWindow(panel) {
   const tag = `popout:${panel}`;
   const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
-  if (existing) { existing.show(); existing.focus(); return; }
+  if (existing) { existing.show(); existing.focus(); return existing; }
 
   const { screen } = require("electron");
-  const size = POPOUT_SIZES[panel] || { width: 640, height: 520 };
-  const displays = screen.getAllDisplays();
-  const primary  = screen.getPrimaryDisplay();
-  const secondary = displays.find(d => d.id !== primary.id);
-  // Place on secondary monitor if available, else offset from center
-  const x = secondary ? secondary.workArea.x + 60 : undefined;
-  const y = secondary ? secondary.workArea.y + 60 : undefined;
+  const size  = POPOUT_SIZES[panel] || { width: 640, height: 520 };
+  const saved = loadPopoutBounds()[panel];
+  let x, y, width = size.width, height = size.height;
+  if (saved && boundsOnScreen(saved)) {
+    x = saved.x; y = saved.y; width = saved.width; height = saved.height;   // remembered size + position
+  } else {
+    const primary   = screen.getPrimaryDisplay();
+    const secondary = screen.getAllDisplays().find(d => d.id !== primary.id);
+    x = secondary ? secondary.workArea.x + 60 : undefined;                  // secondary monitor if present
+    y = secondary ? secondary.workArea.y + 60 : undefined;
+  }
 
   const win = new BrowserWindow({
-    width:  size.width,
-    height: size.height,
-    minWidth:  320,
-    minHeight: 200,
-    x, y,
+    width, height, minWidth: 320, minHeight: 200, x, y,
     title: tag,
     frame: false,
     transparent: false,
@@ -3788,8 +3813,48 @@ ipcMain.handle("window:popout", async (_, panel) => {
     },
   });
 
+  // Remember size + position (Windows fires these once at the end of a drag/resize).
+  const persist = () => { try { savePopoutBounds(panel, win.getBounds()); } catch { /* ignore */ } };
+  win.on("moved", persist);
+  win.on("resized", persist);
+
+  // Close-guard: the Show+ DAW holds an un-persisted editing session — warn before discarding
+  // uncommitted regions. Guards Alt+F4 / OS close, not just the shell X. The renderer reports
+  // dirty via 'studio:set-dirty' and confirms via 'studio:force-close'.
+  if (panel === "studiopro") {
+    win.on("close", (e) => {
+      if (win._forceClose || !win._studioDirty) return;
+      e.preventDefault();
+      try { win.webContents.send("studio:confirm-close"); } catch { /* window gone */ }
+    });
+  }
+
   if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
   else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
+  return win;
+}
+
+ipcMain.handle("window:popout", async (_, panel) => { openPopoutWindow(panel); });
+
+// ── Show+ DAW dirty-state + force-close (the close-guard back-channel) ──
+ipcMain.on("studio:set-dirty", (evt, dirty) => {
+  const w = BrowserWindow.fromWebContents(evt.sender);
+  if (w) w._studioDirty = !!dirty;
+});
+ipcMain.on("studio:force-close", (evt) => {
+  const w = BrowserWindow.fromWebContents(evt.sender);
+  if (w) { w._forceClose = true; w.close(); }
+});
+
+// ── Send-to-Studio hand-off (single production surface) ──
+// The main window's Library forwards a track here; we open/focus the Show+ DAW pop-out and
+// deliver the track to THAT window — cold (on did-finish-load) or warm (immediately). No inline DAW.
+ipcMain.handle("studio:push-track", (_evt, track) => {
+  const win = openPopoutWindow("studiopro");
+  if (!win) return;
+  const deliver = () => { try { win.webContents.send("studio:load-track", track); } catch { /* window gone */ } };
+  if (win.webContents.isLoading()) win.webContents.once("did-finish-load", deliver);
+  else deliver();
 });
 
 // ── Guest Editor pop-out window ───────────────────────────────
@@ -6337,6 +6402,41 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
   } catch (e) {
     return { data: null, error: e.message };
   }
+});
+
+// ── Log-Reader Flip Phase 2: the playhead view (rows ≥ playhead) ───────────────
+// The SAME source the calendar reads (generated_schedule), shaped as "what's playing + what's next"
+// so UpNext + the ▶ marker can render from the log instead of the in-memory queue. Music rows only
+// (JIN/SWP are seam overlays, never deck tracks); same cross-station foreign-category guard as
+// schedule:get. Ordered by scheduled_at (the calendar's order). READ-ONLY — changes no playout.
+ipcMain.handle('schedule:playhead-view', (_e, stationId, limit) => {
+  try {
+    const sid = stationId ?? getActiveStationId();
+    const n = Math.max(1, Math.min(200, limit ?? 12));
+    const foreign = `AND NOT EXISTS (SELECT 1 FROM songs s JOIN categories c ON c.id=s.category_id
+       WHERE s.id=g.song_id AND c.station_id IS NOT NULL AND c.station_id <> g.station_id)`;
+    const cols = `g.id, g.scheduled_at, g.title, g.artist, g.duration_s, g.state, g.played_at, g.seq, g.content_class`;
+    const playing = db.prepare(
+      `SELECT ${cols} FROM generated_schedule g
+        WHERE g.station_id=? AND g.state='playing' AND g.deleted_at IS NULL ${foreign}
+        ORDER BY g.scheduled_at LIMIT 1`).get(sid) || null;
+    const upNext = db.prepare(
+      `SELECT ${cols} FROM generated_schedule g
+        WHERE g.station_id=? AND g.state='pending' AND g.deleted_at IS NULL
+          AND (g.content_class IS NULL OR g.content_class NOT IN ('JIN','SWP')) ${foreign}
+        ORDER BY g.scheduled_at LIMIT ?`).all(sid, n);
+    return { ok: true, playing, upNext };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Log-Reader Flip Phase 2: divergence ledger. The renderer shadow-compares the log-derived up-next
+// against the live engine queue and reports mismatches here; we append them to an honest JSONL sense
+// (userData/playhead-divergence.jsonl) so the read-path burn-in that gates Phase 3 is greppable.
+ipcMain.on('health:playhead-divergence', (_e, record) => {
+  try {
+    const line = JSON.stringify({ t: new Date().toISOString(), ...(record || {}) }) + "\n";
+    require('fs').appendFileSync(path.join(app.getPath('userData'), 'playhead-divergence.jsonl'), line);
+  } catch { /* best-effort; a lost divergence line is cosmetic */ }
 });
 
 // ── Library → R2 sync ─────────────────────────────────────────────────────────

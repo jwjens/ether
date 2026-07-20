@@ -110,6 +110,45 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     return () => { clearInterval(interval); window.removeEventListener("ether:queue-changed", onChanged); };
   }, [engine, queueLen]);
 
+  // ── Log-Reader Flip Phase 2: read-path SHADOW-COMPARE (always-on, observational) ──
+  // Fetch the log-derived up-next (generated_schedule ≥ playhead — the SAME source the calendar reads)
+  // and diff it against the live engine queue by title, positionally. Divergences are appended to the
+  // health ledger (userData/playhead-divergence.jsonl) — the read-path burn-in that gates the Phase 3
+  // flip. This changes NO render and NO playout; it only measures whether the log view and the queue
+  // agree yet. (The flag-gated render switch — UpNext/▶ actually rendering the log — lands with Phase 3,
+  // when the playhead is time-anchored and the log view is the row-for-now; §2.7.)
+  useEffect(() => {
+    if (!isReady) return;
+    let alive = true;
+    const ether = (window as any).ether;
+    if (!ether?.invoke) return;
+    const norm = (s: string) => (s || "").trim().toLowerCase();
+    const compare = async () => {
+      try {
+        const r = await ether.invoke("schedule:playhead-view", stationId, 12);
+        if (!alive || !r?.ok) return;
+        const logTitles = (r.upNext || []).map((row: any) => norm(row.title));
+        const q = engine.getQueue().slice(2, 2 + logTitles.length).map((it: any) => norm(it?.title));
+        let mismatch = 0;
+        const n = Math.max(q.length, logTitles.length);
+        for (let i = 0; i < n; i++) if ((q[i] || "") !== (logTitles[i] || "")) mismatch++;
+        if (mismatch > 0) {
+          ether.emit?.("health:playhead-divergence", {
+            stationId, kind: "upnext-read-mismatch", mismatch, compared: n,
+            playingLog: r.playing?.title ?? null,
+            queueHead: engine.getQueue().slice(2, 5).map((it: any) => it?.title || ""),
+            logHead: (r.upNext || []).slice(0, 3).map((row: any) => row.title || ""),
+          });
+        }
+      } catch { /* shadow-compare never affects the UI */ }
+    };
+    compare();
+    const id = setInterval(compare, 5000);
+    const onChanged = () => compare();
+    window.addEventListener("ether:queue-changed", onChanged);
+    return () => { alive = false; clearInterval(id); window.removeEventListener("ether:queue-changed", onChanged); };
+  }, [stationId, isReady, engine]);
+
   useEffect(() => {
     const update = () => setAnyPlaying(
       (["A", "B", "C"] as const).some(s => engine.getDeck(s)?.getState().status === "playing")

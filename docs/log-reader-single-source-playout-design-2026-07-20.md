@@ -13,9 +13,13 @@ CLEAR-regenerate window confirmed; one CLEAR button → two-verb choice).
   live-adds via the deck loader) and is NOT the Phase 3 yardstick. Phase 3 acceptance = *every air is a
   log row* (machine-placed or operator-inserted), queue==calendar by construction (see §7 Phase 3).
   `docs/log-reader-phase-1-shadow-2026-07-20.md` + `docs/log-reader-phase-1-burn-in-acceptance-2026-07-20.md`.
-- ⏭ **Phase 2 — read-path unification (behind flag)** — NEXT, awaiting Jeff's go. Flag stays OFF until
-  Phase 3's shadow burn-in is clean. STOP at each phase boundary.
-- Phases 3-6: pending (see §7).
+- ⏭ **Phase 2 — read-path unification (behind flag)** — IN PROGRESS (playhead-view IPC +
+  divergence ledger added). Flag stays OFF until Phase 3's shadow burn-in is clean.
+- **CORE INVARIANT (§2.7, Jeff 2026-07-20): the playhead is TIME-ANCHORED** — what airs at time T is
+  the row scheduled for ~T, so calendar == queue == wall clock by construction. This is the *point* of
+  the flip, not a Phase-5 nicety. Today playout drifts (41 min ahead observed); Phase 3 reads the log
+  time-anchored (playhead = row-for-now). **Open ruling: drop-overflow tradeoff (§2.7).**
+- Phases 3-6: pending (see §7); Phase 3 now includes time-anchoring.
 
 > Jeff's directive, verbatim: *"it should not be two parallel representations… the song sitting
 > there should be the exact data that's always read in both places, 1 file sending info to both."*
@@ -154,6 +158,55 @@ floor fire: append clock/SmartRule/on-format rows **to the log** AND emit a **lo
 path entirely (today it fires via `refillIfNeeded` because `continuous` stays true —
 `engine.js:581-598`, `engine-rodio.ts:550-558`).
 
+### 2.7 The playhead is TIME-ANCHORED — the whole point (Jeff, 2026-07-20)
+> *"if the calendar time doesn't sync with real time and the play queue, what is the point of all this."*
+
+The single source is a **real-time timeline**, not a bare sequence. Each row's `scheduled_at` is *when
+it airs*; the invariant is **what airs at time T is the row scheduled for ~T** — so the calendar ▶, the
+queue, the decks, and the wall clock all agree by construction. A log that isn't time-anchored is just
+a playlist.
+
+**Today it drifts** (evidence 2026-07-20: 3:19 PM wall-clock, ▶/deck airing the **4:00 PM** row — 41
+min ahead). Cause: playout advances by song-END, never by the clock — `scheduled_at` is a back-link,
+not a gate — and each on-air song is shorter than its scheduled slot (segue overlap + no time-gating),
+so the playhead creeps ahead all hour. The **only** re-anchor is the top-of-hour hard cut
+(`_hardCutTopOfHour`→`fillFromHour`), which then *jumps back*, skipping the content planned for the
+back half of the hour. That hourly snap is both too coarse and jarring.
+
+**The flip must make the playhead time-anchored — this is part of Phase 3, not deferred to Phase 5.**
+Model: at each song boundary the playhead advances to the log row whose `scheduled_at` is nearest
+**now** — i.e.
+`… WHERE state='pending' AND scheduled_at <= now + slack ORDER BY scheduled_at DESC LIMIT 1`
+(the current slot), marking any skipped-past rows `played`/`missed`. It never starts a far-future row
+early, and when a song runs long it advances past the rows whose slot elapsed. This is standard
+hard-timed automation (network-join behaviour) generalised to every boundary instead of once an hour.
+
+### RULING (Jeff 2026-07-20) — the AUTO-FITTER is the primary mechanism; drop is last resort
+- **(a) The AUTO-FITTER (Layer 2, deterministic, NO LLM).** A continuous look-ahead module projects
+  the playhead's arrival at the **next hard anchor** and pre-corrects the upcoming *pending* log rows
+  minutes before air:
+  - **Overshoot (running behind → will arrive late):** SWAP upcoming pending rows for **shorter
+    same-category** songs (separation rules honored) to catch up.
+  - **Undershoot (running ahead → will arrive early):** INSERT short fills the same way.
+  - Every swap/insert is stamped **`source='autofit'`**, written to the log **minutes ahead**,
+    health-evented, and **visible on the calendar before it airs** (one file → operator sees the fit).
+  - **Boundary DROP (stamp `missed`)** remains **only** as the last-resort fallback when the fitter
+    cannot converge (e.g. no shorter candidate exists).
+- **(b) AHEAD: never wait, never dead-air.** The next row plays early — within slack silently, beyond
+  slack with a health event.
+- **(c) Hard anchors are exact.** Per-boundary anchoring supersedes the coarse hourly jump (Phase 5).
+- **(d) SEQUENCING.** The **flip (Phase 3) ships FIRST with the simple drop-fallback**; the auto-fitter
+  is the **immediate follow-on module** (it writes the log the reader reads, so it needs the flip to
+  exist). Fitter gets its own design doc **after Phase 3's burn-in**.
+- **(e) Generate density (~60 real min/hour)** is the companion scheduling-side fix (over-dense hours
+  make the fitter work harder / drop more) — tracked separately.
+
+**Consequence for the phases:** Phase 3 ships the time-anchored playhead (playhead = row-for-now) with
+drop-fallback → delivers calendar==queue==real-time. The auto-fitter (post-Phase-3) turns most drops
+into graceful pre-air swaps/fills. Phase 5 retires the coarse top-of-hour hard cut in favour of the
+continuous anchor. Phase 2's read-path unification (UpNext/▶ read the log) is valid now — it makes all
+three surfaces render the *same* rows (consistent even while drifting); Phase 3 then removes the drift.
+
 ---
 
 ## 3. CLEAR, redefined — two honest verbs
@@ -263,10 +316,13 @@ on update — full close/reopen).
 - **Phase 2 — Read-path unification (behind flag). ⏭ NEXT.** Point UpNext + the ▶ marker at the same log
   query the calendar uses (rows ≥ playhead). Shadow-compare the log-derived up-next against
   `engine.getQueue()` and log divergences to the Health ledger. No playout change yet.
-- **Phase 3 — Playout flip (ETHER_LOG_READER, shadow→canary).** Daemon consumes `generated_schedule`
-  directly; the in-memory list becomes a validated cache of log rows; advance = move the persisted
-  playhead; restart resumes at `state='playing'`. Delete `_schedCursor` + `purgeUnscheduled`. Canary
-  ovowjensj; compare on-air audio to expected log; only then widen.
+- **Phase 3 — Playout flip, TIME-ANCHORED (ETHER_LOG_READER, shadow→canary).** Daemon consumes
+  `generated_schedule` directly; the in-memory list becomes a validated cache of log rows; advance =
+  move the persisted playhead **to the row scheduled for ~now** (§2.7), not merely the next sequential
+  row — so playout stays locked to the wall clock and cannot drift (the 41-min-ahead symptom). Restart
+  resumes at `state='playing'`. Delete `_schedCursor` + `purgeUnscheduled`. Canary ovowjensj; compare
+  on-air audio to expected log AND to wall-clock; only then widen. **Depends on Jeff's drop-overflow
+  ruling (§2.7).**
   **ACCEPTANCE (Jeff 2026-07-20): NOT "on-log rate → 100%".** Jeff live-adds songs via the deck loader
   as normal operation, so the Phase 1 on-log baseline (60/20/90) is *contaminated by legitimate
   operator inserts* and is not the yardstick. The real acceptance is: **everything that airs IS a log
