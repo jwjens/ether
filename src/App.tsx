@@ -115,7 +115,6 @@ import SubscriptionPanel, { PlanTier } from "./components/SubscriptionPanel";
 import { useSkin, SkinPickerOverlay, setTierForAccent } from "./components/SkinPicker";
 import BroadcastEditor from "./components/BroadcastEditor";
 import StudioEditor from "./components/StudioEditor";
-import StudioPro from "./components/StudioPro";
 import OnboardingTour, { useTour } from "./components/OnboardingTour";
 import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
@@ -2364,6 +2363,7 @@ export default function App() {
 
                 {/* Pop-out windows for every bottom-toolbar feature — drag to another monitor */}
                 {([
+                  { key: "po-studiopro",  label: "Show+ DAW",  panel: "studiopro" },
                   { key: "po-decks",      label: "Decks",      panel: "decks" },
                   { key: "po-carts",      label: "Carts",      panel: "carts" },
                   { key: "po-shows",      label: "Shows",      panel: "shows" },
@@ -2469,26 +2469,20 @@ export default function App() {
                   xfadeActive={xfadeActive}
                   handleXfade={handleXfade}
                   onOpenCarts={() => setPanel("cartwall")}
-                  libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
+                  libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
                 />
               )}
             </div>
           )}
           {panel !== "live" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail: { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms } })); setPanel("studio"); }} />}
+              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "schedulebuilder" && <ProgramLog onClose={() => setPanel("live")} />}
-              {panel === "studio" && (
-                <EtherErrorBoundary>
-                  <StudioPro
-                    deckAPath={null} deckATitle={undefined}
-                    deckBPath={null} deckBTitle={undefined}
-                    stationId={stationId}
-                  />
-                </EtherErrorBoundary>
-              )}
+              {/* Show+ DAW is no longer an inline takeover — it opens as its own pop-out window
+                  (WINDOWS → Show+ DAW / Tools → Show+ DAW → window:popout "studiopro"). Single
+                  production surface; the main dashboard stays live. */}
               {panel === "broadcasteditor" && (
                 <BroadcastEditor
                   onBouncePlace={() => setPanel("library")}
@@ -3010,7 +3004,7 @@ function MenuBar({ active, set, canvasEngine, darkMode, setDarkMode, currentPlan
       <Menu>
         {/* Production */}
         <Item label={L.voicetrack}         onClick={() => set("voicetrack")} />
-        <Item label="Show+ DAW"            onClick={() => set("studio")} />
+        <Item label="Show+ DAW"            onClick={() => { try { (window as any).ether.invoke("window:popout", "studiopro"); } catch { /* not in electron */ } }} />
         <Item label="Show+"                onClick={() => set("videostudio")} />
         <Item label="Production Editor"    onClick={() => set("broadcasteditor")} />
         <Item label="Cue Editor"           onClick={() => set("trackedit")} />

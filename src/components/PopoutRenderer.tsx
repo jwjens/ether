@@ -14,6 +14,7 @@ import { BoutiqueCartWall } from "./DeckConfigurator";
 import Scheduler from "./Scheduler";
 import BroadcastCalendar from "./BroadcastCalendar";
 import { LibraryPanel } from "../App";
+import StudioPro from "./StudioPro";
 import { getEngine } from "../audio/engine-registry";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -54,7 +55,22 @@ const TITLES: Record<string, string> = {
   "categories":"Categories",
   "library":   "Library",
   "calendar":  "Calendar",
+  "studiopro": "Show+ DAW",
 };
+
+// Show+ DAW in its own window — resolves the ACTIVE station (machine-global, via getActive) so
+// chop-and-send targets the same station as the main window. It's an EDITOR window: no now-playing
+// poster, no engine mirror — those live only in <App/> (the main window), never here.
+function StudioProPopout() {
+  const { stationId } = useActiveStation();
+  return (
+    <StudioPro
+      deckAPath={null} deckATitle={undefined}
+      deckBPath={null} deckBTitle={undefined}
+      stationId={stationId ?? 1}
+    />
+  );
+}
 
 // Library pop-out handlers — cue a track onto a deck via the shared engine (daemon-backed,
 // so it affects the live air chain). Edit/send-to-studio aren't meaningful in a pop-out.
@@ -122,6 +138,9 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       break;
     case "library":
       content = <PopoutLibrary />;
+      break;
+    case "studiopro":
+      content = <StudioProPopout />;
       break;
     default:
       content = (

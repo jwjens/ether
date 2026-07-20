@@ -1226,6 +1226,37 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     };
   }, [loadAudio]);
 
+  // ── Pop-out window bridges (Show+ DAW runs as its own window) ──────────────────
+  // (a) Report dirty to main so the window's close-guard can warn before discarding uncommitted
+  //     regions. Dirty = any track holds ≥1 loaded region (the session is not persisted, so any
+  //     loaded audio is by definition uncommitted until it's sent to a deck / library / pool).
+  const studioDirty = state.tracks.some(t => t.regions.length > 0);
+  useEffect(() => {
+    try { (window as any).ether?.invoke?.("studio:set-dirty", studioDirty); } catch { /* not in electron */ }
+  }, [studioDirty]);
+
+  // (b) Confirm-close from the main-process guard → in-app confirm → force-close.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.on) return;
+    const h = ether.on("studio:confirm-close", () => {
+      const ok = window.confirm("Discard this Show+ session?\n\nRegions you haven't sent to a deck, the Library, or a jingle/sweeper pool will be lost.");
+      if (ok) { try { ether.invoke("studio:force-close"); } catch { /* ignore */ } }
+    });
+    return () => { try { ether.off("studio:confirm-close", h); } catch { /* ignore */ } };
+  }, []);
+
+  // (c) Cross-window Send-to-Studio: the main window forwards a track over IPC; re-dispatch the
+  //     same DOM event the in-window handler already consumes, so load logic stays in one place.
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.on) return;
+    const h = ether.on("studio:load-track", (detail: any) => {
+      try { window.dispatchEvent(new CustomEvent("ether:send-to-studio", { detail })); } catch { /* ignore */ }
+    });
+    return () => { try { ether.off("studio:load-track", h); } catch { /* ignore */ } };
+  }, []);
+
   // ── Undo / Redo ───────────────────────────────────────────────
 
   const historyRef = useRef<{ past: StudioTrack[][]; future: StudioTrack[][] }>({ past: [], future: [] });

@@ -3,6 +3,20 @@
 The Show+ DAW (StudioPro) is where you produce audio: bring a file in, cut the piece you want, and send
 it straight to air or your library — **quick import, chop, send to deck or jingle or sweeper or library.**
 
+## Open it — its own window
+
+The Show+ DAW opens as its **own separate window**, not a takeover of the main screen — so your decks,
+meters, Station Health, and queue stay fully visible and live while you produce. Open it from:
+
+- **≡ Menu → WINDOWS → Show+ DAW**, or **Tools → Show+ DAW**, or
+- **Library → right-click a track → Send to Studio** (opens the DAW and drops that track in).
+
+Drag it to a second monitor if you have one. The window **remembers its size and position** for next
+time. Closing it is safe — but if you have **uncommitted regions** (audio loaded that you haven't sent to
+a deck, the Library, or a pool yet), it **warns you before closing** so you don't lose your work. The
+chop-and-send exits keep working from this window exactly as they do inline — → Deck loads the real deck,
+→ Jingle/Sweeper/Library file into the active station.
+
 ## Import audio
 
 Two ways to get audio into the DAW:
