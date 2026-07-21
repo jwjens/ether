@@ -5695,10 +5695,12 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
     generatedScheduleClearAll(db, activeStationId);
 
     // Prepared statements (compiled once, reused in the loop)
+    // CLOCK IS LAW (2026-07-21): LIVE (non-deleted) shows + slots only — matches _buildScheduleCtx and the
+    // on-format guard; a re-categorized clock's dead slots must never be walked (see _buildScheduleCtx note).
     const stmtShows = db.prepare(
       `SELECT id, start_hour, end_hour, clock_id
        FROM shows
-       WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ?
+       WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? AND deleted_at IS NULL
        ORDER BY CASE
          WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
          WHEN end_hour = 0 OR end_hour = start_hour THEN 24
@@ -5709,7 +5711,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
     const stmtSlots = db.prepare(
       `SELECT cs.position, cs.slot_type, cs.category_id, cs.spot_type, cs.spot_category_id, cs.duration_min
        FROM clock_slots cs
-       WHERE cs.clock_id = ? ORDER BY cs.position`
+       WHERE cs.clock_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`
     );
     const stmtSpotsByCategory = db.prepare(SPOT_SELECT_BY_CATEGORY);
     const stmtCandidates = db.prepare(
@@ -5928,8 +5930,12 @@ function _buildScheduleCtx(stationId) {
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxed: [],
     // Why-nothing-filled diagnostics (surfaced to the operator so Generate never fails silently).
     diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
-    stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
-    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? ORDER BY cs.position`),
+    // CLOCK IS LAW (2026-07-21): read only LIVE (non-deleted) shows + slots — the same view the on-format
+    // guard (loggen.getFormatCategoryIds) and the clock UI use. A re-categorized clock soft-deletes its old
+    // slots; without this filter Generate walked the dead slots too and placed off-clock rows (OF: 52%
+    // cat-1 "catch-all" from deleted slots the clock no longer has). See docs/log-reader-of-preflip.
+    stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? AND deleted_at IS NULL ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
+    stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`),
     stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
@@ -6250,6 +6256,9 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     _generateDayRows(dayBase, ctx, effStart);
     _placeJingles(db, activeStationId, ctx.generatedRows);
     generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
+    // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
+    // Health Monitor (health events + a per-station summary), not just the calendar diagnostics panel.
+    try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats] }); } catch {}
     // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
     // calendar can tell the operator exactly what's missing instead of flickering silently.
     const d = ctx.diag, reasons = [];

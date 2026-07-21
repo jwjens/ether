@@ -589,6 +589,28 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   <HealthRow label="Rotation pool" value={`${st.pool.spunPool24h}/${st.pool.librarySize} aired (24h)`} status={lvl(st.pool.level) as any} sub={`top song ${st.pool.topSpins24h} spins/24h`} />
                   <HealthRow label="Skipped at load" value={`${st.skipped.thisHour} this hour`} status={(st.skipped.thisHour > 0 ? "error" : "ok") as any} sub="unresolvable rows the deck refused" />
                   <HealthRow label="Prefetch lag" value={`${st.prefetchLag.upcomingUnmaterialized} upcoming`} status={(st.prefetchLag.upcomingUnmaterialized > 0 ? "warn" : "ok") as any} sub="cloud-only rows not yet local" />
+                  {/* Item 3 — per-clock-slot rotation depth: songs available vs slots the clock asks/hr. */}
+                  {Array.isArray(st.depth) && st.depth.length > 0 && (() => {
+                    const thin = st.depth.filter((d: any) => d.thin);
+                    const tightest = st.depth[0];
+                    return (
+                      <HealthRow
+                        label="Rotation depth"
+                        value={thin.length ? `${thin.length} thin categor${thin.length === 1 ? "y" : "ies"}` : "all categories covered"}
+                        status={(thin.length ? "warn" : "ok") as any}
+                        sub={tightest ? `${tightest.category}: ${tightest.songs} songs for ~${tightest.slotsPerHr} slot${tightest.slotsPerHr === 1 ? "" : "s"}/hr${tightest.thin ? ` — needs ~${tightest.needed}` : ""}` : undefined}
+                      />
+                    );
+                  })()}
+                  {/* Item 2 — last Generate run bent the law (separation relaxed within category / empty). */}
+                  {st.lastGenerate && (st.lastGenerate.relaxed?.length > 0 || st.lastGenerate.emptyCats?.length > 0) && (
+                    <HealthRow
+                      label="Last Generate"
+                      value={st.lastGenerate.emptyCats?.length ? `${st.lastGenerate.emptyCats.length} empty categor${st.lastGenerate.emptyCats.length === 1 ? "y" : "ies"}` : `separation relaxed ×${st.lastGenerate.relaxedTotal}`}
+                      status={(st.lastGenerate.emptyCats?.length ? "error" : "warn") as any}
+                      sub={st.lastGenerate.emptyCats?.length ? `empty: ${st.lastGenerate.emptyCats.join(", ")}` : st.lastGenerate.relaxed.slice(0, 3).map((r: any) => `${r.category} ×${r.count}`).join(" · ")}
+                    />
+                  )}
                 </div>
               );
             })}

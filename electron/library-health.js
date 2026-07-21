@@ -25,6 +25,7 @@ function createLibraryHealth(opts) {
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
   const inFlight = new Set();          // file_key currently downloading (dedup)
   const skipCounts = new Map();        // stationId -> { hour: <epoch hour>, n }
+  const lastGen = new Map();           // stationId -> last Generate run's relaxed/empty summary (item 2)
   let lastSnapshot = { stations: [], t: null };
 
   const nowSec = () => Math.floor(Date.now() / 1000);
@@ -44,6 +45,42 @@ function createLibraryHealth(opts) {
       const on = !!(a && a.is_active);
       return { artistSepSec: on ? (a.value || 60) * 60 : 0 };
     } catch { return { artistSepSec: 0 }; }
+  }
+
+  // ── SCHEDULE DEPTH (per-clock-slot) — songs available per scheduled category vs slots asked per hour ──
+  // "Feel Good: 37 songs for ~10 slots/hr". A programmer's fact: when a category the LIVE clock leans on
+  // is thinner than the separation window demands (slots/hr × repeat-hours), Generate must repeat/relax
+  // within it. Reads only LIVE (non-deleted) shows/clocks/slots — the same law Generate now obeys
+  // (CLOCK IS LAW). Read-only; never throws. Surfaced on the Health Monitor so thinness is a visible fact.
+  function depthCheck(db, sid) {
+    try {
+      const clockIds = db.prepare(
+        `SELECT DISTINCT clock_id FROM shows WHERE station_id=? AND is_active=1 AND deleted_at IS NULL AND clock_id IS NOT NULL`
+      ).all(sid).map(r => r.clock_id);
+      if (!clockIds.length) return [];
+      const ph = clockIds.map(() => '?').join(',');
+      const slotRows = db.prepare(
+        `SELECT category_id, COUNT(*) slots FROM clock_slots
+           WHERE clock_id IN (${ph}) AND slot_type='music' AND category_id IS NOT NULL AND deleted_at IS NULL
+           GROUP BY category_id`).all(...clockIds);
+      if (!slotRows.length) return [];
+      let repeatHrs = 3;
+      try { const sr = db.prepare("SELECT value FROM separation_rules WHERE station_id=? AND rule_type='song_separation_min' AND is_active=1 LIMIT 1").get(sid); if (sr && sr.value) repeatHrs = Math.max(1, Math.round(sr.value / 60)); } catch {}
+      const cnt = db.prepare(
+        `SELECT COUNT(*) n FROM songs WHERE category_id=? AND deleted_at IS NULL
+           AND (rotation_status IS NULL OR rotation_status != 'inactive')
+           AND (content_class IS NULL OR content_class='MUSIC')`);
+      const nameOf = db.prepare("SELECT code, name FROM categories WHERE id=?");
+      const out = [];
+      for (const r of slotRows) {
+        const songs = cnt.get(r.category_id).n;
+        const c = nameOf.get(r.category_id) || {};
+        const needed = r.slots * repeatHrs;                 // plays demanded of this category over the window
+        out.push({ categoryId: r.category_id, category: c.name || c.code || ('#' + r.category_id), songs, slotsPerHr: r.slots, needed, thin: songs < needed });
+      }
+      out.sort((a, b) => (a.songs - a.needed) - (b.songs - b.needed));   // tightest (most under-supplied) first
+      return out;
+    } catch { return []; }
   }
 
   // ── (5) rotation eligibility for one library, returns per-song rows + a summary ──
@@ -169,6 +206,8 @@ function createLibraryHealth(opts) {
       skipped: { thisHour: skipped, level: skipLevel },
       prefetchLag: { upcomingUnmaterialized: lag },
       eligibility: elig.summary,
+      depth: depthCheck(db, sid),                 // per-clock-slot supply vs demand (item 3)
+      lastGenerate: lastGen.get(sid) || null,     // last Generate run's relaxed/empty summary (item 2)
     };
   }
 
@@ -258,6 +297,23 @@ function createLibraryHealth(opts) {
       const c = skipCounts.get(stationId);
       skipCounts.set(stationId, c && c.hour === hr ? { hour: hr, n: c.n + 1 } : { hour: hr, n: 1 });
       appendJsonl({ kind: 'load-skip', stationId, title, reason });
+    },
+    // Item 2 — Generate reports its within-category relaxation (separation bent) + empty categories after
+    // each run. LOUD: a health event per relaxed category + per empty category, and a per-station summary
+    // the Health Monitor surfaces ("Feel Good: separation relaxed ×N"). The law being bent is now visible,
+    // not buried in the calendar panel. relaxed = ctx.relaxed [{category_id,...}]; emptyCatIds = ids.
+    noteGenerate(stationId, info) {
+      try {
+        const db = getDb();
+        const nameOf = (id) => { const c = db.prepare("SELECT code, name FROM categories WHERE id=?").get(id) || {}; return c.name || c.code || ('#' + id); };
+        const byCat = new Map();
+        for (const r of (info && info.relaxed || [])) byCat.set(r.category_id, (byCat.get(r.category_id) || 0) + 1);
+        const relaxed = [...byCat.entries()].map(([id, count]) => ({ categoryId: id, category: nameOf(id), count })).sort((a, b) => b.count - a.count);
+        const emptyCats = (info && info.emptyCatIds || []).map(nameOf);
+        lastGen.set(stationId, { at: new Date().toISOString(), relaxed, emptyCats, relaxedTotal: (info && info.relaxed || []).length });
+        for (const r of relaxed) appendJsonl({ kind: 'generate-relaxed', stationId, category: r.category, count: r.count });
+        for (const nm of emptyCats) appendJsonl({ kind: 'generate-empty-category', stationId, category: nm });
+      } catch { /* best-effort — never break Generate */ }
     },
     snapshot() { return lastSnapshot; },
     eligibilityRows(stationId) { try { return eligibility(getDb(), stationId).rows; } catch { return []; } },
