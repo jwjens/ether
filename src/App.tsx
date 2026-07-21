@@ -1953,12 +1953,12 @@ export default function App() {
     const au = (window as any).ether?.audio;
     if (!au?.onJingle) return;
     const h = au.onJingle((m: any) => {
-      if (!m || m.stationId !== stationId) return;
+      if (!m || m.stationUuid !== stationUuid) return;
       if (m.state === "CLEARED" || m.state === "ARMED_CANCELLED") setJingleOverlay(null);
       else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null, contentClass: m.contentClass ?? "JIN", jinDurSec: m.jinDurSec ?? null });
     });
     return () => { try { au.offJingle?.(h); } catch { /* ignore */ } };
-  }, [stationId]);
+  }, [stationUuid]);
 
   // Discoverability: check whether the active station has any jingle pool (re-checked when leaving Settings
   // so creating one hides the "Set up jingles →" affordance). Read-only, best-effort.

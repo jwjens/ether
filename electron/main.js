@@ -605,7 +605,8 @@ if (AUDIO_DAEMON_DESIRED) {
       } else if (m.event === "jingle") {
         // JINGLES overlay v1: daemon ARMED/FIRING/ARMED_CANCELLED/CLEARED → renderer (deck indicators +
         // seam chip) + the Health Monitor (jingle cell + ledger event). Observed states only.
-        sendToAllWindows("audio:daemon-jingle", { stationId: m.stationId, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, contentClass: m.contentClass, leadInSec: m.leadInSec, underlapSec: m.underlapSec, jinDurSec: m.jinDurSec, ts: m.ts });
+        const _jingleUuid = _stationUuidById(m.stationId);
+        sendToAllWindows("audio:daemon-jingle", { stationUuid: _jingleUuid, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, contentClass: m.contentClass, leadInSec: m.leadInSec, underlapSec: m.underlapSec, jinDurSec: m.jinDurSec, ts: m.ts });
         try { _health.noteJingle(m.stationId, m); } catch {}
       }
     } catch {}

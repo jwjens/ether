@@ -42,3 +42,22 @@ temporarily disable the Slice-C/Phase-2 renderer polls entirely to isolate, or c
 - Footer badge should stay **NOMINAL** (system-only) regardless of library state.
 - Open Format LIBRARY section **green** (relink holds).
 - Run for >20 min and watch renderer memory / for a repeat white-screen. Report back — if it recurs, we bisect.
+
+## (3) CI unblock — `audio:daemon-jingle` migrated to stationUuid
+The first tagged CI since v4.4.52 tripped the station-identity leak-guard
+(`scripts/test-station-identity-leak.js`): **15 integer-station emit-calls > baseline 14**. `git blame`
+placed the 15th at `electron/main.js:608` — the JINGLES overlay channel added by commit `82c0dc17`
+(2026-07-15, jingle overlay v1). It crossed the daemon→renderer boundary carrying an integer
+`stationId`. Pre-existing; not from the library work — CI simply hadn't run on a tag since that commit
+landed.
+
+Fix (the ratchet never goes up — migrate, don't raise the baseline):
+- `electron/main.js` — resolve `_stationUuidById(m.stationId)` to a local first, then
+  `sendToAllWindows("audio:daemon-jingle", { stationUuid, … })`. Same shape as the levels channel.
+- `src/App.tsx` — the `onJingle` subscriber filters by `stationUuid` (dep array `[stationUuid]`).
+- `src/components/UpNext.tsx` — consumes the derived `jingleOverlay` **prop** (deck/state/title only, no
+  station id) — unchanged.
+
+Leak-guard back to **14 (baseline holds)**; `tsc` zero new errors. The full UUID-rekey arc stays
+deferred — only the one over-baseline channel was migrated. OOM soak PASSED (20+ min live), so the
+release proceeds on re-tag.
