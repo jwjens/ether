@@ -23,6 +23,16 @@ const playlog = require("./playlog");
 // One play-log session id per daemon process (mirrors the renderer's getSessionId()).
 const SESSION = crypto.randomUUID();
 
+// ── Log-Reader Flip Phase 3 — the gate ────────────────────────────────────────────────────────────
+// ETHER_LOG_READER=1 turns ON the time-anchored log-reader (playout consumes generated_schedule
+// directly, playhead = the row-for-now per §2.7). It ships OFF: the flip's ACTIVE branch is gated on
+// this flag AND a clean shadow burn-in AND Jeff's separate flip GO. With the flag OFF (this release),
+// the daemon runs its legacy queue-sourced playout UNCHANGED and only OBSERVES — the §2.7 boundary
+// shadow (_shadowEvalTimeAnchor) records, at every go-live, what the flipped reader WOULD have aired
+// vs what legacy aired. That divergence ledger is the burn-in that gates the flip. Inherited from the
+// Electron process env via the daemon spawn (audio-daemon-client.js) — no spawn change needed.
+const LOG_READER_FLIP = process.env.ETHER_LOG_READER === "1";
+
 // Sustained no-playing window before "nobody playing" is treated as a real stall (rides out a
 // crossfade / load-next handoff). Shared by the stall-recovery watchdog AND the honest engine-state
 // truth layer (Slice 1) so both judge "stalled" by the SAME criterion — no second, divergent detector.
@@ -685,9 +695,39 @@ class DaemonEngine {
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
     // throws into the playout path.
     try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION, filePath: st.filePath }); } catch {}
+    // Log-Reader Flip Phase 3 — TIME-ANCHORED boundary SHADOW (§2.7). BEFORE the Phase 1 stamp (while the
+    // aired row is still 'pending' and thus comparable), record what the flipped reader WOULD air "now"
+    // vs what legacy just put on air. OBSERVATIONAL — never drives playout.
+    this._shadowEvalTimeAnchor(deckId, this.deckSchedId[deckId]);
     // Log-Reader Flip Phase 1 — SHADOW playhead writer. Stamp the generated_schedule row's local-only
     // lifecycle as this deck goes live. OBSERVATIONAL ONLY — changes no playout/queue behavior.
     this._shadowStampPlayhead(this.deckSchedId[deckId]);
+  }
+
+  // Log-Reader Flip Phase 3 — TIME-ANCHORED boundary SHADOW (design §2.7). At each go-live boundary,
+  // ask the shared selector (loggen.selectRowForNow) what the flip WOULD air "now", and compare it to
+  // what legacy actually aired (airedSchedId + the deck's scheduled_at). Emits a `logreader-shadow`
+  // record — the burn-in "sense" that quantifies the drift the flip eliminates (e.g. "legacy aired the
+  // 4:00 row at 3:19 wall-clock; the flip would have aired the 3:20 row — 40 min behind, 8 rows missed").
+  // Runs regardless of the flag (the flag OFF is the burn-in). Read-only; never throws into playout.
+  _shadowEvalTimeAnchor(deckId, airedSchedId) {
+    try {
+      const nowTs = Math.floor(Date.now() / 1000);
+      const d = loggen.selectRowForNow(this.db, this.stationId, nowTs);
+      const airedAt = this.deckSched[deckId] ?? null;            // aired row's scheduled_at (back-link)
+      const wouldId = d.playRow ? d.playRow.row_id : null;
+      const rec = {
+        stationId: this.stationId, ts: nowTs, deck: deckId, mode: d.mode,
+        flag: LOG_READER_FLIP ? 1 : 0,                            // flip ACTIVE? (OFF this release)
+        airedSchedId: airedSchedId ?? null, airedScheduledAt: airedAt,
+        wouldAirSchedId: wouldId, wouldAirScheduledAt: d.playRow ? d.playRow.scheduled_at : null,
+        wouldAirTitle: d.playRow ? d.playRow.title : null,
+        driftSec: d.driftSec, missedCount: d.missedCount,
+        agrees: airedSchedId != null && wouldId != null && airedSchedId === wouldId,
+      };
+      this.emit("logreader-shadow", rec);
+      if (!rec.agrees) this._log(`[LOGREADER-SHADOW] ${d.mode}: aired row ${airedSchedId} — flip would air row ${wouldId} (drift ${d.driftSec}s, missed ${d.missedCount})`);
+    } catch (e) { /* shadow must NEVER perturb playout */ }
   }
 
   // Log-Reader Flip Phase 1 — SHADOW playhead writer (design §7 Phase 1). As each deck goes live, record
@@ -845,6 +885,9 @@ class DaemonEngine {
     const wasStarted = this._started;
     this._started = true;   // Stage 3b: automation engaged — the stall watchdog is now allowed to recover.
     this._log("automationStart: requested" + (wasStarted ? " (already _started)" : " — _started false → true (automation engaged)"));
+    // Log-Reader Flip Phase 3: announce the gate so a burn-in run (flag OFF) vs a flip run (flag ON) is
+    // unambiguous in the daemon log. OFF = legacy playout + §2.7 boundary shadow only.
+    if (!wasStarted) this._log("log-reader flip: ETHER_LOG_READER=" + (LOG_READER_FLIP ? "1 (FLIP ACTIVE — time-anchored playout)" : "0 (OFF — legacy playout + §2.7 shadow only)"));
     this._lastPlayingAt = Date.now();  // grace window so the watchdog doesn't fire before start() plays A
     await this.refillIfNeeded();
     // IDEMPOTENT: never start a deck over one that's already on air. If automationStart is

@@ -270,6 +270,22 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     } catch { setUnresolvableList([]); setUnresolvableFor(sid); }
   };
 
+  // ── LOG-READER FLIP §2.7 boundary shadow (Phase 3) — poll logreader-shadow:get (60s; low-churn) ──
+  // The burn-in "sense": at each go-live the daemon reports what the time-anchored flip WOULD air vs
+  // what legacy aired. Here it surfaces as an agree-rate + drift/miss extent per station, so the flip's
+  // readiness is visible before anyone flips the flag. Display-only.
+  const [shadowSummary, setShadowSummary] = useState<any[]>([]);
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => {
+      if (document.hidden) return;
+      try { const s = await (window as any).ether?.invoke?.("logreader-shadow:get"); if (!stop && Array.isArray(s)) setShadowSummary(s); } catch { /* IPC absent */ }
+    };
+    tick();
+    const id = setInterval(tick, 60000);
+    return () => { stop = true; clearInterval(id); };
+  }, []);
+
   // 5s poll, skipped while the panel isn't visible (minimized / occluded / hidden
   // tab) via document.hidden — NOT on blur, so a popout left open on a second
   // monitor keeps updating while the operator works in the main window. On
@@ -574,6 +590,29 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   <HealthRow label="Skipped at load" value={`${st.skipped.thisHour} this hour`} status={(st.skipped.thisHour > 0 ? "error" : "ok") as any} sub="unresolvable rows the deck refused" />
                   <HealthRow label="Prefetch lag" value={`${st.prefetchLag.upcomingUnmaterialized} upcoming`} status={(st.prefetchLag.upcomingUnmaterialized > 0 ? "warn" : "ok") as any} sub="cloud-only rows not yet local" />
                 </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── LOG-READER FLIP §2.7 boundary shadow (Phase 3, burn-in) — observation only, flag OFF ── */}
+        {shadowSummary.length > 0 && (
+          <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Log-Reader Flip — §2.7 Shadow (burn-in)</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
+              Flag OFF — measuring what the time-anchored flip <em>would</em> air at each boundary vs what legacy airs. Low agreement here is the drift the flip removes; it is not an error.
+            </div>
+            {shadowSummary.map((st: any) => {
+              const rate = st.boundaries > 0 ? Math.round((st.agrees / st.boundaries) * 100) : 0;
+              const mm = (s: number) => { const a = Math.abs(Math.round(s || 0)); return `${Math.floor(a / 60)}m ${a % 60}s`; };
+              return (
+                <HealthRow
+                  key={st.stationId}
+                  label={`Station ${st.uuid ? String(st.uuid).slice(0, 8) : st.stationId}`}
+                  value={`${rate}% would-match (${st.boundaries} boundaries)`}
+                  status="ok"
+                  sub={`${st.behind} behind · ${st.ahead} ahead · ${st.onTime} on-time · max drift ${mm(st.maxDriftSec)} · max missed ${st.maxMissed}`}
+                />
               );
             })}
           </div>

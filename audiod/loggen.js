@@ -186,6 +186,51 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
   return playable.map(r => ({ ...toItem(r), schedId: r.row_id }));   // schedId for the Phase 1 shadow playhead writer
 }
 
+// ── Log-Reader Flip Phase 3 (§2.7): the TIME-ANCHORED playhead selector ───────────────────────────────
+// Pure, read-only, deterministic (NO LLM). Given the wall clock, return the generated_schedule row that
+// SHOULD be on air "now" — the decision the flip will act on and the shadow observes:
+//   • BEHIND / ON-TIME: the LATEST still-`pending` music row whose slot has arrived
+//     (scheduled_at <= now + slack) — i.e. the current slot. Any earlier still-`pending` rows are
+//     `missed` (their slots elapsed because a song ran long / legacy aired something else); the flip
+//     would stamp them `missed`, so the count is the reconciliation the flip would perform here.
+//   • AHEAD: if NO pending row has arrived yet (all future beyond slack), the earliest pending row is
+//     the play-early candidate — never wait, never dead-air (§2.7(b)).
+//   • EXHAUSTED: no pending music rows at all — the emergency-floor condition (§2.6).
+// JIN/SWP overlays are excluded (seam overlays, never a deck track), matching the daemon reader's
+// content_class guard (loggen.readGeneratedSchedule). driftSec = now − chosen row's scheduled_at
+// (positive = the chosen slot is in the past = running behind). Never throws.
+function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
+  try {
+    const fmt = getFormatCategoryIds(db, stationId);
+    const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+    const base = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+                  WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
+                    AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}`;
+    const cols = `gs.id AS row_id, gs.title, gs.scheduled_at, COALESCE(gs.file_path, s.file_path) AS file_path`;
+    const fmtP = fmt.length ? fmt : [];
+    // Current slot: the latest pending row whose scheduled_at has arrived (within slack).
+    const playRow = db.prepare(
+      `SELECT ${cols} ${base} AND gs.scheduled_at <= ? ORDER BY gs.scheduled_at DESC, gs.id DESC LIMIT 1`
+    ).get(stationId, ...fmtP, nowTs + slackSec);
+    if (playRow) {
+      // How many pending rows sit BEFORE the current slot (their slots elapsed) — the flip's `missed` set.
+      // NOTE this is a BACKLOG count that spans history: Phase 1 only stamped the rows legacy actually
+      // aired, so every row legacy skipped stays 'pending' in the past. It is a separate signal from the
+      // current anchor's drift — do NOT derive `mode` from it (a perfectly-anchored boundary can still
+      // carry a large historical backlog). `mode` reflects the CHOSEN row's drift vs now only.
+      const missedCount = db.prepare(
+        `SELECT COUNT(*) AS n ${base} AND gs.scheduled_at < ?`
+      ).get(stationId, ...fmtP, playRow.scheduled_at).n;
+      const drift = nowTs - playRow.scheduled_at;   // >0 = chosen slot is in the past (running behind)
+      return { playRow, missedCount, mode: drift > slackSec ? "behind" : "on-time", driftSec: drift };
+    }
+    // AHEAD: nothing has arrived — the earliest future pending row is the play-early candidate.
+    const early = db.prepare(`SELECT ${cols} ${base} ORDER BY gs.scheduled_at LIMIT 1`).get(stationId, ...fmtP);
+    if (early) return { playRow: early, missedCount: 0, mode: "ahead", driftSec: nowTs - early.scheduled_at };
+    return { playRow: null, missedCount: 0, mode: "exhausted", driftSec: 0 };
+  } catch { return { playRow: null, missedCount: 0, mode: "error", driftSec: 0 }; }
+}
+
 // ── JINGLES overlay v1: read the transition-attached JIN placement for the upcoming seam ──────────────
 // The daemon is a LOG-READER (D1=A′): Generate placed JIN rows in generated_schedule bound to the seam
 // (scheduled_at = the incoming music row's start). Given the currently-playing row's scheduled_at (afterTs)
@@ -283,4 +328,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem) };
 }
 
-module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam };
+module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow };

@@ -230,6 +230,10 @@ const VITE_DEV_URL = "http://127.0.0.1:1420";
 const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
 let AUDIO_DAEMON = false;
 let _health = null;                 // v4.4.50: Health Monitor state — module scope so BOTH the daemon and the in-process paths feed it
+// Log-Reader Flip Phase 3 — §2.7 boundary-shadow rolling summary, per station id. Fed by the daemon's
+// `logreader-shadow` event (what the flipped reader WOULD air vs what legacy aired, at each go-live).
+// A live "sense" the Health Monitor reads (logreader-shadow:get); the full history is the JSONL ledger.
+const _logReaderShadow = new Map();  // stationId → { boundaries, agrees, behind, ahead, onTime, exhausted, maxDriftSec, lastDriftSec, maxMissed, last }
 let _inProcessFallback = false;     // v4.4.50: true after a boot-time fallback to the in-process engine (daemon not attached)
 let _handoverWatch = null;          // v4.4.50: song-boundary watcher for a safe in-process → daemon handover
 let audio;
@@ -562,6 +566,30 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
+      } else if (m.event === "logreader-shadow") {
+        // Log-Reader Flip Phase 3 (§2.7): a go-live boundary — the daemon reports what the time-anchored
+        // flip WOULD have aired vs what legacy aired. Append the honest JSONL ledger (the burn-in) AND
+        // fold a per-station rolling summary the Health Monitor surfaces. Observation only.
+        try {
+          require('fs').appendFileSync(path.join(app.getPath('userData'), 'logreader-shadow.jsonl'),
+            JSON.stringify({ t: new Date().toISOString(), ...m }) + "\n");
+        } catch { /* a lost ledger line is cosmetic */ }
+        try {
+          const sid = m.stationId;
+          const cur = _logReaderShadow.get(sid) || { boundaries: 0, agrees: 0, behind: 0, ahead: 0, onTime: 0, exhausted: 0, maxDriftSec: 0, lastDriftSec: 0, maxMissed: 0, last: null };
+          cur.boundaries++;
+          if (m.agrees) cur.agrees++;
+          if (m.mode === "behind") cur.behind++;
+          else if (m.mode === "ahead") cur.ahead++;
+          else if (m.mode === "on-time") cur.onTime++;
+          else if (m.mode === "exhausted") cur.exhausted++;
+          const ad = Math.abs(m.driftSec || 0);
+          if (ad > cur.maxDriftSec) cur.maxDriftSec = ad;
+          cur.lastDriftSec = m.driftSec || 0;
+          if ((m.missedCount || 0) > cur.maxMissed) cur.maxMissed = m.missedCount || 0;
+          cur.last = { ts: m.ts, mode: m.mode, driftSec: m.driftSec, missedCount: m.missedCount, agrees: !!m.agrees, wouldAirTitle: m.wouldAirTitle || null };
+          _logReaderShadow.set(sid, cur);
+        } catch { /* summary is best-effort */ }
       } else if (m.event === "queue") {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
         try { _health.noteQueue(m.stationId, m.items, m.source); } catch {}
@@ -6462,6 +6490,14 @@ ipcMain.on('health:playhead-divergence', (_e, record) => {
     const line = JSON.stringify({ t: new Date().toISOString(), ...(record || {}) }) + "\n";
     require('fs').appendFileSync(path.join(app.getPath('userData'), 'playhead-divergence.jsonl'), line);
   } catch { /* best-effort; a lost divergence line is cosmetic */ }
+});
+
+// Log-Reader Flip Phase 3 (§2.7): the boundary-shadow summary for the Health Monitor. Returns the
+// per-station rolling tallies fed by the daemon's `logreader-shadow` events — the burn-in "sense" that
+// gates the flip (agree rate + drift/miss extents). Read-only; [] before any boundary has fired.
+ipcMain.handle('logreader-shadow:get', () => {
+  try { return Array.from(_logReaderShadow.entries()).map(([stationId, s]) => ({ stationId, uuid: _stationUuidById(stationId), ...s })); }
+  catch { return []; }
 });
 
 // ── Library → R2 sync ─────────────────────────────────────────────────────────
