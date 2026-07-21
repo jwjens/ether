@@ -291,6 +291,7 @@ class DaemonEngine {
         const first = this.dequeue();
         if (this.loadToDeck("A", first)) { this.deckChainType.A = first.chainType || "segue"; loaded = true; break; }
         this.emit("error", { stationId: this.stationId, where: "top-of-hour", error: "skipped unplayable: " + (first.filePath || "") });
+        this._noteLoadSkip(first.title, "unplayable at load (top-of-hour)");
       }
       if (!loaded) { this._log("top-of-hour: first element unplayable — rotation will self-heal"); return; }
       this._play("A");
@@ -386,6 +387,7 @@ class DaemonEngine {
         return true;
       }
       this.emit("error", { stationId: this.stationId, where: "resume-playout", error: "skipped unplayable: " + (next.filePath || "") });
+      this._noteLoadSkip(next.title, "unplayable at load (resume-playout)");
       if (this.queue.length === 0) await this.refillIfNeeded();
     }
     return false;
@@ -543,6 +545,7 @@ class DaemonEngine {
           const next = this.dequeue();
           if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; loaded = true; break; }
           this.emit("error", { stationId: this.stationId, where: "handleLoadNext", error: "skipped unplayable: " + (next.filePath || "") });
+          this._noteLoadSkip(next.title, "unplayable at load (handleLoadNext)");
           if (this.queue.length === 0) await this.refillIfNeeded();
         }
         if (!loaded) return;
@@ -577,8 +580,16 @@ class DaemonEngine {
         this.queue.splice(queueIndex, 1);
         this.emit("queue", { stationId: this.stationId, items: this.queue });
         this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
+        this._noteLoadSkip(next.title, "unplayable at load (preload)");
       }
     });
+  }
+
+  // Slice B — every skip of an unresolvable row is LOUD: a structured health event (title, station,
+  // reason) that main routes to the library-health skipped-at-load sense + health-events.jsonl. A deck
+  // load must never die silently again.
+  _noteLoadSkip(title, reason) {
+    try { this.emit("loadskip", { stationId: this.stationId, title: title || "(untitled)", reason }); } catch { /* never break playout */ }
   }
 
   async refillIfNeeded() {
@@ -589,8 +600,18 @@ class DaemonEngine {
     if (now - (this._lastRefillAt || 0) < 2000) return;
     this._lastRefillAt = now;
     const fill = loggen.fillQueue(this.db, this.stationId, 20);
-    // Drop tracks whose files are gone (scheduled-then-deleted) — they'd stall the rotation.
-    const items = this._ensureIds(this._playable(fill.items));
+    // Slice B rotation honesty: only LOCAL-playable items enter the queue (unchanged behaviour). But be
+    // HONEST about WHY a row is dropped: an R2-only row (fileKey present) is prefetch-lag — it will
+    // materialize (the prefetch-lag sense tracks it), so defer it quietly this pass. A row with NO local
+    // file AND NO fileKey is genuinely DEAD — drop it LOUDLY (a load-skip health event) so it never
+    // phantom-fills the pool and separation stays honest. Queue content is identical to before.
+    const kept = [];
+    for (const it of (fill.items || [])) {
+      if (this._fileOk(it.filePath)) kept.push(it);
+      else if (!it.fileKey) this._noteLoadSkip(it.title, "unresolvable — no local file, no file_key");
+      // else: R2-only → prefetch-lag; silently deferred (prefetch materializes it; next fill picks it up).
+    }
+    const items = this._ensureIds(kept);
     if (items.length) {
       this.queue.push(...items);
       // Schedule is authoritative — once a generated_schedule fill lands, drop any live-picked /

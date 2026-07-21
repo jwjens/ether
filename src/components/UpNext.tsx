@@ -96,6 +96,9 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
   const [dragVisual, setDragVisual] = useState<{ from: number | null; over: number | null }>({ from: null, over: null });
 
   const [queue, setQueue] = useState(() => engine.getQueue());
+  // Slice C: live queue lint — scheduledAt → seconds-too-early for any upcoming row whose song/artist
+  // is still RESTING at its projected air time (from library-health, rules-derived). Yellow chip.
+  const [lintMap, setLintMap] = useState<Record<number, number>>({});
 
   useEffect(() => {
     setQueue(engine.getQueue());
@@ -109,6 +112,24 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     window.addEventListener("ether:queue-changed", onChanged);
     return () => { clearInterval(interval); window.removeEventListener("ether:queue-changed", onChanged); };
   }, [engine, queueLen]);
+
+  // ── Slice C: live queue lint — fetch upcoming separation violations (rules-derived, main-process) ──
+  useEffect(() => {
+    if (!isReady) return;
+    let stop = false;
+    const fetchLint = async () => {
+      try {
+        const rows = await (window as any).ether?.invoke?.("library-health:queue-lint", stationId);
+        if (stop || !Array.isArray(rows)) return;
+        const m: Record<number, number> = {};
+        for (const r of rows) if (r?.scheduledAt != null) m[r.scheduledAt] = r.violatesBySec;
+        setLintMap(m);
+      } catch { /* IPC absent */ }
+    };
+    fetchLint();
+    const id = setInterval(fetchLint, 60000);   // gentle — the lint window moves slowly; 60s is plenty
+    return () => { stop = true; clearInterval(id); };
+  }, [stationId, isReady]);
 
   // ── Log-Reader Flip Phase 2: read-path SHADOW-COMPARE (always-on, observational) ──
   // Fetch the log-derived up-next (generated_schedule ≥ playhead — the SAME source the calendar reads)
@@ -143,10 +164,13 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       } catch { /* shadow-compare never affects the UI */ }
     };
     compare();
-    const id = setInterval(compare, 5000);
-    const onChanged = () => compare();
-    window.addEventListener("ether:queue-changed", onChanged);
-    return () => { alive = false; clearInterval(id); window.removeEventListener("ether:queue-changed", onChanged); };
+    // 30s cadence only — NOT on every ether:queue-changed. On a live box the daemon fires queue events
+    // frequently (and, pre-flip, the divergence is ~constant), so the old 5s + per-queue-event trigger
+    // ran an async IPC round-trip many times/sec against a renderer already handling ~90 levels
+    // events/sec — back-pressured invoke promises that could accumulate. A burn-in read only needs a
+    // periodic sample.
+    const id = setInterval(compare, 30000);
+    return () => { alive = false; clearInterval(id); };
   }, [stationId, isReady, engine]);
 
   useEffect(() => {
@@ -462,6 +486,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           const color = getItemColor(item);
           const catLabel = getCatLabel(item);
           const ms = (item as any).durationMs || (item as any).duration_ms || 0;
+          const lintEarly = (item as any).scheduledAt != null ? lintMap[(item as any).scheduledAt] : undefined;
           const artKey = `${item.title}::${item.artist}`;
           const isBeingDragged = dragVisual.from === engineIdx;
           const isDropTarget = dragVisual.over === engineIdx && dragVisual.from !== null && dragVisual.from !== engineIdx;
@@ -526,6 +551,11 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                     } as React.CSSProperties}
                   >{item.title}</div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, marginTop: 3 }}>{item.artist}</div>
+                  {lintEarly != null && lintEarly > 0 && (
+                    <div title="This placement airs before the song/artist separation rule allows" style={{ marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9, fontWeight: 800, letterSpacing: "0.04em", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.4)", padding: "1px 5px", borderRadius: 2, textTransform: "uppercase" as const }}>
+                      ⚠ separation · {Math.round(lintEarly / 60)}m early
+                    </div>
+                  )}
                 </div>
 
                 {/* Right side: duration only — elapsed lives on the playing deck rows, not queued */}

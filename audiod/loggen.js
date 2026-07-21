@@ -93,12 +93,13 @@ function getFormatCategoryIds(db, stationId, clockId) {
   } catch { return []; }
 }
 
-const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.intro_end, s.outro_start
+const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.file_key, s.duration_ms, s.intro_end, s.outro_start
   FROM songs s LEFT JOIN artists a ON a.id = s.artist_id`;
 const toItem = (r) => ({
   filePath: r.file_path, title: r.title, artist: r.artist_name || r.artist || "",
   durationMs: r.duration_ms || 0, introEnd: r.intro_end ?? undefined, outroStart: r.outro_start ?? undefined,
   scheduledAt: r.scheduled_at ?? undefined,
+  fileKey: r.file_key ?? undefined,   // Slice B: lets the fill distinguish R2-only (prefetchable) from dead (no key)
 });
 
 // least-recently-played first: songs never aired on THIS station (MAX→NULL→0) come first, then oldest.
@@ -152,7 +153,7 @@ function readGeneratedSchedule(db, count, stationId) {
   let rows;
   try {
     rows = db.prepare(
-      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
+      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
@@ -172,7 +173,7 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
   let rows;
   try {
     rows = db.prepare(
-      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
+      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id

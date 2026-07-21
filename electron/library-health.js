@@ -61,6 +61,10 @@ function createLibraryHealth(opts) {
     const lastArtist = db.prepare(
       `SELECT MAX(pl.played_at) m FROM play_log pl JOIN songs s2 ON s2.file_path=pl.file_path
          WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s2.artist_id=?`);
+    // Slice C: the repaired PLAYS join — station-scoped play count by file_path (this is what the
+    // Library page's plays column reads, replacing the stale/empty songs.play_count).
+    const playCount = db.prepare(
+      `SELECT COUNT(*) c FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL`);
     const out = []; const sum = { eligible: 0, resting: 0, neverPlayed: 0, unresolvable: 0, total: songs.length };
     for (const s of songs) {
       const resolvable = exists(s.file_path) || !!s.file_key;
@@ -74,9 +78,42 @@ function createLibraryHealth(opts) {
       else if (!lp) { status = 'NEVER_PLAYED'; sum.neverPlayed++; }
       else if (rest > 0) { status = 'RESTING'; sum.resting++; }
       else { status = 'ELIGIBLE'; sum.eligible++; }
-      out.push({ id: s.id, title: s.title, lastPlayed: lp || null, restSec: rest, status, resolvable });
+      const plays = s.file_path ? playCount.get(sid, s.file_path).c : 0;
+      out.push({ id: s.id, title: s.title, plays, lastPlayed: lp || null, restSec: rest, status, resolvable });
     }
     return { rows: out, summary: sum };
+  }
+
+  // ── Queue/Generate LINT: upcoming rows whose song/artist is still RESTING at its projected air time ──
+  // Deterministic, rules-derived (no_repeat_hours + artist separation), evaluated against the plays that
+  // precede each row's scheduled_at. Returns the violations; the SAME check serves the live queue chip
+  // (UpNext) and Generate-time placement warnings — a violation means "N minutes too early".
+  function lintUpcoming(db, sid) {
+    const { artistSepSec } = sepConfig(db, sid);
+    const now = nowSec();
+    let rows = [];
+    try {
+      rows = db.prepare(
+        `SELECT g.id rowId, g.scheduled_at at, g.title, s.file_path, s.artist_id, s.no_repeat_hours
+           FROM generated_schedule g LEFT JOIN songs s ON s.id=g.song_id
+          WHERE g.station_id=? AND g.deleted_at IS NULL AND (g.state IS NULL OR g.state IN ('pending','playing'))
+            AND g.scheduled_at BETWEEN ? AND ? AND (g.content_class IS NULL OR g.content_class NOT IN ('JIN','SWP'))
+            AND g.song_id IS NOT NULL
+          ORDER BY g.scheduled_at LIMIT 60`).all(sid, now - 300, now + 7200);
+    } catch { return []; }
+    const lastSong = db.prepare("SELECT MAX(played_at) m FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL AND played_at < ?");
+    const lastArt = db.prepare("SELECT MAX(pl.played_at) m FROM play_log pl JOIN songs s2 ON s2.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s2.artist_id=? AND pl.played_at < ?");
+    const out = [];
+    for (const r of rows) {
+      if (!r.file_path) continue;
+      const sl = lastSong.get(sid, r.file_path, r.at).m || 0;
+      const songViol = sl ? Math.max(0, (sl + (r.no_repeat_hours || 3) * 3600) - r.at) : 0;
+      let artViol = 0;
+      if (artistSepSec && r.artist_id) { const al = lastArt.get(sid, r.artist_id, r.at).m || 0; artViol = al ? Math.max(0, (al + artistSepSec) - r.at) : 0; }
+      const viol = Math.max(songViol, artViol);
+      if (viol > 0) out.push({ rowId: r.rowId, scheduledAt: r.at, title: r.title, violatesBySec: viol, kind: songViol >= artViol ? "song" : "artist" });
+    }
+    return out;
   }
 
   // ── (1) materialization, (2) pool, (4) prefetch-lag, (3) skipped ──
@@ -135,12 +172,26 @@ function createLibraryHealth(opts) {
     };
   }
 
+  const _lintSeen = new Set();   // rowIds already event-logged, so a violation is reported once
   function computeAll() {
     const db = getDb();
-    const snap = { t: new Date().toISOString(), stations: [] };
+    const snap = { t: new Date().toISOString(), stations: [], lint: {} };
     for (const sid of stationIds(db)) {
-      try { snap.stations.push(computeStation(db, sid)); } catch (e) { /* one station never breaks the rest */ }
+      try {
+        const st = computeStation(db, sid);
+        const lint = lintUpcoming(db, sid);
+        st.lintCount = lint.length;
+        snap.lint[sid] = lint;
+        // Emit a health event ONCE per violating row: "placement violates separation, N min early".
+        for (const v of lint) {
+          if (_lintSeen.has(v.rowId)) continue;
+          _lintSeen.add(v.rowId);
+          appendJsonl({ kind: 'queue-lint', stationId: sid, title: v.title, scheduledAt: v.scheduledAt, earlyBySec: v.violatesBySec, ruleKind: v.kind });
+        }
+        snap.stations.push(st);
+      } catch (e) { /* one station never breaks the rest */ }
     }
+    if (_lintSeen.size > 4000) _lintSeen.clear();   // bounded — old rows have long aired
     lastSnapshot = snap;
     appendJsonl({ kind: 'library-health', stations: snap.stations });
     try { broadcast('library-health', snap); } catch { /* no window yet */ }
@@ -210,11 +261,13 @@ function createLibraryHealth(opts) {
     },
     snapshot() { return lastSnapshot; },
     eligibilityRows(stationId) { try { return eligibility(getDb(), stationId).rows; } catch { return []; } },
+    lintRows(stationId) { try { return lintUpcoming(getDb(), stationId); } catch { return []; } },
     computeAll,
     start() {
-      // Senses hourly + on demand; prefetch every 45s (background, bounded).
+      // Senses + lint every 2 min (cheap indexed reads) so a separation violation is EVENTED within a
+      // couple minutes of Generate placing it; prefetch every 45s (background, bounded).
       try { computeAll(); } catch {}
-      const t1 = setInterval(() => { try { computeAll(); } catch {} }, 3600 * 1000);
+      const t1 = setInterval(() => { try { computeAll(); } catch {} }, 120 * 1000);
       const t2 = setInterval(() => { prefetchTick().catch(() => {}); }, 45 * 1000);
       setTimeout(() => { prefetchTick().catch(() => {}); }, 8000);   // one early pass after boot
       return () => { clearInterval(t1); clearInterval(t2); };

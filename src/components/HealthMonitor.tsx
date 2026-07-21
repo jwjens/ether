@@ -247,6 +247,29 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [eventsLoading, setEventsLoading] = useState(false);
   const isPopout = typeof window !== "undefined" && window.location.hash.startsWith("#popout/");
 
+  // ── LIBRARY & ROTATION senses (Slice C) — poll library-health:get (hourly-refreshed in main) ──
+  const [libHealth, setLibHealth] = useState<any>(null);
+  const [unresolvableFor, setUnresolvableFor] = useState<number | null>(null);
+  const [unresolvableList, setUnresolvableList] = useState<{ id: number; title: string }[]>([]);
+  useEffect(() => {
+    let stop = false;
+    const tick = async () => {
+      if (document.hidden) return;
+      try { const s = await (window as any).ether?.invoke?.("library-health:get"); if (!stop && s) setLibHealth(s); } catch { /* IPC absent */ }
+    };
+    tick();
+    const id = setInterval(tick, 30000);
+    return () => { stop = true; clearInterval(id); };
+  }, []);
+  const showUnresolvable = async (sid: number) => {
+    if (unresolvableFor === sid) { setUnresolvableFor(null); return; }
+    try {
+      const rows = await (window as any).ether.invoke("library-health:eligibility", sid);
+      setUnresolvableList((Array.isArray(rows) ? rows : []).filter((r: any) => r.status === "UNRESOLVABLE").map((r: any) => ({ id: r.id, title: r.title })));
+      setUnresolvableFor(sid);
+    } catch { setUnresolvableList([]); setUnresolvableFor(sid); }
+  };
+
   // 5s poll, skipped while the panel isn't visible (minimized / occluded / hidden
   // tab) via document.hidden — NOT on blur, so a popout left open on a second
   // monitor keeps updating while the operator works in the main window. On
@@ -518,6 +541,44 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
+        {/* ── LIBRARY & ROTATION (Slice C) — per station: materialization, pool, skips, prefetch lag ── */}
+        {libHealth?.stations?.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>Library &amp; Rotation</div>
+            {libHealth.stations.map((st: any) => {
+              const dotCol = st.level === "red" ? "#f87171" : st.level === "yellow" ? "#fbbf24" : "#22c55e";
+              const lvl = (l: string) => (l === "red" ? "error" : l === "yellow" ? "warn" : "ok");
+              return (
+                <div key={st.stationId} style={{ background: "var(--bg-secondary)", border: `1px solid ${st.level === "red" ? "rgba(248,113,113,0.35)" : st.level === "yellow" ? "rgba(251,191,36,0.3)" : "var(--border-primary)"}`, padding: "10px 12px", marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
+                  </div>
+                  <HealthRow
+                    label="Materialization"
+                    value={`${st.materialization.resolvable}/${st.materialization.total} resolvable`}
+                    status={lvl(st.materialization.level) as any}
+                    sub={st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import` : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)` : "all local"}
+                  />
+                  {st.materialization.dead > 0 && (
+                    <button onClick={() => showUnresolvable(st.stationId)} style={{ fontSize: 9, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
+                      {unresolvableFor === st.stationId ? "hide" : "show"} unresolvable list
+                    </button>
+                  )}
+                  {unresolvableFor === st.stationId && (
+                    <div style={{ margin: "4px 0 6px", padding: "6px 8px", background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", maxHeight: 120, overflowY: "auto" as const, fontSize: 10, color: "rgba(248,113,113,0.85)", fontFamily: "'DM Mono', monospace" }}>
+                      {unresolvableList.length ? unresolvableList.map(r => <div key={r.id}>{r.title}</div>) : <div>none</div>}
+                    </div>
+                  )}
+                  <HealthRow label="Rotation pool" value={`${st.pool.spunPool24h}/${st.pool.librarySize} aired (24h)`} status={lvl(st.pool.level) as any} sub={`top song ${st.pool.topSpins24h} spins/24h`} />
+                  <HealthRow label="Skipped at load" value={`${st.skipped.thisHour} this hour`} status={(st.skipped.thisHour > 0 ? "error" : "ok") as any} sub="unresolvable rows the deck refused" />
+                  <HealthRow label="Prefetch lag" value={`${st.prefetchLag.upcomingUnmaterialized} upcoming`} status={(st.prefetchLag.upcomingUnmaterialized > 0 ? "warn" : "ok") as any} sub="cloud-only rows not yet local" />
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* Play log export */}
         <div style={{ paddingTop: 16, paddingBottom: 20, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 14 }}>DMCA Play Log Export</div>
@@ -594,6 +655,9 @@ export function HealthStatusDot({ onClick, compact = false, height }: { onClick:
       try { await query("SELECT 1"); } catch { dbOk = false; }
       let alarmed = false;
       try { const r = await (window as any).ether?.ha?.alarmStatus(); alarmed = !!r?.alarm; } catch { /* HA bridge absent → ignore */ }
+      // The global footer dot reflects SYSTEM health only (DB + HA). Library/rotation health is NOT
+      // rolled in here — a content issue (e.g. a song that needs re-import) must never show a global
+      // system ERROR. Library health lives in the Health Monitor's LIBRARY & ROTATION section instead.
       setAlarm(alarmed);
       setStatus(!dbOk || alarmed ? "error" : "ok");
     };

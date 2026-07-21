@@ -537,6 +537,9 @@ export default function App() {
   const [firstRunChecked, setFirstRunChecked] = useState(false);
   const [stationName, setStationName] = useState("Ether");
   const [switchToast, setSwitchToast] = useState("");
+  // Slice B: A/B/C deck-load status/refusal message (never silent). Loading… on success clears; a
+  // failure ("unavailable, needs re-import") sticks briefly.
+  const [deckLoadMsg, setDeckLoadMsg] = useState<{ text: string; err: boolean } | null>(null);
   // Video live indicator — updated via custom event from VideoEngineContext
   const [videoLive, setVideoLive] = useState(false);
   useEffect(() => {
@@ -1813,21 +1816,32 @@ export default function App() {
 
   // A/B/C = load the song onto that exact deck. If the deck is on air, leave it alone — never
   // override the playing song. (Q below appends to the bottom of the queue.)
-  const loadDeck = useCallback((deckId: "A" | "B" | "C", s: SongRow) => {
-    if (!s.file_path) return;
-    // Command-path station scoping: resolve the ACTIVE station's engine fresh at call time.
-    // A useCallback that closed over the render-0 `engine` (line 506) froze to station 1, so after
-    // a station switch the library A/B/C buttons loaded onto the wrong station's decks (same class
-    // as the VU cross-talk, but on the command path). getEngine(stationId) here = active engine.
+  const loadDeck = useCallback(async (deckId: "A" | "B" | "C", s: SongRow) => {
+    const fail = (text: string) => { setDeckLoadMsg({ text, err: true }); setTimeout(() => setDeckLoadMsg(m => (m && m.text === text ? null : m)), 6000); };
+    if (!s.file_path) { fail(`Can't load "${s.title}" — no file on record`); return; }
+    // Command-path station scoping: resolve the ACTIVE station's engine fresh at call time (getEngine
+    // froze to station 1 under a useCallback that closed over render-0 engine — see VU cross-talk).
     const engine = getEngine(stationId);
     if (engine.getDeck(deckId).getState().status === "playing") return; // don't kill what's on air
-    // Stage 2a: daemon mode → deck:cue intent (the daemon loads + protects it from the self-heal).
-    // In-process → load the deck locally as before.
+    // Slice B — loud refusal: resolve the SAME way the cue editor does (local-first → R2-by-file_key),
+    // so an R2-only library song loads onto the deck instead of dying silently; on failure, SAY WHY.
+    // The resolve is off the deck-load hot path (it's a manual button), so it may fetch from the cloud.
+    let filePath = s.file_path;
+    setDeckLoadMsg({ text: `Loading "${s.title}" onto ${deckId}…`, err: false });
+    try {
+      const r = await (window as any).ether.invoke("audio:resolve-local-path", s.file_path);
+      if (!r?.ok || !r.filePath) {
+        fail(`Can't load "${s.title}" — ${r?.error === 'no local file, no file_key' ? 'unavailable, needs re-import' : (r?.error || 'file not on this machine')}`);
+        return;
+      }
+      filePath = r.filePath;
+    } catch { /* resolver unreachable — proceed with the raw path; the engine surfaces its own error */ }
     if (engine.isDaemonDriven) {
-      engine.deckCue(deckId, { filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 });
+      engine.deckCue(deckId, { filePath, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 });
     } else {
-      engine.loadToDeck(deckId, s.file_path, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
+      engine.loadToDeck(deckId, filePath, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
     }
+    setDeckLoadMsg(null);   // success — clear the Loading… note
     window.dispatchEvent(new CustomEvent('ether:queue-changed'));
     if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
   }, [stationId]);
@@ -2666,6 +2680,11 @@ export default function App() {
       {switchToast && (
         <div style={{ position: "fixed", bottom: 32, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.4)", color: "var(--accent-blue)", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
           {switchToast}
+        </div>
+      )}
+      {deckLoadMsg && (
+        <div style={{ position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: `1px solid ${deckLoadMsg.err ? "rgba(224,64,64,0.5)" : "rgb(from var(--accent-blue) r g b / 0.4)"}`, color: deckLoadMsg.err ? "#ff6b6b" : "var(--accent-blue)", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
+          {deckLoadMsg.text}
         </div>
       )}
       <LibrarySyncProgressBar />
@@ -4265,9 +4284,37 @@ function SingleChoicePopover({
 
 interface DiscogsResult { id: number; title: string; artist: string; album: string; year: number | null; genre: string | null; thumb: string | null; format: string | null; label: string | null; }
 
+// ── Slice C: rotation-eligibility helpers for the repaired PLAYS column ──
+const libFmtRest = (sec: number) => { const m = Math.floor(sec / 60), s = Math.floor(sec % 60); return `${m}:${String(s).padStart(2, "0")}`; };
+const libTimeAgo = (ts: number) => { const d = Math.floor(Date.now() / 1000) - ts; if (d < 60) return "just now"; if (d < 3600) return `${Math.floor(d / 60)}m ago`; if (d < 86400) return `${Math.floor(d / 3600)}h ago`; return `${Math.floor(d / 86400)}d ago`; };
+function LibStatusChip({ status }: { status: string }) {
+  const map: Record<string, [string, string]> = { ELIGIBLE: ["#22c55e", "ready"], RESTING: ["#fbbf24", "resting"], NEVER_PLAYED: ["#6b7280", "new"], UNRESOLVABLE: ["#f87171", "no file"] };
+  const [c, l] = map[status] || ["#6b7280", status.toLowerCase()];
+  return <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.04em", color: c, border: `1px solid ${c}66`, padding: "1px 4px", borderRadius: 2, textTransform: "uppercase" as const, whiteSpace: "nowrap" as const }}>{l}</span>;
+}
+
 export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
   const engine = useAudioEngine();
   const { stationId } = useActiveStation();
+  // Slice C: per-song rotation eligibility (plays + last-played + rest + status) from library-health —
+  // the station-scoped play_log join that repairs the empty PLAYS column. Refreshed every 30s so the
+  // RESTING countdown ticks down.
+  const [eligMap, setEligMap] = useState<Record<number, { plays: number; lastPlayed: number | null; restSec: number; status: string }>>({});
+  useEffect(() => {
+    let stop = false;
+    const fetchElig = async () => {
+      try {
+        const rows = await (window as any).ether?.invoke?.("library-health:eligibility", stationId);
+        if (stop || !Array.isArray(rows)) return;
+        const m: Record<number, any> = {};
+        for (const r of rows) m[r.id] = { plays: r.plays ?? 0, lastPlayed: r.lastPlayed, restSec: r.restSec, status: r.status };
+        setEligMap(m);
+      } catch { /* IPC absent */ }
+    };
+    fetchElig();
+    const id = setInterval(fetchElig, 30000);
+    return () => { stop = true; clearInterval(id); };
+  }, [stationId]);
   const watermarkedPaths = React.useMemo<Set<string>>(() => {
     try { return new Set(JSON.parse(localStorage.getItem("ether_watermarked_paths") || "[]")); }
     catch { return new Set(); }
@@ -5197,6 +5244,23 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                         default:         return null;
                       }
                     })();
+                    if (id === "plays") {
+                      const e = eligMap[s.id];
+                      const plays = e ? e.plays : (s.play_count ?? 0);
+                      const last = e?.lastPlayed ? libTimeAgo(e.lastPlayed) : "never";
+                      const rest = e && e.restSec > 0 ? `rest ${libFmtRest(e.restSec)}` : null;
+                      return (
+                        <div key={id} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "5px 12px", display: "flex", flexDirection: "column", justifyContent: "center", gap: 2, borderRight: "1px solid var(--border-primary)", overflow: "hidden" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontSize: 13, color: "var(--text-secondary)", fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>{plays}</span>
+                            {e && <LibStatusChip status={e.status} />}
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--text-tertiary)", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {last}{rest ? ` · ${rest}` : ""}
+                          </div>
+                        </div>
+                      );
+                    }
                     if (id === "category") return (
                       <div key={id} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
                         <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}

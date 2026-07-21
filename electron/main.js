@@ -526,8 +526,10 @@ if (AUDIO_DAEMON_DESIRED) {
   // Background: materializes upcoming R2-only rows to their file_path (so the "half the library never
   // airs" gate can't recur), and computes materialization / pool-health / rotation-eligibility /
   // prefetch-lag / skipped-at-load into health-events.jsonl + a snapshot for the Health Monitor.
+  // Declared in the enclosing scope so the daemon event handler (below) can feed noteSkip (Slice B).
+  let _libHealth = null;
   try {
-    const _libHealth = require("./library-health").createLibraryHealth({
+    _libHealth = require("./library-health").createLibraryHealth({
       getDb: () => db,
       backendUrl: ETHER_BACKEND_URL,
       licenseKeyFn: () => { try { return accountLicenseKey(); } catch { return null; } },
@@ -537,6 +539,7 @@ if (AUDIO_DAEMON_DESIRED) {
     _libHealth.start();
     ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
     ipcMain.handle("library-health:eligibility", (_e, stationId) => { try { return _libHealth.eligibilityRows(stationId); } catch { return []; } });
+    ipcMain.handle("library-health:queue-lint", (_e, stationId) => { try { return _libHealth.lintRows(stationId); } catch { return []; } });
   } catch (e) { console.error("[library-health] init failed:", e && e.message); }
 
   audiodClient.setEventHandler((m) => {
@@ -555,6 +558,10 @@ if (AUDIO_DAEMON_DESIRED) {
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
         sendToAllWindows("audio:daemon-deck", { stationId: m.stationId, deck: m.deck, state: m.state, ready: m.ready });
         try { _health.noteDeck(m.stationId, m.deck, m.ready, m.state); } catch {}
+      } else if (m.event === "loadskip") {
+        // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
+        // sense (+ health-events.jsonl). Never silent.
+        try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
       } else if (m.event === "queue") {
         sendToAllWindows("audio:daemon-queue", { stationId: m.stationId, items: m.items, source: m.source });
         try { _health.noteQueue(m.stationId, m.items, m.source); } catch {}
