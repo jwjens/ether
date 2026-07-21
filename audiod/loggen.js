@@ -125,8 +125,11 @@ function pickTier(db, count, hour, stationId, formatCats, excludeIds, opts, orde
 
 // Clock: fill each music slot in order with a compliant pick (Tier-1 rules).
 function pickFromClock(db, clockId, count, hour, stationId, opts) {
+  // CLOCK IS LAW (2026-07-21): read only LIVE (non-deleted) slots — the same view getFormatCategoryIds,
+  // the clock UI, and Generate now use. The flip promotes this emergency floor to load-bearing, so a
+  // re-categorized clock's dead slots must never be walked here either.
   const slots = db.prepare(`SELECT category_id FROM clock_slots
-    WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND station_id = ? ORDER BY position`).all(clockId, stationId);
+    WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND station_id = ? AND deleted_at IS NULL ORDER BY position`).all(clockId, stationId);
   const out = [], used = [];
   for (const slot of slots) {
     if (out.length >= count) break;
