@@ -286,6 +286,26 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     return () => { stop = true; clearInterval(id); };
   }, []);
 
+  // Log-Reader Flip CANARY toggle — per-station flag (station_config_kv 'log_reader_flip', LOCAL-ONLY,
+  // never syncs). Flips a station's playout to the §2.7 time-anchored log-reader. Read via get-value,
+  // written via set-local (the mutation-less local writer). Refreshed when the station list changes.
+  const [flipFlags, setFlipFlags] = useState<Record<number, boolean>>({});
+  const refreshFlipFlags = useCallback(async () => {
+    try {
+      const sts = (libHealth?.stations || []) as any[];
+      const out: Record<number, boolean> = {};
+      for (const st of sts) {
+        const r = await (window as any).ether?.invoke?.("station_config_kv:get-value", st.stationId, "log_reader_flip");
+        out[st.stationId] = !!(r && r.ok && (r.value === "1" || r.value === "true"));
+      }
+      setFlipFlags(out);
+    } catch { /* IPC absent */ }
+  }, [libHealth]);
+  useEffect(() => { refreshFlipFlags(); }, [refreshFlipFlags]);
+  const toggleFlip = async (sid: number, on: boolean) => {
+    try { await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, "log_reader_flip", on ? "1" : "0"); await refreshFlipFlags(); } catch { /* IPC absent */ }
+  };
+
   // 5s poll, skipped while the panel isn't visible (minimized / occluded / hidden
   // tab) via document.hidden — NOT on blur, so a popout left open on a second
   // monitor keeps updating while the operator works in the main window. On
@@ -624,6 +644,30 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       sub={st.lastGenerate.emptyCats?.length ? `empty: ${st.lastGenerate.emptyCats.join(", ")}` : st.lastGenerate.relaxed.slice(0, 3).map((r: any) => `${r.category} ×${r.count}`).join(" · ")}
                     />
                   )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── LOG-READER FLIP — per-station CANARY toggle (activation). Local-only; never syncs. ── */}
+        {libHealth?.stations?.length > 0 && (
+          <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Log-Reader Flip — Canary</div>
+            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
+              Switch a station to the §2.7 time-anchored log-reader (playout reads the calendar directly). Per-station and local-only — it never syncs. Flip <strong>Magical Forest</strong> first and verify on air before the next.
+            </div>
+            {libHealth.stations.map((st: any) => {
+              const on = !!flipFlags[st.stationId];
+              return (
+                <div key={st.stationId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 2px", borderBottom: "1px solid var(--border-primary)" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
+                  <button onClick={() => toggleFlip(st.stationId, !on)} title={on ? "Playout: time-anchored log-reader" : "Playout: legacy queue"} style={{
+                    fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 0, cursor: "pointer",
+                    background: on ? "#8868D8" : "transparent",
+                    border: `1px solid ${on ? "#8868D8" : "var(--border-primary)"}`,
+                    color: on ? "#fff" : "var(--text-tertiary)",
+                  }}>{on ? "LOG-READER ON" : "LEGACY"}</button>
                 </div>
               );
             })}

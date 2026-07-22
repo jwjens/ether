@@ -566,6 +566,14 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
+      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write") {
+        // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
+        // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
+        // to the log. Appended to the honest health ledger so the flip's law-bending is visible, never silent.
+        try {
+          require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
+            JSON.stringify({ t: new Date().toISOString(), kind: m.event, ...m }) + "\n");
+        } catch { /* a lost ledger line is cosmetic */ }
       } else if (m.event === "logreader-shadow") {
         // Log-Reader Flip Phase 3 (§2.7): a go-live boundary — the daemon reports what the time-anchored
         // flip WOULD have aired vs what legacy aired. Append the honest JSONL ledger (the burn-in) AND

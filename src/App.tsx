@@ -509,6 +509,7 @@ export default function App() {
   const viewport = useViewport();
   const [bottomMenuOpen, setBottomMenuOpen] = useState(false);
   const [irisOpen, setIrisOpen] = useState(false);   // Iris chat panel — toggled by the bottom-bar IRIS button (2026-07-22)
+  const [clearMenuOpen, setClearMenuOpen] = useState(false);   // CLEAR two-verb popover (Log-Reader Flip §3.2)
   // Macro automation: listen for hotkey-triggered macros + clock-based triggers
   useMacroHotkeys();
   useMacroClock(stationId);
@@ -2699,15 +2700,44 @@ export default function App() {
         <div style={{ width: 1, height: 24, background: "var(--border-primary)", margin: "0 8px" }} />
         {/* NOMINAL health indicator — same height as tabs */}
         <HealthStatusDot onClick={() => setPanel("health")} height={36} />
-        {/* Clear queue — moved here from the (removed) queue header */}
+        {/* CLEAR — two honest verbs (Log-Reader Flip §3.2): Reset to schedule (re-sync + re-cue idle
+            decks from the log) / Clear & regenerate (rewrite forward rows; the in-progress hour is
+            spared). Never a silent clock-refill. */}
         {queueLen > 0 && (
-          <button
-            onClick={() => { if (engine.isDaemonDriven) (engine as any).queueClearPending?.(); else engine.clearQueue?.(); window.dispatchEvent(new CustomEvent('ether:queue-changed')); }}
-            title="Clear the Up Next queue"
-            style={{ height: 36, padding: "0 12px", borderRadius: 0, marginLeft: 6, marginRight: 2, border: "1px solid var(--border-primary)", background: "transparent", color: "var(--text-tertiary)", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer" }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"}
-          >CLEAR</button>
+          <div style={{ position: "relative", marginLeft: 6, marginRight: 2 }}>
+            <button
+              onClick={() => setClearMenuOpen(o => !o)}
+              title="Reset or regenerate the log"
+              style={{ height: 36, padding: "0 12px", borderRadius: 0, border: `1px solid ${clearMenuOpen ? "#ef4444" : "var(--border-primary)"}`, background: "transparent", color: clearMenuOpen ? "#ef4444" : "var(--text-tertiary)", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer" }}
+              onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ef4444"}
+              onMouseLeave={e => { if (!clearMenuOpen) (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+            >CLEAR ▾</button>
+            {clearMenuOpen && (
+              <>
+                <div onClick={() => setClearMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 299 }} />
+                <div style={{ position: "absolute", bottom: "calc(100% + 4px)", left: 0, minWidth: 230, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 300, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
+                  <button
+                    onClick={() => { setClearMenuOpen(false); if (engine.isDaemonDriven) (engine as any).queueClearPending?.(); else engine.clearQueue?.(); window.dispatchEvent(new CustomEvent('ether:queue-changed')); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", background: "transparent", border: "none", borderBottom: "1px solid var(--border-primary)", color: "var(--text-primary)", cursor: "pointer" }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em" }}>Reset to schedule</div>
+                    <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>Re-sync playout + re-cue idle decks from the log</div>
+                  </button>
+                  <button
+                    onClick={async () => { setClearMenuOpen(false); try { await (window as any).ether?.invoke?.("schedule:generateDay", Math.floor(Date.now() / 1000)); } catch { /* ignore */ } if (engine.isDaemonDriven) (engine as any).queueClearPending?.(); window.dispatchEvent(new CustomEvent('ether:queue-changed')); }}
+                    style={{ display: "block", width: "100%", textAlign: "left", padding: "9px 12px", background: "transparent", border: "none", color: "var(--text-primary)", cursor: "pointer" }}
+                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"}
+                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}
+                  >
+                    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.04em" }}>Clear &amp; regenerate</div>
+                    <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>Rewrite forward rows — the in-progress hour is spared</div>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         )}
         {/* View tabs — inline when there's room; collapsed into a hamburger (bottom-right) on tablet */}
         {!viewport.bottomCollapsed && viewTabs.map(({ label, active, fn }) => (

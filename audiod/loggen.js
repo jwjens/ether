@@ -234,6 +234,48 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
   } catch { return { playRow: null, missedCount: 0, mode: "error", driftSec: 0 }; }
 }
 
+// ── Log-Reader Flip Phase 3 (ACTIVATION): the time-anchored read-through fill (§2.3 + §2.7) ────────────
+// READ-ONLY. Returns the queue content (the row-for-now forward — a cache of log rows >= the playhead) +
+// the skipped-past pending row ids to stamp 'missed' (BOUNDED TO THE CURRENT DAY, per the flip-activation
+// ruling) + mode/drift. Rider A (AHEAD = never wait, never dead air): on 'ahead' the earliest FUTURE
+// pending row is returned as the item to air early — items is never empty while any pending music row
+// exists; only 'exhausted'/'error' returns no items, which the engine's emergency floor covers. The item
+// shape matches loggen.fillQueue (schedId carried) so the daemon's proven preload/rotate/loadToDeck path
+// consumes it unchanged. Never throws.
+function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
+  const nowTs = Math.floor(Date.now() / 1000);
+  const d = selectRowForNow(db, stationId, nowTs, slackSec);
+  if (!d.playRow) return { items: [], mode: d.mode, missedRowIds: [], driftSec: 0, aheadBySec: 0 };
+  const anchorTs = d.playRow.scheduled_at;
+  const fmt = getFormatCategoryIds(db, stationId);
+  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const fmtP = fmt.length ? fmt : [];
+  const pendBase = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+    WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
+      AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}`;
+  // MISSED (day-bounded): still-pending on-format rows scheduled TODAY, before the anchor — the flip
+  // stamps these 'missed' at the boundary. Bounding to today prevents a first-boundary sweep of the
+  // entire historical backlog (Phase 1 only stamped aired rows).
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0); const dayStart = Math.floor(d0.getTime() / 1000);
+  let missedRowIds = [];
+  try {
+    missedRowIds = db.prepare(`SELECT gs.id AS row_id ${pendBase} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at`)
+      .all(stationId, ...fmtP, dayStart, anchorTs).map(r => r.row_id);
+  } catch { /* leave empty */ }
+  // ITEMS: the row-for-now forward.
+  let rows = [];
+  try {
+    rows = db.prepare(
+      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
+       ${pendBase} AND gs.scheduled_at >= ? ORDER BY gs.scheduled_at LIMIT ?`
+    ).all(stationId, ...fmtP, anchorTs, count);
+  } catch { /* leave empty */ }
+  const items = rows.filter(r => r.file_path).map(r => ({ ...toItem(r), schedId: r.row_id }));
+  return { items, mode: d.mode, missedRowIds, driftSec: d.driftSec, aheadBySec: d.mode === "ahead" ? Math.max(0, -d.driftSec) : 0 };
+}
+
 // ── JINGLES overlay v1: read the transition-attached JIN placement for the upcoming seam ──────────────
 // The daemon is a LOG-READER (D1=A′): Generate placed JIN rows in generated_schedule bound to the seam
 // (scheduled_at = the incoming music row's start). Given the currently-playing row's scheduled_at (afterTs)
@@ -331,4 +373,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem) };
 }
 
-module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow };
+module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored };

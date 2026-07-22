@@ -31,7 +31,10 @@ const SESSION = crypto.randomUUID();
 // shadow (_shadowEvalTimeAnchor) records, at every go-live, what the flipped reader WOULD have aired
 // vs what legacy aired. That divergence ledger is the burn-in that gates the flip. Inherited from the
 // Electron process env via the daemon spawn (audio-daemon-client.js) — no spawn change needed.
-const LOG_READER_FLIP = process.env.ETHER_LOG_READER === "1";
+const LOG_READER_FLIP = process.env.ETHER_LOG_READER === "1";   // DEV global override (forces ALL stations on)
+// Rider A slack (§2.7): AHEAD airs the next row EARLY silently within this window; beyond it, a health
+// event fires (still never waits, never dead-airs — music floats forward).
+const FLIP_AHEAD_SLACK_SEC = 120;
 
 // Sustained no-playing window before "nobody playing" is treated as a real stall (rides out a
 // crossfade / load-next handoff). Shared by the stall-recovery watchdog AND the honest engine-state
@@ -622,9 +625,30 @@ class DaemonEngine {
     try { this.emit("loadskip", { stationId: this.stationId, title: title || "(untitled)", reason }); } catch { /* never break playout */ }
   }
 
+  // Log-Reader Flip (ACTIVATION) — is the time-anchored log-reader ON for THIS station? Per-station via
+  // station_config_kv key='log_reader_flip' (LOCAL-AUTHORITATIVE, rider B — never synced), plus the dev
+  // env global override. Cached 5s so a canary toggle takes effect within seconds, no restart. Read-only.
+  _logReaderOn() {
+    if (LOG_READER_FLIP) return true;
+    const now = Date.now();
+    if (now - (this._flagCheckedAt || 0) < 5000) return this._flagCached || false;
+    this._flagCheckedAt = now;
+    try {
+      const r = this.db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='log_reader_flip' AND deleted_at IS NULL").get(this.stationId);
+      this._flagCached = !!(r && (r.value === "1" || r.value === "true"));
+    } catch { this._flagCached = false; }
+    return this._flagCached;
+  }
+
   async refillIfNeeded() {
+    if (!this.continuous) return;
+    // Log-Reader Flip: when ON for this station, playout is a READ-THROUGH of generated_schedule via the
+    // §2.7 selector — the queue becomes a cache of log rows >= the playhead (§2.3). OFF path below is
+    // byte-identical to the pre-flip legacy behaviour.
+    if (this._logReaderOn()) return this._refillFromLog();
+    // ── legacy queue-sourced refill (unchanged) ──
     // Refill BEFORE the queue hits 0 (low watermark), so it never sits empty and starves preload.
-    if (!this.continuous || this.queue.length >= 5) return;
+    if (this.queue.length >= 5) return;
     // Throttle so we don't hammer loggen every 250ms tick when the schedule genuinely returns nothing.
     const now = Date.now();
     if (now - (this._lastRefillAt || 0) < 2000) return;
@@ -656,6 +680,92 @@ class DaemonEngine {
     } else {
       this._log("refill: 0 playable from " + fill.source + " (queue=" + this.queue.length + ")");
     }
+  }
+
+  // Log-Reader Flip (ACTIVATION) — the read-through refill (§2.3). The queue becomes a cache of log rows
+  // from the §2.7 playhead forward: keep the cued/bound HEAD (the decks — §2.4a), rebuild the PENDING
+  // region from the anchored read. Time-anchored: BEHIND stamps the skipped-past rows 'missed' (day-
+  // bounded) and drops them from the pending region; AHEAD (rider A) queues the early row so it plays when
+  // the current song ends — never waits, never dead-airs (health event only beyond slack). EXHAUSTED →
+  // the emergency floor (loud). Throttled 2s. The proven preload/rotate/loadToDeck path is untouched.
+  async _refillFromLog() {
+    const now = Date.now();
+    if (now - (this._lastRefillAt || 0) < 2000) return;
+    this._lastRefillAt = now;
+    let r;
+    try { r = loggen.readLogAnchored(this.db, this.stationId, 20); }
+    catch (e) { this._log("logreader refill error: " + String(e)); return; }
+
+    // Cued/bound head — the decks. NEVER dropped (§2.4a: only the pending region re-syncs to the log).
+    const boundHead = this.queue.filter(q => this.boundQids.has(q.qid));
+    const boundSchedIds = new Set(boundHead.map(q => q.schedId).filter(x => x != null));
+
+    // EMERGENCY FLOOR — no pending log row for now (log exhausted / error). Loud, then fall to the
+    // clock/on-format tiers so a flipped station never dead-airs (§2.6). Off-log, and screamed.
+    if (r.mode === "exhausted" || r.mode === "error") {
+      try { this.emit("logreader-floor", { stationId: this.stationId, reason: r.mode }); } catch {}
+      this._log("LOG-READER FLOOR: log " + r.mode + " — emergency clock/on-format fill (never dead-air)");
+      let fill; try { fill = loggen.fillQueue(this.db, this.stationId, 20); } catch { fill = { items: [], source: "none" }; }
+      const kept = this._ensureIds((fill.items || []).filter(it => this._fileOk(it.filePath)));
+      this.queue = [...boundHead, ...kept];
+      this.emit("queue", { stationId: this.stationId, source: "logreader-floor:" + fill.source, items: this.queue });
+      return;
+    }
+
+    // BEHIND — stamp the skipped-past pending rows 'missed' (day-bounded, from readLogAnchored). Loud.
+    if (r.missedRowIds.length) {
+      try {
+        const ph = r.missedRowIds.map(() => "?").join(",");
+        this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending'`).run(...r.missedRowIds, this.stationId);
+      } catch { /* stamping is best-effort; never break playout */ }
+      try { this.emit("logreader-missed", { stationId: this.stationId, count: r.missedRowIds.length, driftSec: r.driftSec }); } catch {}
+      this._log("LOG-READER: behind " + Math.round(r.driftSec / 60) + "m — stamped " + r.missedRowIds.length + " skipped-past rows 'missed' (day-bounded)");
+    }
+
+    // AHEAD (rider A) — the early row is already in r.items and will air when the current song ends. NEVER
+    // wait / dead-air; within slack it airs silently, beyond slack we health-event it (music floats forward).
+    if (r.mode === "ahead" && r.aheadBySec > FLIP_AHEAD_SLACK_SEC) {
+      try { this.emit("logreader-ahead", { stationId: this.stationId, aheadSec: r.aheadBySec }); } catch {}
+      this._log("LOG-READER: ahead " + Math.round(r.aheadBySec / 60) + "m — next row plays early (never wait)");
+    }
+
+    // Rebuild the PENDING region from the anchored log rows (dedup vs the bound head).
+    const seen = new Set(boundSchedIds); const kept = [];
+    for (const it of r.items) {
+      if (it.schedId != null && seen.has(it.schedId)) continue;
+      if (!this._fileOk(it.filePath)) { if (!it.fileKey) this._noteLoadSkip(it.title, "unresolvable — no local file, no file_key"); continue; }
+      if (it.schedId != null) seen.add(it.schedId);
+      kept.push(it);
+    }
+    const freshPending = this._ensureIds(kept);
+    // Only emit if the pending region actually changed (avoid a queue-event storm on the 2s tick).
+    const oldPending = this.queue.filter(q => !this.boundQids.has(q.qid)).map(q => q.schedId).join(",");
+    const newPending = freshPending.map(q => q.schedId).join(",");
+    this.queue = [...boundHead, ...freshPending];
+    if (oldPending !== newPending) {
+      this.emit("queue", { stationId: this.stationId, source: "logreader", items: this.queue });
+      this._log("logreader refill: " + freshPending.length + " pending from log (mode=" + r.mode + ", queue=" + this.queue.length + ")");
+    }
+  }
+
+  // Log-Reader Flip (ACTIVATION, §2.5) — a jock hand-loading a deck is FIRST-CLASS in the one file: write
+  // a generated_schedule row at the playhead stamped source='operator', so the queue/calendar reflect it
+  // and it airs AS a log row (zero off-log airs). Only when the flip is ON for this station. Direct local
+  // write (like playlog/shadow-stamp); best-effort, never breaks the load. info: {title,artist,filePath,
+  // fileKey,songId,durationMs}.
+  _writeOperatorLogRow(info) {
+    if (!this._logReaderOn() || !info || !info.filePath) return;
+    try {
+      const nowTs = Math.floor(Date.now() / 1000);
+      const iso = new Date().toISOString();
+      this.db.prepare(
+        `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, file_key, duration_s, station_id, uuid, state, source, content_class, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'operator', 'MUSIC', ?, ?)`
+      ).run(nowTs, info.songId ?? null, info.title || "", info.artist || "", info.filePath, info.fileKey || null,
+            info.durationMs ? Math.round(info.durationMs / 1000) : null, this.stationId, crypto.randomUUID(), iso, iso);
+      try { this.emit("logreader-operator-write", { stationId: this.stationId, title: info.title || "" }); } catch {}
+      this._log("LOG-READER: operator deck-load → wrote source='operator' log row \"" + (info.title || "") + "\"");
+    } catch (e) { /* never break the operator load */ }
   }
 
   dequeue() {
@@ -792,6 +902,9 @@ class DaemonEngine {
     if (this._deckState(deckId).status === "playing") return;
     this.deckReady.add(deckId);
     this.manualCue.add(deckId);
+    // Flip §2.5: the jock hand-loaded this deck — write it to the log as an operator row so it airs on-log.
+    const st = this._deckState(deckId);
+    this._writeOperatorLogRow({ title: st.title, artist: st.artist, filePath: st.filePath, durationMs: (st.durationSec || 0) * 1000 });
   }
   addToQueue(items) { this.queue.push(...this._ensureIds(this._playable(items))); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   replaceQueue(items) { this.queue = this._ensureIds(this._playable(items)); this._pruneBound(); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
@@ -862,6 +975,8 @@ class DaemonEngine {
     this.deckReady.add(deck);
     this.manualCue.add(deck);
     this._maybeEmitDeck(deck);
+    // Flip §2.5: cue-to-deck is an operator insert — write it to the log so it airs on-log.
+    this._writeOperatorLogRow({ title: songRef.title, artist: songRef.artist, filePath: songRef.filePath, fileKey: songRef.fileKey, songId: songRef.songId ?? songRef.id, durationMs: songRef.durationMs });
     return true;
   }
 
