@@ -16,6 +16,36 @@ const TABLE              = 'station_config_kv';
 const HAS_STATION_ID_COL = true;
 const PATCHABLE          = ["value","updated_at"];
 
+// LOCAL-AUTHORITATIVE keys (rider B, 2026-07-22): these station_config_kv keys are per-machine truth
+// that must NEVER cross sync in either direction — the is_active lesson (cloud sync clobbered local
+// switches). `log_reader_flip` selects a station's PLAYOUT ENGINE; a remote machine's sync must never be
+// able to flip it. Enforced two ways: (OUT) writes go through stationConfigKvSetLocal which does NOT log
+// a mutation, so nothing ever enters the outbound stream; (IN) the mutation-logging writers below skip
+// these keys, so an inbound/legacy mutation can never apply one. (The peer sync engine is also off by
+// default, so a flag mutation cannot even exist — this is belt-and-suspenders.)
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip']);
+const isLocalOnlyKey = (k) => LOCAL_ONLY_KEYS.has(k);
+
+// Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the
+// value never becomes a syncable mutation. The ONLY sanctioned writer for a LOCAL_ONLY_KEYS key.
+function stationConfigKvSetLocal(db, stationId, key, value) {
+  if (stationId == null) throw new Error(`[station_config_kv] station_id required for setLocal`);
+  const now = new Date().toISOString();
+  const existing = db.prepare(`SELECT uuid FROM ${TABLE} WHERE station_id = ? AND key = ?`).get(stationId, key);
+  if (existing) {
+    db.prepare(`UPDATE ${TABLE} SET value = ?, deleted_at = NULL, updated_at = ? WHERE uuid = ?`).run(value, now, existing.uuid);
+    return { ok: true, uuid: existing.uuid };
+  }
+  const crypto = require('crypto');
+  const uuid = crypto.randomUUID();
+  db.prepare(`INSERT INTO ${TABLE} (station_id, key, value, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, NULL)`).run(stationId, key, value, uuid, now, now);
+  return { ok: true, uuid };
+}
+function stationConfigKvGetValue(db, stationId, key) {
+  const r = db.prepare(`SELECT value FROM ${TABLE} WHERE station_id = ? AND key = ? AND deleted_at IS NULL`).get(stationId, key);
+  return r ? r.value : null;
+}
+
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
 function validateScope() {
@@ -49,6 +79,9 @@ function stationConfigKvGet(db, uuid) {
 
 function stationConfigKvCreate(db, payload) {
   validateScope();
+  // Rider B: a local-authoritative key must never be created via the mutation-logging path (that is the
+  // inbound-apply / legacy vector). Skip it — the sanctioned writer is stationConfigKvSetLocal.
+  if (isLocalOnlyKey(payload && payload.key)) return { ok: true, skippedLocalOnly: true };
   if (HAS_STATION_ID_COL && payload.station_id == null) {
     throw new Error(`[station_config_kv] station_id is required for station-scoped create`);
   }
@@ -82,6 +115,9 @@ function stationConfigKvUpdate(db, uuid, patch) {
   validateScope();
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
   if (!existing) throw new Error(`[station_config_kv] row not found: ${uuid}`);
+  // Rider B: never mutation-log an update to a local-authoritative key (blocks an inbound update landing
+  // on the flag row by uuid). Local flips use stationConfigKvSetLocal.
+  if (isLocalOnlyKey(existing.key)) return stationConfigKvGet(db, uuid);
 
   const forbidden = Object.keys(patch).filter(k => k !== 'actor_id' && !PATCHABLE.includes(k));
   if (forbidden.length > 0) {
@@ -143,6 +179,9 @@ function stationConfigKvDelete(db, uuid, stationId) {
 
 function stationConfigKvUpsertByKey(db, stationId, key, value) {
   validateScope();
+  // Rider B: never write a local-authoritative key through the mutation-logging path. This is both the
+  // inbound-apply guard and a guard against any caller accidentally syncing the flag.
+  if (isLocalOnlyKey(key)) return { ok: true, skippedLocalOnly: true };
   if (stationId == null) throw new Error(`[station_config_kv] station_id required for upsertByKey`);
   const existing = db.prepare(
     `SELECT * FROM ${TABLE} WHERE station_id = ? AND key = ?`
@@ -240,6 +279,18 @@ function installStationConfigKv(ipcMain, db) {
     catch (e) { return { ok: false, error: e.message }; }
   });
 
+  // Rider B: the LOCAL-ONLY setter — the canary toggle for log_reader_flip goes through here (no
+  // mutation logged → never syncs). Rejects any non-local-only key so it can't be misused to bypass sync.
+  ipcMain.handle('station_config_kv:set-local', (_, stationId, key, value) => {
+    try {
+      if (!isLocalOnlyKey(key)) return { ok: false, error: `set-local refuses non-local-only key "${key}"` };
+      return stationConfigKvSetLocal(getDb(), stationId, key, value);
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('station_config_kv:get-value', (_, stationId, key) => {
+    try { return { ok: true, value: stationConfigKvGetValue(getDb(), stationId, key) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
 
   console.log('[station_config_kv] handlers installed');
 }
@@ -255,5 +306,8 @@ module.exports = {
 
   stationConfigKvUpsertByKey,
   stationConfigKvRemoveByKey,
+  stationConfigKvSetLocal,
+  stationConfigKvGetValue,
+  isLocalOnlyKey,
 
 };

@@ -324,6 +324,7 @@ const REGISTRY = {
       state:        'local-only',   // 'pending' | 'playing' | 'played' | 'skipped' — playhead = the 'playing' row
       played_at:    'local-only',   // unix seconds the row actually aired (engine-stamped, Phase 1)
       seq:          'local-only',   // local play-order (decoupled from scheduled_at); sync treatment revisited at Phase 4 reorder
+      source:       'local-only',   // v34: provenance — NULL/'machine' | 'operator' (jock deck-load) | 'autofit'. Local-authoritative playout state (§2.5)
       station_id:   'scalar',
       uuid:         'scalar',
       created_at:   'scalar',
