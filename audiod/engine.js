@@ -494,6 +494,21 @@ class DaemonEngine {
     return this.advanceP;
   }
 
+  // Bug-A guard (2026-07-22): decide the deferred post-crossfade stop for an outgoing deck. Pure +
+  // testable (audiod/smoke-seam-stop.js). Returns:
+  //   'skip-reloaded' — a fresh source was loaded onto this deck since the rotate (deckGen bumped); the
+  //                     deferred stop must NEVER wipe it.
+  //   'skip-target'   — this IS the deck we rotated INTO; never stop the incoming/live deck.
+  //   'stop'          — same outgoing source, not the target → STOP it, even if it still reports
+  //                     "playing" (a still-playing outgoing deck past the grace is the overlap/leak the
+  //                     stop exists to clear). The old code returned early on status==="playing", which
+  //                     let a delayed stop leak a decoding deck — this is the fix.
+  _outgoingStopAction(fromId, fromGen, toId) {
+    if (this.deckGen[fromId] !== fromGen) return "skip-reloaded";
+    if (fromId === toId) return "skip-target";
+    return "stop";
+  }
+
   handleRotate(fromId, toId) {
     this._advance("handleRotate", async () => {
         const live = this._state();
@@ -522,8 +537,13 @@ class DaemonEngine {
         // floating off-chain setTimeout(_stop) that could land after a re-preload and wipe a fresh source.
         const fromGen = this.deckGen[fromId];
         setTimeout(() => this._advance("stop:" + fromId, async () => {
-          if (this.deckGen[fromId] !== fromGen) return;             // re-loaded → fresh source, don't wipe
-          if (this._deckState(fromId).status === "playing") return; // live again → never stop a playing deck
+          const act = this._outgoingStopAction(fromId, fromGen, toId);
+          if (act !== "stop") return;
+          // Bug-A hardening (2026-07-22): the OLD outgoing source is still on this deck (deckGen unchanged)
+          // and it isn't the deck we rotated INTO — so it MUST stop. Do NOT skip merely because it still
+          // reports "playing": a still-playing outgoing deck past the crossfade grace IS the leaked/overlap
+          // deck this deferred stop exists to clear (the 2026-07-21 OF two-decks incident). Force the stop.
+          if (this._deckState(fromId).status === "playing") this._log("stop:" + fromId + " — outgoing still playing past grace (same source) → FORCE stop (Bug-A guard)");
           this._stop(fromId);
           this.deckReady.delete(fromId);
           this.endTriggered.delete(fromId);
@@ -695,13 +715,19 @@ class DaemonEngine {
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
     // throws into the playout path.
     try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION, filePath: st.filePath }); } catch {}
-    // Log-Reader Flip Phase 3 — TIME-ANCHORED boundary SHADOW (§2.7). BEFORE the Phase 1 stamp (while the
-    // aired row is still 'pending' and thus comparable), record what the flipped reader WOULD air "now"
-    // vs what legacy just put on air. OBSERVATIONAL — never drives playout.
-    this._shadowEvalTimeAnchor(deckId, this.deckSchedId[deckId]);
-    // Log-Reader Flip Phase 1 — SHADOW playhead writer. Stamp the generated_schedule row's local-only
-    // lifecycle as this deck goes live. OBSERVATIONAL ONLY — changes no playout/queue behavior.
-    this._shadowStampPlayhead(this.deckSchedId[deckId]);
+    // Log-Reader Flip Phase 1/3 — SHADOW (observational), DEFERRED OFF THE ADVANCE CRITICAL PATH
+    // (2026-07-22 incident fix). These do DB read/write (a COUNT + two UPDATEs); under DB contention a
+    // slow op here previously stalled _fireStart → stalled the serialized advance chain → delayed the
+    // deferred deck-stop → a leaked/overlapping deck. setImmediate runs them AFTER the current advance
+    // tick completes, so the shadow can NEVER again delay a rotation or its stop — the shadow's own stated
+    // principle ("must never perturb playout"), now enforced by placement. Capture the row id now
+    // (deckSchedId may be overwritten by a later load before this fires). Order preserved: EVAL (compares
+    // while the row is still 'pending') THEN STAMP.
+    const _shadowSchedId = this.deckSchedId[deckId];
+    setImmediate(() => {
+      try { this._shadowEvalTimeAnchor(deckId, _shadowSchedId); } catch { /* never perturb playout */ }
+      try { this._shadowStampPlayhead(_shadowSchedId); } catch { /* never perturb playout */ }
+    });
   }
 
   // Log-Reader Flip Phase 3 — TIME-ANCHORED boundary SHADOW (design §2.7). At each go-live boundary,

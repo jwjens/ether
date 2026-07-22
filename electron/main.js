@@ -2598,6 +2598,26 @@ function cachedStartupStatus() {
   return val;
 }
 
+// Main event-loop lag sense (2026-07-22): a 1s self-timer measures its own scheduling drift. When the
+// main thread is blocked (a synchronous DB sweep, a big Generate), this timer fires late by the block
+// duration — that late-by-ms IS the event-loop lag. Canonical and daemon-independent (unlike the ping
+// RTT). Surfaced on the Health Monitor so a UI freeze (e.g. the 2026-07-21 ~17s stall) is an observed
+// fact on the panel, not reconstructed from a log. `peak` holds the worst lag in a rolling ~60s window
+// so a brief freeze stays visible past the single tick that caught it.
+let _mainLoopLagMs = 0, _mainLoopLagPeakMs = 0, _mainLoopLagPeakAt = 0;
+{
+  const PERIOD = 1000;
+  let _expected = Date.now() + PERIOD;
+  const _t = setInterval(() => {
+    const nowT = Date.now();
+    const lag = Math.max(0, nowT - _expected);
+    _expected = nowT + PERIOD;
+    _mainLoopLagMs = lag;
+    if (lag >= _mainLoopLagPeakMs || (nowT - _mainLoopLagPeakAt) > 60000) { _mainLoopLagPeakMs = lag; _mainLoopLagPeakAt = nowT; }
+  }, PERIOD);
+  if (_t.unref) _t.unref();
+}
+
 // Single source of truth for the /health payload — shared by the GET /health
 // route (the HA watchdog's poll) and the ha:dashboard IPC (the renderer's System
 // Health panel). MUST stay lock-free: reads only Node-native values + the atomic
@@ -2629,6 +2649,8 @@ function buildHealthSnapshot() {
     sync,
     station: { activeId },
     memRssMb,
+    eventLoopLagMs: _mainLoopLagMs,          // (2026-07-22) current main event-loop lag
+    eventLoopLagPeakMs: _mainLoopLagPeakMs,  // worst in the last ~60s
   };
 }
 

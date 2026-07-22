@@ -523,6 +523,19 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   status="ok"
                   sub="Main process resident set"
                 />
+                {/* Event-loop lag (2026-07-22): a UI freeze must be a fact on the panel. peak = worst in ~60s. */}
+                {hh.eventLoopLagMs != null && (() => {
+                  const peak = hh.eventLoopLagPeakMs ?? hh.eventLoopLagMs;
+                  const st = peak >= 2000 ? "error" : peak >= 500 ? "warn" : "ok";
+                  return (
+                    <HealthRow
+                      label="Event-loop lag"
+                      value={peak >= 1000 ? `${(peak / 1000).toFixed(1)}s peak` : `${peak} ms peak`}
+                      status={st as any}
+                      sub={`now ${hh.eventLoopLagMs} ms · a frozen UI shows here (main thread blocked)`}
+                    />
+                  );
+                })()}
               </>
             );
           })() : (

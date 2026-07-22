@@ -93,29 +93,41 @@ function createLibraryHealth(opts) {
     const songs = db.prepare(
       `SELECT s.id, s.title, s.file_path, s.file_key, s.artist_id, s.no_repeat_hours
          FROM songs s WHERE s.category_id IN ${inCats} AND s.deleted_at IS NULL`).all();
-    const lastPlay = db.prepare(
-      `SELECT MAX(played_at) m FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL`);
-    const lastArtist = db.prepare(
-      `SELECT MAX(pl.played_at) m FROM play_log pl JOIN songs s2 ON s2.file_path=pl.file_path
-         WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s2.artist_id=?`);
-    // Slice C: the repaired PLAYS join — station-scoped play count by file_path (this is what the
-    // Library page's plays column reads, replacing the stale/empty songs.play_count).
-    const playCount = db.prepare(
-      `SELECT COUNT(*) c FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL`);
+    // BATCHED (2026-07-22 main-loop-freeze fix): the previous version ran THREE play_log subqueries PER
+    // SONG (last-play + last-artist + count) synchronously — over ~all songs ×3 stations every sweep,
+    // that froze the main event loop (measured 17s). Replace with TWO set-based scans: one GROUP BY
+    // file_path (last-play + count) and one GROUP BY artist (last-play), looked up in memory. Same output.
+    const byPath = new Map();     // file_path -> { last, count }
+    try {
+      for (const r of db.prepare(
+        `SELECT file_path, MAX(played_at) m, COUNT(*) c FROM play_log
+           WHERE station_id=? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path`).all(sid))
+        byPath.set(r.file_path, { last: r.m || 0, count: r.c || 0 });
+    } catch { /* empty play_log */ }
+    const byArtist = new Map();    // artist_id -> last-play (only needed when artist separation is on)
+    if (artistSepSec) {
+      try {
+        for (const r of db.prepare(
+          `SELECT s2.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s2 ON s2.file_path=pl.file_path
+             WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s2.artist_id IS NOT NULL GROUP BY s2.artist_id`).all(sid))
+          byArtist.set(r.aid, r.m || 0);
+      } catch { /* no artist plays */ }
+    }
     const out = []; const sum = { eligible: 0, resting: 0, neverPlayed: 0, unresolvable: 0, total: songs.length };
     for (const s of songs) {
       const resolvable = exists(s.file_path) || !!s.file_key;
-      const lp = s.file_path ? (lastPlay.get(sid, s.file_path).m || 0) : 0;
+      const pe = s.file_path ? byPath.get(s.file_path) : null;
+      const lp = pe ? pe.last : 0;
       const songRest = lp ? Math.max(0, (lp + (s.no_repeat_hours || 3) * 3600) - now) : 0;
       let artRest = 0;
-      if (artistSepSec && s.artist_id) { const la = lastArtist.get(sid, s.artist_id).m || 0; artRest = la ? Math.max(0, (la + artistSepSec) - now) : 0; }
+      if (artistSepSec && s.artist_id) { const la = byArtist.get(s.artist_id) || 0; artRest = la ? Math.max(0, (la + artistSepSec) - now) : 0; }
       const rest = Math.max(songRest, artRest);
       let status;
       if (!resolvable) { status = 'UNRESOLVABLE'; sum.unresolvable++; }
       else if (!lp) { status = 'NEVER_PLAYED'; sum.neverPlayed++; }
       else if (rest > 0) { status = 'RESTING'; sum.resting++; }
       else { status = 'ELIGIBLE'; sum.eligible++; }
-      const plays = s.file_path ? playCount.get(sid, s.file_path).c : 0;
+      const plays = pe ? pe.count : 0;
       out.push({ id: s.id, title: s.title, plays, lastPlayed: lp || null, restSec: rest, status, resolvable });
     }
     return { rows: out, summary: sum };
@@ -213,6 +225,7 @@ function createLibraryHealth(opts) {
 
   const _lintSeen = new Set();   // rowIds already event-logged, so a violation is reported once
   function computeAll() {
+    const _sweepStart = Date.now();   // (2026-07-22) observe the sweep cost — a slow sweep freezes main
     const db = getDb();
     const snap = { t: new Date().toISOString(), stations: [], lint: {} };
     for (const sid of stationIds(db)) {
@@ -231,8 +244,9 @@ function createLibraryHealth(opts) {
       } catch (e) { /* one station never breaks the rest */ }
     }
     if (_lintSeen.size > 4000) _lintSeen.clear();   // bounded — old rows have long aired
+    snap.sweepMs = Date.now() - _sweepStart;        // (2026-07-22) how long this sweep held the main loop
     lastSnapshot = snap;
-    appendJsonl({ kind: 'library-health', stations: snap.stations });
+    appendJsonl({ kind: 'library-health', stations: snap.stations, sweepMs: snap.sweepMs });
     try { broadcast('library-health', snap); } catch { /* no window yet */ }
     return snap;
   }
