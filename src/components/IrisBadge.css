@@ -1,26 +1,7 @@
-/* Iris presence surface — bottom-right, never obscuring broadcast UI. Glow = badge pulse on speaking. */
-.iris-root { position: fixed; right: 18px; bottom: 18px; z-index: 9000;
-  display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
-
-.iris-badge { position: relative; width: 52px; height: 52px; border-radius: 50%; border: none; cursor: pointer;
-  background: linear-gradient(135deg, #6040C0, #8868D8); color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.45); transition: transform 0.12s; }
-.iris-badge:hover { transform: translateY(-2px); }
-.iris-badge-glyph { font-size: 22px; line-height: 1; }
-.iris-badge.offline { background: #23232c; color: #7a7a86; }
-
-/* THE GLOW — soft purple pulse synced to Iris speaking (badge-only; never a screen-wide glow). */
-.iris-badge.speaking { animation: iris-pulse 1.3s ease-in-out infinite; }
-@keyframes iris-pulse {
-  0%,100% { box-shadow: 0 6px 20px rgba(0,0,0,0.45), 0 0 0 0 rgba(136,104,216,0.5); }
-  50%     { box-shadow: 0 6px 20px rgba(0,0,0,0.45), 0 0 24px 7px rgba(136,104,216,0.9); }
-}
-
-.iris-badge-dot { position: absolute; right: 2px; top: 2px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid #14141a; background: #6b7280; }
-.iris-badge-dot.online-idle, .iris-badge-dot.thinking, .iris-badge-dot.speaking { background: #34d399; }
-.iris-badge-dot.error { background: #ef4444; }
-.iris-badge-dot.offline { background: #6b7280; }
+/* Iris chat panel — anchored bottom-right, just above the bottom toolbar. The trigger is the bottom-bar
+   IRIS button (App.tsx, the one purple button); the floating circle was retired 2026-07-22. */
+.iris-root { position: fixed; right: 12px; bottom: 48px; z-index: 9000;
+  display: flex; flex-direction: column; align-items: flex-end; }
 
 .iris-panel { width: 340px; max-height: 60vh; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
   background: #14141a; border: 1px solid rgba(136,104,216,0.35); box-shadow: 0 16px 48px rgba(0,0,0,0.6); }

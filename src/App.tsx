@@ -508,6 +508,7 @@ export default function App() {
   const engine = getEngine(stationId);
   const viewport = useViewport();
   const [bottomMenuOpen, setBottomMenuOpen] = useState(false);
+  const [irisOpen, setIrisOpen] = useState(false);   // Iris chat panel — toggled by the bottom-bar IRIS button (2026-07-22)
   // Macro automation: listen for hotkey-triggered macros + clock-based triggers
   useMacroHotkeys();
   useMacroClock(stationId);
@@ -2108,7 +2109,7 @@ export default function App() {
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
       <TrialGate />
-      <IrisBadge />{/* Iris presence surface — always present (contract: docs/iris-ether-contract.md) */}
+      <IrisBadge open={irisOpen} onClose={() => setIrisOpen(false)} />{/* Iris chat panel — opened by the bottom-bar IRIS button (contract: docs/iris-ether-contract.md) */}
       <SchedulerHealthHost />{/* Movable Scheduler Health panel — opened from Tools */}
 
       {/* ── Header — 3-column grid (1fr | clock | 1fr) keeps the clock mathematically centered ── */}
@@ -2751,7 +2752,7 @@ export default function App() {
             cursor: (delayArmed && delayFill >= 1) ? "pointer" : "not-allowed",
           }}>DUMP</button>
 
-        {/* XFADE — far right */}
+        {/* XFADE */}
         <button onClick={handleXfade} style={{
           height: 36, padding: "0 14px", borderRadius: 0,
           background: xfadeActive ? "#ef4444" : "transparent",
@@ -2760,6 +2761,20 @@ export default function App() {
           fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
           cursor: "pointer", transition: "all 0.12s",
         }}>XFADE</button>
+
+        {/* IRIS — far right; the ONE purple button (Iris's brand). Standard bar rectangle; replaces the
+            old floating circle. Opens exactly what the circle opened (the chat panel). */}
+        <button onClick={() => setIrisOpen(o => !o)} title="Iris — your assistant producer" style={{
+          height: 36, padding: "0 14px", borderRadius: 0, marginLeft: 2, flexShrink: 0,
+          background: irisOpen ? "#8868D8" : "transparent",
+          border: "1px solid #8868D8",
+          color: irisOpen ? "#fff" : "#8868D8",
+          fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
+          cursor: "pointer", transition: "all 0.12s",
+        }}
+          onMouseEnter={e => { if (!irisOpen) (e.currentTarget as HTMLElement).style.background = "color-mix(in srgb, #8868D8 16%, transparent)"; }}
+          onMouseLeave={e => { if (!irisOpen) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+        >IRIS</button>
 
         {/* Collapsed view-tabs → bottom-right hamburger menu (tablet/narrow) */}
         {viewport.bottomCollapsed && (

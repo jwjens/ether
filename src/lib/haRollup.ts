@@ -12,6 +12,8 @@ export interface HaHealthSnapshot {
   sync: { running: boolean; initialComplete: boolean; appliedTotal: number } | null;
   station: { activeId: number | string | null };
   memRssMb: number | null;
+  eventLoopLagMs?: number;       // v4.4.77: current main event-loop lag (ms)
+  eventLoopLagPeakMs?: number;   // worst in the last ~60s
 }
 
 export interface HaControlPlane {

@@ -9,9 +9,11 @@ import "./IrisBadge.css";
 type Msg = { from: "you" | "iris"; text: string };
 type Status = "offline" | "connecting" | "online-idle" | "thinking" | "speaking" | "error";
 
-export default function IrisBadge() {
+// Controlled by the bottom-bar IRIS button (2026-07-22): the floating purple circle was replaced by a
+// standard bar rectangle (App.tsx, far right, the only purple button). This surface now renders ONLY the
+// chat panel; `open`/`onClose` are owned by App. Behavior on open is unchanged.
+export default function IrisBadge({ open, onClose }: { open: boolean; onClose: () => void }) {
   const iris = (window as any).ether?.iris;
-  const [open, setOpen] = useState(false);
   const [connected, setConnected] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [thinking, setThinking] = useState(false);
@@ -69,7 +71,7 @@ export default function IrisBadge() {
           <div className="iris-head">
             <span className={`iris-dot ${status}`} />
             <span className="iris-title">{label[status]}</span>
-            <button className="iris-x" onClick={() => setOpen(false)} aria-label="Close Iris">✕</button>
+            <button className="iris-x" onClick={onClose} aria-label="Close Iris">✕</button>
           </div>
           <div className="iris-msgs" ref={listRef}>
             {msgs.length === 0 && (
@@ -94,15 +96,6 @@ export default function IrisBadge() {
           </div>
         </div>
       )}
-      <button
-        className={`iris-badge ${status}${speaking ? " speaking" : ""}`}
-        onClick={() => setOpen(o => !o)}
-        aria-label={label[status]}
-        title={label[status]}
-      >
-        <span className="iris-badge-glyph">◈</span>
-        <span className={`iris-badge-dot ${status}`} />
-      </button>
     </div>
   );
 }
