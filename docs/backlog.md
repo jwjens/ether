@@ -1,5 +1,22 @@
 # Backlog
 
+## Auto-generation — rolling-horizon top-up (filed 2026-07-22)
+- **PREREQUISITE — the Generate-worker release.** Generate must move OFF the main thread into the worker
+  (the same class as the 4.4.77 senses-freeze fix: synchronous 24h×slots generation blocks the main
+  event loop — a `schedule:generate` 7-day run was the likely 17s freeze on 2026-07-21). Once Generate
+  runs in the worker, the automatic pass below can hang off it. Auto-generation REQUIRES this — do not
+  build it before the worker exists.
+- **AUTO-GENERATION — rolling-horizon top-up per station (requires the Generate-worker release).** A
+  daily background check **in the worker, never main-thread** generates any missing days to maintain a
+  configurable horizon (default **7 days ahead**; per-station setting + on/off). Respects the
+  in-progress-hour rule and the clock law (deleted_at-filtered slots, per the 4.4.76 fix). Every run
+  emits a health event ("generated N hours for station X" / "nothing needed"). Manual Generate stays for
+  edits/regeneration; the automatic pass makes **"the log ran dry" a retired failure class**.
+  - **NEW SENSE — "Schedule horizon" Health Monitor row per station:** days of log remaining (green ≥5,
+    yellow <3, red <1) — the log's fuel gauge, visible. (Ships as part of this release.)
+  - Sequencing after: Log-Reader Phase 3 flip (the flip promotes the log to the single playout source;
+    a dry log there = dead air, so the horizon top-up + fuel gauge matter most once the flip is on).
+
 ## Jingles re-enable + the dead-thread class (2026-07-15 maiden-fire crash)
 - **NEXT NATIVE RELEASE — `audio.rs:988` CART-exhaustion out-of-bounds (the root fix).** The mixer's "source exhausted" loop iterates all 7 decks and does `fin.set(DECK_LETTERS[i])`, but `DECK_LETTERS` is len 6 (`[&str;6]`, `audio.rs:577`) and slot 6 is the CART channel — so when a CART source plays to natural end (first done by the maiden jingle overlay), `DECK_LETTERS[6]` panics and kills the `cpal_wasapi_out` thread → permanent dead air. Fix: handle the CART slot by its own key (`fin.set("CART")`), never index `DECK_LETTERS`. Prove with an explicit **CART-plays-to-natural-end** test, then flip the jingle kill-switch (`audiod/loggen.js JINGLES_ENABLED`) back to true and re-enable jingles. See `docs/incident-jingle-cart-panic-2026-07-15.md`. (added 2026-07-15)
 - **DEAD-THREAD RECOVERY (same family, still unbuilt) — a panic that kills a mixer/output thread must NOT equal permanent dead air.** Today proved this scenario is real: `cpal_wasapi_out` panicked, the thread died, the station stayed silent forever. The auto-recovery watchman (`startAudioLivenessWatchdog`, REOPEN-on-wedge) and AUTO-cycling CANNOT cure this class — you can't revive a dead thread by re-issuing automationStart; only rebuilding the stream/output can. Build the fix-plan's **thread-death detection + stream rebuild** machinery: detect a dead output/mixer thread (frames frozen + thread gone) and rebuild the cpal output + program bus for that station, unattended. (added 2026-07-15)
