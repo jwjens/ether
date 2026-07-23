@@ -2097,6 +2097,7 @@ export default function App() {
     { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
     { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
     { label: "JINGLES",    active: progPanel === "jingles",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "jingles" ? null : "jingles"); } },
+    { label: "SPOTS",      active: panel === "spots",          fn: () => { setShowCarts(false); setProgPanel(null); setPanel("spots"); } },
     { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
     { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
     { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
@@ -4368,6 +4369,25 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   // Item 1 — cue popup menu (anchored to the row's arrow button) + Quick Cue slide-up panel.
   const [cueMenu, setCueMenu] = useState<{ song: SongRow; x: number; y: number } | null>(null);
   const [quickCueSong, setQuickCueSong] = useState<SongRow | null>(null);
+  // "Mark as Spot" (2026-07-22) — the fast path from a library track into the Spots traffic manager.
+  // The small dialog picks a spot category (existing or create-new inline) + type; on confirm the track
+  // becomes content_class='SPOT' (leaves music rotation, same discipline as JIN/SWP) and a spots record
+  // is created carrying title + file_path. Spots & Promos stays the full manager (dates/max-plays/advertiser).
+  const [spotMark, setSpotMark] = useState<{ song: SongRow; catId: number | null; type: string; newCat: string } | null>(null);
+  const [spotCats, setSpotCats] = useState<{ id: number; name: string; color: string | null }[]>([]);
+  const loadSpotCats = useCallback(async () => {
+    try { const r = await (window as any).ether.spotCategories.list(stationId); setSpotCats((r && r.rows) || []); } catch { setSpotCats([]); }
+  }, [stationId]);
+  const confirmSpotMark = async () => {
+    if (!spotMark) return;
+    const ether = (window as any).ether;
+    let catId = spotMark.catId;
+    const nc = spotMark.newCat.trim();
+    if (nc) { try { const r = await ether.spotCategories.create({ station_id: stationId, name: nc, color: "#f59e0b" }); catId = r?.row?.id ?? catId; } catch { /* proceed uncategorized */ } }
+    try { await ether.songs.updateById(spotMark.song.id, { content_class: "SPOT" }); } catch {}
+    try { await ether.spots.create({ station_id: stationId, title: spotMark.song.title, file_path: spotMark.song.file_path, spot_type: spotMark.type || "commercial", spot_category_id: catId ?? null }); } catch {}
+    setSpotMark(null); load();
+  };
   // Borrowed catalog → read-only: gate ingest + core-field edits (the hard guarantee lives in
   // electron/sync/mutation-writer.js). Station-scoped tagging/programming stays fully editable.
   const libraryBorrowed = useLibraryBorrowed();
@@ -5043,6 +5063,11 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
             { label: ctxMenu.song.content_class === "JIN" ? "Unmark Jingle (→ Music)" : "Mark as Jingle (JIN)", action: async () => { const next = ctxMenu.song.content_class === "JIN" ? "MUSIC" : "JIN"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
             { label: ctxMenu.song.content_class === "SWP" ? "Unmark Sweeper (→ Music)" : "Mark as Sweeper (SWP)", action: async () => { const next = ctxMenu.song.content_class === "SWP" ? "MUSIC" : "SWP"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
+            { label: ctxMenu.song.content_class === "SPOT" ? "Unmark Spot (→ Music)" : "Mark as Spot (SPOT)", action: async () => {
+              const song = ctxMenu.song; setCtxMenu(null);
+              if (song.content_class === "SPOT") { await (window as any).ether.songs.updateById(song.id, { content_class: "MUSIC" }); load(); return; }
+              await loadSpotCats(); setSpotMark({ song, catId: null, type: "commercial", newCat: "" });
+            } },
             { label: ctxMenu.song.cart_id ? `Cart # — ${ctxMenu.song.cart_id}` : "Enter Cart #", action: () => openCartId(ctxMenu.song) },
             { label: "Load to Deck A", action: () => { onLoadA(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
@@ -5060,6 +5085,38 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                 {item.label}
               </div>
           )}
+        </div>
+      )}
+
+      {/* Mark as Spot — category + type, then create the spots record + tag the track SPOT */}
+      {spotMark && (
+        <div onMouseDown={() => setSpotMark(null)} style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div onMouseDown={e => e.stopPropagation()} style={{ width: 400, background: "var(--bg-secondary)", border: "1px solid #f59e0b", boxShadow: "0 16px 48px rgba(0,0,0,0.6)", padding: 18 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#f59e0b", marginBottom: 4 }}>Mark as Spot</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
+              “{spotMark.song.title}” leaves music rotation and becomes a spot. Fine-tune dates, max-plays &amp; advertiser later in <strong>Spots &amp; Promos</strong>.
+            </div>
+            <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>Category</label>
+            <select value={spotMark.catId ?? ""} onChange={e => setSpotMark(m => m && { ...m, catId: e.target.value ? Number(e.target.value) : null, newCat: "" })}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, marginBottom: 8 }}>
+              <option value="">— Uncategorized —</option>
+              {spotCats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <input value={spotMark.newCat} onChange={e => setSpotMark(m => m && { ...m, newCat: e.target.value, catId: e.target.value ? null : m.catId })}
+              placeholder="…or type a new category name" style={{ width: "100%", padding: "8px 10px", background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, marginBottom: 14 }} />
+            <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>Type</label>
+            <select value={spotMark.type} onChange={e => setSpotMark(m => m && { ...m, type: e.target.value })}
+              style={{ width: "100%", padding: "8px 10px", background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, marginBottom: 18 }}>
+              <option value="commercial">Commercial</option>
+              <option value="promo">Promo</option>
+              <option value="psa">PSA</option>
+              <option value="sponsorship">Sponsorship</option>
+            </select>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setSpotMark(null)} style={{ padding: "8px 16px", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
+              <button onClick={confirmSpotMark} style={{ padding: "8px 16px", background: "#f59e0b", border: "1px solid #f59e0b", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Mark as Spot</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -5258,6 +5315,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     )}
                     {s.content_class === "SWP" && (
                       <span title="Sweeper — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#4f46e5", background: "rgba(79, 70, 229, 0.14)", border: "1px solid rgba(79, 70, 229, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SWP</span>
+                    )}
+                    {s.content_class === "SPOT" && (
+                      <span title="Spot — commercial/promo; excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#f59e0b", background: "rgba(245, 158, 11, 0.14)", border: "1px solid rgba(245, 158, 11, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SPOT</span>
                     )}
                     <InlineNameEditor
                       value={s.title || ""}

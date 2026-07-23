@@ -831,6 +831,23 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   // Snapshots (rehydrated)
   const [snapshots, setSnapshots] = useState<MixerSnapshot[]>(() => studioCache?.snapshots ?? []);
   const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  // Library search import (2026-07-22) — same title/artist search the Library uses; results drag onto any
+  // track/timeline and resolve via the standard path (local or R2, like a deck load). Complements + Import.
+  const [libQ, setLibQ] = useState("");
+  const [libResults, setLibResults] = useState<any[]>([]);
+  const [libOpen, setLibOpen] = useState(false);
+  const runLibSearch = useCallback(async (q: string) => {
+    setLibQ(q);
+    if (!q.trim()) { setLibResults([]); setLibOpen(false); return; }
+    try {
+      const rows = await query(
+        `SELECT s.id, s.title, a.name AS artist, s.file_path, s.file_key FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+          WHERE s.deleted_at IS NULL AND s.file_path IS NOT NULL AND (s.title LIKE ? OR a.name LIKE ?) ORDER BY s.title LIMIT 40`,
+        [`%${q.trim()}%`, `%${q.trim()}%`]
+      );
+      setLibResults(Array.isArray(rows) ? rows : []); setLibOpen(true);
+    } catch { setLibResults([]); }
+  }, []);
 
   // Session version control
   const [sessionId, setSessionId]           = useState<string>(() => uuid());
@@ -2742,6 +2759,25 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
       dropMs = Math.max(0, xToMs(x));
     }
+    // Library search import (2026-07-22): a dragged library result carries our custom payload. Resolve it
+    // the standard way (local-first → R2-by-file_key, like a deck load), then load onto this track at the
+    // drop position via a file:// URL (the same renderer path ClipEditor uses).
+    const libData = e.dataTransfer.getData("application/x-ether-library");
+    if (libData) {
+      try {
+        const item = JSON.parse(libData);
+        (async () => {
+          try {
+            const ether = (window as any).ether;
+            const r = await ether.invoke("audio:resolve-local-path", item.file_path);
+            const p = (r && r.ok && r.filePath) ? r.filePath : item.file_path;
+            if (!p) { setStatus(`Couldn't load "${item.title}" — file not on this machine`); return; }
+            loadAudio(trackId, "file:///" + String(p).replace(/\\/g, "/"), { title: item.title || "track", atMs: dropMs });
+          } catch { setStatus("Couldn't load library track"); }
+        })();
+      } catch { /* not our payload */ }
+      return;
+    }
     const files = Array.from(e.dataTransfer.files || []);
     if (files.length > 1) {
       // Bulk import: first file lands on this track at drop position;
@@ -3412,6 +3448,30 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
         <NormalizeMenu onPick={(t) => autoNormalize(t)} />
         <TBtn onClick={pickImport} title="Import audio file(s) into the DAW — quick import to chop & send">＋ Import</TBtn>
+        {/* Library search import — search the library; drag a result onto any track/timeline. */}
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <input value={libQ} onChange={e => runLibSearch(e.target.value)} onFocus={() => { if (libResults.length) setLibOpen(true); }}
+            placeholder="Search library…" title="Search the library (title/artist) — drag a result onto a track"
+            style={{ width: 150, padding: "5px 8px", fontSize: 11, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          {libOpen && libResults.length > 0 && (
+            <>
+              <div onClick={() => setLibOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 998 }} />
+              <div style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, width: 300, maxHeight: 320, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 999, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
+                <div style={{ padding: "5px 10px", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, borderBottom: "1px solid var(--border-primary)" }}>Drag onto a track ↓</div>
+                {libResults.map(r => (
+                  <div key={r.id} draggable
+                    onDragStart={e => { e.dataTransfer.setData("application/x-ether-library", JSON.stringify({ title: r.title, file_path: r.file_path, file_key: r.file_key })); e.dataTransfer.effectAllowed = "copy"; }}
+                    style={{ padding: "7px 10px", cursor: "grab", borderBottom: "1px solid var(--border-primary)" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{r.artist || "—"}</div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         {/* Session name — double-click to rename */}
         {sessionNameEditing ? (
