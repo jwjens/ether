@@ -837,6 +837,19 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [libResults, setLibResults] = useState<any[]>([]);
   const [libOpen, setLibOpen] = useState(false);
   const libAnchorRef = useRef<HTMLDivElement>(null);   // for the portal dropdown (toolbar clips overflow)
+  const libDropRef = useRef<HTMLDivElement>(null);
+  // Close the search dropdown on an outside click — via a document listener, NOT a full-screen backdrop
+  // div (a backdrop over the timeline intercepts the drag → the "red circle" / can't drop on a track).
+  useEffect(() => {
+    if (!libOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (libAnchorRef.current?.contains(t) || libDropRef.current?.contains(t)) return;
+      setLibOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [libOpen]);
   const runLibSearch = useCallback(async (q: string) => {
     setLibQ(q);
     if (!q.trim()) { setLibResults([]); setLibOpen(false); return; }
@@ -2767,6 +2780,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     if (libData) {
       try {
         const item = JSON.parse(libData);
+        setLibOpen(false);
         (async () => {
           try {
             const ether = (window as any).ether;
@@ -3458,9 +3472,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             style={{ width: 150, padding: "5px 8px", fontSize: 11, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
         </div>
         {libOpen && libResults.length > 0 && libAnchorRef.current && createPortal(
-          <>
-            <div onClick={() => setLibOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 99998 }} />
-            <div style={{ position: "fixed", top: libAnchorRef.current.getBoundingClientRect().bottom + 3, left: libAnchorRef.current.getBoundingClientRect().left, width: 300, maxHeight: 340, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 99999, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
+          <div ref={libDropRef} style={{ position: "fixed", top: libAnchorRef.current.getBoundingClientRect().bottom + 3, left: libAnchorRef.current.getBoundingClientRect().left, width: 300, maxHeight: 340, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 99999, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
               <div style={{ padding: "5px 10px", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, borderBottom: "1px solid var(--border-primary)" }}>Drag onto a track ↓</div>
               {libResults.map(r => (
                 <div key={r.id} draggable
@@ -3472,8 +3484,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{r.artist || "—"}</div>
                 </div>
               ))}
-            </div>
-          </>,
+          </div>,
           document.body
         )}
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
