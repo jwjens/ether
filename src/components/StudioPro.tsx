@@ -836,6 +836,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [libQ, setLibQ] = useState("");
   const [libResults, setLibResults] = useState<any[]>([]);
   const [libOpen, setLibOpen] = useState(false);
+  const libAnchorRef = useRef<HTMLDivElement>(null);   // for the portal dropdown (toolbar clips overflow)
   const runLibSearch = useCallback(async (q: string) => {
     setLibQ(q);
     if (!q.trim()) { setLibResults([]); setLibOpen(false); return; }
@@ -3448,30 +3449,33 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
         <NormalizeMenu onPick={(t) => autoNormalize(t)} />
         <TBtn onClick={pickImport} title="Import audio file(s) into the DAW — quick import to chop & send">＋ Import</TBtn>
-        {/* Library search import — search the library; drag a result onto any track/timeline. */}
-        <div style={{ position: "relative", flexShrink: 0 }}>
+        {/* Library search import — search the library; drag a result onto any track/timeline. The results
+            dropdown is PORTALED to <body> (position:fixed off the input's rect) because the toolbar row
+            clips overflow — an in-flow absolute dropdown was hidden. */}
+        <div ref={libAnchorRef} style={{ flexShrink: 0 }}>
           <input value={libQ} onChange={e => runLibSearch(e.target.value)} onFocus={() => { if (libResults.length) setLibOpen(true); }}
             placeholder="Search library…" title="Search the library (title/artist) — drag a result onto a track"
             style={{ width: 150, padding: "5px 8px", fontSize: 11, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
-          {libOpen && libResults.length > 0 && (
-            <>
-              <div onClick={() => setLibOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 998 }} />
-              <div style={{ position: "absolute", top: "calc(100% + 2px)", left: 0, width: 300, maxHeight: 320, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 999, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
-                <div style={{ padding: "5px 10px", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, borderBottom: "1px solid var(--border-primary)" }}>Drag onto a track ↓</div>
-                {libResults.map(r => (
-                  <div key={r.id} draggable
-                    onDragStart={e => { e.dataTransfer.setData("application/x-ether-library", JSON.stringify({ title: r.title, file_path: r.file_path, file_key: r.file_key })); e.dataTransfer.effectAllowed = "copy"; }}
-                    style={{ padding: "7px 10px", cursor: "grab", borderBottom: "1px solid var(--border-primary)" }}
-                    onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
-                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
-                    <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{r.artist || "—"}</div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
         </div>
+        {libOpen && libResults.length > 0 && libAnchorRef.current && createPortal(
+          <>
+            <div onClick={() => setLibOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 99998 }} />
+            <div style={{ position: "fixed", top: libAnchorRef.current.getBoundingClientRect().bottom + 3, left: libAnchorRef.current.getBoundingClientRect().left, width: 300, maxHeight: 340, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 99999, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
+              <div style={{ padding: "5px 10px", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, borderBottom: "1px solid var(--border-primary)" }}>Drag onto a track ↓</div>
+              {libResults.map(r => (
+                <div key={r.id} draggable
+                  onDragStart={e => { e.dataTransfer.setData("application/x-ether-library", JSON.stringify({ title: r.title, file_path: r.file_path, file_key: r.file_key })); e.dataTransfer.effectAllowed = "copy"; }}
+                  style={{ padding: "7px 10px", cursor: "grab", borderBottom: "1px solid var(--border-primary)" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{r.artist || "—"}</div>
+                </div>
+              ))}
+            </div>
+          </>,
+          document.body
+        )}
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         {/* Session name — double-click to rename */}
         {sessionNameEditing ? (
