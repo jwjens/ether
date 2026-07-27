@@ -127,6 +127,16 @@ pub struct AudioLevels {
     /// bus.monitor_vol — the local studio-monitor (device) gain; never the program bus.
     #[serde(default)]
     pub mon_vol: f32,
+    // ── Audio Processing v1 meters — observed at the stage taps (all #[serde(default)] so older readers
+    // are unaffected). Feeds the dedicated processing-meters event: IN/OUT VU, LUFS in/out/target, GR bar. ──
+    #[serde(default)] pub proc_local:  bool,
+    #[serde(default)] pub proc_stream: bool,
+    #[serde(default)] pub proc_target_lufs: f32,
+    #[serde(default)] pub proc_in_lufs:  f32,
+    #[serde(default)] pub proc_out_lufs: f32,
+    #[serde(default)] pub proc_gr_db:    f32,
+    #[serde(default)] pub proc_in_peak:  f32,
+    #[serde(default)] pub proc_out_peak: f32,
     /// Per-deck A/B/C telemetry snapshot (source/active/paused/volume/gain).
     #[serde(default)]
     pub decks: Vec<DeckTel>,
@@ -226,6 +236,9 @@ pub enum AudioCmd {
     /// Local studio-monitor output gain (0..4). Affects ONLY the speakers tap — the program
     /// bus → Icecast stream is untouched, so muting the monitor never changes what airs.
     SetMonitorVolume(f32),
+    /// Audio Processing v1 — per-station program-bus loudness. (process_local, process_stream, target LUFS).
+    /// Both bools default OFF; the daemon delivers this like the segue setting (survives respawns).
+    SetProcessing { local: bool, stream: bool, target_lufs: f32 },
 }
 
 pub struct AudioState {
@@ -551,6 +564,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::ReopenOutput => { break; } // legacy path: drop stream → 'outer reopens
                             AudioCmd::SetEq(_) => {}
                             AudioCmd::SetMonitorVolume(_) => {}
+                            AudioCmd::SetProcessing { .. } => {} // no-device context: applied when the stream is live
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -832,6 +846,15 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     // SAME lock (no extra lock; diagnostic only). Fed to `[mix sN]`.
                                     lvl.frames_total = bus.frames_consumed;
                                     lvl.mon_vol      = bus.monitor_vol;
+                                    // Audio Processing v1 meters (same lock; observed at the taps).
+                                    lvl.proc_local       = bus.proc_local;
+                                    lvl.proc_stream      = bus.proc_stream;
+                                    lvl.proc_target_lufs = bus.proc_target_lufs;
+                                    lvl.proc_in_lufs     = bus.proc_in_lufs;
+                                    lvl.proc_out_lufs    = bus.proc_out_lufs;
+                                    lvl.proc_gr_db       = bus.proc_gr_db;
+                                    lvl.proc_in_peak     = bus.proc_in_peak;
+                                    lvl.proc_out_peak    = bus.proc_out_peak;
                                     let mut active = 0u32;
                                     let mut dt = Vec::with_capacity(3);
                                     for (i, id) in [(0usize, "A"), (1, "B"), (2, "C")] {
@@ -871,6 +894,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             }
                             AudioCmd::SetMonitorVolume(v) => {
                                 if let Ok(mut bus) = bus_cmd.lock() { bus.monitor_vol = v.clamp(0.0, 4.0); }
+                            }
+                            AudioCmd::SetProcessing { local, stream, target_lufs } => {
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    bus.proc_local  = local;
+                                    bus.proc_stream = stream;
+                                    bus.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
+                                }
                             }
                             AudioCmd::Ping
                             | AudioCmd::StartStream { .. }

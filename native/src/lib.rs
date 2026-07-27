@@ -116,6 +116,15 @@ pub fn audio_set_monitor_volume(station_id: u32, volume: f64) -> bool {
     audio.sender.send(AudioCmd::SetMonitorVolume(volume as f32)).is_ok()
 }
 
+// Audio Processing v1 — set this station's program-bus processing (both toggles default OFF; the daemon
+// delivers this like the segue setting on connect + respawn). Meters come back via audio_get_level (AudioLevels).
+#[napi]
+pub fn audio_set_processing(station_id: u32, process_local: bool, process_stream: bool, target_lufs: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetProcessing { local: process_local, stream: process_stream, target_lufs: target_lufs as f32 }).is_ok()
+}
+
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);

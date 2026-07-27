@@ -705,6 +705,59 @@ function CloudPlayoutSection() {
 
 // ── MIDI Controllers section ──────────────────────────────────
 
+// ── Audio Processing v1 — per-station program-bus loudness (Settings → Broadcast) ──────────────────────
+// Two toggles + target LUFS, persisted to station_config_kv (proc_local / proc_stream / proc_target_lufs);
+// the daemon delivers them to the native engine like the segue setting (that layer ships next). Both OFF by
+// default → bit-identical passthrough. The native DSP + fork are already in place (bench-proven).
+function AudioProcessingSection() {
+  const { stationId } = useActiveStation();
+  const [local, setLocal]   = useState(false);
+  const [stream, setStream] = useState(false);
+  const [target, setTarget] = useState(-14);
+  useEffect(() => {
+    if (!stationId) return;
+    (async () => {
+      try {
+        const r: any = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows: any[] = (r && r.rows) || [];
+        const get = (k: string) => rows.find(x => x.key === k)?.value;
+        setLocal(get("proc_local") === "1");
+        setStream(get("proc_stream") === "1");
+        const t = parseFloat(get("proc_target_lufs")); if (!isNaN(t)) setTarget(t);
+      } catch { /* defaults */ }
+    })();
+  }, [stationId]);
+  const save = (k: string, v: string) => { try { (window as any).ether.stationConfigKv.upsertByKey(stationId, k, v); } catch { /* ignore */ } };
+  const Toggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
+    <button onClick={onClick} role="switch" aria-checked={on} style={{ width: 44, height: 24, borderRadius: 999, border: "none", cursor: "pointer", background: on ? "var(--accent-blue)" : "var(--bg-tertiary)", position: "relative", transition: "background .15s", flexShrink: 0 }}>
+      <span style={{ position: "absolute", top: 2, left: on ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left .15s" }} />
+    </button>
+  );
+  return (
+    <Section category="broadcast"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>}
+      title="Audio Processing" description="Per-station loudness on the program bus — loudness ride to target + −1 dBTP true-peak limiter. Both OFF by default; opt in per station.">
+      <SettingRow label="Process local output" hint="Apply processing to THIS machine's speaker/monitor output. Broadcast is unaffected — this is the PRE/POST monitor choice.">
+        <Toggle on={local} onClick={() => { const v = !local; setLocal(v); save("proc_local", v ? "1" : "0"); }} />
+      </SettingRow>
+      <SettingRow label="Process stream" hint="Apply processing to the Icecast stream — what listeners hear.">
+        <Toggle on={stream} onClick={() => { const v = !stream; setStream(v); save("proc_stream", v ? "1" : "0"); }} />
+      </SettingRow>
+      <SettingRow label="Target loudness" hint="EBU R128 program target. −14 LUFS is the streaming standard; the limiter holds −1 dBTP.">
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <input type="number" min={-30} max={-6} step={1} value={target}
+            onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); setTarget(c); save("proc_target_lufs", String(c)); } }}
+            style={{ width: 70, padding: "6px 8px", fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>LUFS</span>
+        </div>
+      </SettingRow>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>
+        Live meters (IN/OUT VU, LUFS, gain-reduction, PRE/POST monitor) attach once the daemon meter feed ships. Passthrough is bit-identical while both toggles are off.
+      </div>
+    </Section>
+  );
+}
+
 function ControllersSection() {
   const [devices,   setDevices]   = useState<string[]>([]);
   const [status,    setStatus]    = useState<{ connected: boolean; deviceName: string }>({ connected: false, deviceName: "" });
@@ -2526,6 +2579,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
         </div>
         <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 10 }}>Target is -14 LUFS — the broadcast standard used by most radio stations. This runs in the background and doesn't affect playback.</div>
       </Section>
+
+      {/* ── Audio Processing (program-bus loudness) ── */}
+      <AudioProcessingSection />
 
       {/* ── MIDI Controllers ── */}
       <ControllersSection />
