@@ -563,6 +563,11 @@ if (AUDIO_DAEMON_DESIRED) {
         // because its cpal callback stopped firing → its levels freeze at ~0 while siblings stay fresh.
         if (lv.master > 0.01 || lv.a > 0.01 || lv.b > 0.01 || lv.c > 0.01) _noteStationAudio(m.stationId);
         try { _health.noteLevels(m.stationId, m); } catch {}
+      } else if (m.event === "procmeters") {
+        // Audio Processing v1: dedicated per-station processing-meter frame (~15Hz, ONLY while a toggle
+        // is on). Deliberately its OWN channel — the levels channel already runs ~90/s and is implicated
+        // in a renderer OOM, so this stays separate and lower-rate. Observed at the taps; forward as-is.
+        sendToAllWindows("audio:proc-meters", m);
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.

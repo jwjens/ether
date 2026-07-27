@@ -167,6 +167,60 @@ class DaemonEngine {
     } catch { /* diagnostic only — never disturb playout */ }
   }
 
+  // Audio Processing v1 — deliver the per-station program-bus processing state to the mixer (segue
+  // pattern). proc_local / proc_stream / proc_target_lufs live in station_config_kv (per-station,
+  // synced); the Settings→Broadcast toggles write them. Read cached 3s (poll-driven), and push to the
+  // native mixer via audioSetProcessing whenever the applied triple CHANGES — so it lands on connect,
+  // re-lands after a daemon respawn (fresh engine → _procApplied null → first poll applies), and picks
+  // up a live toggle within ~3s. While ON, re-assert every 15s so an apply dropped during a device
+  // reopen (SetProcessing no-ops in the no-device window) self-heals. Both toggles default OFF →
+  // audioSetProcessing(false,false,…) → native takes the CLEAN tap → bit-identical passthrough.
+  _applyProcessingFromKv(now) {
+    if (now - (this._procCheckedAt || 0) < 3000) return;
+    this._procCheckedAt = now;
+    let local = false, stream = false, target = -14.0;
+    try {
+      const rows = this.db.prepare(
+        "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('proc_local','proc_stream','proc_target_lufs') AND deleted_at IS NULL"
+      ).all(this.stationId);
+      for (const r of rows) {
+        if (r.key === "proc_local") local = (r.value === "1" || r.value === "true");
+        else if (r.key === "proc_stream") stream = (r.value === "1" || r.value === "true");
+        else if (r.key === "proc_target_lufs") { const t = parseFloat(r.value); if (!isNaN(t)) target = Math.max(-30, Math.min(-6, t)); }
+      }
+    } catch { return; }   // KV unreadable → leave the last-applied state untouched; never disturb playout
+    const prev = this._procApplied;
+    const changed = !prev || prev.local !== local || prev.stream !== stream || prev.target !== target;
+    const reassert = (local || stream) && (now - (this._procAssertedAt || 0) > 15000);
+    if (!changed && !reassert) return;
+    this._procApplied = { local, stream, target };
+    this._procOn = local || stream;
+    this._procAssertedAt = now;
+    try { A.audioSetProcessing(this.stationId, local, stream, target); if (changed) this._log("processing", `local=${local} stream=${stream} target=${target}`); }
+    catch (e) { this._log("processing apply ✗", String(e)); }
+  }
+
+  // Dedicated processing-meters emit (~15Hz). Its OWN event ("procmeters"), NOT the levels channel —
+  // levels already runs ~90/s and is implicated in a renderer OOM, so this rides a separate, lower-rate
+  // channel gated to ON. Quiet unless processing is on AND automation is engaged (no silence spam). The
+  // meters are OBSERVED at the stage taps (in/out LUFS, gain-reduction, in/out peak) — never claimed.
+  _emitProcMeters() {
+    if (!this._procOn || !this._started) return;
+    let lv; try { lv = JSON.parse(A.audioGetLevels(this.stationId)); } catch { return; }
+    if (!lv || (!lv.proc_local && !lv.proc_stream)) return;   // native says processing off → stay quiet
+    const dbfs = (p) => (p > 0 ? Math.max(-70, 20 * Math.log10(p)) : -70);
+    try {
+      this.emit("procmeters", {
+        stationId: this.stationId,
+        local: !!lv.proc_local, stream: !!lv.proc_stream,
+        target: lv.proc_target_lufs ?? -14,
+        inLufs: lv.proc_in_lufs ?? -70, outLufs: lv.proc_out_lufs ?? -70,
+        grDb: lv.proc_gr_db ?? 0,
+        inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
+      });
+    } catch { /* never break playout for a meter frame */ }
+  }
+
   // ── addon wrappers (synchronous) ──
   _load(deck, fp, title, artist, gainDb) { return A.audioLoad(deck, fp, title || "", artist || "", gainDb ?? 0, this.stationId); }
   // A deck plays at whatever fader the OPERATOR set — automation NEVER moves a deck fader (those are
@@ -180,11 +234,14 @@ class DaemonEngine {
   init() {
     A.initAudioEngine(this.stationId);
     if (!this.pollTimer) { this.processingEnd = false; this.pollTimer = setInterval(() => this.poll(), 250); }
+    // Audio Processing v1: dedicated ~15Hz meter emit (self-gates to processing-on + automation-engaged).
+    if (!this._procMeterTimer) this._procMeterTimer = setInterval(() => this._emitProcMeters(), 66);
   }
   stop() {
     if (this._started) this._log("_started: true → false (automation stopped)");
     this._started = false;   // Stage 3b: automation stopped — disable the stall watchdog (don't fight a deliberate stop).
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    if (this._procMeterTimer) { clearInterval(this._procMeterTimer); this._procMeterTimer = null; }
     this._stop("A"); this._stop("B"); this._stop("C");
   }
 
@@ -204,6 +261,7 @@ class DaemonEngine {
     this.lastPollTime = now;
 
     this._mixHeartbeat(now, s);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
+    this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
     const dur = { A: this.stateA.durationSec, B: this.stateB.durationSec, C: this.stateC.durationSec };

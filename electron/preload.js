@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld("ether", {
     // Push-based level subscription — 30fps from main process, no polling
     onLevels:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:levels", h); return h; },
     offLevels: (h)  => ipcRenderer.removeListener("audio:levels", h),
+    // Audio Processing v1 — dedicated processing-meter channel (~15Hz, ONLY while a toggle is on).
+    // Separate from onLevels on purpose: the levels channel is high-rate; this one stays quiet otherwise.
+    onProcMeters:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:proc-meters", h); return h; },
+    offProcMeters: (h)  => ipcRenderer.removeListener("audio:proc-meters", h),
     // Item 10 Phase 2 Step 2 — out-of-process daemon. daemonEnabled() lets the engine decide
     // whether to drive advance locally (false) or proxy the daemon (true). daemon() sends a
     // queue/automation command; onDeck/onQueue/onPlayStart subscribe to the daemon's state.
@@ -146,7 +150,6 @@ contextBridge.exposeInMainWorld("ether", {
     restore: (n) => ipcRenderer.invoke("db:restore", n),
   },
   schedule: {
-    generate: (days) => ipcRenderer.invoke("schedule:generate", days ?? 7),
     get:      (fromTs, toTs) => ipcRenderer.invoke("schedule:get", fromTs, toTs),
   },
   fs: {

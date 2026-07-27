@@ -707,8 +707,9 @@ function CloudPlayoutSection() {
 
 // ── Audio Processing v1 — per-station program-bus loudness (Settings → Broadcast) ──────────────────────
 // Two toggles + target LUFS, persisted to station_config_kv (proc_local / proc_stream / proc_target_lufs);
-// the daemon delivers them to the native engine like the segue setting (that layer ships next). Both OFF by
-// default → bit-identical passthrough. The native DSP + fork are already in place (bench-proven).
+// the daemon reads them (segue pattern) and pushes to the native engine via audioSetProcessing, then feeds
+// live meters back over its dedicated "audio:proc-meters" channel. Both OFF by default → bit-identical
+// passthrough. Native DSP + fork bench-proven (native/src/program_processor.rs).
 function AudioProcessingSection() {
   const { stationId } = useActiveStation();
   const [local, setLocal]   = useState(false);
@@ -728,6 +729,23 @@ function AudioProcessingSection() {
     })();
   }, [stationId]);
   const save = (k: string, v: string) => { try { (window as any).ether.stationConfigKv.upsertByKey(stationId, k, v); } catch { /* ignore */ } };
+  // Live processing meters — the daemon's dedicated ~15Hz "audio:proc-meters" feed (emitted ONLY while a
+  // toggle is on). Observed at the taps: IN/OUT LUFS, gain-reduction, IN/OUT peak (dBFS). Null until a
+  // frame arrives (processing on + audio flowing). Auto-stales to null after 1s of no frames.
+  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; inPeakDb: number; outPeakDb: number }>(null);
+  useEffect(() => {
+    const audio = (window as any).ether?.audio;
+    if (!audio?.onProcMeters || !stationId) return;
+    let staleTimer: any = null;
+    const h = audio.onProcMeters((m: any) => {
+      if (!m || m.stationId !== stationId) return;
+      setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb });
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = setTimeout(() => setMeters(null), 1000);   // no frames for 1s → meters idle
+    });
+    return () => { try { audio.offProcMeters?.(h); } catch { /* ignore */ } if (staleTimer) clearTimeout(staleTimer); };
+  }, [stationId]);
+  const on = local || stream;
   const Toggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
     <button onClick={onClick} role="switch" aria-checked={on} style={{ width: 44, height: 24, borderRadius: 999, border: "none", cursor: "pointer", background: on ? "var(--accent-blue)" : "var(--bg-tertiary)", position: "relative", transition: "background .15s", flexShrink: 0 }}>
       <span style={{ position: "absolute", top: 2, left: on ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left .15s" }} />
@@ -751,10 +769,48 @@ function AudioProcessingSection() {
           <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>LUFS</span>
         </div>
       </SettingRow>
-      <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>
-        Live meters (IN/OUT VU, LUFS, gain-reduction, PRE/POST monitor) attach once the daemon meter feed ships. Passthrough is bit-identical while both toggles are off.
-      </div>
+      {on ? (
+        <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 6 }}>
+          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-tertiary)", marginBottom: 8 }}>
+            Live meters {meters ? "" : "· waiting for audio…"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            <Meter label="IN" lufs={meters?.inLufs} peakDb={meters?.inPeakDb} />
+            <Meter label="OUT" lufs={meters?.outLufs} peakDb={meters?.outPeakDb} accent />
+            <div>
+              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>GAIN REDUCTION</div>
+              <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: (meters?.grDb ?? 0) > 0.3 ? "var(--accent-blue)" : "var(--text-primary)" }}>
+                {meters ? `−${(meters.grDb || 0).toFixed(1)}` : "—"}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> dB</span>
+              </div>
+              <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, marginTop: 6, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${Math.min(100, (meters?.grDb ?? 0) / 12 * 100)}%`, background: "var(--accent-blue)", transition: "width .1s" }} />
+              </div>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 8 }}>
+            Riding to {target} LUFS · limiter holds −1 dBTP · {local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
+          </div>
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>
+          Passthrough is bit-identical while both toggles are off — turn one on to ride to target and see live meters.
+        </div>
+      )}
     </Section>
+  );
+}
+
+// Compact LUFS + peak readout for one processing stage (IN or OUT).
+function Meter({ label, lufs, peakDb, accent }: { label: string; lufs?: number; peakDb?: number; accent?: boolean }) {
+  const fmt = (v?: number) => (v == null || v <= -70 ? "—" : v.toFixed(1));
+  return (
+    <div>
+      <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>{label} LOUDNESS</div>
+      <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: accent ? "var(--accent-blue)" : "var(--text-primary)" }}>
+        {fmt(lufs)}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> LUFS</span>
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>peak {fmt(peakDb)} dBFS</div>
+    </div>
   );
 }
 
