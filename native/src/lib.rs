@@ -7,6 +7,7 @@ mod audio_routing;
 pub mod eq;
 mod lufs;
 mod clock;
+mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
 
 use napi_derive::napi;
 use std::collections::HashMap;
