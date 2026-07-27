@@ -433,6 +433,28 @@ function useSwipe(onSwipe: (dir: 'left' | 'right') => void) {
 // engine dequeues the now-playing song, so it's never in the queue). The in-app
 // Next Up panel slices from index 2 because it shows those two on the deck strips,
 // but the listener page has no deck strips and must include them.
+// Resolve an on-air file's content class (MUSIC | JIN | SWP | SPOT) for the now-playing payload. Cached by
+// filePath so the ~3s heartbeat never re-queries a stable on-air file (the 2026-07-22 main-loop-freeze
+// precedent). Imaging/commercials (JIN/SWP/SPOT) must NOT get a music-store artwork lookup — the listener
+// falls back to the hub/station logo. Songs carry content_class; a spot file (not a song) resolves to SPOT.
+const _contentClassCache = new Map<string, string>();
+async function resolveContentClass(filePath: string | null): Promise<string> {
+  if (!filePath) return "MUSIC";
+  const cached = _contentClassCache.get(filePath);
+  if (cached) return cached;
+  let cc = "MUSIC";
+  try {
+    const row = await queryOne<{ content_class: string | null }>("SELECT content_class FROM songs WHERE file_path = ? AND deleted_at IS NULL LIMIT 1", [filePath]);
+    if (row && row.content_class) cc = row.content_class;
+    else {
+      const sp = await queryOne<{ n: number }>("SELECT 1 AS n FROM spots WHERE file_path = ? LIMIT 1", [filePath]);
+      if (sp) cc = "SPOT";
+    }
+  } catch { /* default MUSIC */ }
+  _contentClassCache.set(filePath, cc);
+  return cc;
+}
+
 function buildNowPlayingPayload(
   engine: ReturnType<typeof getEngine>,
   stationName: string,
@@ -459,7 +481,8 @@ function buildNowPlayingPayload(
     duration:     live?.state?.durationSec || 0,
     deck:         live?.deck || null,
     filePath:     live?.state?.filePath || null, // on-air file → embedded-art lookup (not stored)
-    art_url:      null as string | null,         // resolved from embedded cover art before POST
+    art_url:      null as string | null,         // resolved from embedded cover art before POST (MUSIC only)
+    content_class: null as string | null,        // MUSIC|JIN|SWP|SPOT — resolved before POST; imaging gets no music-store art
     station_name: stationName,
     station_uuid: stationUuid || null,   // backend keys per-station now-playing on this
     // Honest engine-state truth layer (Slice 1): live | stalled | off, straight from the engine
@@ -2022,10 +2045,14 @@ export default function App() {
           ts: Date.now(),
         });
       } catch { /* main not ready / not in electron — ignore */ }
-      // Embedded cover art of the on-air file → R2 public (primary listener artwork).
-      // Cached URL returns immediately, or null while the upload is in flight; the next
-      // heartbeat forwards it once the art is ready (main's dedup sig includes art_url).
-      try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(st.uuid, payload.filePath)) || null; } catch { /* ignore */ }
+      // Content class of the on-air item (cached by filePath). Imaging/commercials get NO music-store art.
+      payload.content_class = await resolveContentClass(payload.filePath);
+      // Embedded cover art → R2 public (primary listener artwork), MUSIC ONLY. For JIN/SWP/SPOT leave art_url
+      // null so the listener never runs an external artwork lookup (that pulled explicit third-party art for a
+      // jingle whose filename matched a band). B2 will set art_url from a local pool/spot image.
+      if (!["JIN", "SWP", "SPOT"].includes(payload.content_class || "")) {
+        try { payload.art_url = (await (window as any).ether?.station?.nowPlayingArt?.(st.uuid, payload.filePath)) || null; } catch { /* ignore */ }
+      }
       // Forward this station's payload to main (payload carries station_uuid). Main is the ONLY
       // backend poster now: it accepts 'nowplaying:state' from the elected primary window only, then
       // runs the single dedup + 20s keepalive + [NOWPLAY] POST loop. No backend fetch here (4.4.54).
