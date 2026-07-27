@@ -95,7 +95,7 @@ import SpotifyImport from "./components/SpotifyImport";
 import { useLibraryBorrowed } from "./hooks/useLibraryBorrowed";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
 import BulkAssignModal from "./components/BulkAssignModal";
-import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
+import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, HIDDEN_BUILTIN_COL_NAMES, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
@@ -1500,11 +1500,14 @@ export default function App() {
     // exists (accountSignedIn). That flag is set true ONLY by a resumed session, a completed sign-in,
     // or the watchdog on-air exception (account:was-on-air → _wasOnAir in main.js) — so this fires in
     // exactly the legitimate cases and NEVER before the sign-in screen. The effect re-runs when the gate
-    // opens ([accountSignedIn] dep) so a fresh sign-in resumes AUTO. (If AUTO was on when last closed,
-    // fill + play after a 2s crash-recovery grace.) engine.init() above is idempotent, so re-running is
-    // a no-op; toggling AUTO has its own handler (automation_on), so it is intentionally NOT a dep here.
+    // opens so a fresh sign-in resumes AUTO. engine.init() above is idempotent, so re-running is a no-op;
+    // toggling AUTO has its own handler (automation_on), so it is intentionally NOT a dep here.
+    // BOOT AUDIO POLICY (2026-07-24): auto-resume is CRASH-ONLY. A clean/manual launch must NEVER auto-air even
+    // with AUTO persisted on — the operator clicks AUTO deliberately. Gate on wasOnAir (account:was-on-air →
+    // _wasOnAir: on-air marker + watchdog respawn) so ONLY a crash of a genuinely-airing station resumes here.
+    // (This also stops the empty-station boot autofill/emergency-generate, which lives inside this block.)
     let autoStartTimer: ReturnType<typeof setTimeout> | null = null;
-    if (readAutoAdv(stationId) && accountSignedIn) {
+    if (readAutoAdv(stationId) && accountSignedIn && wasOnAir === true) {
       autoStartTimer = setTimeout(async () => {
         // Item 10 Phase 2: wait for the daemon-vs-in-process decision before choosing how to
         // start, so a slow daemon connect can't race us into the local path (and dead air).
@@ -1623,7 +1626,7 @@ export default function App() {
       lastLoggedStatus.current[id] = st.status;
     });
     return () => { if (autoStartTimer) clearTimeout(autoStartTimer); unsub(); };
-  }, [accountSignedIn]);   // re-run when the account gate opens so a fresh sign-in resumes AUTO (account-is-root)
+  }, [accountSignedIn, wasOnAir]);   // re-run when the account gate opens OR wasOnAir resolves (crash-only auto-resume)
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -2026,7 +2029,11 @@ export default function App() {
       // Forward this station's payload to main (payload carries station_uuid). Main is the ONLY
       // backend poster now: it accepts 'nowplaying:state' from the elected primary window only, then
       // runs the single dedup + 20s keepalive + [NOWPLAY] POST loop. No backend fetch here (4.4.54).
-      try { (window as any).ether?.emit?.("nowplaying:state", payload); } catch { /* main not ready / not in electron */ }
+      // GATE: publish ONLY when THIS machine is the LIVE SOURCE of the mount (ss.live). A non-source engine
+      // (idle/standby, or a second install whose operator is on another station) must not post a blank
+      // now-playing for a uuid another machine is airing — that idle keepalive clobbered the airing row and
+      // flickered Open Format off-air. HalloVeen/Magical Forest never collided; this makes OF behave the same.
+      if (ss.live) try { (window as any).ether?.emit?.("nowplaying:state", payload); } catch { /* main not ready / not in electron */ }
       }
     };
     push();
@@ -4383,9 +4390,16 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     const ether = (window as any).ether;
     let catId = spotMark.catId;
     const nc = spotMark.newCat.trim();
-    if (nc) { try { const r = await ether.spotCategories.create({ station_id: stationId, name: nc, color: "#f59e0b" }); catId = r?.row?.id ?? catId; } catch { /* proceed uncategorized */ } }
+    if (nc) { try { const r = await ether.spotCategories.create({ station_id: stationId, name: nc, color: "#fbbf24" }); catId = r?.row?.id ?? catId; } catch { /* keep going */ } }
+    // Breaks are traffic law: a category-specific break must never pull uncategorized audio. Require one.
+    if (catId == null) { window.alert("Pick a spot category (or type a new one) — a break pulls from a category."); return; }
     try { await ether.songs.updateById(spotMark.song.id, { content_class: "SPOT" }); } catch {}
-    try { await ether.spots.create({ station_id: stationId, title: spotMark.song.title, file_path: spotMark.song.file_path, spot_type: spotMark.type || "commercial", spot_category_id: catId ?? null }); } catch {}
+    // Probe the REAL audio duration (seconds) — the same native probe every import uses — so the spot's
+    // length_sec is truthful. A fake default corrupts the calendar, the generator's spacing, and anchor-fit.
+    let lengthSec: number | null = null;
+    try { const d = await ether.audio.getFileDuration(spotMark.song.file_path); if (typeof d === "number" && d > 0) lengthSec = Math.round(d); } catch {}
+    // is_active:1 explicitly so the spot airs immediately (spots.create also defaults it now).
+    try { await ether.spots.create({ station_id: stationId, title: spotMark.song.title, file_path: spotMark.song.file_path, spot_type: spotMark.type || "commercial", spot_category_id: catId, is_active: 1, max_plays_day: 999, length_sec: lengthSec }); } catch {}
     setSpotMark(null); load();
   };
   // Borrowed catalog → read-only: gate ingest + core-field edits (the hard guarantee lives in
@@ -4397,7 +4411,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const [newCatCode, setNewCatCode] = useState("");
   const [newCatName, setNewCatName] = useState("");
   const [newCatColor, setNewCatColor] = useState("var(--accent-blue)");
-  const [catList, setCatList] = useState<{ id: number; code: string; color: string | null }[]>([]);
+  const [catList, setCatList] = useState<{ id: number; code: string; name: string | null; color: string | null }[]>([]);
   const [songs, setSongs] = useState<SongRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -4407,6 +4421,8 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const [missingSongs, setMissingSongs] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showBulkAssign, setShowBulkAssign] = useState(false);
+  // Uniform column sort — active column key + direction (default: Title ascending, matching the load order).
+  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' }>({ key: 'title', dir: 'asc' });
   const { isStation } = usePlan();
 
   // ── Column visibility & widths ─────────────────────────────
@@ -4739,7 +4755,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
       const [r] = await query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE deleted_at IS NULL");
       setCount(r ? r.c : 0);
       // station_id scoping: Strategy B — single table
-      setCatList(await queryScoped<{ id: number; code: string; color: string | null }>("SELECT id, code, color FROM categories ORDER BY code", [], stationId));
+      setCatList(await queryScoped<{ id: number; code: string; name: string | null; color: string | null }>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId));
     } catch (e) { console.error(e); setStatus("Error: " + e); }
     setLoading(false);
   };
@@ -4750,7 +4766,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     try {
       const res = await (window as any).ether.metadataDefinitions.list(stationId);
       const rows: MetadataDefinition[] = res?.ok ? (res.rows ?? []) : [];
-      setDefs(rows.filter(d => !d.deleted_at).sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name)));
+      // Hide built-in defs that duplicate a native standard column (BPM/Genre/Plays/Year/Length/Kind) —
+      // one column per field; the native column carries the real data.
+      setDefs(rows.filter(d => !d.deleted_at && !HIDDEN_BUILTIN_COL_NAMES.has((d.name || '').trim().toLowerCase())).sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name)));
     } catch (e) { console.error('[LibraryPanel] failed to load definitions:', e); }
   }, [stationId]);
 
@@ -4877,6 +4895,83 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     ...ALL_LIB_COLS.filter(c => visibleCols.has(c)).map(c => ({ kind: 'standard' as const, id: c, label: LIB_COL_LABELS[c] })),
     ...defs.filter(d => visibleMetaCols.has(d.id)).map(d => ({ kind: 'metadata' as const, defId: d.id, defUuid: d.uuid, label: d.name, dataType: d.data_type, width: META_COL_WIDTHS[d.data_type] })),
   ];
+
+  // ── Uniform column sort ─────────────────────────────────────────────────────
+  // ONE handler for EVERY header (standard + metadata). Click a header → sort by that column; click again →
+  // flip direction; the active header shows ▲/▼. No per-column wiring — any column Jeff enables now, and any
+  // metadata field added later, becomes sortable automatically. Metadata values come from metaMap, typed by
+  // the definition's data_type (number/date sort numerically/chronologically; everything else lexically).
+  const colSortKey = (col: LibraryColumn) => col.kind === 'standard' ? col.id : `meta-${col.defId}`;
+  // Built-in DATE columns carry no stored metadata value — resolve them from the song's own timestamp
+  // (songs.updated_at / created_at, ISO text) so they display AND sort. Returns epoch ms, or null when the
+  // column isn't a mapped built-in / the row has no value; user-created date columns fall through to metaMap.
+  const builtinDateMs = (col: LibraryColumn, s: SongRow): number | null => {
+    if (col.kind !== 'metadata' || col.dataType !== 'date') return null;
+    const name = (col.label || '').trim().toLowerCase();
+    if (name === 'last played') {                 // native last_played_at is unix SECONDS
+      const n = Number((s as any).last_played_at);
+      return isFinite(n) && n > 0 ? n * 1000 : null;
+    }
+    const src = name === 'date modified' ? (s as any).updated_at
+              : name === 'date added'    ? (s as any).created_at
+              : null;
+    if (src == null || src === '') return null;
+    const t = Date.parse(String(src));
+    return isNaN(t) ? null : t;
+  };
+  // Built-in NUMBER columns backed by a native field (Intro/Outro Time ← intro_end/outro_start, seconds).
+  const builtinNumber = (col: LibraryColumn, s: SongRow): number | null => {
+    if (col.kind !== 'metadata' || col.dataType !== 'number') return null;
+    const name = (col.label || '').trim().toLowerCase();
+    const src = name === 'intro time' ? (s as any).intro_end
+              : name === 'outro time' ? (s as any).outro_start
+              : null;
+    if (src == null) return null;
+    const n = Number(src);
+    return isFinite(n) ? n : null;
+  };
+  const sortValueFor = (col: LibraryColumn, s: SongRow): string | number | null => {
+    if (col.kind === 'metadata') {
+      const builtin = builtinDateMs(col, s);
+      if (builtin != null) return builtin;
+      const bnum = builtinNumber(col, s);
+      if (bnum != null) return bnum;
+      const raw = metaMap[s.id]?.[col.defId];
+      if (raw == null || raw === '') return null;
+      if (col.dataType === 'number') { const n = Number(raw); return isNaN(n) ? null : n; }
+      if (col.dataType === 'date')   { const t = Date.parse(raw); return isNaN(t) ? String(raw).toLowerCase() : t; }
+      return String(raw).toLowerCase();
+    }
+    switch (col.id) {
+      case 'title':    return (s.title || '').toLowerCase();
+      case 'artist':   return (s.artist_name || '').toLowerCase();
+      case 'album':    return (s.album_title || '').toLowerCase();
+      case 'year':     return s.album_year ?? null;
+      case 'genre':    return (s.genre || '').toLowerCase();
+      case 'bpm':      return s.bpm ?? null;
+      case 'format':   return s.file_path ? fmtExt(s.file_path) : null;
+      case 'duration': return s.duration_ms ?? null;
+      case 'category': return (s.category_code || '').toLowerCase();
+      case 'plays':    return eligMap[s.id]?.plays ?? s.play_count ?? 0;
+      default:         return null;
+    }
+  };
+  const onHeaderSort = (key: string) =>
+    setSort(prev => prev.key === key ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  const sortArrow = (key: string) => sort.key === key ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  const sortCol = visibleLibraryCols.find(c => colSortKey(c) === sort.key) || null;
+  // The rows the body renders — filtered, then ordered by the active column. Blanks always sort last.
+  const sorted = sortCol
+    ? [...filtered].sort((a, b) => {
+        const av = sortValueFor(sortCol, a), bv = sortValueFor(sortCol, b);
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        const cmp = (typeof av === 'number' && typeof bv === 'number') ? av - bv : String(av).localeCompare(String(bv));
+        return sort.dir === 'asc' ? cmp : -cmp;
+      })
+    : filtered;
+
   const hasTitleCol = visibleCols.has('title');
   const ACTION_ZONE_W = 252; // 6 buttons × 36px min-width + 5 gaps × 3px + 12px h-padding
   const titleW = colWidths['title'] ?? LIB_COL_DEFAULT_WIDTHS['title'];
@@ -5036,7 +5131,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           songIds={[...selectedIds]}
           stationId={stationId}
           onClose={() => setShowBulkAssign(false)}
-          onApplied={() => { setShowBulkAssign(false); setSmvReloadKey(k => k + 1); }}
+          onApplied={() => { setShowBulkAssign(false); setSmvReloadKey(k => k + 1); load(); }}
         />
       )}
       {status && <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
@@ -5096,7 +5191,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 14, lineHeight: 1.5 }}>
               “{spotMark.song.title}” leaves music rotation and becomes a spot. Fine-tune dates, max-plays &amp; advertiser later in <strong>Spots &amp; Promos</strong>.
             </div>
-            <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>Category</label>
+            <label style={{ display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 4 }}>Category <span style={{ color: "#f87171" }}>*required</span></label>
             <select value={spotMark.catId ?? ""} onChange={e => setSpotMark(m => m && { ...m, catId: e.target.value ? Number(e.target.value) : null, newCat: "" })}
               style={{ width: "100%", padding: "8px 10px", background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, marginBottom: 8 }}>
               <option value="">— Uncategorized —</option>
@@ -5114,7 +5209,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             </select>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button onClick={() => setSpotMark(null)} style={{ padding: "8px 16px", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Cancel</button>
-              <button onClick={confirmSpotMark} style={{ padding: "8px 16px", background: "#f59e0b", border: "1px solid #f59e0b", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Mark as Spot</button>
+              {(() => { const ready = !!(spotMark.catId || spotMark.newCat.trim()); return (
+                <button onClick={confirmSpotMark} disabled={!ready} title={ready ? "" : "Pick or create a category first"} style={{ padding: "8px 16px", background: ready ? "#f59e0b" : "var(--surface, #333)", border: `1px solid ${ready ? "#f59e0b" : "var(--border-primary)"}`, color: ready ? "#000" : "var(--text-tertiary)", fontSize: 12, fontWeight: 800, cursor: ready ? "pointer" : "not-allowed", opacity: ready ? 1 : 0.6 }}>Mark as Spot</button>
+              ); })()}
             </div>
           </div>
         </div>
@@ -5233,9 +5330,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             </div>
             <div role="columnheader" style={{ padding: "10px 6px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>#</div>
             {hasTitleCol && (
-              <div role="columnheader" style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", display: "flex", alignItems: "center", overflow: "hidden", position: "relative" as any, borderRight: "1px solid var(--border-primary)" }}>
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>Title</span>
-                <span onMouseDown={e => startColResize('title', e, titleW)} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
+              <div role="columnheader" onClick={() => onHeaderSort('title')} title="Sort by Title" style={{ padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", display: "flex", alignItems: "center", overflow: "hidden", position: "relative" as any, borderRight: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>Title{sortArrow('title')}</span>
+                <span onMouseDown={e => startColResize('title', e, titleW)} onClick={e => e.stopPropagation()} style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }} />
               </div>
             )}
             <div ref={middleHeaderRef} style={{ display: "flex", overflow: "hidden" }}>
@@ -5243,10 +5340,11 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                 const w = colW(col);
                 const key = col.kind === 'standard' ? col.id : `meta-${col.defId}`;
                 return (
-                  <div key={key} role="columnheader" style={{ flex: `0 0 ${w}px`, padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any, borderRight: "1px solid var(--border-primary)" }}>
-                    {col.label}
+                  <div key={key} role="columnheader" onClick={() => onHeaderSort(key)} title={`Sort by ${col.label}`} style={{ flex: `0 0 ${w}px`, padding: "10px 12px", fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.08em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, position: "relative" as any, borderRight: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                    {col.label}{sortArrow(key)}
                     <span
                       onMouseDown={e => col.kind === 'standard' ? startColResize(col.id, e, w) : startMetaColResize(col.defId, e, w)}
+                      onClick={e => e.stopPropagation()}
                       style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 6, cursor: "col-resize", zIndex: 1 }}
                     />
                   </div>
@@ -5278,12 +5376,12 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           </div>
 
           {/* Body rows */}
-          {filtered.map((s, i) => (
+          {sorted.map((s, i) => (
             <div
               key={s.id}
               role="row"
               className="ether-lib-row"
-              style={{ borderBottom: i < filtered.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+              style={{ borderBottom: i < sorted.length - 1 ? "1px solid var(--border-primary)" : "none" }}
               onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
@@ -5427,6 +5525,23 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     if (col.dataType === 'boolean') return (
                       <div key={col.defId} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "10px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
                         <input type="checkbox" checked={rawVal === 'true' || rawVal === '1'} onChange={e => commitMetaEdit(s.id, col, e.target.checked ? 'true' : 'false')} />
+                      </div>
+                    );
+                    // Built-in date columns (Date Modified/Added) render the real date from the song's timestamp;
+                    // user-created date columns fall through to the editable text cell below (builtinMs === null).
+                    const builtinMs = builtinDateMs(col, s);
+                    if (builtinMs != null) return (
+                      <div key={col.defId} role="gridcell" title={new Date(builtinMs).toLocaleString()}
+                        style={{ flex: `0 0 ${w}px`, padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", fontSize: 13, color: "var(--text-secondary)", borderRight: "1px solid var(--border-primary)" }}>
+                        {new Date(builtinMs).toLocaleDateString()}
+                      </div>
+                    );
+                    // Native-backed number columns (Intro/Outro Time ← intro_end/outro_start), read-only, seconds.
+                    const builtinNum = builtinNumber(col, s);
+                    if (builtinNum != null) return (
+                      <div key={col.defId} role="gridcell"
+                        style={{ flex: `0 0 ${w}px`, padding: "10px 12px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, display: "flex", alignItems: "center", fontSize: 13, color: "var(--text-secondary)", borderRight: "1px solid var(--border-primary)" }}>
+                        {`${builtinNum.toFixed(1)}s`}
                       </div>
                     );
                     return (

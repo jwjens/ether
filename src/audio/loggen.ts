@@ -452,13 +452,19 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
   const nowTs = Math.floor(Date.now() / 1000);
   // Stay ON FORMAT even from a pre-generated log: skip any entry whose song is in an
   // off-rotation category (one no active show's clock uses — e.g. a stale Christmas entry
-  // from an old generation). Uncategorized entries pass; empty fmt (no clocks) = no filter.
+  // from an old generation). Empty fmt (no clocks) = no filter.
+  // GATE is `s.id IS NULL` (no song join → legacy/SPOT snapshot row, allowed), NOT
+  // `s.category_id IS NULL`: a song that EXISTS but is ORPHANED (category_id NULL → no
+  // category → no station) must NOT pass, or it leaks onto every station's air (the
+  // back-to-back "Munsters Theme" orphan leak; munsters-repeat-diagnosis-2026-07-26.md).
+  // Mirrors the daemon fix in audiod/loggen.js so the cold-stage in-process fallback
+  // window is not a back door for the leak the daemon path already closed.
   const fmt = await getFormatCategoryIds(stationId);
-  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
   const cursor = _schedCursor.get(stationId) ?? 0;
   const params = fmt.length ? [cursor, stationId, nowTs, ...fmt, count] : [cursor, stationId, nowTs, count];
   const rows = await query<ScheduledTrackRow>(
-    `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key,
+    `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key, gs.content_class,
             COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
             COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
      FROM generated_schedule gs
@@ -521,9 +527,10 @@ export async function fillQueueFromSchedule(targetCount = 20, stationIdArg?: num
           outroStart: s.outro_start ?? undefined,
           durationMs: s.duration_ms ?? 0,
           scheduledAt: s.scheduled_at,   // generated_schedule row identity — single source for the calendar
+          contentClass: (s as any).content_class ?? undefined,   // MUSIC/SPOT — carried so the queue UI can gold-tint spots
         } : null;
       }));
-      const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string; durationMs?: number; scheduledAt?: number }[];
+      const items = resolved.filter(Boolean) as { filePath: string; title: string; artist: string; durationMs?: number; scheduledAt?: number; contentClass?: string }[];
       if (items.length > 0) {
         engine.addToQueue(items);
         (engine as any).purgeUnscheduled?.();   // schedule is authoritative — drop any live-picked/restored pollutant

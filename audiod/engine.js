@@ -68,6 +68,10 @@ class DaemonEngine {
     // can stamp that row's LOCAL-ONLY lifecycle (state/played_at). null = an off-log (live-picked) item.
     this.deckSchedId = {};
     this.deckChainType = { A: "segue", B: "segue", C: "segue" };
+    // Content class of the row loaded on each deck (MUSIC/SPOT/JIN…). A SPOT is exclusive PROGRAM content
+    // and gets CLEAN EDGES — never the segue overlap, never a jingle over/into it (Jeff's broadcast ruling,
+    // 2026-07-23). Set at loadToDeck (the single load funnel); null = unknown/none.
+    this.deckContentClass = { A: null, B: null, C: null };
     this.deckReady = new Set();
     // Bug A fix (source-wipe race): per-deck LOAD GENERATION — bumped on every fresh loadToDeck. A
     // deferred post-crossfade stop captures this at rotate time and no-ops if it changed (the deck was
@@ -418,7 +422,9 @@ class DaemonEngine {
     // Stage 0: deck events now carry deckReady (cued/ready) so the renderer can mirror cued state
     // instead of guessing. Emit on a status/title/position change OR a ready flip.
     if (this._changed(this.lastFired[id], st) || this.lastReady[id] !== ready) {
-      this.emit("deck", { stationId: this.stationId, deck: id, state: { ...st, scheduledAt: this.deckSched[id] ?? null }, ready });
+      // contentClass rides the deck event so the UI can flash a SPOT-holding deck (clean-edges sibling):
+      // sourced from the authoritative per-deck class map (set at loadToDeck), not the render state.
+      this.emit("deck", { stationId: this.stationId, deck: id, state: { ...st, scheduledAt: this.deckSched[id] ?? null, contentClass: this.deckContentClass[id] ?? null }, ready });
     }
     this.lastFired[id] = st;
     this.lastReady[id] = ready;
@@ -680,6 +686,18 @@ class DaemonEngine {
     } else {
       this._log("refill: 0 playable from " + fill.source + " (queue=" + this.queue.length + ")");
     }
+    // STARVED (2026-07-26): the ladder found no playable song in ANY of this station's own categories.
+    // Loud once/60s — never silently borrow a foreign/uncategorized song to paper over an empty library.
+    if (fill.starved) this._noteStarved();
+  }
+
+  // Throttled loud starvation signal → main appends it to health-events.jsonl (fill-starved).
+  _noteStarved() {
+    const now = Date.now();
+    if (now - (this._lastStarvedAt || 0) < 60000) return;
+    this._lastStarvedAt = now;
+    this._log("STARVED: no playable song in this station's own categories — honest empty (no foreign borrow)");
+    try { this.emit("fill-starved", { stationId: this.stationId }); } catch { /* never break playout */ }
   }
 
   // Log-Reader Flip (ACTIVATION) — the read-through refill (§2.3). The queue becomes a cache of log rows
@@ -709,6 +727,7 @@ class DaemonEngine {
       const kept = this._ensureIds((fill.items || []).filter(it => this._fileOk(it.filePath)));
       this.queue = [...boundHead, ...kept];
       this.emit("queue", { stationId: this.stationId, source: "logreader-floor:" + fill.source, items: this.queue });
+      if (fill.starved) this._noteStarved();   // in-station library empty even at the floor — loud, no foreign borrow
       return;
     }
 
@@ -807,6 +826,7 @@ class DaemonEngine {
     this.deckGen[id] = (this.deckGen[id] || 0) + 1;   // Bug A: fresh source loaded → invalidate any pending deferred stop for this deck
     this.deckSched[id] = item.scheduledAt ?? null;   // remember this deck's schedule-row identity
     this.deckSchedId[id] = item.schedId ?? null;     // Phase 1 shadow: the generated_schedule row id (null = off-log)
+    this.deckContentClass[id] = item.contentClass || null;   // clean-edges: SPOT decks never overlap / take a jingle
     this._setDeck(id, { title: item.title || "", artist: item.artist || "", filePath: item.filePath, positionSec: 0, durationSec: (item.durationMs ?? 0) / 1000, status: "idle", volume: 1 });
     this.endTriggered.delete(id);
     const d = this._dur(item.filePath);
@@ -1215,6 +1235,13 @@ class DaemonEngine {
       if (this._jingle && this._jingle.deck === P && this._jingle.phase === "armed") return; // let it fire first
       const nextDeck = this._nextRotateDeck(P);
       if (!(nextDeck && this.deckReady.has(nextDeck))) return;
+      // CLEAN SPOT EDGES: a SPOT is exclusive PROGRAM content — never overlap the incoming over a spot's
+      // tail (clean OUT) and never start a spot early over the outgoing's tail (clean IN). The spot plays
+      // alone; the natural-end rotate gives a clean cut. Segue overlap is music↔music only.
+      if (this.deckContentClass[P] === 'SPOT' || this.deckContentClass[nextDeck] === 'SPOT') {
+        this._log(`clean spot edge: ${P}→${nextDeck} — no segue overlap (SPOT is exclusive program)`);
+        return;
+      }
       this.segueTriggered.add(P);
       this._log(`segue overlap: ${P}→${nextDeck} — incoming starts ${this.segueOverlap}s early over ${P}'s tail (no fade)`);
       this.handleRotate(P, nextDeck);
@@ -1269,6 +1296,9 @@ class DaemonEngine {
       const afterTs = this.deckSched[P];
       if (!(remaining > 0) || afterTs == null) { this._clearScheduled("unscheduled"); return; }  // non-scheduled row → no seam
       const nextDeck = this._nextRotateDeck(P);
+      // NO IMAGING OVER A COMMERCIAL: a jingle introduces MUSIC, never a SPOT. If the outgoing (playing) OR
+      // the incoming deck is a spot, suppress the seam entirely — a spot gets clean edges under any policy.
+      if (this.deckContentClass[P] === 'SPOT' || (nextDeck && this.deckContentClass[nextDeck] === 'SPOT')) { this._clearScheduled("spot-seam"); return; }
       const beforeTs = (nextDeck && this.deckSched[nextDeck] != null)
         ? this.deckSched[nextDeck]
         : (afterTs + Math.ceil(remaining) + 2);

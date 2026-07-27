@@ -92,6 +92,13 @@ npx tsc --noEmit                           # TYPECHECK — vite/esbuild STRIPS t
                                            # crash before it ships. Known pre-existing errors live in
                                            # App.tsx / Scheduler.tsx / OnboardingFlow.tsx / PhoneDesk.tsx;
                                            # the bar is ZERO NEW errors in the code you changed.
+                                           #
+                                           # ACCEPTED BASELINE (standing): 2 pre-existing errors, BOTH in
+                                           # OnboardingFlow.tsx + PhoneDesk.tsx (those files are incomplete
+                                           # and NOT current work). If tsc shows exactly those two, the gate
+                                           # PASSES — just confirm "no new errors" and move on. Do NOT
+                                           # re-list or explain them unless the count changes (a higher
+                                           # count, or an error in any other file, IS new and must be fixed).
 npm run build                              # vite renderer (dist/) — prerequisite
 npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (never publishes)
 ```

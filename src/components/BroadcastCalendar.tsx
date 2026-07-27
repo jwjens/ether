@@ -330,13 +330,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                     <div style={{ padding: "8px 12px", fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>— empty —</div>
                   ) : items.map((it, i) => {
                     const isNow = isToday && it.scheduled_at === currentAt;
+                    const isSpot = !it.song_id;   // a spot (commercial/promo) — no song_id. Gold/amber class color.
                     return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px", background: isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : "transparent", borderLeft: `3px solid ${isNow ? "var(--accent-green)" : "transparent"}` }}>
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px", background: isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent", borderLeft: `3px solid ${isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "transparent"}` }}>
                       <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isNow ? "var(--accent-green)" : "var(--text-tertiary)" }}>
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : it.song_id ? "var(--text-primary)" : "var(--accent-green)" }}>
-                        {isNow ? "▶ " : ""}{it.title}{!it.song_id ? "  ·  spot" : ""}
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "var(--text-primary)" }}>
+                        {isNow ? "▶ " : ""}
+                        {isSpot && <span style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.06em" }}>SPOT</span>}
+                        {it.title}
                       </span>
                       <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
                       <span style={{ flexShrink: 0, width: 40, textAlign: "right" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>

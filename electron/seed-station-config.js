@@ -7,12 +7,12 @@
 // migrate-metadata-tables-phase-sync-6.js (47 defs + 35 vocab) so a new station matches a migrated one.
 const crypto = require('crypto');
 
-// 5 default separation rules (matches the old fresh-install seed): [rule_type, scope, value, is_hard, is_active, description]
+// Default separation rules (matches the old fresh-install seed): [rule_type, scope, value, is_hard, is_active, description]
+// max_same_gender removed 2026-07-24 (never enforced, not wanted) — a startup migration tombstones existing rows.
 const SEPARATION_RULES = [
   ['artist_separation_min', 'global', 60,  1, 1, 'Minimum minutes between songs by the same artist'],
   ['song_separation_min',   'global', 180, 1, 1, 'Minimum minutes before a song can repeat'],
   ['title_separation_min',  'global', 120, 1, 1, 'Minimum minutes between songs with the same title'],
-  ['max_same_gender',       'global', 3,   0, 1, 'Max consecutive songs of the same gender'],
   ['max_same_category',     'global', 3,   0, 1, 'Max consecutive songs from the same category'],
 ];
 

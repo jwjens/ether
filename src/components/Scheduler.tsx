@@ -789,6 +789,10 @@ function ClocksTab() {
   const [breaks, setBreaks]       = useState<{ id: number; uuid: string; minute: number; spot_category_id: number | null; count: number }[]>([]);
   const [breaksSaved, setBreaksSaved] = useState(false);
   const [spotCatCounts, setSpotCatCounts] = useState<Record<number, number>>({});
+  // Eligible-spot counts per spot category (Generate's SPOT_SELECT criteria) + total active — drives the
+  // per-break "0 eligible spots" warning so a break that would air nothing is a visible fact (v4.4.83).
+  const [breakEligible, setBreakEligible] = useState<Record<number, number>>({});
+  const [anyEligible, setAnyEligible] = useState(0);
   const [editSpotCat, setEditSpotCat] = useState<{ id: number; name: string; color: string } | null>(null);
   const [newSpotCatName, setNewSpotCatName] = useState("");
   const [newSpotCatColor, setNewSpotCatColor] = useState("#8868D8");
@@ -819,6 +823,17 @@ function ClocksTab() {
     const map: Record<number, number> = {};
     for (const r of counts) map[r.spot_category_id] = r.c;
     setSpotCatCounts(map);
+    // Eligible-per-category (the exact criteria Generate's SPOT_SELECT_BY_CATEGORY places by).
+    const today = new Date().toISOString().slice(0, 10);
+    const elig = await queryScoped<{ spot_category_id: number | null; c: number }>(
+      `SELECT spot_category_id, COUNT(*) c FROM spots
+         WHERE deleted_at IS NULL AND is_active = 1 AND file_path IS NOT NULL
+           AND (start_date IS NULL OR start_date = '' OR start_date <= ?)
+           AND (end_date   IS NULL OR end_date   = '' OR end_date   >= ?)
+         GROUP BY spot_category_id`, [today, today], stationId);
+    const em: Record<number, number> = {}; let any = 0;
+    for (const r of elig) { if (r.spot_category_id != null) em[r.spot_category_id] = r.c; any += r.c; }
+    setBreakEligible(em); setAnyEligible(any);
   };
   const addSpotCat = async () => {
     const name = newSpotCatName.trim(); if (!name) return;
@@ -1605,8 +1620,15 @@ function ClocksTab() {
                   <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, fontSize: 9, fontWeight: 800, color: "var(--text-tertiary)", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>
                     <span>Min past hr</span><span>Spot category</span><span>Spots</span><span></span>
                   </div>
-                  {breaks.map(b => (
-                    <div key={b.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, alignItems: "center" }}>
+                  {breaks.map(b => {
+                    // Foreign = the break points at a category id that isn't one of THIS station's spot
+                    // categories (e.g. a stale id left by the per-station category split). Eligible = spots
+                    // Generate could actually place here; 0 → this break airs nothing.
+                    const foreign = b.spot_category_id != null && !spotCats.some(sc => sc.id === b.spot_category_id);
+                    const elig = b.spot_category_id == null ? anyEligible : (breakEligible[b.spot_category_id] || 0);
+                    return (
+                    <div key={b.id}>
+                    <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, alignItems: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <span style={{ fontSize: 14, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
                         <input type="text" inputMode="numeric" value={String(b.minute)}
@@ -1614,10 +1636,10 @@ function ClocksTab() {
                           onChange={e => { const n = parseInt(e.target.value.replace(/\D/g, ''), 10); updateBreak(b.id, { minute: isNaN(n) ? 0 : Math.max(0, Math.min(59, n)) }); }}
                           style={{ width: 66, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
                       </div>
-                      <select value={b.spot_category_id ?? ""} onChange={e => updateBreak(b.id, { spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
-                        style={{ padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: b.spot_category_id == null ? "var(--text-tertiary)" : "var(--text-primary)", outline: "none", cursor: "pointer" }}>
+                      <select value={foreign ? "" : (b.spot_category_id ?? "")} onChange={e => updateBreak(b.id, { spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
+                        style={{ padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: `1px solid ${elig === 0 ? "rgba(251,191,36,0.55)" : "var(--border-primary)"}`, color: b.spot_category_id == null ? "var(--text-tertiary)" : "var(--text-primary)", outline: "none", cursor: "pointer" }}>
                         <option value="">Any spot</option>
-                        {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
+                        {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name} ({breakEligible[sc.id] || 0})</option>)}
                       </select>
                       <input type="text" inputMode="numeric" value={String(b.count)}
                         onFocus={e => e.currentTarget.select()}
@@ -1625,7 +1647,17 @@ function ClocksTab() {
                         style={{ width: 74, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
                       <button onClick={() => removeBreak(b)} title="Remove break" style={{ padding: "6px 9px", fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
-                  ))}
+                    {elig === 0 && (
+                      <div style={{ marginTop: 3, marginLeft: 118, fontSize: 10, fontWeight: 700, color: "#fbbf24", letterSpacing: "0.02em" }}>
+                        ⚠ 0 eligible spots — this break airs nothing.{" "}
+                        {foreign ? "This category belongs to another station — re-pick one below."
+                          : b.spot_category_id == null ? "No active spots on this station yet."
+                          : "Add or activate a spot in this category (Spots & Promos)."}
+                      </div>
+                    )}
+                    </div>
+                    );
+                  })}
                 </div>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

@@ -33,8 +33,9 @@ The quickest way to turn an existing audio file into a spot:
 
 1. Open the **Library** and **right-click** the track.
 2. Choose **Mark as Spot (SPOT)**.
-3. In the small dialog, pick a **category** (or type a new one) and a **type** (Commercial by default), then
-   **Mark as Spot**.
+3. In the small dialog, pick a **category** (or type a new one — this is **required**) and a **type**
+   (Commercial by default), then **Mark as Spot**. A spot with no category can't be pulled by a break, so
+   the dialog won't let you finish until one is set.
 4. The track gets an amber **SPOT** badge, leaves music rotation, and a spot record is created carrying its
    title and file. Fine-tune dates, caps and advertiser later in the panel.
 
@@ -56,6 +57,32 @@ Spots don't rotate like music — they air in **timed breaks** you place on a cl
    choose which **spot category** it pulls from, and how many spots it plays.
 3. Every hour that clock runs, the break airs at that time. Music fills the time around the breaks
    automatically — you don't count songs to fill the hour.
+
+## Will it air? (the amber cues)
+
+- In the **Spots & Promos** list, any spot that a break **can't pull** wears an amber **⚠ WON'T AIR** flag —
+  it's either **inactive** or has **no category**. Open it (Edit) and set an active status + a category to fix.
+  This is your at-a-glance check that every spot is schedulable.
+- If a **timed break** on your active clock pulls a category with **no eligible spots**, the panel shows an
+  amber banner naming each empty break (":20 → Sponsors — add or activate a spot"). If a break points at
+  *another station's* category (a leftover after splitting stations), the banner says so and sends you to
+  **Clocks → Timed Spot Breaks** to re-pick. The clock break editor shows the same **⚠ 0 eligible spots**
+  warning inline, and each category in its dropdown shows its eligible count. A break that would air silence
+  is never a silent fact.
+- Once a spot is scheduled, its rows render **gold/amber** everywhere the log shows — in the **calendar**
+  (a **SPOT** chip + amber row) and in the **live Up Next queue** (amber left-edge + **SPOT** chip) — so a
+  commercial break is instantly distinct from music at a glance.
+
+## How spots air (exclusive program, clean edges)
+
+- A spot is **exclusive program content** — it owns its slot like a song. At a break the spot plays **alone**:
+  clean start, clean end, **no music overlap in or out** and **no jingle over it** (imaging introduces music,
+  never a commercial). The next song follows at the spot's natural end.
+- Spot length is read from the **actual audio file** on import / Mark-as-Spot (not a guessed default), so the
+  log and the break timing are accurate. Existing spots self-repair their length the next time the panel loads.
+- **Amber deck flash:** while a deck is holding a spot — from the moment it loads until it finishes airing —
+  that deck card pulses an amber/gold frame, readable across the room. Songs never flash; this is separate
+  from the jingle indicator (the white/yellow line under a deck).
 
 ## Notes
 

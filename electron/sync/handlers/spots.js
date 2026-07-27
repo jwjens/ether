@@ -57,6 +57,11 @@ function spotsCreate(db, payload) {
   const row  = {
     ...payload,
     uuid,
+    // A created spot AIRS by default: default is_active to 1 when the caller omits it (2026-07-23 —
+    // Mark-as-Spot was minting is_active=null spots, which Generate's SPOT_SELECT (is_active=1) excluded,
+    // so breaks placed nothing). Callers may still pass is_active:0 to create a parked spot.
+    is_active: payload.is_active ?? 1,
+    max_plays_day: payload.max_plays_day ?? 999,
     created_at: now,
     updated_at: now,
     deleted_at: payload.deleted_at ?? null,

@@ -28,7 +28,7 @@ function fmtSec(sec: number): string {
 // A / B / C deck accent colors — must match the fader strips + ThreeSlotBar.
 const DECK_COLORS: Record<"A" | "B" | "C", string> = { A: "var(--deck-a)", B: "var(--deck-b)", C: "var(--deck-c)" };
 
-interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; }
+interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; contentClass: string | null; }
 
 // Tiny artwork cache — exported so OnAirDeck can share it
 export const artCache: Record<string, string> = {};
@@ -184,9 +184,9 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
   // Live A/B/C deck snapshots for the stacked deck rows. engine.on fires on every state
   // change; the 1s tick keeps the playing deck's countdown + progress fresh between events.
   const [deckStates, setDeckStates] = useState<Record<"A" | "B" | "C", DeckRowState>>({
-    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "" },
-    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "" },
-    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "" },
+    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null },
+    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null },
+    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null },
   });
   useEffect(() => {
     const pull = () => setDeckStates(prev => {
@@ -197,6 +197,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           title: s?.title ?? "", artist: s?.artist ?? "", status: s?.status ?? "idle",
           positionSec: s?.positionSec ?? 0, durationSec: s?.durationSec ?? 0,
           filePath: (s as any)?.filePath ?? "",
+          contentClass: (s as any)?.contentClass ?? null,
         };
       });
       return next;
@@ -367,7 +368,9 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       {/* Flash keyframe — pulses the deck color over a row during the last 10s so a DJ
           knows to start talking. Color-agnostic (the overlay's bg is set per-deck inline). */}
       <style>{`@keyframes deck-row-flash { 0%,100% { opacity: 0.06; } 50% { opacity: 0.5; } }
-        @keyframes jingle-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }`}</style>
+        @keyframes jingle-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+        @keyframes spot-deck-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .spot-deck-flash { animation: spot-deck-flash 1s ease-in-out infinite; }`}</style>
 
       {/* ── Stacked A / B / C deck rows — color-coded, animated, flash in last 10s ── */}
       <div style={{ flexShrink: 0, borderBottom: "2px solid rgba(255,255,255,0.07)" }}>
@@ -392,6 +395,10 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           const isEndingSoon = isPlaying && dur > 0 && remaining <= 10;
           const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
           const hasTrack = !!s.title;
+          // SPOT-deck flash: a deck holding a SPOT (commercial/promo) gets an amber pulsing frame from load
+          // until it finishes airing — exclusive to spots (songs never flash), distinct from the jingle
+          // third-row indicator. Dies when the spot ends (status 'ended') and music takes over.
+          const isSpotDeck = s.contentClass === "SPOT" && hasTrack && s.status !== "ended";
           const timeStr = isPlaying ? `-${fmtSec(remaining)}` : (dur > 0 ? fmtSec(dur) : "");
           const artKey = `${s.title}::${s.artist}`;
           return (
@@ -418,6 +425,10 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
               {/* last-10s flash overlay */}
               {isEndingSoon && (
                 <div style={{ position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none", animation: "deck-row-flash 0.85s ease-in-out infinite" }} />
+              )}
+              {/* SPOT deck flash — amber pulsing frame + faint wash, SPOT-exclusive (songs never flash) */}
+              {isSpotDeck && (
+                <div className="spot-deck-flash" style={{ position: "absolute", inset: 0, zIndex: 4, pointerEvents: "none", boxShadow: "inset 0 0 0 3px #fbbf24", background: "rgba(251,191,36,0.12)" }} />
               )}
               {/* (deck color strip removed) */}
               {/* content */}
@@ -485,6 +496,11 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           const engineIdx = i + 2;
           const color = getItemColor(item);
           const catLabel = getCatLabel(item);
+          // A spot (commercial/promo) in the live queue → gold/amber, matching the calendar. Detected the
+          // same way the daemon/generator tags them: itemType 'spot', content_class 'SPOT', or a spot id.
+          const isSpot = (item as any).itemType === "spot"
+            || (item as any).contentClass === "SPOT" || (item as any).content_class === "SPOT"
+            || (item as any).spot_id != null || (item as any).spotId != null;
           const ms = (item as any).durationMs || (item as any).duration_ms || 0;
           const lintEarly = (item as any).scheduledAt != null ? lintMap[(item as any).scheduledAt] : undefined;
           const artKey = `${item.title}::${item.artist}`;
@@ -512,7 +528,8 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                 display: "flex", alignItems: "stretch",
                 borderBottom: "1px solid rgba(255,255,255,0.04)",
                 borderTop: isDropTarget ? "2px solid var(--accent-blue)" : "none",
-                background: isBeingDragged ? "rgb(from var(--accent-blue) r g b / 0.06)" : "transparent",
+                borderLeft: isSpot ? "3px solid #fbbf24" : "3px solid transparent",
+                background: isBeingDragged ? "rgb(from var(--accent-blue) r g b / 0.06)" : isSpot ? "rgba(251,191,36,0.06)" : "transparent",
                 opacity: isBeingDragged ? 0.4 : 1,
                 cursor: isBeingDragged ? "grabbing" : "grab",
                 userSelect: "none" as any,
@@ -549,7 +566,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                       whiteSpace: "nowrap" as any, letterSpacing: "-0.01em",
                       ...(i === 0 && topScrollPx > 0 ? { animation: "nextup-title-scroll 9s ease-in-out infinite", "--scroll-x": `-${topScrollPx}px` } : {}),
                     } as React.CSSProperties}
-                  >{item.title}</div>
+                  >{isSpot && <span style={{ marginRight: 7, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.06em", verticalAlign: "middle" as any }}>SPOT</span>}{item.title}</div>
                   <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, marginTop: 3 }}>{item.artist}</div>
                   {lintEarly != null && lintEarly > 0 && (
                     <div title="This placement airs before the song/artist separation rule allows" style={{ marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9, fontWeight: 800, letterSpacing: "0.04em", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.4)", padding: "1px 5px", borderRadius: 2, textTransform: "uppercase" as const }}>

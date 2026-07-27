@@ -324,9 +324,19 @@ function createLibraryHealth(opts) {
         for (const r of (info && info.relaxed || [])) byCat.set(r.category_id, (byCat.get(r.category_id) || 0) + 1);
         const relaxed = [...byCat.entries()].map(([id, count]) => ({ categoryId: id, category: nameOf(id), count })).sort((a, b) => b.count - a.count);
         const emptyCats = (info && info.emptyCatIds || []).map(nameOf);
-        lastGen.set(stationId, { at: new Date().toISOString(), relaxed, emptyCats, relaxedTotal: (info && info.relaxed || []).length });
+        // Anchor-fit (v4.4.84): breaks that still landed > tolerance off their minute — a visible honest
+        // signal so an un-fittable anchor (e.g. a category of only long songs) surfaces, never silent.
+        const breakDrift = (info && info.breakDrift || []);
+        const driftSummary = breakDrift.length ? {
+          count: breakDrift.length,
+          worstSec: Math.max(0, ...breakDrift.map(b => Math.abs(b.driftSec || 0))),
+          byMinute: [...breakDrift.reduce((m, b) => m.set(b.minute, (m.get(b.minute) || 0) + 1), new Map()).entries()]
+            .map(([minute, n]) => ({ minute, n })).sort((a, b) => a.minute - b.minute),
+        } : null;
+        lastGen.set(stationId, { at: new Date().toISOString(), relaxed, emptyCats, relaxedTotal: (info && info.relaxed || []).length, breakDrift: driftSummary });
         for (const r of relaxed) appendJsonl({ kind: 'generate-relaxed', stationId, category: r.category, count: r.count });
         for (const nm of emptyCats) appendJsonl({ kind: 'generate-empty-category', stationId, category: nm });
+        for (const b of breakDrift) appendJsonl({ kind: 'generate-break-drift', stationId, hour: b.hour, minute: b.minute, driftSec: b.driftSec, direction: b.direction });
       } catch { /* best-effort — never break Generate */ }
     },
     snapshot() { return lastSnapshot; },

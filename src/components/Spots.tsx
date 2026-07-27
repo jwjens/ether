@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { queryScoped } from "../db/stationScoped";
+import { query } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
@@ -15,6 +16,7 @@ interface Spot {
   is_active: number;
   notes: string | null;
   spot_category_id: number | null;
+  length_sec: number | null;
 }
 
 interface SpotCategory { id: number; name: string; color: string | null; uuid: string; }
@@ -47,16 +49,49 @@ export default function Spots() {
   const [newCatColor, setNewCatColor] = useState("#8868D8");
   const [editCat, setEditCat] = useState<{ id: number; name: string; color: string } | null>(null);
 
+  // Build-the-sense (v4.4.83): active-clock spot breaks whose category has 0 eligible spots on THIS station.
+  // A silent empty break (all spots deleted/inactive/uncategorized, or the break points at another station's
+  // category id) becomes a visible fact — this is exactly the failure that aired nothing.
+  const [emptyBreaks, setEmptyBreaks] = useState<{ minute: number; category: string; foreign: boolean }[]>([]);
+
   const load = async () => {
     if (!isReady) return;
-    const conds: string[] = [], params: any[] = [];
+    // deleted_at IS NULL is FIRST and unconditional — a soft-deleted spot must never render here. Without it
+    // the panel showed deleted rows (so Delete looked dead — the row never left the list — and the panel
+    // misreported deleted spots as live). This is the truth-fix (v4.4.83).
+    const conds: string[] = ["deleted_at IS NULL"], params: any[] = [];
     if (filter !== "all")    { conds.push("spot_type = ?"); params.push(filter); }
     if (catFilter === "none") conds.push("spot_category_id IS NULL");
     else if (catFilter !== "all") { conds.push("spot_category_id = ?"); params.push(catFilter); }
-    const where = conds.length ? " WHERE " + conds.join(" AND ") : "";
-    setSpots(await queryScoped<Spot>("SELECT * FROM spots" + where + " ORDER BY title", params, stationId));
+    const where = " WHERE " + conds.join(" AND ");
+    const rows = await queryScoped<Spot>("SELECT * FROM spots" + where + " ORDER BY title", params, stationId);
+    setSpots(rows);
+    // Repair any fake/missing durations from the file, then re-load once to reflect them (the second pass
+    // finds nothing to heal → terminates, no loop).
+    if (await healDurations(rows)) load();
   };
   useEffect(() => { load(); }, [filter, catFilter, isReady]);
+
+  // Probe the REAL audio duration (seconds) via the native probe every import uses — so length_sec is
+  // truthful (a fake default corrupts the calendar, generator spacing, and anchor-fit). null on failure.
+  const probeLen = async (fp: string | null): Promise<number | null> => {
+    if (!fp) return null;
+    try { const d = await (window as any).ether.audio.getFileDuration(fp); return (typeof d === "number" && d > 0) ? Math.round(d) : null; }
+    catch { return null; }
+  };
+  // Self-heal existing spots whose length_sec is missing or the old 30s default: re-probe from the file.
+  // One-shot after each load; only touches rows that need it (bounded), via the proper spots.update IPC.
+  const healDurations = async (rows: Spot[]): Promise<boolean> => {
+    let changed = false;
+    for (const s of rows) {
+      if (!s.file_path) continue;
+      const cur = s.length_sec;
+      if (cur != null && cur !== 30) continue;   // trust a real, non-default value
+      const real = await probeLen(s.file_path);
+      if (real != null && real !== cur) { try { await (window as any).ether.spots.updateById(s.id, { length_sec: real }); changed = true; } catch {} }
+    }
+    return changed;
+  };
 
   const catName = (id: number | null) => (id == null ? null : cats.find(c => c.id === id)?.name ?? null);
   const catColor = (id: number | null) => (id == null ? null : cats.find(c => c.id === id)?.color ?? "var(--accent-blue)");
@@ -66,13 +101,50 @@ export default function Spots() {
     const res = await (window as any).ether.spotCategories.list(stationId);
     setCats(res?.rows || []);
     const counts = await queryScoped<{ spot_category_id: number; c: number }>(
-      "SELECT spot_category_id, COUNT(*) c FROM spots WHERE spot_category_id IS NOT NULL GROUP BY spot_category_id", [], stationId);
+      "SELECT spot_category_id, COUNT(*) c FROM spots WHERE spot_category_id IS NOT NULL AND deleted_at IS NULL GROUP BY spot_category_id", [], stationId);
     const map: Record<number, number> = {};
     for (const r of counts) map[r.spot_category_id] = r.c;
     setCatCounts(map);
   };
 
   useEffect(() => { loadCats(); }, [isReady, stationId]);
+
+  // Recompute the empty-break sense whenever spots/categories change (so the warning clears the moment
+  // Jeff activates/categorizes a spot or re-picks the break's category).
+  const loadBreakSense = async () => {
+    if (!isReady) return;
+    const today = new Date().toISOString().slice(0, 10);
+    let breaks: { minute: number; spot_category_id: number | null }[] = [];
+    try {
+      // Cross-table JOIN → unscoped query() with an explicit station filter (queryScoped can't auto-scope JOINs).
+      breaks = await query(
+        `SELECT cb.minute, cb.spot_category_id
+           FROM clock_breaks cb JOIN shows sh ON sh.clock_id = cb.clock_id
+          WHERE sh.station_id = ? AND sh.is_active = 1 AND sh.deleted_at IS NULL AND cb.deleted_at IS NULL
+          ORDER BY cb.minute`, [stationId]);
+    } catch { breaks = []; }
+    const out: { minute: number; category: string; foreign: boolean }[] = [];
+    for (const b of breaks) {
+      // The EXACT eligibility Generate's SPOT_SELECT_BY_CATEGORY uses.
+      const cnt = (await query<{ n: number }>(
+        `SELECT COUNT(*) n FROM spots WHERE station_id = ? AND deleted_at IS NULL AND is_active = 1 AND file_path IS NOT NULL
+           AND (? IS NULL OR spot_category_id = ?)
+           AND (start_date IS NULL OR start_date = '' OR start_date <= ?)
+           AND (end_date   IS NULL OR end_date   = '' OR end_date   >= ?)`,
+        [stationId, b.spot_category_id, b.spot_category_id, today, today]))[0]?.n ?? 0;
+      if (cnt > 0) continue;
+      let category = "Any active spot", foreign = false;
+      if (b.spot_category_id != null) {
+        const c = (await query<{ name: string; station_id: number }>(
+          `SELECT name, station_id FROM spot_categories WHERE id = ?`, [b.spot_category_id]))[0];
+        if (c) { category = c.name; foreign = c.station_id !== stationId; }
+        else { category = `category #${b.spot_category_id}`; foreign = true; }
+      }
+      out.push({ minute: b.minute, category, foreign });
+    }
+    setEmptyBreaks(out);
+  };
+  useEffect(() => { loadBreakSense(); }, [isReady, stationId, spots.length, cats.length]);
 
   // ── Category CRUD ──────────────────────────────────────────────
   const addCat = async () => {
@@ -103,14 +175,17 @@ export default function Spots() {
       if (!files || (Array.isArray(files) && files.length === 0)) return;
       setImporting(true);
       const fileList = Array.isArray(files) ? files : [files];
-      let n = 0;
+      let n = 0, skipped = 0;
       for (const fp of fileList) {
-        const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp], stationId))[0] ?? null;
-        if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo" }); n++; }
+        // deleted_at IS NULL: a soft-deleted spot must NOT block re-import (that was the halloVeen silent
+        // failure — its two deleted rows shared this file, so dedup matched and skipped). Only a LIVE dup skips.
+        const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ? AND deleted_at IS NULL", [fp], stationId))[0] ?? null;
+        if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo", length_sec: await probeLen(fp) }); n++; }
+        else skipped++;
       }
-      setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
+      setStatus(`Imported ${n} spot${n === 1 ? "" : "s"}${skipped ? ` · ${skipped} already in the library (skipped)` : ""}.`); setTimeout(() => setStatus(""), 4000);
       setImporting(false); load();
-    } catch (e) { console.error(e); setImporting(false); }
+    } catch (e) { console.error(e); setStatus("Import failed: " + String(e)); setImporting(false); }
   };
 
   const handleImportFolder = async () => {
@@ -119,18 +194,19 @@ export default function Spots() {
       if (!folder) return;
       setImporting(true); setStatus("Scanning...");
       const entries = await readDir(folder as string);
-      let n = 0;
+      let n = 0, skipped = 0;
       for (const e of entries) {
         if (e.name && isAudio(e.name)) {
           const sep = (folder as string).includes("/") ? "/" : "\\";
           const fp = (folder as string) + sep + e.name;
-          const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ?", [fp], stationId))[0] ?? null;
-          if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo" }); n++; }
+          const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ? AND deleted_at IS NULL", [fp], stationId))[0] ?? null;
+          if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo", length_sec: await probeLen(fp) }); n++; }
+          else skipped++;
         }
       }
-      setStatus("Imported " + n + " spots."); setTimeout(() => setStatus(""), 3000);
+      setStatus(`Imported ${n} spot${n === 1 ? "" : "s"}${skipped ? ` · ${skipped} already in the library (skipped)` : ""}.`); setTimeout(() => setStatus(""), 4000);
       setImporting(false); load();
-    } catch (e) { console.error(e); setImporting(false); }
+    } catch (e) { console.error(e); setStatus("Import failed: " + String(e)); setImporting(false); }
   };
 
   // ── Traffic CSV Import ──────────────────────────────────────
@@ -197,8 +273,8 @@ export default function Spots() {
 
         // Dedupe by ISCI or title
         const ex = isci
-          ? (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE isci_code = ?", [isci], stationId))[0] ?? null
-          : (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE title = ? AND advertiser = ?", [title, advertiser], stationId))[0] ?? null;
+          ? (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE isci_code = ? AND deleted_at IS NULL", [isci], stationId))[0] ?? null
+          : (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE title = ? AND advertiser = ? AND deleted_at IS NULL", [title, advertiser], stationId))[0] ?? null;
         if (ex) {
           // Update dates/agency if changed; only pass non-null values to preserve existing data
           const patch: Record<string, any> = { is_active: 1 };
@@ -310,6 +386,23 @@ export default function Spots() {
       )}
 
       {status && <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
+
+      {/* Empty-break sense — silent breaks that would air nothing, made visible (v4.4.83). */}
+      {emptyBreaks.length > 0 && (
+        <div style={{ padding: "12px 14px", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.45)", borderRadius: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#fbbf24", marginBottom: 4 }}>⚠ {emptyBreaks.length} spot break{emptyBreaks.length > 1 ? "s" : ""} on this station's active clock will air NOTHING</div>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+            Each pulls a category with <strong>0 eligible spots</strong> (active, categorized, in-flight, on-disk):
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+              {emptyBreaks.map((e, i) => (
+                <li key={i}>:{String(e.minute).padStart(2, "0")} → <strong>{e.category}</strong>{e.foreign
+                  ? <> — that category belongs to <em>another station</em>; re-pick it in <strong>Clocks → Timed Spot Breaks</strong></>
+                  : " — add or activate a spot in this category"}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
@@ -447,7 +540,15 @@ export default function Spots() {
                     onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                   >
-                    <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{s.title}</td>
+                    <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>
+                      {s.title}
+                      {(!s.is_active || s.spot_category_id == null) && (
+                        <span
+                          title={`This spot will not be placed by Generate — ${!s.is_active ? "it is inactive" : ""}${!s.is_active && s.spot_category_id == null ? " and " : ""}${s.spot_category_id == null ? "it has no category (category breaks pull spots by category)" : ""}. Edit it to fix.`}
+                          style={{ marginLeft: 8, padding: "1px 6px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.05em", verticalAlign: "middle" as any }}
+                        >⚠ WON'T AIR</span>
+                      )}
+                    </td>
                     <td style={{ padding: "10px 14px" }}>
                       <span style={{ fontSize: 9, fontWeight: 700, color: typeColor, background: typeColor + "20", padding: "2px 8px", borderRadius: 0, textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>{s.spot_type}</span>
                     </td>

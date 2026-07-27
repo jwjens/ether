@@ -93,6 +93,17 @@ function getFormatCategoryIds(db, stationId, clockId) {
   } catch { return []; }
 }
 
+// ── This station's OWN category universe (the honest last-resort pool for Tier 3b) ──
+// Every non-deleted category owned by the station. Used only when the on-format (clock-derived) set is
+// empty/misconfigured: the fallback stays inside the STATION'S library instead of borrowing the whole
+// account. A NULL-category orphan and any other station's songs are excluded by construction (their
+// category_id is not in this list). Read-only; [] means the station has no categories at all.
+function getStationCategoryIds(db, stationId) {
+  try {
+    return db.prepare("SELECT id FROM categories WHERE station_id = ? AND deleted_at IS NULL").all(stationId).map(r => r.id);
+  } catch { return []; }
+}
+
 const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.file_key, s.duration_ms, s.intro_end, s.outro_start
   FROM songs s LEFT JOIN artists a ON a.id = s.artist_id`;
 const toItem = (r) => ({
@@ -100,6 +111,7 @@ const toItem = (r) => ({
   durationMs: r.duration_ms || 0, introEnd: r.intro_end ?? undefined, outroStart: r.outro_start ?? undefined,
   scheduledAt: r.scheduled_at ?? undefined,
   fileKey: r.file_key ?? undefined,   // Slice B: lets the fill distinguish R2-only (prefetchable) from dead (no key)
+  contentClass: r.content_class ?? undefined,   // MUSIC/SPOT — carried so the queue UI can gold-tint spots
 });
 
 // least-recently-played first: songs never aired on THIS station (MAX→NULL→0) come first, then oldest.
@@ -145,19 +157,26 @@ function pickFromClock(db, clockId, count, hour, stationId, opts) {
 }
 
 // ── Priority 0: pre-generated log (local files only) ──
+// FORMAT GATE (all four log readers below use this shape): a scheduled row airs on this station only if
+// its joined song sits in an on-format category — OR the song JOIN is ABSENT (s.id IS NULL), which is a
+// legacy/SPOT snapshot row that carries its own file_path/title on the generated_schedule row. The gate
+// is `s.id IS NULL`, NOT `s.category_id IS NULL`: an ORPHAN song (row exists but category_id = NULL →
+// belongs to no category → no station) must NOT pass. The old `s.category_id IS NULL` arm let a
+// category-less orphan pass EVERY station's filter, which put a NULL-category "Munsters Theme" on air
+// on a Christmas station, back-to-back (munsters-repeat-diagnosis-2026-07-26.md).
 let _schedCursor = 0;
 function resetScheduleCursor() { _schedCursor = 0; }
 
 function readGeneratedSchedule(db, count, stationId) {
   const nowTs = Math.floor(Date.now() / 1000);
   const fmt = getFormatCategoryIds(db, stationId);
-  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
   const params = fmt.length ? [_schedCursor, stationId, nowTs, ...fmt, count] : [_schedCursor, stationId, nowTs, count];
   let rows;
   try {
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
-              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL
@@ -171,13 +190,13 @@ function readGeneratedSchedule(db, count, stationId) {
 // Top-of-hour: schedule anchored exactly at hourStartTs, no grace (daemon hard cut).
 function fillFromHour(db, stationId, hourStartTs, count = 20) {
   const fmt = getFormatCategoryIds(db, stationId);
-  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
   const params = fmt.length ? [stationId, hourStartTs, ...fmt, count] : [stationId, hourStartTs, count];
   let rows;
   try {
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
-              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL
@@ -205,7 +224,7 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
 function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
   try {
     const fmt = getFormatCategoryIds(db, stationId);
-    const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+    const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
     const base = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
                   WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
                     AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}`;
@@ -248,7 +267,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
   if (!d.playRow) return { items: [], mode: d.mode, missedRowIds: [], driftSec: 0, aheadBySec: 0 };
   const anchorTs = d.playRow.scheduled_at;
   const fmt = getFormatCategoryIds(db, stationId);
-  const catClause = fmt.length ? `AND (s.category_id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+  const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
   const fmtP = fmt.length ? fmt : [];
   const pendBase = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
     WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
@@ -267,7 +286,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
   try {
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
-              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        ${pendBase} AND gs.scheduled_at >= ? ORDER BY gs.scheduled_at LIMIT ?`
     ).all(stationId, ...fmtP, anchorTs, count);
@@ -357,20 +376,33 @@ function fillQueue(db, stationId, count = 12) {
       add(pickTier(db, count - songs.length, hour, stationId, formatCats, ids(), { artistSepSec: 0, songSep: false, daypart: false }, "lrp"));
       if (songs.length > before) { tier = 3; console.warn(`[loggen] TIER 3 (absolute least-recently-played, no rules): +${songs.length - before}`); }
     }
-    // Tier 3b — on-format set empty/misconfigured → LRP across ALL active songs, any category.
+    // Tier 3b — on-format (clock-derived) set empty/misconfigured → LRP across THIS STATION'S OWN library
+    // (all of its categories), NOT the whole account. Scoping to the station's category ids means a
+    // category-less orphan and every other station's songs are excluded by construction — the fallback
+    // can never again borrow a foreign song (the 4-Beach-Boys / cross-station leak). If the station has
+    // no categories at all, stationCats is [] and we DO NOT relax to "any category / any station" — we
+    // leave the pool empty and let the loud starvation signal below fire (honest empty-library, never a
+    // silent foreign-song cover-up). Separation stays off at this absolute floor (AUTO NEVER STOPS —
+    // within the station), which is unchanged; the defect was cross-station borrowing, not the relax.
     if (songs.length === 0) {
-      add(pickTier(db, count, hour, stationId, [], [], { artistSepSec: 0, songSep: false, daypart: false }, "lrp"));
-      if (songs.length) { tier = 4; console.warn(`[loggen] TIER 3b (LRP across all active songs — no on-format candidates): +${songs.length}`); }
+      const stationCats = getStationCategoryIds(db, stationId);
+      if (stationCats.length) {
+        add(pickTier(db, count, hour, stationId, stationCats, [], { artistSepSec: 0, songSep: false, daypart: false }, "lrp"));
+        if (songs.length) { tier = 4; console.warn(`[loggen] TIER 3b (LRP across this station's own library — no on-format candidates): +${songs.length}`); }
+      }
     }
   } catch (e) {
     console.error("[loggen] ladder failed:", e.message);
   }
 
-  if (songs.length === 0) {
-    // Only reachable if the station genuinely has ZERO active songs (empty library) — nothing to play.
-    console.error("[loggen] INVARIANT: no active songs exist for this station — cannot avoid silence.");
+  // Genuine starvation: no playable song in ANY of the station's own categories. LOUD — the caller emits
+  // a health event so an empty/misconfigured station library surfaces, rather than being papered over by
+  // borrowing another station's songs (which is what the old account-wide Tier 3b did silently).
+  const starved = songs.length === 0;
+  if (starved) {
+    console.error("[loggen] INVARIANT: no active in-station songs exist for this station — cannot avoid silence (STARVED).");
   }
-  return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem) };
+  return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored };
+module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored };

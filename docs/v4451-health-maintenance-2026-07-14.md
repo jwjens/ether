@@ -63,3 +63,56 @@ metering active station only".)
 
 ## Commit / push
 Committed 4.4.51 and pushed to origin. **No installer built, nothing installed.** STOP for review.
+
+---
+
+## Overnight soak — validated (2026-07-14)
+
+Formal receipt for the **4.4.48 → 4.4.51 arc** (source-wipe race fix → live Health Monitor →
+non-terminal fallback + handover → health-maintenance tuning). Read-only analysis of
+`ether-audiod.log(.1)` + `logs/health-events.jsonl`. All times local (UTC−7).
+
+**Window:** 19:45 (7/13) → 06:42 (7/14), ~10h55m. Segmented by the startup log:
+4.4.49 until 20:33, **4.4.51 from the 20:35 gapless engine reload → 06:42 (~10h07m steady-state)**.
+The bulk of the soak is 4.4.51.
+
+### Requested metrics (steady-state = window minus the 20:32–20:37 update reload)
+
+| Metric | Target | Steady-state | Notes |
+|---|---|---|---|
+| play-skip alerts (`source=None, path empty`) | 0 | **0** | 1 in-window, during the 20:35 engine swap (expected teardown). Bug-A fix (4.4.48) holds. |
+| `frames=+0` events | 0 | **0** | 8 in-window, all clustered 20:32–20:36 across the engine swap; none in the ~10h run. |
+| engine restarts | 0 | **0** | engine **pid 31900 constant** the entire steady-state. One *intentional* gapless reload at 20:35 for the 4.4.51 install — not a crash. |
+| daemon/engine uptime | — | **~10h07m unbroken** | engine 31900 up 20:35:08 (7/13) → 06:42+ (7/14). audiod supervisor/pipe continuously up since 2026-07-09T19:09Z (~4.5 days). |
+| streaming drain continuity | — | **continuous** | halloVeen/Magical Forest/Open Format all streamed; drain steady ~354 kB/s; **0 drain=0 samples while streaming**. Open Format came online 20:44 and held. |
+
+### YELLOW/RED transitions (health-events.jsonl)
+
+- **Headline — 4.4.51 fix validated:** `starting / no fresh audio` = **589 before** the install
+  (all in the 4.4.49 run) and **0 after**. The quiet≠no-data + 5 s hysteresis change eliminated
+  the flapping artifact over ~10h in production.
+- **RED: 0 in steady-state.** The one RED (halloVeen `silent 30s while playing`, 20:35:20) lands
+  inside the 20:35 engine swap (`enginestate: off`) — the audible cost of the in-place engine
+  reload during the update. Watchdog recovered (see below). This is exactly the transition the
+  v4.4.50 song-boundary handover is meant to smooth — the flagged unsoaked item.
+- **Steady-state YELLOW reasons:** `queue depth 4 < 5` ×18 (benign refill lag), `event-loop lag`
+  0.5–0.9 s ×~19 (small GC/IO blips), and the Magical Forest silences below.
+- **Watchdog STALLs:** 3 — two during the 20:35 swap (1.0 s + 8.3 s, `forcing advance`, recovered),
+  and one steady-state micro-stall at 06:40:57 (s1, 1.0 s, auto-recovered, no RED).
+
+### Separate finding (NOT a 4.4.48–4.4.51 regression)
+
+**Magical Forest airs ~10–11 s of digital silence at :30 past every hour** (20:30, 21:30, 22:30,
+23:30, 00:30) plus a few sporadic track-level silences (00:32, 03:15, 03:36, 05:19, 05:39). In
+every case `peak=0` while **frames flow and the engine is `live`** — the decoder is emitting
+silence, i.e. a **content/clock element**, not a pipeline stall. The clean hourly :30 cadence points
+to a scheduled silent element on Magical Forest's clock. Flagged for a separate content review.
+
+### Verdict
+
+**4.4.48–4.4.51 validated.** Over ~10h steady-state on 4.4.51: 0 play-skips, 0 `frames=+0`,
+0 engine restarts, 0 REDs, continuous stream drain, and the headline flapping fix confirmed
+(589 → 0). The only disruption was the ~90-second in-place engine swap during the 4.4.51 update
+itself (1 RED, halloVeen ~30 s silent, watchdog-recovered) — the known cost of a gapless reload,
+and the case the v4.4.50 handover (still unsoaked) targets. The Magical Forest hourly silence is a
+content/clock issue, tracked separately.

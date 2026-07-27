@@ -42,6 +42,7 @@ export interface DeckState {
   peaks: number[];
   error?: string;
   outroStartSec?: number;
+  contentClass?: string | null;   // MUSIC/SPOT/… — lets the UI flash a SPOT-holding deck (amber)
 }
 
 type Listener = (id: DeckId, state: DeckState) => void;
@@ -59,6 +60,7 @@ function makeState(id: DeckId, s: any): DeckState {
     positionSec: s.position_sec || s.positionSec || 0,
     durationSec: s.duration_sec || s.durationSec || 0,
     volume: s.volume ?? 1,
+    contentClass: s.content_class ?? s.contentClass ?? null,
     peaks: [],
     error: s.error,
   };
@@ -90,6 +92,9 @@ export class AudioEngine {
   // identity the Calendar matches (no text/clock guessing). Lives here so native state
   // round-trips don't wipe it.
   private deckSched: Record<string, number | undefined> = {};
+  // In-process only: the content class loaded on each deck (daemon mode carries it on the deck event).
+  // poll() rebuilds deck state from the native engine (no class), so we overlay this at emit time.
+  private deckContentClass: Record<string, string | null> = {};
   private refillCallback: (() => Promise<{ filePath: string; title: string; artist: string }[]>) | null = null;
   // Per-deck chain type: what happens when THIS deck finishes.
   // Loaded from the queue item at deck-load time.
@@ -275,7 +280,7 @@ export class AudioEngine {
       const items = Array.isArray(r?.result) ? r.result : (Array.isArray(r) ? r : null);
       if (!items) return;
       this.queue = items.map((it: any) => ({
-        filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
+        filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid, contentClass: it.contentClass, scheduledAt: it.scheduledAt,
       }));
       this.listeners.forEach(l => l("A", this.stateA)); // nudge subscribers (queue length changed)
     } catch { /* daemon not answering yet — the next onQueue event will populate it */ }
@@ -371,9 +376,9 @@ export class AudioEngine {
       // Stage 0: in daemon mode A/B/C status/title/duration are authoritative from onDeck events;
       // here we only advance positionSec locally for a smooth countdown between those events. The
       // in-process engine keeps reading the native deck state directly (unchanged).
-      this.stateA = this.daemonDriven ? { ...this.stateA, positionSec: posA } : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA };
-      this.stateB = this.daemonDriven ? { ...this.stateB, positionSec: posB } : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB };
-      this.stateC = this.daemonDriven ? { ...this.stateC, positionSec: posC } : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC };
+      this.stateA = this.daemonDriven ? { ...this.stateA, positionSec: posA } : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA, contentClass: this.deckContentClass["A"] ?? null };
+      this.stateB = this.daemonDriven ? { ...this.stateB, positionSec: posB } : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB, contentClass: this.deckContentClass["B"] ?? null };
+      this.stateC = this.daemonDriven ? { ...this.stateC, positionSec: posC } : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC, contentClass: this.deckContentClass["C"] ?? null };
 
       if (this.stateChanged(this.lastFiredState.A, this.stateA)) { this.listeners.forEach(l => l("A", this.stateA)); }
       this.lastFiredState.A = this.stateA;
@@ -518,7 +523,7 @@ export class AudioEngine {
         if (this.queue.length === 0) return;
         const next = this.dequeue();
         this.deckChainType[deckId] = next.chainType || "segue";
-        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt);
+        await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt, (next as any).contentClass);
         await invoke("audio_play", { deck: deckId, stationId: this.stationId });
         if (deckId === "A") { this.stateA = { ...this.stateA, status: "playing", positionSec: 0 }; this.endTriggered.delete("A"); }
         if (deckId === "B") { this.stateB = { ...this.stateB, status: "playing", positionSec: 0 }; this.endTriggered.delete("B"); }
@@ -542,7 +547,7 @@ export class AudioEngine {
     rotLog(`[ROT] preload ${deckId}[${queueIndex}] → "${next.title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     try {
       this.deckChainType[deckId] = next.chainType || "segue";
-      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt);
+      await this.loadToDeck(deckId, next.filePath, next.title, next.artist, next.gainDb, next.durationMs, next.scheduledAt, (next as any).contentClass);
       this.deckReady.add(deckId);
     } catch (e) { console.error(`[ROT] preload ${deckId} FAILED:`, e); }
   }
@@ -613,12 +618,13 @@ export class AudioEngine {
     };
   }
 
-  async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number, scheduledAt?: number) {
+  async loadToDeck(id: DeckId | string, filePath: string, title: string, artist: string, gainDb?: number, durationMs?: number, scheduledAt?: number, contentClass?: string | null) {
     rotLog(`[ROT] loadToDeck ${id}: "${title}" | decks: A="${this.stateA.title}"(${this.stateA.status}) B="${this.stateB.title}"(${this.stateB.status}) C="${this.stateC.title}"(${this.stateC.status})`);
     this.init();
     this.deckSched[String(id)] = scheduledAt;   // remember this deck's schedule-row identity
+    this.deckContentClass[String(id)] = contentClass ?? null;   // for the SPOT-deck flash (in-process path)
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0, stationId: this.stationId });
-    const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [] };
+    const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [], contentClass: contentClass ?? null };
     if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
     if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
     if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; this.listeners.forEach(l => l("C", this.stateC)); }

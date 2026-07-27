@@ -293,6 +293,12 @@ function _persistAutomationIntent() {
 let _intentSeeded = false;
 function _seedAutomationIntentFromDisk() {
   if (_intentSeeded) return; _intentSeeded = true;
+  // BOOT AUDIO POLICY (2026-07-24): auto-resume is CRASH-ONLY. Only seed the persisted on-air set (→ replay →
+  // daemon resumes playout on connect) when THIS launch is a watchdog/crash respawn of a station that was
+  // genuinely streaming (_wasOnAir = .ether-on-air marker + ETHER_WATCHDOG_PID). A clean/manual cold launch
+  // resumes NOTHING — the daemon stays idle and silent until the operator explicitly enables AUTO. A mid-session
+  // daemon respawn is unaffected: _automationIntent is already in memory, so replayIntents resumes without this seed.
+  if (!_wasOnAir()) { logStartup("[AUDIO] clean launch — boot auto-resume SUPPRESSED (not a crash respawn); stations idle until AUTO"); return; }
   const p = _automationIntentPath(); if (!p) return;
   try {
     const arr = JSON.parse(fs.readFileSync(p, "utf8"));
@@ -566,10 +572,12 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
-      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write") {
+      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved") {
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
-        // to the log. Appended to the honest health ledger so the flip's law-bending is visible, never silent.
+        // to the log. Plus fill-starved: the refill ladder found NO playable song in ANY of the station's
+        // OWN categories (2026-07-26) — surfaced loudly here instead of silently borrowing another
+        // station's songs. Appended to the honest health ledger so the law-bending is visible, never silent.
         try {
           require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
             JSON.stringify({ t: new Date().toISOString(), kind: m.event, ...m }) + "\n");
@@ -1427,12 +1435,22 @@ function seedFreshInstall() {
       insertRule.run(sid, 'artist_separation_min', 'global', 60,  1, 1, 'Minimum minutes between songs by the same artist');
       insertRule.run(sid, 'song_separation_min',   'global', 180, 1, 1, 'Minimum minutes before a song can repeat');
       insertRule.run(sid, 'title_separation_min',  'global', 120, 1, 1, 'Minimum minutes between songs with the same title');
-      insertRule.run(sid, 'max_same_gender',        'global', 3,   0, 1, 'Max consecutive songs of the same gender');
       insertRule.run(sid, 'max_same_category',      'global', 3,   0, 1, 'Max consecutive songs from the same category');
     });
     seedRules();
     console.log("[DB] Seeded default separation rules for station", sid);
   }
+
+  // Migration (2026-07-24): remove max_same_gender everywhere — never enforced, not wanted. separation_rules
+  // is a synced soft-delete table, so TOMBSTONE (deleted_at + bumped updated_at) so the removal propagates to
+  // every install rather than a hard delete a peer could resurrect. Idempotent (only touches live rows).
+  try {
+    const nowIso = new Date().toISOString();
+    const res = db.prepare(
+      "UPDATE separation_rules SET deleted_at = ?, updated_at = ?, is_active = 0 WHERE rule_type = 'max_same_gender' AND deleted_at IS NULL"
+    ).run(nowIso, nowIso);
+    if (res.changes > 0) console.log(`[DB] Tombstoned ${res.changes} max_same_gender separation rule(s)`);
+  } catch (e) { console.error('[DB] max_same_gender cleanup failed:', e.message); }
 }
 
 // ── Active station helper ─────────────────────────────────────
@@ -5811,7 +5829,7 @@ ipcMain.handle('schedule:generate', (_, days = 7) => {
               spotLastTs.set(sp.id, currentTs);
               spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
               const durationS = sp.length_sec || slotDurationS;
-              generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
+              generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
               currentTs += durationS;
               continue;
             }
@@ -5958,6 +5976,10 @@ function _buildScheduleCtx(stationId) {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxed: [],
+    // Anchor-fit (v4.4.84): breaks whose fitted landing still misses the target minute by > tolerance —
+    // surfaced as a health signal so an un-fittable anchor (e.g. a category of only long songs) is visible,
+    // never silent. { hour, minute, driftSec (+late/−early), direction }.
+    breakDrift: [],
     // Why-nothing-filled diagnostics (surfaced to the operator so Generate never fails silently).
     diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
     // CLOCK IS LAW (2026-07-21): read only LIVE (non-deleted) shows + slots — the same view the on-format
@@ -6103,12 +6125,17 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       const musicSlots = slots.filter(s => s.slot_type === 'music' && s.category_id);
       let musicIdx = 0;
       const nextMusicSlot = () => (musicSlots.length ? musicSlots[musicIdx++ % musicSlots.length] : null);
-      // Select a song for a category at the cursor — SAME per-hour dedup + separation as the
-      // sequential path; returns the row or null (does NOT record/push).
-      const selectMusic = (categoryId, cursorTs) => {
+      // Select a song for a category at the cursor — SAME per-hour dedup + separation as the sequential
+      // path; returns the row or null (does NOT record/push). fitTargetTs (anchor-fit, v4.4.84): when set,
+      // choose among the FULLY-compliant candidates the one whose duration lands cursorTs closest to the
+      // anchor (closest-fit); ties keep the existing random-candidate order. fit is a tiebreaker WITHIN the
+      // compliant pool — it never airs a song that violates separation. Without fitTargetTs the behavior is
+      // byte-identical (first compliant, then the LRP ladder).
+      const selectMusic = (categoryId, cursorTs, fitTargetTs = null, defaultDurS = 240) => {
         const candidates = stmtCandidates.all(categoryId, h);
         if (!candidates.length) ctx.diag.emptyCats.add(categoryId);
         let picked = null;
+        const compliant = fitTargetTs != null ? [] : null;   // collect all compliant only when fitting
         for (const song of candidates) {
           if (usedSongIds.has(song.id)) continue;
           const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
@@ -6120,7 +6147,20 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           }
           const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
           const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (cursorTs - lastArtistTs) < artistSepMin * 60);
-          if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
+          if (artistBlocked) continue;
+          if (fitTargetTs == null) { picked = song; break; }   // Tier 1: first fully compliant (unchanged)
+          compliant.push(song);                                 // fit: gather the whole compliant pool
+        }
+        // Fit: pick the compliant song whose end lands closest to the anchor (strict < keeps the first/random
+        // candidate on ties, preserving rotation).
+        if (fitTargetTs != null && compliant.length) {
+          let best = compliant[0], bestScore = Infinity;
+          for (const s of compliant) {
+            const d = s.duration_ms ? Math.round(s.duration_ms / 1000) : defaultDurS;
+            const score = Math.abs(fitTargetTs - (cursorTs + d));
+            if (score < bestScore) { bestScore = score; best = s; }
+          }
+          picked = best;
         }
         // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
         if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: categoryId }); }
@@ -6147,21 +6187,32 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           spotLastTs.set(sp.id, cur);
           spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
           const durationS = sp.length_sec || 30;
-          generatedRows.push({ scheduled_at: cur, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
+          generatedRows.push({ scheduled_at: cur, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
           cur += durationS;
         }
         return cur;
       };
+      // Anchor-fit (v4.4.84): treat break minutes as anchors and land songs so the break hits its minute.
+      // TOL = on-time band; within a song-length of the anchor (WINDOW) the last pick(s) are duration-fit
+      // toward the target (closest-fit), so the break lands near :M instead of at a random boundary. Earlier
+      // fill stays normal LRP rotation. The nearest-boundary decision remains the hard floor — never worse
+      // than before. A landing still outside TOL is stamped as a break-drift health signal (visible).
+      const FIT_TOL_S = 15, FIT_WINDOW_S = 360;
       const anchors = breaks.slice().sort((a, b) => (a.minute || 0) - (b.minute || 0));
       for (const brk of anchors) {
         const target = hourStartTs + (brk.minute || 0) * 60;
         if (target >= hourEnd) break; // anchor at/after the top of the next hour never airs this hour
-        let breakPlaced = false;
+        let breakPlaced = false, breakStartTs = null;
         // Fill music until the boundary NEAREST the target (minute 0 => nothing to fill => exact top of hour).
         while (currentTs < target) {
           const ms = nextMusicSlot(); if (!ms) break;
-          const picked = selectMusic(ms.category_id, currentTs); if (!picked) break;
-          const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : (ms.duration_min || 4) * 60;
+          const slotDefaultDurS = (ms.duration_min || 4) * 60;
+          // Final approach → duration-aware pick so the last song lands the break on its minute; before that,
+          // normal first-compliant selection (rotation preserved).
+          const fitting = (target - currentTs) <= FIT_WINDOW_S;
+          const picked = selectMusic(ms.category_id, currentTs, fitting ? target : null, slotDefaultDurS);
+          if (!picked) break;
+          const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : slotDefaultDurS;
           if (currentTs + durationS <= target) {
             recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS;
             continue;
@@ -6172,12 +6223,18 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           if (gapAfter < gapBefore) {
             recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS; // song, then break
           } else {
-            currentTs = placeBreak(brk, currentTs); breakPlaced = true;                        // break, then song
+            breakStartTs = currentTs; currentTs = placeBreak(brk, currentTs); breakPlaced = true;  // break, then song
             recordMusic(picked, ms.category_id, currentTs, durationS); currentTs += durationS;
           }
           break;
         }
-        if (!breakPlaced && currentTs < hourEnd) currentTs = placeBreak(brk, currentTs);
+        if (!breakPlaced && currentTs < hourEnd) { breakStartTs = currentTs; currentTs = placeBreak(brk, currentTs); }
+        // Honest break-drift signal: if the break's actual start still misses its minute by > tolerance,
+        // record it (over = late, under = early) so an un-fittable anchor surfaces instead of drifting silently.
+        if (breakStartTs != null) {
+          const driftSec = breakStartTs - target;
+          if (Math.abs(driftSec) > FIT_TOL_S) ctx.breakDrift.push({ hour: h, minute: brk.minute || 0, driftSec, direction: driftSec > 0 ? 'over' : 'under' });
+        }
       }
       // Fill the remainder of the hour with music (last song may overrun :00 and is cut, same as sequential).
       while (currentTs < hourEnd) {
@@ -6217,7 +6274,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
           spotLastTs.set(sp.id, currentTs);
           spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
           const durationS = sp.length_sec || slotDurationS;
-          generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id });
+          generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
           currentTs += durationS;
           continue;
         }
@@ -6288,7 +6345,7 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
     generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
     // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
     // Health Monitor (health events + a per-station summary), not just the calendar diagnostics panel.
-    try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats] }); } catch {}
+    try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
     // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
     // calendar can tell the operator exactly what's missing instead of flickering silently.
     const d = ctx.diag, reasons = [];

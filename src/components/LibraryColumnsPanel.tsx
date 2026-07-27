@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { ALL_LIB_COLS, LIB_COL_LABELS, type LibCol, type MetadataDefinition, type MetadataVocabulary } from "../types/metadata";
+import { ALL_LIB_COLS, LIB_COL_LABELS, HIDDEN_BUILTIN_COL_NAMES, type LibCol, type MetadataDefinition, type MetadataVocabulary } from "../types/metadata";
 
 interface Props {
   isOpen: boolean;
@@ -129,7 +129,7 @@ export default function LibraryColumnsPanel({ isOpen, onClose, visibleColumns, o
         const defsRes = await (window as any).ether.metadataDefinitions.list(stationId);
         const defs: MetadataDefinition[] = defsRes?.ok ? (defsRes.rows ?? []) : [];
         const active = defs
-          .filter(d => !d.deleted_at)
+          .filter(d => !d.deleted_at && !HIDDEN_BUILTIN_COL_NAMES.has((d.name || '').trim().toLowerCase()))
           .sort((a, b) => a.display_order - b.display_order || a.name.localeCompare(b.name));
         setDefinitions(active);
 

@@ -316,7 +316,7 @@ export default function BulkAssignModal({ songIds, stationId, onClose, onApplied
             disabled={changeCount === 0 || applying}
             style={{ ...S.btn("var(--accent-purple, var(--accent-blue))", "#fff"), opacity: changeCount === 0 || applying ? 0.45 : 1, cursor: changeCount === 0 ? "not-allowed" : "pointer" }}
           >
-            {applying ? "Applying…" : `Apply (${changeCount} change${changeCount !== 1 ? "s" : ""})`}
+            {applying ? "Applying…" : `Apply to ${songIds.length} song${songIds.length !== 1 ? "s" : ""}`}
           </button>
         </div>
       </div>

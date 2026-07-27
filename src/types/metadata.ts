@@ -13,6 +13,10 @@ export const LIB_COL_DEFAULT_WIDTHS: Record<LibCol, number> = {
   bpm: 90, format: 60, duration: 90, category: 80, plays: 90,
 };
 
+// Built-in metadata definitions that DUPLICATE a native standard column (which carries the real data).
+// Hidden from the Library Columns panel so there is exactly ONE column per field. Matched by lowercased name.
+export const HIDDEN_BUILTIN_COL_NAMES = new Set(['bpm', 'genre', 'plays', 'year', 'length', 'kind']);
+
 export interface MetadataDefinition {
   id: number;
   uuid: string;
