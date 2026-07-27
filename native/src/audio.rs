@@ -316,6 +316,20 @@ pub struct BusState {
     /// GetLevel into AudioLevels.frames_total. The daemon heartbeat logs the delta = a live "is the
     /// callback still pulling PCM?" signal, distinct from the VU levels and the cpal-callback stamp.
     pub frames_consumed: u64,
+    /// Audio Processing v1 — per-station program-bus loudness. Both toggles default OFF → the branch takes
+    /// the CLEAN tap and the processor is never run (bit-identical passthrough). Set by the NAPI command
+    /// thread (SetProcessing), read by mixer_callback under the lock it already holds. Processor behind its
+    /// own lock (mirrors bus.eq) so it stays off the command path; try_lock in the callback, never blocks.
+    pub proc_local:  bool,
+    pub proc_stream: bool,
+    pub proc_target_lufs: f32,
+    pub processor:   Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    /// Processing meters written by mixer_callback (observed), read by GetLevel → the daemon meter event.
+    pub proc_in_peak:  f32,
+    pub proc_out_peak: f32,
+    pub proc_in_lufs:  f32,
+    pub proc_out_lufs: f32,
+    pub proc_gr_db:    f32,
 }
 
 impl BusState {
@@ -335,6 +349,12 @@ impl BusState {
             monitor_vol: 1.0,
             stream_connected,
             frames_consumed: 0,
+            proc_local:  false,   // OFF on every station on every install — opt-in per station
+            proc_stream: false,
+            proc_target_lufs: -14.0,
+            processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            proc_in_peak: 0.0, proc_out_peak: 0.0,
+            proc_in_lufs: -70.0, proc_out_lufs: -70.0, proc_gr_db: 0.0,
         }
     }
 }
@@ -1051,6 +1071,30 @@ fn mixer_callback(
     for i in 0..7 { bus.peaks[i] = frame_peaks[i].max(bus.peaks[i] * VU_RELEASE); }
     bus.master_peak = peak.max(bus.master_peak * VU_RELEASE);
 
+    // ── Audio Processing v1: per-station program-bus loudness ────────────────────────────────────────────
+    // Compute the PROCESSED bus ONCE if EITHER branch wants it; each branch (stream drain / device monitor)
+    // taps processed or clean independently below. Both toggles OFF → this whole block is skipped and both
+    // taps use the clean out_l/out_r (bit-identical to today). The processor has its OWN lock (mirrors bus.eq):
+    // try_lock only, never blocks air; a missed lock falls back to clean. Meters are extracted before the lock
+    // drops, then written to the bus fields (no split-borrow of the guard). `peak` is the clean stage-IN VU.
+    let (proc_l, proc_r): (Option<Vec<f32>>, Option<Vec<f32>>) = if bus.proc_local || bus.proc_stream {
+        let target = bus.proc_target_lufs;
+        let mut pl = out_l.clone();
+        let mut pr = out_r.clone();
+        let meters = if let Ok(mut p) = bus.processor.try_lock() {
+            p.set_target(target);
+            p.process_planar(&mut pl, &mut pr);
+            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db()))
+        } else { None };
+        if let Some((il, ol, gr)) = meters {
+            let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
+            bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr;
+            bus.proc_in_peak  = peak.max(bus.proc_in_peak * VU_RELEASE);
+            bus.proc_out_peak = op.max(bus.proc_out_peak * VU_RELEASE);
+            (Some(pl), Some(pr))
+        } else { (None, None) }
+    } else { (None, None) };
+
     // v4.4.46 mix telemetry: advance the frames-consumed counter (single u64 add under the lock we
     // already hold — no new lock, no atomic, RT-safe). GetLevel surfaces it; the daemon heartbeat
     // logs the per-interval delta as a live "callback is still pulling PCM" signal.
@@ -1060,23 +1104,31 @@ fn mixer_callback(
     // Per-station stream-client flag (DESIGN-TRUTH §2) — only THIS station's Icecast
     // client presence gates THIS station's push; never a sibling's.
     if bus.stream_connected.load(Ordering::Relaxed) {
+        // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
+        let use_proc = bus.proc_stream && proc_l.is_some();
         for f in 0..prog_frames {
-            let _ = bus.ring_prod.try_push(out_l[f]);
-            let _ = bus.ring_prod.try_push(out_r[f]);
+            let (l, r) = if use_proc { (proc_l.as_ref().unwrap()[f], proc_r.as_ref().unwrap()[f]) } else { (out_l[f], out_r[f]) };
+            let _ = bus.ring_prod.try_push(l);
+            let _ = bus.ring_prod.try_push(r);
         }
     }
 
     // Studio Monitor Bus: resample 44100 Hz → device rate if they differ. The monitor gain
     // (local speaker level) is applied HERE only — the program bus above already pushed full
     // level to Icecast, so turning the monitor down never changes what airs.
+    // Device (studio-monitor) taps PROCESSED when "Process local output" is on, else clean — this IS the
+    // PRE/POST monitor choice (broadcast is the stream branch above, unaffected). monitor_vol applies HERE only.
+    let (dl, dr): (&[f32], &[f32]) = if bus.proc_local && proc_l.is_some() {
+        (proc_l.as_ref().unwrap(), proc_r.as_ref().unwrap())
+    } else { (&out_l, &out_r) };
     let mvol = bus.monitor_vol;
     if device_sr == PROGRAM_RATE || prog_frames <= 1 {
         for f in 0..device_frames {
             if ch == 2 {
-                data[f * 2]     = out_l[f] * mvol;
-                data[f * 2 + 1] = out_r[f] * mvol;
+                data[f * 2]     = dl[f] * mvol;
+                data[f * 2 + 1] = dr[f] * mvol;
             } else {
-                data[f] = (out_l[f] + out_r[f]) * 0.5 * mvol;
+                data[f] = (dl[f] + dr[f]) * 0.5 * mvol;
             }
         }
     } else {
@@ -1086,10 +1138,10 @@ fn mixer_callback(
             let t    = f as f64 * scale;
             let idx  = t as usize;
             let frac = (t - idx as f64) as f32;
-            let l0 = out_l[idx];
-            let l1 = out_l.get(idx + 1).copied().unwrap_or(l0);
-            let r0 = out_r[idx];
-            let r1 = out_r.get(idx + 1).copied().unwrap_or(r0);
+            let l0 = dl[idx];
+            let l1 = dl.get(idx + 1).copied().unwrap_or(l0);
+            let r0 = dr[idx];
+            let r1 = dr.get(idx + 1).copied().unwrap_or(r0);
             let l = l0 + (l1 - l0) * frac;
             let r = r0 + (r1 - r0) * frac;
             if ch == 2 {

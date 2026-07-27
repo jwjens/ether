@@ -173,6 +173,7 @@ pub struct ProgramProcessor {
     ride: LoudnessRide,
     limiter: TruePeakLimiter,
     pub target_lufs: f32,
+    scratch: Vec<f32>, // preallocated interleave buffer for the ebur128 meter feed (no RT alloc)
 }
 impl ProgramProcessor {
     pub fn new(sample_rate: f32, target_lufs: f32) -> Self {
@@ -180,6 +181,22 @@ impl ProgramProcessor {
             ride: LoudnessRide::new(sample_rate, target_lufs),
             limiter: TruePeakLimiter::new(sample_rate),
             target_lufs,
+            scratch: Vec::with_capacity(8192),
+        }
+    }
+    /// Runtime target change (from settings) — no realloc, no state reset.
+    pub fn set_target(&mut self, target_lufs: f32) { self.target_lufs = target_lufs; self.ride.target = target_lufs; }
+    /// Process planar L/R IN PLACE (the callback holds separate out_l/out_r Vecs). Same chain as
+    /// process_block; the ebur128 meter is fed via a preallocated interleave scratch (no RT alloc).
+    #[inline]
+    pub fn process_planar(&mut self, l: &mut [f32], r: &mut [f32]) {
+        let n = l.len().min(r.len());
+        self.scratch.clear();
+        for i in 0..n { self.scratch.push(l[i]); self.scratch.push(r[i]); }
+        let g = self.ride.update(&self.scratch);
+        for i in 0..n {
+            let (ol, or) = self.limiter.process(l[i] * g, r[i] * g);
+            l[i] = ol; r[i] = or;
         }
     }
     /// Process an interleaved-stereo buffer IN PLACE. Caller invokes this ONLY when at least one branch
