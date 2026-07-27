@@ -47,3 +47,9 @@ scripts/dump-all-cols.js
 # Rust audio debug artifacts
 debug-stream.f32le
 dist-electron/
+
+# Saved web pages (browser "Save As" artifacts) — never commit. A defunct saved page
+# once leaked an (inert) Google API key; cleaned up 2026-07-26. These patterns block the
+# saved-page asset folders and browser download parts so a "Save As" can't land here again.
+*_files/
+*.download

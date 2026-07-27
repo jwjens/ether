@@ -114,6 +114,7 @@ npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (
 - Jeff often relays between a separate chat (architecture/planning) and Claude Code. He's frequently copy-pasting and relies on the tools to hold the thread — DO NOT make him repeat himself, and DO NOT run ahead.
 
 ### Hard rules
+- **STAY STRICTLY ON THE REQUESTED TASK.** Do NOT run unrequested audits, security scans, repo-wide health checks, or inspect repo/account contents beyond what the task needs. If something concerning is noticed incidentally, mention it in ONE line and STOP — do not investigate further, escalate, or start fixing it without Jeff's ask. Finish the task given, report, stop.
 - **Propose first, change nothing, wait for explicit confirmation.** Investigate read-only before edits. Never run ahead or overstep.
 - **Never commit or push before Jeff verifies.** Local commits only unless told otherwise. Never tag/release without explicit go-ahead (tagging triggers CI + client auto-update).
 - **The only valid test of a UI/routing fix is launching the app and seeing the actual screen.** A passing database query is NOT proof the screen is correct. Do not claim a routing bug is fixed based on a DB-level test.
