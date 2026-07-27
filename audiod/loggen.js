@@ -27,6 +27,24 @@ function sepConfig(db, stationId) {
   } catch { return { rulesOn: false, artistSepSec: 0 }; }
 }
 
+// ── Enforce-separation toggle (2026-07-27, slice 2) — per-station, station_config_kv key
+// 'enforce_separation'. Mirrors electron/main.js _buildScheduleCtx. Default OFF. When ON, the daemon's
+// live-pick emergency floor (below) uses the SHARED enforced picker (electron/separation-enforce.js) —
+// LRP-ordered eligible from play_log, relax only when the pool is exhausted. (Tier 0 — the generated_
+// schedule read — is unaffected: it airs the log Generate already authored under enforcement.)
+function enforceSeparationOn(db, stationId) {
+  try {
+    const t = db.prepare("SELECT value FROM station_config_kv WHERE key='enforce_separation' AND station_id=? AND deleted_at IS NULL").get(stationId);
+    return !!(t && (t.value === '1' || t.value === 'true'));
+  } catch { return false; }
+}
+
+// Per-station separation windows (minutes) — same source Generate uses (_buildScheduleCtx).
+function sepWindows(db, stationId) {
+  const g = (rt, def) => { try { const r = db.prepare("SELECT value FROM separation_rules WHERE station_id=? AND rule_type=? AND is_active=1 LIMIT 1").get(stationId, rt); return r ? r.value : def; } catch { return def; } };
+  return { artistSepMin: g('artist_separation_min', 60), songRepeatMin: g('song_separation_min', 180), titleSepMin: g('title_separation_min', 120) };
+}
+
 // ── Base conditions. opts toggles each soft rule so the ladder can relax tier by tier ──
 //   opts.daypart      (default on)  — current-hour daypart mask
 //   opts.songSep      (bool)        — per-song no_repeat_hours, station-scoped via play_log
@@ -338,6 +356,55 @@ function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
   } catch { return null; }
 }
 
+// ── Enforced live-pick (2026-07-27, slice 2) — the emergency-floor fill when enforce_separation is ON.
+// Fills `count` slots one at a time from the active clock's music categories (in position order; else
+// on-format; else the station's own library), each via the SHARED pickEnforced: LRP-ordered eligible from
+// play_log, relaxing (loud) only when a category's pool is exhausted. cursorTs advances by each pick's
+// duration so rest windows are evaluated at each slot's projected air time. Never dead air (relax rather
+// than empty while any candidate exists). Returns the fillQueue shape + relaxedCount (caller health-events).
+function fillQueueEnforced(db, stationId, count, hour) {
+  const path = require('path');
+  const { buildRestMaps, pickEnforced } = require(path.join(__dirname, '..', 'electron', 'separation-enforce'));
+  const clock = getActiveShowClock(db, stationId);
+  let cats = [];
+  try {
+    if (clock) cats = db.prepare("SELECT category_id FROM clock_slots WHERE clock_id=? AND slot_type='music' AND category_id IS NOT NULL AND station_id=? AND deleted_at IS NULL ORDER BY position").all(clock.clockId, stationId).map(r => r.category_id);
+  } catch {}
+  if (!cats.length) cats = getFormatCategoryIds(db, stationId, clock && clock.clockId);
+  if (!cats.length) cats = getStationCategoryIds(db, stationId);
+  if (!cats.length) return { source: "enforced", tier: 1, formatCats: [], items: [], starved: true, relaxedCount: 0 };
+  const win = sepWindows(db, stationId);
+  const maps = { ...buildRestMaps(db, stationId), songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map() };
+  const used = { usedSongIds: new Set(), usedArtistIds: new Set(), usedTitles: new Set() };
+  let stmtC;
+  try {
+    stmtC = db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.file_key, s.intro_end, s.outro_start, s.no_repeat_hours
+       FROM songs s LEFT JOIN artists a ON a.id=s.artist_id
+       WHERE s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')
+         AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)`);
+  } catch (e) { console.error("[loggen] enforced prepare failed:", e.message); return { source: "enforced", tier: 1, formatCats: cats, items: [], starved: true, relaxedCount: 0 }; }
+  const items = []; let cursorTs = Math.floor(Date.now() / 1000); let relaxedCount = 0, ci = 0;
+  for (let i = 0; i < count; i++) {
+    let picked = null, guard = 0;
+    while (!picked && guard++ < cats.length) {
+      const cat = cats[ci++ % cats.length];
+      let cands = []; try { cands = stmtC.all(cat, new Date(cursorTs * 1000).getHours()); } catch {}
+      if (!cands.length) continue;
+      const r = pickEnforced(cands, cursorTs, maps, win, used, null, 240);
+      if (!r) continue;
+      picked = r.picked; if (r.relaxed) relaxedCount++;
+    }
+    if (!picked) break;
+    used.usedSongIds.add(picked.id); if (picked.artist_id) used.usedArtistIds.add(picked.artist_id);
+    const tk = (picked.title || '').trim().toLowerCase(); if (tk) used.usedTitles.add(tk);
+    maps.songLastTs.set(picked.id, cursorTs); if (picked.artist_id) maps.artistLastTs.set(picked.artist_id, cursorTs); if (tk) maps.titleLastTs.set(tk, cursorTs);
+    items.push(toItem(picked));
+    cursorTs += picked.duration_ms ? Math.round(picked.duration_ms / 1000) : 240;
+  }
+  if (relaxedCount) console.warn(`[loggen] ENFORCED live-pick relaxed ${relaxedCount}/${items.length} (category pool exhausted — loud)`);
+  return { source: clock ? `enforced clock "${clock.showName}"` : "enforced on-format", tier: 1, formatCats: cats, items, starved: items.length === 0, relaxedCount };
+}
+
 // ── Main: fill `count` tracks. Never-empty priority ladder (see DESIGN LAW at top). ──
 function fillQueue(db, stationId, count = 12) {
   const hour = new Date().getHours();
@@ -349,6 +416,10 @@ function fillQueue(db, stationId, count = 12) {
   // writer can stamp that exact row when it goes on air. Live-picked items (Tiers 1-4 below) omit it —
   // that absence IS the off-log divergence signal.
   if (sched.length) return { source: "generated_schedule", tier: 0, formatCats: [], items: sched.map(r => ({ ...toItem(r), schedId: r.row_id })) };
+
+  // ENFORCE-SEPARATION (slice 2): when ON, the live-pick floor uses the shared enforced picker instead of
+  // the RANDOM-first-compliant ladder below. OFF path (below) is byte-identical to before.
+  if (enforceSeparationOn(db, stationId)) return fillQueueEnforced(db, stationId, count, hour);
 
   const { rulesOn, artistSepSec } = sepConfig(db, stationId);
   const clock = getActiveShowClock(db, stationId);
@@ -405,4 +476,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored };
+module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored };

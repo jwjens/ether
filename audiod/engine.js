@@ -689,6 +689,8 @@ class DaemonEngine {
     // STARVED (2026-07-26): the ladder found no playable song in ANY of this station's own categories.
     // Loud once/60s — never silently borrow a foreign/uncategorized song to paper over an empty library.
     if (fill.starved) this._noteStarved();
+    // ENFORCE-SEPARATION relax (2026-07-27): the enforced floor bent rest to avoid dead air — loud.
+    if (fill.relaxedCount) this._noteSepRelaxed(fill.relaxedCount);
   }
 
   // Throttled loud starvation signal → main appends it to health-events.jsonl (fill-starved).
@@ -698,6 +700,15 @@ class DaemonEngine {
     this._lastStarvedAt = now;
     this._log("STARVED: no playable song in this station's own categories — honest empty (no foreign borrow)");
     try { this.emit("fill-starved", { stationId: this.stationId }); } catch { /* never break playout */ }
+  }
+
+  // Throttled loud separation-relax signal → main appends it to health-events.jsonl (separation-relaxed).
+  _noteSepRelaxed(count) {
+    const now = Date.now();
+    if (now - (this._lastSepRelaxAt || 0) < 60000) return;
+    this._lastSepRelaxAt = now;
+    this._log("SEPARATION RELAXED: enforced floor bent rest on " + count + " pick(s) — category pool exhausted");
+    try { this.emit("separation-relaxed", { stationId: this.stationId, count, where: "daemon-fill" }); } catch { /* never break playout */ }
   }
 
   // Log-Reader Flip (ACTIVATION) — the read-through refill (§2.3). The queue becomes a cache of log rows
@@ -728,6 +739,7 @@ class DaemonEngine {
       this.queue = [...boundHead, ...kept];
       this.emit("queue", { stationId: this.stationId, source: "logreader-floor:" + fill.source, items: this.queue });
       if (fill.starved) this._noteStarved();   // in-station library empty even at the floor — loud, no foreign borrow
+      if (fill.relaxedCount) this._noteSepRelaxed(fill.relaxedCount);   // enforced floor bent rest — loud
       return;
     }
 

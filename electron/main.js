@@ -572,7 +572,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
-      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved") {
+      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed") {
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
         // to the log. Plus fill-starved: the refill ladder found NO playable song in ANY of the station's
@@ -5721,194 +5721,6 @@ ipcMain.handle('schedule:insertVoiceTrack', (_, { stationId, hour, beforeTitle, 
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('schedule:generate', (_, days = 7) => {
-  try {
-    // Load separation rules (fall back to safe defaults)
-    let artistSepMin = 60;
-    let songRepeatMin = 180;
-    let titleSepMin = 120;
-    try {
-      const ar = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get();
-      if (ar) artistSepMin = ar.value;
-      const sr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='song_separation_min' AND is_active=1 LIMIT 1").get();
-      if (sr) songRepeatMin = sr.value;
-      const tr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='title_separation_min' AND is_active=1 LIMIT 1").get();
-      if (tr) titleSepMin = tr.value;
-    } catch {}
-
-    const { generatedScheduleClearAll, generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
-    const activeStationId = getActiveStationId();
-
-    // Wipe previous run
-    generatedScheduleClearAll(db, activeStationId);
-
-    // Prepared statements (compiled once, reused in the loop)
-    // CLOCK IS LAW (2026-07-21): LIVE (non-deleted) shows + slots only — matches _buildScheduleCtx and the
-    // on-format guard; a re-categorized clock's dead slots must never be walked (see _buildScheduleCtx note).
-    const stmtShows = db.prepare(
-      `SELECT id, start_hour, end_hour, clock_id
-       FROM shows
-       WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? AND deleted_at IS NULL
-       ORDER BY CASE
-         WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
-         WHEN end_hour = 0 OR end_hour = start_hour THEN 24
-         WHEN end_hour > start_hour              THEN end_hour - start_hour
-         ELSE 24 - start_hour + end_hour
-       END ASC`
-    );
-    const stmtSlots = db.prepare(
-      `SELECT cs.position, cs.slot_type, cs.category_id, cs.spot_type, cs.spot_category_id, cs.duration_min
-       FROM clock_slots cs
-       WHERE cs.clock_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`
-    );
-    const stmtSpotsByCategory = db.prepare(SPOT_SELECT_BY_CATEGORY);
-    const stmtCandidates = db.prepare(
-      `SELECT s.id, s.title, a.name AS artist_name, s.artist_id,
-              s.duration_ms, s.last_played_at, s.file_path
-       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE s.category_id = ?
-         AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-         AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
-         AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1)
-       ORDER BY RANDOM()`
-    );
-    const generatedRows = [];
-
-    // Per-generation tracking maps (survive across hours/days)
-    const songLastTs   = new Map(); // songId        → unix ts last queued this run
-    const artistLastTs = new Map(); // artistId      → unix ts last queued this run
-    const titleLastTs  = new Map(); // norm. title   → unix ts last queued this run (covers covers/re-recordings)
-    const spotLastTs   = new Map(); // spotId        → unix ts last queued this run (spot rotation)
-    const spotPlaysToday = new Map(); // `${dayStr}|${spotId}` → plays this calendar day (max_plays_day cap)
-
-    const now = new Date();
-    now.setMinutes(0, 0, 0);
-
-    for (let d = 0; d < days; d++) {
-      for (let h = 0; h < 24; h++) {
-        const slotDate = new Date(now.getTime() + d * 86_400_000);
-        slotDate.setHours(h, 0, 0, 0);
-        const jsDay      = slotDate.getDay(); // 0=Sun
-        const hourStartTs = Math.floor(slotDate.getTime() / 1000);
-
-        // Find the show active at this hour on this weekday
-        const shows = stmtShows.all(String(jsDay), activeStationId);
-        const show  = shows.find(s => {
-          if (s.end_hour === 0 || s.end_hour === s.start_hour) return h >= s.start_hour;
-          if (s.end_hour > s.start_hour) return h >= s.start_hour && h < s.end_hour;
-          return h >= s.start_hour || h < s.end_hour; // overnight
-        });
-        if (!show || !show.clock_id) continue;
-
-        const slots = stmtSlots.all(show.clock_id);
-        if (!slots.length) continue;
-
-        // Per-hour sets to avoid same song, artist, or title within a single hour
-        const usedSongIds   = new Set();
-        const usedArtistIds = new Set();
-        const usedTitles    = new Set();
-
-        const hourEnd = hourStartTs + 3600;
-        let currentTs = hourStartTs;
-
-        // Fill the whole hour by TIME, not by slot count: cycle the clock's slots until we reach the
-        // next :00. A clock whose slots sum to < 60 min would otherwise leave a gap at the end of the
-        // hour (its "missing last song"). The last song starts before :00 and is cut off at :00.
-        let slotIdx = 0, slotGuard = 0;
-        while (currentTs < hourEnd && slots.length > 0 && slotGuard++ < 500) {
-          const slot = slots[slotIdx % slots.length];
-          slotIdx++;
-          const slotDurationS = (slot.duration_min || 4) * 60;
-
-          // Spot break: pull the least-recently-aired eligible spot from the slot's SPOT category
-          // (clock is the master). NULL spot_category_id = any active spot.
-          if (slot.slot_type === 'spot_break') {
-            const dayStr = _localDayStr(slotDate);
-            const sp = _pickSpot(stmtSpotsByCategory, slot.spot_category_id, activeStationId, dayStr, spotLastTs, spotPlaysToday);
-            if (sp) {
-              spotLastTs.set(sp.id, currentTs);
-              spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
-              const durationS = sp.length_sec || slotDurationS;
-              generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
-              currentTs += durationS;
-              continue;
-            }
-            // no eligible spot → fall through and advance time (silent gap)
-          }
-
-          if (slot.slot_type !== 'music' || !slot.category_id) {
-            currentTs += slotDurationS;
-            continue;
-          }
-
-          const candidates = stmtCandidates.all(slot.category_id, h);
-
-          let picked = null;
-
-          for (const song of candidates) {
-            if (usedSongIds.has(song.id)) continue;
-
-            // Song repeat check — use generation-run timestamp if available, else DB value
-            const lastSongTs  = songLastTs.get(song.id) ?? (song.last_played_at || 0);
-            const songAgeSec  = currentTs - lastSongTs;
-            if (songAgeSec < songRepeatMin * 60) continue;
-
-            // Title separation — covers/re-recordings (same title, different recording/song_id)
-            // must not stack inside the window. Strict within the hour, time-based across hours.
-            const titleKey = (song.title || '').trim().toLowerCase();
-            if (titleKey) {
-              const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
-              if (usedTitles.has(titleKey) || (currentTs - lastTitleTs) < titleSepMin * 60) continue;
-            }
-
-            // Artist separation — strict within the hour, soft across hours
-            const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
-            const artistAgeSec = currentTs - lastArtistTs;
-            const artistBlocked = usedArtistIds.has(song.artist_id)
-              || (song.artist_id && artistAgeSec < artistSepMin * 60);
-
-            if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
-          }
-
-          // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-          if (!picked) picked = _lrpFallback(candidates, usedSongIds, songLastTs);
-
-          if (picked) {
-            usedSongIds.add(picked.id);
-            if (picked.artist_id) usedArtistIds.add(picked.artist_id);
-            const pTitleKey = (picked.title || '').trim().toLowerCase();
-            if (pTitleKey) { usedTitles.add(pTitleKey); titleLastTs.set(pTitleKey, currentTs); }
-            songLastTs.set(picked.id, currentTs);
-            if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
-
-            const durationS = picked.duration_ms
-              ? Math.round(picked.duration_ms / 1000)
-              : slotDurationS;
-
-            generatedRows.push({
-              scheduled_at: currentTs, song_id: picked.id,
-              title: picked.title, artist: picked.artist_name || '',
-              file_key: picked.file_path ? path.basename(picked.file_path) : '',
-              duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id,
-            });
-            currentTs += durationS;
-          } else {
-            currentTs += slotDurationS;
-          }
-        }
-      }
-    }
-
-    _placeJingles(db, activeStationId, generatedRows);
-    generatedScheduleBulkCreate(db, activeStationId, generatedRows);
-    console.log(`[schedule:generate] Generated ${generatedRows.length} tracks over ${days} days`);
-    return { ok: true, count: generatedRows.length };
-  } catch (e) {
-    console.error('[schedule:generate]', e.message);
-    return { ok: false, error: e.message };
-  }
-});
-
 // ── Spot rotation (clock spot_break slots → spots library) ────────────────────
 // A spot_break clock slot pulls from the spots table: active, inside its date window, and —
 // if the slot names a spot_type — matching that type (NULL slot.spot_type = any active spot).
@@ -5955,13 +5767,31 @@ function _pickSpot(stmt, filterValue, stationId, dayStr, spotLastTs, spotPlaysTo
 function _buildScheduleCtx(stationId) {
   let artistSepMin = 60, songRepeatMin = 180, titleSepMin = 120;
   try {
-    const ar = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get();
+    // PER-STATION separation rules (2026-07-27). Previously these read `... AND is_active=1 LIMIT 1` with
+    // NO station_id, so a multi-station install picked some other station's rule at random (cross-station
+    // bleed — e.g. station 4's 180-min song window silently became station 3's 120). loggen.sepConfig
+    // already scopes by station; Generate must too — it is load-bearing for correct enforcement.
+    const ar = db.prepare("SELECT value FROM separation_rules WHERE station_id=? AND rule_type='artist_separation_min' AND is_active=1 LIMIT 1").get(stationId);
     if (ar) artistSepMin = ar.value;
-    const sr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='song_separation_min' AND is_active=1 LIMIT 1").get();
+    const sr = db.prepare("SELECT value FROM separation_rules WHERE station_id=? AND rule_type='song_separation_min' AND is_active=1 LIMIT 1").get(stationId);
     if (sr) songRepeatMin = sr.value;
-    const tr = db.prepare("SELECT value FROM separation_rules WHERE rule_type='title_separation_min' AND is_active=1 LIMIT 1").get();
+    const tr = db.prepare("SELECT value FROM separation_rules WHERE station_id=? AND rule_type='title_separation_min' AND is_active=1 LIMIT 1").get(stationId);
     if (tr) titleSepMin = tr.value;
   } catch {}
+
+  // ENFORCE-SEPARATION toggle (2026-07-27, slice 1) — per-station, station_config_kv key
+  // 'enforce_separation'. Default OFF: absent/'0'/'false' = today's behavior (rest ignored at pick,
+  // warn-only lint). ON = the LRP-from-play_log enforced picker (separation-enforce.pickEnforced). Opt-in
+  // per station — turning it on reshapes that station's rotation, so the operator opts in and watches.
+  let enforceSeparation = false;
+  try {
+    const t = db.prepare("SELECT value FROM station_config_kv WHERE key='enforce_separation' AND station_id=? AND deleted_at IS NULL").get(stationId);
+    enforceSeparation = !!(t && (t.value === '1' || t.value === 'true'));
+  } catch {}
+  // Rest maps from play_log (the REAL airplay) — built ONCE per run, and ONLY when enforcing (the 2026-07-22
+  // freeze precedent: never a per-candidate play_log query). songs.last_played_at is not used here.
+  const { buildRestMaps } = require('./separation-enforce');
+  const restMaps = enforceSeparation ? buildRestMaps(db, stationId) : { restByFile: new Map(), restByArtist: new Map(), restByTitle: new Map() };
   // Clock is the master for spots: a spot_break slot pulls from its assigned SPOT category via
   // stmtSpotsByCategory (NULL spot_category_id = any active spot). Prepared defensively so a pre-v24
   // DB (no spot_category_id column) can't break generation — spot breaks just fall back to any spot.
@@ -5974,6 +5804,7 @@ function _buildScheduleCtx(stationId) {
   try { stmtClockBreaks = db.prepare(`SELECT minute, spot_category_id, count FROM clock_breaks WHERE clock_id = ? AND deleted_at IS NULL ORDER BY minute, sort_order`); } catch {}
   return {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
+    enforceSeparation, restByFile: restMaps.restByFile, restByArtist: restMaps.restByArtist, restByTitle: restMaps.restByTitle,
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxed: [],
     // Anchor-fit (v4.4.84): breaks whose fitted landing still misses the target minute by > tolerance —
@@ -5988,7 +5819,7 @@ function _buildScheduleCtx(stationId) {
     // cat-1 "catch-all" from deleted slots the clock no longer has). See docs/log-reader-of-preflip.
     stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? AND deleted_at IS NULL ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
     stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`),
-    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
+    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.no_repeat_hours, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?`),
   };
 }
@@ -6134,6 +5965,14 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       const selectMusic = (categoryId, cursorTs, fitTargetTs = null, defaultDurS = 240) => {
         const candidates = stmtCandidates.all(categoryId, h);
         if (!candidates.length) ctx.diag.emptyCats.add(categoryId);
+        // ENFORCE-SEPARATION (2026-07-27): LRP-order the eligible pool from play_log; violator only when the
+        // pool is exhausted → loud separation-relaxed event. OFF path below is byte-identical to before.
+        if (ctx.enforceSeparation) {
+          const { pickEnforced } = require('./separation-enforce');
+          const r = pickEnforced(candidates, cursorTs, ctx, { songRepeatMin, artistSepMin, titleSepMin }, { usedSongIds, usedArtistIds, usedTitles }, fitTargetTs, defaultDurS);
+          if (r && r.relaxed) ctx.relaxed.push({ hour: h, title: r.picked.title, artist: r.picked.artist_name || '', category_id: categoryId, overageSec: r.overageSec, rule: r.rule });
+          return r ? r.picked : null;
+        }
         let picked = null;
         const compliant = fitTargetTs != null ? [] : null;   // collect all compliant only when fitting
         for (const song of candidates) {
@@ -6284,21 +6123,28 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
       const candidates = stmtCandidates.all(slot.category_id, h);
       if (!candidates.length) ctx.diag.emptyCats.add(slot.category_id);
       let picked = null;
-      for (const song of candidates) {
-        if (usedSongIds.has(song.id)) continue;
-        const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
-        if (currentTs - lastSongTs < songRepeatMin * 60) continue;
-        const titleKey = (song.title || '').trim().toLowerCase();
-        if (titleKey) {
-          const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
-          if (usedTitles.has(titleKey) || (currentTs - lastTitleTs) < titleSepMin * 60) continue;
+      if (ctx.enforceSeparation) {
+        // ENFORCE-SEPARATION (2026-07-27): LRP-order eligible from play_log; relax only when exhausted (loud).
+        const { pickEnforced } = require('./separation-enforce');
+        const r = pickEnforced(candidates, currentTs, ctx, { songRepeatMin, artistSepMin, titleSepMin }, { usedSongIds, usedArtistIds, usedTitles }, null, slotDurationS);
+        if (r) { picked = r.picked; if (r.relaxed) ctx.relaxed.push({ hour: h, title: r.picked.title, artist: r.picked.artist_name || '', category_id: slot.category_id, overageSec: r.overageSec, rule: r.rule }); }
+      } else {
+        for (const song of candidates) {
+          if (usedSongIds.has(song.id)) continue;
+          const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
+          if (currentTs - lastSongTs < songRepeatMin * 60) continue;
+          const titleKey = (song.title || '').trim().toLowerCase();
+          if (titleKey) {
+            const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
+            if (usedTitles.has(titleKey) || (currentTs - lastTitleTs) < titleSepMin * 60) continue;
+          }
+          const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
+          const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < artistSepMin * 60);
+          if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
         }
-        const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
-        const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < artistSepMin * 60);
-        if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
+        // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
+        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: slot.category_id }); }
       }
-      // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-      if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: slot.category_id }); }
       if (picked) {
         usedSongIds.add(picked.id);
         if (picked.artist_id) usedArtistIds.add(picked.artist_id);

@@ -16,6 +16,7 @@
 import { query, execute, queryOne } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { getEngine } from "./engine-registry";
+import { pickEnforced, RestMaps, SepWin } from "./separationEnforce";
 
 interface SmartRule {
   id: string;
@@ -120,6 +121,77 @@ async function getSepRules(stationId: number): Promise<SepRules> {
   } catch {
     return { artist_sep_sec: 3600, song_sep_sec: 7200 };
   }
+}
+
+// ── Enforce-separation (2026-07-27, slice 3) — renderer twin of the daemon enforced floor ─────────────
+// Per-station toggle (station_config_kv key 'enforce_separation'), default OFF. When ON, the live-pick
+// fallback below uses the shared enforced picker (separationEnforce.pickEnforced) instead of the
+// clock/rule/random ladder. Tier 0 (generated_schedule) is unaffected. Mirrors audiod/loggen.js slice 2.
+async function enforceSeparationOn(stationId: number): Promise<boolean> {
+  try {
+    const rows = await query<{ value: string }>(
+      "SELECT value FROM station_config_kv WHERE key='enforce_separation' AND station_id=? AND deleted_at IS NULL",
+      [stationId]);
+    const v = rows[0]?.value;
+    return v === "1" || v === "true";
+  } catch { return false; }
+}
+
+async function sepWindowsMin(stationId: number): Promise<SepWin> {
+  const g = async (rt: string, def: number) => {
+    try {
+      const r = await query<{ value: number }>(
+        "SELECT value FROM separation_rules WHERE station_id=? AND rule_type=? AND is_active=1 LIMIT 1", [stationId, rt]);
+      return r[0]?.value ?? def;
+    } catch { return def; }
+  };
+  return { artistSepMin: await g("artist_separation_min", 60), songRepeatMin: await g("song_separation_min", 180), titleSepMin: await g("title_separation_min", 120) };
+}
+
+async function buildRestMapsTwin(stationId: number): Promise<Pick<RestMaps, "restByFile" | "restByArtist" | "restByTitle">> {
+  const restByFile = new Map<string, number>(), restByArtist = new Map<number, number>(), restByTitle = new Map<string, number>();
+  try { for (const r of await query<{ file_path: string; m: number }>("SELECT file_path, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path", [stationId])) restByFile.set(r.file_path, r.m || 0); } catch { /* */ }
+  try { for (const r of await query<{ aid: number; m: number }>("SELECT s.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s.artist_id IS NOT NULL GROUP BY s.artist_id", [stationId])) restByArtist.set(r.aid, r.m || 0); } catch { /* */ }
+  try { for (const r of await query<{ tk: string; m: number }>("SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL GROUP BY LOWER(TRIM(title))", [stationId])) restByTitle.set(r.tk, r.m || 0); } catch { /* */ }
+  return { restByFile, restByArtist, restByTitle };
+}
+
+// Enforced live-pick: fill `count` slots from the clock's music categories (else on-format), each via the
+// shared pickEnforced. Returns Song[] in air order (rest-driven — NOT BPM-reordered). Empty ⇒ caller falls
+// through to the legacy ladder (never dead air). relaxedCount is logged loud.
+async function enforcedFill(count: number, stationId: number): Promise<Song[]> {
+  const win = await sepWindowsMin(stationId);
+  const rest = await buildRestMapsTwin(stationId);
+  const maps: RestMaps = { ...rest, songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map() };
+  const used = { usedSongIds: new Set<number>(), usedArtistIds: new Set<number>(), usedTitles: new Set<string>() };
+  const showClock = await getActiveShowClock(stationId);
+  let cats: number[] = [];
+  if (showClock) {
+    const rows = await query<{ category_id: number }>("SELECT category_id FROM clock_slots WHERE clock_id=? AND slot_type='music' AND category_id IS NOT NULL AND station_id=? AND deleted_at IS NULL ORDER BY position", [showClock.clockId, stationId]);
+    cats = rows.map(r => r.category_id);
+  }
+  if (!cats.length) cats = await getFormatCategoryIds(stationId, showClock?.clockId);
+  if (!cats.length) return [];
+  const out: Song[] = []; let cursorTs = Math.floor(Date.now() / 1000); let ci = 0, relaxedCount = 0;
+  for (let i = 0; i < count; i++) {
+    let picked: any = null, guard = 0;
+    while (!picked && guard++ < cats.length) {
+      const cat = cats[ci++ % cats.length];
+      const cands = await query<Song>("SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.intro_end, s.outro_start, s.no_repeat_hours FROM songs s LEFT JOIN artists a ON a.id=s.artist_id WHERE s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive') AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)", [cat, new Date(cursorTs * 1000).getHours()]);
+      if (!cands.length) continue;
+      const r = pickEnforced(cands as any[], cursorTs, maps, win, used, null, 240);
+      if (!r) continue;
+      picked = r.picked; if (r.relaxed) relaxedCount++;
+    }
+    if (!picked) break;
+    used.usedSongIds.add(picked.id); if (picked.artist_id) used.usedArtistIds.add(picked.artist_id);
+    const tk = (picked.title || "").trim().toLowerCase(); if (tk) used.usedTitles.add(tk);
+    maps.songLastTs.set(picked.id, cursorTs); if (picked.artist_id) maps.artistLastTs.set(picked.artist_id, cursorTs); if (tk) maps.titleLastTs.set(tk, cursorTs);
+    out.push(picked as Song);
+    cursorTs += picked.duration_ms ? Math.round(picked.duration_ms / 1000) : 240;
+  }
+  if (relaxedCount) console.warn(`[loggen] ENFORCED (twin) relaxed ${relaxedCount}/${out.length} — category pool exhausted`);
+  return out;
 }
 
 // ── Energy level → SQL filter ──────────────────────────────────
@@ -540,6 +612,19 @@ export async function fillQueueFromSchedule(targetCount = 20, stationIdArg?: num
     }
 
     console.log("[loggen] generated_schedule empty — falling back to live picking");
+
+    // ENFORCE-SEPARATION (slice 3): when ON, use the enforced picker (LRP eligible from play_log, relax
+    // only on exhaustion) and SKIP the clock/rule/random ladder + BPM reorder (order is rest-driven).
+    // Falls through to the legacy ladder only if enforced picking yields nothing (never dead air).
+    if (await enforceSeparationOn(stationId)) {
+      const enforced = await enforcedFill(targetCount, stationId);
+      if (enforced.length) {
+        const items = enforced.map(s => ({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 }));
+        engine.addToQueue(items);
+        console.log(`[loggen] fillQueue: source=enforced | ${items.length} tracks`);
+        return items.length;
+      }
+    }
 
     const sep  = await getSepRules(stationId);
     const { blockExplicit } = getContentFilter();

@@ -3,7 +3,7 @@
 // Shows are queried from the DB and rendered as colored blocks.
 // Clicking a block calls onShowClick(showId) — App.tsx navigates to the Scheduler.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -80,7 +80,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const [trackCounts, setTrackCounts] = useState<TrackCounts>(new Map());
   const [scheduleByDay, setScheduleByDay] = useState<Map<string, { scheduled_at: number; title: string; artist: string; song_id: number | null }[]>>(new Map());
   const [showTracks, setShowTracks] = useState(false);
-  const [viewMode, setViewMode]     = useState<"week" | "month">("week");
+  const [viewMode]                  = useState<"week" | "month">("week"); // month removed (unnecessary); week only
 
   const MIN_HOUR    = fullDay ? 0 : 5;
   const MAX_HOUR    = 24;
@@ -141,31 +141,35 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
+  // Progress meter + cancel for a week generate (2026-07-27): the per-day loop reports done/total so the
+  // user SEES it working instead of a frozen window. Cancel is checked between days.
+  const [genProgress, setGenProgress] = useState<{ done: number; total: number; label: string } | null>(null);
+  const genCancelRef = useRef(false);
   // Generate diagnostics now flow to the movable Scheduler Health panel (Tools) via the
   // "ether:gen-report" event — structured, actionable, non-blocking (no locked modal).
 
-  // Generate the airing log (generated_schedule) for exactly the WEEK or MONTH being viewed,
-  // by regenerating each of its days (per-day clear+rebuild — no full wipe).
-  const generate = async (scope: "week" | "month") => {
+  // Generate the airing log (generated_schedule) for the viewed WEEK, one day at a time (per-day
+  // clear+rebuild — no full wipe). Metered: reports done/total between days so the window shows progress
+  // instead of appearing frozen, and Cancel stops it cleanly. A manual run is capped at one week (a month
+  // is unnecessary; recurring coverage comes from the weekly auto-schedule).
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const generate = async () => {
     if (generating) return;
-    setGenerating(true);
+    setGenerating(true); genCancelRef.current = false;
     const mon = getMondayOfWeek(weekOffset);
-    const mid = new Date(mon.getTime() + 3 * 86_400_000);
-    let dates: Date[];
-    if (scope === "week") {
-      dates = Array.from({ length: 7 }, (_, i) => new Date(mon.getTime() + i * 86_400_000));
-      setGenMsg("Generating this week…");
-    } else {
-      const first = new Date(mid.getFullYear(), mid.getMonth(), 1);
-      const nDays = new Date(mid.getFullYear(), mid.getMonth() + 1, 0).getDate();
-      dates = Array.from({ length: nDays }, (_, i) => new Date(first.getFullYear(), first.getMonth(), 1 + i));
-      setGenMsg("Generating this month…");
-    }
+    const dates = Array.from({ length: 7 }, (_, i) => new Date(mon.getTime() + i * 86_400_000));
+    setGenProgress({ done: 0, total: dates.length, label: "Starting…" });
     try {
       let count = 0;
       let station = "";
       const days: any[] = [];
-      for (const d of dates) {
+      let canceled = false;
+      for (let i = 0; i < dates.length; i++) {
+        if (genCancelRef.current) { canceled = true; break; }
+        const d = dates[i];
+        setGenProgress({ done: i, total: dates.length, label: `${DAY_NAMES[d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}` });
+        // Yield to the event loop so the meter paints before the (blocking) day generate.
+        await new Promise(r => setTimeout(r, 0));
         const ts = Math.floor(new Date(d).setHours(0, 0, 0, 0) / 1000);
         const res = await (window as any).ether.invoke("schedule:generateDay", ts);
         count += (res?.count || 0);
@@ -175,6 +179,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         if (g.noShow?.length || g.noClock?.length || g.emptyCats?.length || g.emptyClocks?.length || relaxed.length) {
           days.push({ date: res.date, dateTs: res.dateTs, noShow: g.noShow || [], noClock: g.noClock || [], emptyCats: g.emptyCats || [], emptyClocks: g.emptyClocks || [], relaxed });
         }
+        setGenProgress({ done: i + 1, total: dates.length, label: `${DAY_NAMES[d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}` });
       }
       setShowTracks(true);
       await loadTrackCounts();
@@ -182,18 +187,21 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
       // Feed the movable Scheduler Health panel with the STRUCTURED diagnostics (named gaps + relaxed).
       window.dispatchEvent(new CustomEvent("ether:gen-report", { detail: { station, count, days } }));
-      if (days.length || count === 0) {
+      if (canceled) {
+        setGenMsg(`Canceled · ${count} items generated so far`);
+        setTimeout(() => setGenMsg(""), 6000);
+      } else if (days.length || count === 0) {
         window.dispatchEvent(new Event("ether:open-scheduler-health")); // surface it, don't lock the screen
         setGenMsg(count === 0 ? "Generated nothing — see Scheduler Health (Tools)" : `Generated ${count} · gaps/relaxed → Scheduler Health`);
         setTimeout(() => setGenMsg(""), 9000);
       } else {
-        setGenMsg(`✓ Generated this ${scope} · ${count} items · clean`);
+        setGenMsg(`✓ Generated this week · ${count} items · clean`);
         setTimeout(() => setGenMsg(""), 6000);
       }
     } catch (e: any) {
       setGenMsg("Generation failed: " + String(e?.message || e));
       setTimeout(() => setGenMsg(""), 9000);
-    } finally { setGenerating(false); }
+    } finally { setGenerating(false); setGenProgress(null); }
   };
 
   // ── Day view — click a day to open its date and see the airing log hour-by-hour ──
@@ -429,18 +437,33 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
-        {/* Week / Month scope toggle */}
-        <div style={{ display: "flex", border: "1px solid var(--border-primary)", height: 26 }}>
-          {(["week", "month"] as const).map(s => (
-            <button key={s} onClick={() => setViewMode(s)} disabled={generating}
-              style={{ padding: "0 12px", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 800, textTransform: "capitalize" as const,
-                background: viewMode === s ? "var(--accent-green)" : "transparent",
-                color: viewMode === s ? "#0a160d" : "var(--text-secondary)" }}>{s}</button>
-          ))}
-        </div>
-        <button disabled={generating} onClick={() => generate(viewMode)} title={`Generate the viewed ${viewMode}`}
+        {/* Generate meter — "tech-scene" green terminal progress (glowing left→right fill, monospace,
+            percentage) so the user plainly SEES it working instead of a frozen window. Cancelable (ABORT). */}
+        {generating && genProgress && (() => {
+          const pct = Math.round(100 * genProgress.done / Math.max(1, genProgress.total));
+          const G = "#2bff88";
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px", height: 26,
+              background: "#050a06", border: `1px solid ${G}`,
+              boxShadow: "0 0 10px rgba(43,255,136,0.35), inset 0 0 8px rgba(43,255,136,0.12)",
+              fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
+              <span style={{ fontSize: 10, fontWeight: 800, color: G, letterSpacing: "0.12em", textShadow: `0 0 6px ${G}` }}>▮ GENERATING</span>
+              <div style={{ position: "relative", width: 150, height: 10, background: "#0a1a0e", border: "1px solid rgba(43,255,136,0.4)", overflow: "hidden" }}>
+                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: G,
+                  boxShadow: `0 0 8px ${G}, 0 0 14px ${G}`, transition: "width 0.25s ease" }} />
+                {/* LED-segment overlay for the tech look */}
+                <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(90deg, transparent 0 6px, rgba(0,0,0,0.28) 6px 8px)", pointerEvents: "none" }} />
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 800, color: G, textShadow: `0 0 6px ${G}`, minWidth: 34, textAlign: "right" }}>{pct}%</span>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(43,255,136,0.75)", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>{genProgress.done}/{genProgress.total} · {genProgress.label}</span>
+              <button onClick={() => { genCancelRef.current = true; }}
+                style={{ background: "transparent", border: "1px solid #ff5555", color: "#ff5555", fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", padding: "2px 8px", cursor: "pointer" }}>ABORT</button>
+            </div>
+          );
+        })()}
+        <button disabled={generating} onClick={() => generate()} title="Generate the viewed week (one week at a time)"
           style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
-          {generating ? "Generating…" : "Generate"}
+          {generating ? "Generating…" : "Generate week"}
         </button>
       </div>
 
