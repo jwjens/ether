@@ -486,15 +486,24 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
 
   const addCameraSource = useCallback(async (deviceId: string, label: string) => {
     try {
-      let dupe = false;
+      // A physical camera is single-open on Windows. Guard BOTH cases before a second getUserMedia:
+      //  (1) explicit duplicate — same deviceId added twice via + Camera;
+      //  (2) already held by another source (typically the host camera, whose externalId is "host", NOT the
+      //      deviceId — so the (1) check alone misses it). A second getUserMedia on a held device throws
+      //      NotReadableError, surfaced as "Requested device not found". If it's already on stage, say so
+      //      instead of colliding. (Interim guard; the full device-acquisition service shares one handle —
+      //      see docs/showplus-device-layer-design-2026-07-27.md.)
+      let blockedMsg: string | null = null;
       setSources(prev => {
-        if (prev.some(s => s.externalId === deviceId)) { dupe = true; }
+        if (prev.some(s => s.externalId === deviceId)) {
+          blockedMsg = `Camera "${label}" is already in your sources.`;
+        } else {
+          const held = prev.find(s => s.stream && s.stream.getVideoTracks().some(t => t.getSettings().deviceId === deviceId));
+          if (held) blockedMsg = `Camera "${label}" is already on stage as "${held.label}".`;
+        }
         return prev;
       });
-      if (dupe) {
-        setErr(`Camera "${label}" is already in your sources.`);
-        return;
-      }
+      if (blockedMsg) { setErr(blockedMsg); return; }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { deviceId: { exact: deviceId }, width: 1280, height: 720, frameRate: 30 },

@@ -27,9 +27,10 @@ export default function AudioDevices({ onOutputChange, onInputChange, currentOut
   const [error, setError] = useState("");
 
   const loadDevices = async () => {
+    // Best-effort grant to unlock labels ONLY — its failure (no/blocked/busy mic) must NOT abort
+    // enumeration, or output devices (which need no grant) vanish with it. Enumerate unconditionally.
+    try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); } catch {}
     try {
-      // Request permission first so labels show up
-      await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
       const all = await navigator.mediaDevices.enumerateDevices();
       setDevices(all.filter(d => d.kind === "audioinput" || d.kind === "audiooutput").map(d => ({
         deviceId: d.deviceId,

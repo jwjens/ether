@@ -1,5 +1,44 @@
 # Backlog
 
+## Show+ device layer — one acquisition service (filed 2026-07-27)
+Full design: `docs/showplus-device-layer-design-2026-07-27.md`.
+- **Systemic root:** NO device manager/broker/refcount anywhere — every component calls
+  `getUserMedia`/`getDisplayMedia`/`enumerateDevices` directly (16 sites mapped). Windows cameras are
+  single-open, so two paths on one device → "Requested device not found." The 3 device bugs this session
+  were three faces of this one gap.
+- **INTERIM two-patch (shipping 4.4.95):** (1) camera double-open — `HostCamera` (`ShowPlus.tsx:686`, holds
+  the cam even while hidden) vs `addCameraSource` (`VideoEngineContext.tsx:498`); (2) `AudioDevices.tsx:32-41`
+  gated-enumerate (second live copy of the bug fixed in `ShowPlusPanel`).
+- **FULL fix (designed, not built):** one device-acquisition service — open each physical device once
+  (keyed deviceId+kind), hand out shared/cloned tracks, reference-count + release on last consumer,
+  enumeration fully decoupled from grants (single `listDevices`), typed errors not silent catches, one
+  screen path (retire legacy `useScreenShare`). Generalizes the host-stream-by-reference pattern that already
+  works (`ShowPlus.tsx:2392` + `VideoEngineCanvas.tsx:82`). Real-device code — proves out only on install.
+  (added 2026-07-27)
+
+## Seamless daemon update — no dead air on install (filed 2026-07-27)
+Full design: `docs/seamless-daemon-update-design-2026-07-27.md`. **Build nothing yet.**
+- **Diagnosis:** UI-only updates are ALREADY gapless (daemon detached, `installer.nsh` never kills
+  `ether-engine.exe`, `quitAndInstall` relaunches only the UI). Dead air comes from ONE class: **new
+  daemon code** (`audiod/*.js` or a new `native/ether-audio.node`). A native process image can't hot-swap,
+  so the only way to run it is `reloadDaemon()` → shutdown → respawn, which (a) drops the Icecast mount
+  (ffmpeg lives INSIDE the daemon, `audiod/stream.js`) and (b) reloads decks from zero. And the reload is
+  guarded to never kill a live engine (`main.js:340-354`), so it often doesn't fire at all → CLAUDE.md's
+  "must fully close and reopen" caveat.
+- **PHASE 1 — Stream Relay (the only part worth considering soon).** Extract ffmpeg + the Icecast socket
+  out of the daemon into a small long-lived relay that survives both app AND daemon restarts; it reads PCM
+  from whichever mixer is the current producer over a stable local port and supports a producer swap. The
+  Icecast mount then never drops even across today's hard daemon reload — kills the listener-facing dead
+  air for the whole daemon-update class with NO shadow machinery. Leverages the 256 KB Icecast burst buffer
+  already raised on Lightsail. Ships behind a flag, off-air-proven then OV-proven; rollback = today's
+  in-daemon encoder. Health event `relay-producer-switch` measures the ACTUAL listener-side underrun.
+- **PHASE 2 — Shadow-daemon handoff — PARKED INDEFINITELY.** Two mixers + device release/acquire + producer
+  crossover is too close to the process-swap/device-contention surface behind the dead-thread and
+  silent-daemon incidents (`incident-two-stations-silent-2026-07-15.md`,
+  `incident-jingle-cart-panic-2026-07-15.md`), and it depends on the Log-Reader Flip reaching Phase 3 (the
+  time-anchored playhead is the only clean mid-song resume primitive). Not scheduled; if ever revisited,
+  strictly AFTER the flip's Phase 3 burn-in. (added 2026-07-27)
+
 ## Auto-generation — rolling-horizon top-up (filed 2026-07-22)
 - **PREREQUISITE — the Generate-worker release.** Generate must move OFF the main thread into the worker
   (the same class as the 4.4.77 senses-freeze fix: synchronous 24h×slots generation blocks the main
