@@ -1733,8 +1733,11 @@ function AudioPanel({
 
   useEffect(() => {
     const load = async () => {
+      // Best-effort mic grant ONLY to unlock device labels — a failure (no/blocked/busy mic, the
+      // "Requested device not found" case) must NOT abort enumeration, or output devices (which need no
+      // grant) vanish too. Enumerate unconditionally so the lists always populate.
+      try { const s = await navigator.mediaDevices.getUserMedia({ audio: true }); s.getTracks().forEach(t => t.stop()); } catch {}
       try {
-        await navigator.mediaDevices.getUserMedia({ audio: true }).then(s => s.getTracks().forEach(t => t.stop()));
         const all = await navigator.mediaDevices.enumerateDevices();
         setAudioDevices(all
           .filter(d => d.kind === "audioinput" || d.kind === "audiooutput")
@@ -2561,11 +2564,16 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
         {/* Left: main canvas area */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
 
-          <div style={{ display: rightTab === "engine" ? "flex" : "none", flex: 1, flexDirection: "column" as const, minHeight: 0 }}>
+          {/* Main stage = the composited program canvas, ALWAYS. The right-panel tabs (ENGINE / SOURCES /
+              SHOW+ / QUALITY) are controls only — they never replace what's on the main stage, so the
+              operator always sees the program while selecting sources / adjusting anything. */}
+          <div style={{ display: "flex", flex: 1, flexDirection: "column" as const, minHeight: 0 }}>
             <VideoEngineCanvas />
           </div>
 
-          <div style={{ display: rightTab !== "engine" ? "flex" : "none", flex: 1, flexDirection: "column" as const, minHeight: 0 }}>
+          {/* HostCamera stays MOUNTED (host-stream capture + teleprompter overlays) but never takes the
+              main stage — the canvas above is the program preview on every tab. */}
+          <div style={{ display: "none", flex: 1, flexDirection: "column" as const, minHeight: 0 }}>
             <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
               <HostCamera
                 onStream={setHostStream} lowerThirds={lowerThirds}
