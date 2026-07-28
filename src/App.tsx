@@ -5719,7 +5719,11 @@ function ThreeSlotBar({ queueLen, masterCollapsed = true, showCarts = false }: {
         const da   = engine.getDeck(id)?.getState?.();
         const fill = fillRefs[i].current;
         if (!fill || !da) return;
-        const trackKey = `~${Math.round(da.durationSec ?? 0)}`;
+        // Identity-keyed so EVERY new track re-arms the left→right sweep. Keying on rounded duration
+        // alone (the old `~<durationSec>`) collided when two consecutive tracks on a deck shared a
+        // whole-second length → the guard stayed false → the fill never re-swept for the new track.
+        // filePath is unique per track (most robust); fall back to title/artist/duration if absent.
+        const trackKey = da.filePath || `${da.title ?? ""}~${da.artist ?? ""}~${Math.round(da.durationSec ?? 0)}`;
         if (da.status === "playing" && da.durationSec > 0 && trackKey !== fillTrackRefs[i].current) {
           fillTrackRefs[i].current = trackKey;
           const startPct  = (da.positionSec / da.durationSec) * 100;
