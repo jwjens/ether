@@ -121,13 +121,45 @@ rather than depending on peer-reflexive discovery.
 TURN (`ShowPlus.tsx:494-496`), which is explicitly out of scope for this release and remains the open backlog item
 first noted in commit `8db0925`.
 
-**Verification is a live guest join, not a typecheck.** Per `CLAUDE.md`, the only valid test is the real app. On the
-next run, the console should show `[WEBRTC] Queued remote ICE candidate` lines while the guest is pending, then a
-single `[WEBRTC] Flushed queued ICE candidates for guest … {queued: N, applied: N, dropped: 0}` on Accept, followed by
-`[WEBRTC] ICE state` / `[WEBRTC] Connection state` lines that never printed before.
+**Verification is a live guest join, not a typecheck.** Per `CLAUDE.md`, the only valid test is the real app.
+
+### Live verification — PASSED (2026-07-28, operator-run)
+
+Observed on a real guest join, in order:
+
+1. `[WEBRTC] Queued remote ICE candidate` (`ShowPlus.tsx:459`) — queue depth climbed to **4** while the guest sat
+   pending. Under the old code these four candidates were the ones silently discarded.
+2. `[WEBRTC] Flushed queued ICE candidates for guest … {queued: 4, applied: 4, dropped: 0}` (`ShowPlus.tsx:585`) on
+   Accept. **All four applied, none dropped** — the flush ordering after `setRemoteDescription` (`ShowPlus.tsx:574`)
+   is correct, and no `addIceCandidate` error fired from `ShowPlus.tsx:583`.
+3. `[WEBRTC] ICE state … checking` (`ShowPlus.tsx:537`) and `[WEBRTC] Connection state … connecting`
+   (`ShowPlus.tsx:540`) — **lines that had never printed at all before this fix.**
+
+That is the exact sequence predicted above. The defect in §7.1 of the trace is closed: the peer connection now starts
+with the guest's real remote candidates instead of zero, and ICE actually runs candidate checks.
+
+### Known remaining failure — out of scope, already filed
+
+ICE proceeds `checking → disconnected → failed`. That is the **TURN gap** (§7.3 of the trace): with STUN-only
+`iceServers` (`ShowPlus.tsx:494-496`) there is no relay candidate, so a guest whose path requires relaying still
+cannot complete. `iceServers` was **not touched in this release** per instruction; it remains the open backlog item
+first recorded in commit `8db0925`. This fix was never expected to resolve it — it makes ICE able to run at all,
+which is the precondition for TURN to help.
 
 ---
 
-## Stopped here
+## Release actions taken
 
-No version bump. No commit. No tag. No push. No installer build. No install. Awaiting GO.
+- **Version:** `package.json` bumped `4.4.95` → `4.4.96` (`package.json:70`).
+- **Commit:** `43b9baa` — `fix(showplus) 4.4.96: queue pre-Accept guest ICE candidates (black guest tile)`.
+  Staged files only: `package.json`, `src/components/ShowPlus.tsx`,
+  `docs/showplus-guest-tile-black-video-trace-2026-07-28.md`, and this report. Five unrelated untracked items (two
+  other design docs, three `native/*.bak` / `.new` binaries) were deliberately left unstaged.
+- **Pre-commit `verify:schema` hook:** PASSED — `schema_version` 34, transformer coverage v2→v34 (33 migrations).
+- **Renderer:** `npm run build` — built in 11.0s.
+- **Installer:** `npm run electron:build:win -- --publish never` → **`C:\openair\dist-electron\Ether Setup 4.4.96.exe`**
+  (202,692,950 bytes), signed via signtool, blockmap generated. `--publish never` — nothing pushed to any GitHub
+  release by the build.
+- **Pushed:** branch `log-reader-flip` → `origin` (`github.com/jwjens/ether`). **No tag was created**, so the
+  tag-only CI in `build.yml` did not fire and no client auto-update was triggered.
+- **Not installed.** The operator installs manually.
