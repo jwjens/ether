@@ -403,6 +403,13 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
   const [guests, setGuests] = useState<GuestPeer[]>([]);
   const wsRef    = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, RTCPeerConnection>>(new Map());
+  // Remote ICE candidates that arrive before this guest's PC exists (or before its
+  // remote description is set). The guest trickles candidates the moment it creates
+  // its offer; Accept is a human click seconds later, so without this buffer every
+  // candidate in that window was dropped and the PC started with zero remote
+  // candidates. Keyed by the same guest id as peersRef; flushed after
+  // setRemoteDescription resolves and cleared whenever the guest goes away.
+  const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const hostStreamRef = useRef<MediaStream | null>(hostStream);
@@ -438,10 +445,26 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
           console.log("[WEBRTC] Remote ICE candidate from guest", from, payload ? {
             candidate: payload.candidate,
           } : "null");
-          if (pc && payload) try { await pc.addIceCandidate(payload); } catch {}
+          if (!payload) {
+            // End-of-candidates marker — nothing to add or queue.
+          } else if (pc && pc.remoteDescription) {
+            try { await pc.addIceCandidate(payload); }
+            catch (e) { console.error("[WEBRTC] addIceCandidate failed for guest", from, e); }
+          } else {
+            // No PC yet (guest not accepted), or the PC exists but setRemoteDescription
+            // has not resolved — addIceCandidate throws in both cases. Buffer instead.
+            const q = pendingIceRef.current.get(from) || [];
+            q.push(payload);
+            pendingIceRef.current.set(from, q);
+            console.log("[WEBRTC] Queued remote ICE candidate for guest", from, {
+              reason: pc ? "no remote description yet" : "no peer connection yet",
+              queueDepth: q.length,
+            });
+          }
         } else if (type === "leave") {
           const pc = peersRef.current.get(from);
           if (pc) { pc.close(); peersRef.current.delete(from); }
+          pendingIceRef.current.delete(from);
           setGuests(prev => prev.filter(g => g.id !== from));
         }
       } catch (e) { console.error("[STUDIO-HOST] message error:", e); }
@@ -454,6 +477,7 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
       ws.close();
       peersRef.current.forEach(pc => pc.close());
       peersRef.current.clear();
+      pendingIceRef.current.clear();
       setGuests([]);
       wsRef.current = null;
     };
@@ -540,6 +564,7 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
         console.log("[WEBRTC] Connection state for guest", id, pc.connectionState);
         if (pc.connectionState === "failed" || pc.connectionState === "closed") {
           peersRef.current.delete(id);
+          pendingIceRef.current.delete(id);
           setGuests(p => p.filter(g => g.id !== id));
         }
       };
@@ -547,6 +572,20 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
       (async () => {
         try {
           await pc.setRemoteDescription(guest.offer);
+
+          // Flush candidates buffered while this guest was pending. MUST run after
+          // setRemoteDescription resolves — addIceCandidate throws before it.
+          const queued = pendingIceRef.current.get(id) || [];
+          pendingIceRef.current.delete(id);
+          let applied = 0;
+          for (const cand of queued) {
+            try { await pc.addIceCandidate(cand); applied++; }
+            catch (e) { console.error("[WEBRTC] Queued addIceCandidate failed for guest", id, e); }
+          }
+          console.log("[WEBRTC] Flushed queued ICE candidates for guest", id, {
+            queued: queued.length, applied, dropped: queued.length - applied,
+          });
+
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
           ws.send(JSON.stringify({ to: id, type: "answer", payload: answer }));
@@ -560,12 +599,14 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
   const denyGuest = useCallback((id: string) => {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ to: id, type: "denied" }));
+    pendingIceRef.current.delete(id);
     setGuests(prev => prev.filter(g => g.id !== id));
   }, []);
 
   const removeGuest = useCallback((id: string) => {
     const pc = peersRef.current.get(id);
     if (pc) { pc.close(); peersRef.current.delete(id); }
+    pendingIceRef.current.delete(id);
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ to: id, type: "denied" }));
     setGuests(prev => prev.filter(g => g.id !== id));
