@@ -1497,6 +1497,19 @@ export default function App() {
   // Display subscription — re-subscribes whenever the active station changes so
   // deckA/B/C and queueLen always reflect the currently-viewed station.
   useEffect(() => {
+    // EVERY active station's engine gets initialized, not just the login-time one.
+    // The startup effect below calls init() with deps [accountSignedIn, wasOnAir], so a
+    // station switched to AFTER launch (soft switch, no reload) held an engine that had
+    // never run init() → no 250 ms poll and no attachDaemonEvents subscription → engine.on()
+    // returned a valid unsub that never fired. Every listener on that engine went silent:
+    // no fill sweep, no position countdown, frozen duration — with no error anywhere.
+    // init() is idempotent by construction (engine-rodio.ts:150 `if (this.pollTimer) return`
+    // and :161 daemonDetectStarted), so re-running it here on every engine change cannot
+    // double-init, cannot double-subscribe, and cannot restart the daemon detect.
+    // Deliberately placed in THIS effect rather than the startup one: that effect also owns
+    // crash-only auto-resume, and re-running it per station switch could re-trigger
+    // auto-start on the station being switched to.
+    engine.init();
     setDeckA(engine.getDeck("A")?.getState?.() ?? null);
     setDeckB(engine.getDeck("B")?.getState?.() ?? null);
     setDeckC(engine.getDeck("C")?.getState?.() ?? null);
