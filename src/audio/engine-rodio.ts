@@ -136,6 +136,7 @@ export class AudioEngine {
   private daemonUnsub: Array<() => void> = [];
   private daemonDetectStarted = false;
   private daemonQueuePollN = 0; // low-frequency Up-Next resync counter (daemon mode)
+  private daemonDeckPollN  = 0; // low-frequency deck-position re-anchor counter (daemon mode)
   // Honest engine-state truth layer (Slice 1): the daemon's live | stalled | off, mirrored from its
   // `enginestate` events (+ a one-shot resync pull on attach). In daemon mode this cached value is the
   // authoritative answer engineState() returns; in-process mode derives it live. Seeds "off".
@@ -248,12 +249,35 @@ export class AudioEngine {
       (["A", "B", "C"] as DeckId[]).forEach(id => {
         const ds = id === "A" ? s.deckA : id === "B" ? s.deckB : s.deckC;
         if (!ds) return;
-        const vol = makeState(id, ds).volume;   // defaults to unity when the daemon omits it
-        if (id === "A") this.stateA = { ...this.stateA, volume: vol };
-        else if (id === "B") this.stateB = { ...this.stateB, volume: vol };
-        else this.stateC = { ...this.stateC, volume: vol };
-        const st = id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC;
-        this.listeners.forEach(l => l(id, st));
+        const auth = makeState(id, ds);         // the daemon's authoritative view of this deck
+        const cur  = id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC;
+
+        // Volume — unchanged behaviour (defaults to unity when the daemon omits it).
+        const merged: DeckState = { ...cur, volume: auth.volume };
+
+        // POSITION — observed, not extrapolated. Between deck events poll() advances
+        // positionSec from the wall clock and CLAMPS it at durationSec
+        // (`Math.min(pos + elapsed, dur || 9999)`), so if the event stream is interrupted for
+        // any reason the countdown reaches the end of the track and stays there forever —
+        // there was no correction path at all. Re-anchoring here every resync bounds the
+        // drift at one cycle instead of unbounded, and a clamped position self-heals.
+        //
+        // Only for a deck the DAEMON says is playing, and only the measurement: `status` stays
+        // owned by the onDeck event stream. Deciding a deck had stopped from a poll would race
+        // the daemon's own end/advance sequencing, which is a decision the daemon owns.
+        if (auth.status === "playing" && typeof auth.positionSec === "number") {
+          merged.positionSec = auth.positionSec;
+          if (typeof auth.durationSec === "number" && auth.durationSec > 0) {
+            merged.durationSec = auth.durationSec;   // anchors the clamp the tick applies
+          }
+        }
+
+        if (id === "A") this.stateA = merged;
+        else if (id === "B") this.stateB = merged;
+        else this.stateC = merged;
+        // Keep poll()'s change-detector aligned so this resync cannot cause a double-fire.
+        this.lastFiredState[id] = merged;
+        this.listeners.forEach(l => l(id, merged));
       });
     } catch { /* daemon not answering yet — the next deck event resyncs it */ }
   }
@@ -355,6 +379,12 @@ export class AudioEngine {
       // daemon's authoritative queue (~every 5s). Cheap safety net against any missed event
       // (daemon respawn without a renderer reload, dropped IPC, etc.).
       if (this.daemonDriven && (++this.daemonQueuePollN % 20 === 0)) void this.resyncDaemonQueue();
+      // Deck position re-anchor, same 5 s cadence and same daemon gate as the queue resync
+      // above. poll() interpolates positionSec locally between deck events for smooth motion;
+      // this pulls the authoritative value back in so that interpolation can never drift, and
+      // can never sit clamped at durationSec if the event stream is interrupted. Per station,
+      // no active-station special case — every engine whose poll runs re-anchors its own decks.
+      if (this.daemonDriven && (++this.daemonDeckPollN % 20 === 10)) void this.resyncDaemonDecks();
 
       const s = await invoke("audio_get_state", { stationId: this.stationId });
       const now = Date.now();

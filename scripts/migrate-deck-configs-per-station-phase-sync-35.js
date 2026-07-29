@@ -126,7 +126,29 @@ function applyMigration(db) {
   console.log('[migrate-v35] Transaction committed.');
 }
 
-module.exports = { applyMigration, isAlreadyMigrated, pkColumns, COLUMNS };
+module.exports = {
+  // Every phase-sync migration must export a payloadTransformer — the chain applies each
+  // version's transformer in order to bring an older peer's payload up to this schema
+  // (electron/sync/transformer-chain.js).
+  //
+  // v35 changes only the PRIMARY KEY (slot → (station_id, slot)). It adds no column,
+  // removes none, and renames none, so an inbound deck_configs payload from a v34 peer is
+  // already shape-correct. The one thing this version relies on is that `station_id` is
+  // present, because it is now half the key: a legacy payload that omitted it would have
+  // silently landed on station 1 under the old column default. Defaulting it here keeps
+  // that legacy behaviour explicit instead of implicit, and is a no-op for any payload
+  // that already carries one.
+  payloadTransformer: function payloadTransformer(payload) {
+    if (payload && (payload.station_id === undefined || payload.station_id === null)) {
+      payload.station_id = 1;
+    }
+    return payload;
+  },
+  applyMigration,
+  isAlreadyMigrated,
+  pkColumns,
+  COLUMNS,
+};
 
 if (require.main === module) {
   const path = require('path');
