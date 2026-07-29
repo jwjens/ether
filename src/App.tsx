@@ -1520,7 +1520,21 @@ export default function App() {
       else if (id === "C") setDeckC({...st});
       setQueueLen(engine.getQueue().length);
     });
-    return () => unsub();
+    // Exactly ONE live engine: when the active station changes, the engine we are leaving
+    // releases its 250 ms poll and its daemon listeners. Without this, every station
+    // visited left a timer running for the session — and in the in-process fallback two
+    // initialised engines both detect the same track end and both advance.
+    //
+    // NEVER stopped while it is driving audio: in daemon mode the daemon owns playout and
+    // this engine is only a mirror, so stopping it cannot affect air. In the in-process
+    // fallback the renderer engine IS the playout driver, so an engine with a playing deck
+    // is left running — silencing an airing station to tidy up a timer would be a far worse
+    // bug than the one being fixed.
+    const leaving = engine;
+    return () => {
+      unsub();
+      if (leaving.isDaemonDriven || !leaving.hasPlayingDeck()) leaving.stop();
+    };
   }, [engine]);
 
   useEffect(() => {

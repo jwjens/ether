@@ -154,6 +154,35 @@ export class AudioEngine {
     this.detectDaemon();
   }
 
+  /**
+   * Release everything init() started: the 250 ms poll and every daemon IPC listener.
+   *
+   * Without this there was no teardown at all — no clearInterval anywhere — so once the
+   * HOP 4 fix started initialising each station's engine, visiting N stations left N poll
+   * timers running for the session. In the in-process fallback that is worse than untidy:
+   * every initialised engine runs end-detection against the single global native engine,
+   * so two of them detect the same track end and both advance.
+   *
+   * Safe to call repeatedly, and safe to call before init(). After stop(), a later init()
+   * re-attaches cleanly — daemonDetectStarted is reset so detectDaemon() runs again.
+   * Deliberately does NOT touch deck state, the queue, or anything the daemon owns: this
+   * stops the renderer's mirror, never playout.
+   */
+  stop() {
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    for (const off of this.daemonUnsub) { try { off(); } catch { /* listener already gone */ } }
+    this.daemonUnsub = [];
+    // Allow a future init() to re-run detection and re-subscribe.
+    this.daemonDetectStarted = false;
+  }
+
+  /** True while any music deck is playing — used to decide whether stopping is safe. */
+  hasPlayingDeck(): boolean {
+    return this.stateA.status === "playing"
+        || this.stateB.status === "playing"
+        || this.stateC.status === "playing";
+  }
+
   /** Resolves when the daemon-vs-in-process decision is settled. */
   awaitDaemonReady(): Promise<void> { return this.daemonReady || Promise.resolve(); }
 
