@@ -118,6 +118,7 @@ npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (
 - **Propose first, change nothing, wait for explicit confirmation.** Investigate read-only before edits. Never run ahead or overstep.
 - **Never commit or push before Jeff verifies.** Local commits only unless told otherwise. Never tag/release without explicit go-ahead (tagging triggers CI + client auto-update).
 - **The only valid test of a UI/routing fix is launching the app and seeing the actual screen.** A passing database query is NOT proof the screen is correct. Do not claim a routing bug is fixed based on a DB-level test.
+- **A CLAIM ABOUT WHAT THE RUNNING APP DOES REQUIRES A RUNTIME RECEIPT — a log line, a screenshot, or Jeff's word. A grep is a claim about the tree, NEVER about the product.** Static analysis proves what the source says; it does not prove what the user sees. Say what the code says, then mark the runtime behavior **UNVERIFIED** and name the one check that would settle it. Never promote "I grepped and found no case for X" into "X is broken/dead/missing" — that inversion shipped a false premise into a design doc (2026-07-29, the `videostudio` popout).
 - Never use inline `node -e` / `electron -e` (fails/quoting issues) — write a `.js` diag script and run it.
 - `schema_version` lives in its own table (rows 1..N), not in `system_state`.
 - `window.ether.<table>.list()` IPC returns `{rows:[...]}` — unwrap `.rows`.

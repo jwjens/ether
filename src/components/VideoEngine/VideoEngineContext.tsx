@@ -14,6 +14,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useRef, useState,
 } from "react";
+import { acquireCamera } from "./deviceService";
 
 const ether: any = (window as any).ether;
 
@@ -28,6 +29,10 @@ export interface VideoSource {
   height?:    number;
   thumbnailDataUrl?: string; // stable preview shown in sidebar
   externalId?: string;       // for dedupe — desktopCapturer id, deviceId, file path
+  /** Set for device-service-owned sources. Drops this source's reference; the
+   *  device closes only when the LAST consumer releases. Never stop() these tracks —
+   *  they are shared with the host path and any other stage tile. */
+  release?:   () => void;
 }
 
 export interface ChromaKey {
@@ -229,6 +234,11 @@ export function autoArrange(layers: SceneLayer[], sources: VideoSource[]): Scene
 }
 
 // ── Context value ──────────────────────────────────────────────────────────
+// The Phase-1 host-camera acquisition claim lived here. It was an ordering stopgap
+// for a collision that can no longer occur: the device service opens each camera at
+// most once and shares the handle, so there is nothing left to arbitrate. Deleted
+// with its guard in addCameraSource — see the build report for 2026-07-29.
+
 interface CtxValue {
   // Core data
   sources: VideoSource[];
@@ -486,35 +496,33 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
 
   const addCameraSource = useCallback(async (deviceId: string, label: string) => {
     try {
-      // A physical camera is single-open on Windows. Guard BOTH cases before a second getUserMedia:
-      //  (1) explicit duplicate — same deviceId added twice via + Camera;
-      //  (2) already held by another source (typically the host camera, whose externalId is "host", NOT the
-      //      deviceId — so the (1) check alone misses it). A second getUserMedia on a held device throws
-      //      NotReadableError, surfaced as "Requested device not found". If it's already on stage, say so
-      //      instead of colliding. (Interim guard; the full device-acquisition service shares one handle —
-      //      see docs/showplus-device-layer-design-2026-07-27.md.)
-      let blockedMsg: string | null = null;
+      // The device service opens each physical camera AT MOST ONCE and hands the same
+      // track to every consumer, so a camera already held by the host is no longer a
+      // collision to refuse — it is a handle to share. The Phase-1 "already in use as
+      // the host camera" refusal and the 4.4.95 "already on stage as X" refusal both
+      // existed only to prevent a second getUserMedia; that second open cannot happen
+      // any more, so both are gone. See docs/showplus-device-layer-design-2026-07-27.md:76-81.
+      //
+      // The one check kept is list hygiene, not device arbitration: the same camera
+      // twice in the SOURCES list is two identical tiles, which helps nobody.
+      let dupe = false;
       setSources(prev => {
-        if (prev.some(s => s.externalId === deviceId)) {
-          blockedMsg = `Camera "${label}" is already in your sources.`;
-        } else {
-          const held = prev.find(s => s.stream && s.stream.getVideoTracks().some(t => t.getSettings().deviceId === deviceId));
-          if (held) blockedMsg = `Camera "${label}" is already on stage as "${held.label}".`;
-        }
+        if (prev.some(s => s.externalId === deviceId)) dupe = true;
         return prev;
       });
-      if (blockedMsg) { setErr(blockedMsg); return; }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { deviceId: { exact: deviceId }, width: 1280, height: 720, frameRate: 30 },
-      });
-      const track = stream.getVideoTracks()[0];
-      const settings = track.getSettings();
+      if (dupe) { setErr(`Camera "${label}" is already in your sources.`); return; }
+
+      const handle = await acquireCamera({ deviceId, width: 1280, height: 720, frameRate: 30, who: `stage:${label}` });
+      // Stage sources stay video-only, exactly as before — the mic belongs to the host
+      // path, not to a scene tile.
+      const stream = new MediaStream([handle.track]);
+      const settings = handle.track.getSettings();
       const id = `cam_${Date.now().toString(36)}`;
       setSources(prev => [...prev, {
         id, kind: "camera", label, stream,
         width: settings.width, height: settings.height,
-        externalId: deviceId,
+        externalId: handle.deviceId,
+        release: () => handle.release(),
       }]);
       setErr("");
     } catch (e: any) { setErr(`Camera failed: ${e?.message || e}`); }
@@ -535,7 +543,11 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
   const removeSource = useCallback((id: string) => {
     setSources(prev => {
       const t = prev.find(s => s.id === id);
-      if (t?.stream) t.stream.getTracks().forEach(tr => tr.stop());
+      // Device-service sources are RELEASED, never stopped — the same track may be
+      // live on the host peer connection. Only sources we opened ourselves (screen /
+      // window capture) are stopped here.
+      if (t?.release) t.release();
+      else if (t?.stream) t.stream.getTracks().forEach(tr => tr.stop());
       if (t?.imageBitmap) t.imageBitmap.close();
       return prev.filter(s => s.id !== id);
     });

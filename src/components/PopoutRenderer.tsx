@@ -15,6 +15,7 @@ import Scheduler from "./Scheduler";
 import BroadcastCalendar from "./BroadcastCalendar";
 import { LibraryPanel } from "../App";
 import StudioPro from "./StudioPro";
+import VideoStudio from "./ShowPlus";
 import { getEngine } from "../audio/engine-registry";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -56,6 +57,7 @@ const TITLES: Record<string, string> = {
   "library":   "Library",
   "calendar":  "Calendar",
   "studiopro": "Show+ DAW",
+  "videostudio":"Show+",
 };
 
 // Show+ DAW in its own window — resolves the ACTIVE station (machine-global, via getActive) so
@@ -141,6 +143,12 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       break;
     case "studiopro":
       content = <StudioProPopout />;
+      break;
+    // Show+ (the video studio) in its own window — same pattern as every other
+    // popout. ShowPlus brings its own VideoEngineProvider, so nothing extra is
+    // needed here; `active` defaults to true, which is what opens the camera.
+    case "videostudio":
+      content = <VideoStudio />;
       break;
     default:
       content = (

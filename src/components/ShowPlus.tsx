@@ -8,6 +8,7 @@ import React, {
 import { query as dbQuery } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { VideoEngineProvider, useVideoEngine } from "./VideoEngine/VideoEngineContext";
+import { acquireCamera, acquireMic, deviceServiceSnapshot, type DeviceHandle } from "./VideoEngine/deviceService";
 import VideoEngineCanvas from "./VideoEngine/VideoEngineCanvas";
 import VideoEnginePanel, { EncoderSection, DestinationsSection } from "./VideoEngine/VideoEnginePanel";
 import { useCaptions, CaptionsOverlay } from "./Captions";
@@ -410,6 +411,12 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
   // candidates. Keyed by the same guest id as peersRef; flushed after
   // setRemoteDescription resolves and cleared whenever the guest goes away.
   const pendingIceRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
+  // ICE servers (STUN + Cloudflare TURN relay) are minted server-side per
+  // connection and delivered over the signaling socket. NOTHING is hard-coded
+  // here: no credentials in the app, and no STUN-only fallback — a guest that
+  // needs a relay and silently gets STUN-only is the failure this replaces.
+  const [turnState, setTurnState] = useState<{ status: "waiting" | "ready" | "error"; error?: string }>({ status: "waiting" });
+  const iceServersRef = useRef<RTCIceServer[] | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const hostStreamRef = useRef<MediaStream | null>(hostStream);
@@ -436,7 +443,28 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
         const msg = JSON.parse(ev.data);
         const { from, type, payload, name } = msg;
 
-        if (type === "offer") {
+        if (type === "ice-servers") {
+          const list = payload?.iceServers;
+          if (Array.isArray(list) && list.length > 0) {
+            iceServersRef.current = list;
+            const urls = list.flatMap((s: RTCIceServer) => Array.isArray(s.urls) ? s.urls : [s.urls]);
+            console.log("[TURN] ICE servers received from signaling server", {
+              entries: list.length,
+              urls: urls.length,
+              relay: urls.some((u: string) => typeof u === "string" && u.startsWith("turn")),
+              ttl: payload?.ttl,
+            });
+            setTurnState({ status: "ready" });
+          } else {
+            iceServersRef.current = null;
+            console.error("[TURN] ice-servers message carried no usable list", payload);
+            setTurnState({ status: "error", error: "Signaling server sent no relay credentials." });
+          }
+        } else if (type === "ice-servers-error") {
+          iceServersRef.current = null;
+          console.error("[TURN] Signaling server could not mint credentials:", payload?.error);
+          setTurnState({ status: "error", error: payload?.error || "Relay credentials unavailable." });
+        } else if (type === "offer") {
           setGuests(prev => prev.find(g => g.id === from) ? prev : [
             ...prev, { id: from, name: name || `Guest ${prev.length + 1}`, stream: null, conn: null, muted: false, status: "pending", offer: payload },
           ]);
@@ -478,6 +506,10 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
       peersRef.current.forEach(pc => pc.close());
       peersRef.current.clear();
       pendingIceRef.current.clear();
+      // Credentials came from THIS socket and have a TTL. Once it closes, stop
+      // claiming "ready" — the next connection mints fresh ones.
+      iceServersRef.current = null;
+      setTurnState({ status: "waiting" });
       setGuests([]);
       wsRef.current = null;
     };
@@ -487,13 +519,24 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
+    // Fail closed. Without server-minted ICE servers the only connection we could
+    // build is STUN-only — which is precisely the configuration that left guests
+    // stuck at "checking". Refuse and say why rather than build a broken call.
+    const iceServers = iceServersRef.current;
+    if (!iceServers || iceServers.length === 0) {
+      console.error("[TURN] Refusing to accept guest", id, "— no ICE servers from the signaling server yet");
+      setTurnState(prev => prev.status === "error" ? prev : {
+        status: "error",
+        error: "Relay credentials have not arrived — cannot admit guests yet.",
+      });
+      return;
+    }
+
     setGuests(prev => {
       const guest = prev.find(g => g.id === id);
       if (!guest || !guest.offer) return prev;
 
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }, { urls: "stun:stun1.l.google.com:19302" }],
-      });
+      const pc = new RTCPeerConnection({ iceServers });
       peersRef.current.set(id, pc);
       console.log("[WEBRTC] PC created for guest", id);
 
@@ -650,7 +693,7 @@ function useWebRTCGuests(enabled: boolean, hostStream: MediaStream | null) {
     };
   }, []);
 
-  return { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode };
+  return { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode, turnState };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -712,43 +755,165 @@ function HostCamera({
 }) {
   const videoRef   = useRef<HTMLVideoElement>(null);
   const streamRef  = useRef<MediaStream | null>(null);
+  // Handles from the device service. These tracks are SHARED with the stage — never
+  // stop() them; release() and let the service close the device at zero refs.
+  const handlesRef = useRef<DeviceHandle[]>([]);
   const [error, setError]     = useState<string | null>(null);
   const [actualRes, setActualRes] = useState<string | null>(null);
 
-  const start = useCallback(async (res: ResKey) => {
+  const releaseHandles = useCallback(() => {
+    handlesRef.current.forEach(h => h.release());
+    handlesRef.current = [];
+    streamRef.current = null;
+  }, []);
+
+  // Which physical camera is "the host camera"? There is only ever one answer the
+  // operator would accept: the camera this app already has on screen. Resolve it to a
+  // concrete deviceId so the host path and any stage source key on the SAME device and
+  // share one open.
+  const resolveHostCameraDeviceId = useCallback(async (): Promise<string | undefined> => {
+    // 1. A camera already open in this app IS the host camera. This is the case that
+    //    was broken: the operator adds their webcam under SOURCES, sees it working,
+    //    and reasonably expects the guest to receive it.
+    const openCams = deviceServiceSnapshot().filter(d => d.kind === "camera" && d.live);
+    if (openCams.length === 1) {
+      console.log(`[HOSTCAM] using the camera already open in this app: ${openCams[0].deviceId.slice(0, 8)}…`);
+      return openCams[0].deviceId;
+    }
+    // 2. Otherwise resolve the platform default to a real id, so a stage source added
+    //    LATER reuses this open instead of colliding with it.
     try {
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      const { w, h } = RES[res];
-      const audioConstraint: MediaStreamConstraints["audio"] = micDeviceId
-        ? { deviceId: { exact: micDeviceId } }
-        : true;
-      let s: MediaStream;
-      try {
-        s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: w }, height: { ideal: h } }, audio: audioConstraint });
-      } catch {
-        s = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: audioConstraint });
-        setError("4K not supported by camera — using 1080p");
+      const devs = await navigator.mediaDevices.enumerateDevices();
+      const cams = devs.filter(d => d.kind === "videoinput" && d.deviceId);
+      if (openCams.length > 1) {
+        console.log(`[HOSTCAM] ${openCams.length} cameras already open — using the first enumerated device for the host`);
       }
+      if (cams.length) {
+        console.log(`[HOSTCAM] resolved host camera to ${cams[0].deviceId.slice(0, 8)}… (${cams[0].label || "unlabelled"})`);
+        return cams[0].deviceId;
+      }
+    } catch (e: any) {
+      console.warn(`[HOSTCAM] enumerateDevices failed: ${e?.name || "Error"}: ${e?.message || String(e)}`);
+    }
+    // 3. Last resort — let the platform pick. Sharing may not be possible in this case.
+    console.warn("[HOSTCAM] could not resolve a camera deviceId — falling back to the platform default");
+    return undefined;
+  }, []);
+
+  // This stream is the ONLY source of outbound host media: acceptGuest adds its tracks
+  // to every guest peer connection, and when it is null the host falls back to recvonly
+  // transceivers and transmits NOTHING — no camera, no mic. So every failure here is a
+  // silent on-air failure, and every attempt gets logged under [HOSTCAM].
+  const start = useCallback(async (res: ResKey) => {
+    let cam: DeviceHandle | null = null;
+    let mic: DeviceHandle | null = null;
+    try {
+      // Release the previous handles rather than stopping tracks: the stage may be
+      // holding the same device, and stop() would kill its picture too.
+      releaseHandles();
+      const { w, h } = RES[res];
+
+      // ── Camera. Resolve to a CONCRETE deviceId first. Asking for "the system
+      // default" produced a request key ("camera:@default") that could not be matched
+      // against a camera already open under its real id, so a stage source that opened
+      // first caused a second getUserMedia on the same physical device →
+      // NotReadableError → null hostStream → recvonly → guest gets nothing. Keying
+      // both consumers on the same id is what makes "the camera on the stage IS the
+      // camera the guest receives" literally true, in either open order.
+      // Try every route to a camera before giving up. NOTHING secondary — a mic
+      // problem, a stale device id, an unresolvable default — is allowed to cost the
+      // guest their video.
+      const camId = await resolveHostCameraDeviceId();
+      const camPlan: { label: string; deviceId?: string; w: number; h: number }[] = [
+        { label: "resolved id, requested size", deviceId: camId, w, h },
+        { label: "resolved id, 1080p",          deviceId: camId, w: 1920, h: 1080 },
+        { label: "platform default, 1080p",     deviceId: undefined, w: 1920, h: 1080 },
+      ];
+      for (const step of camPlan) {
+        try {
+          cam = await acquireCamera({ deviceId: step.deviceId, width: step.w, height: step.h, who: "HostCamera" });
+          break;
+        } catch (err: any) {
+          console.warn(`[HOSTCAM] camera attempt failed (${step.label}): ${err?.name || "Error"}: ${err?.message || String(err)}`);
+        }
+      }
+      // Last resort: walk every enumerated camera.
+      if (!cam) {
+        const devs = await navigator.mediaDevices.enumerateDevices().catch(() => [] as MediaDeviceInfo[]);
+        for (const d of devs.filter(d => d.kind === "videoinput" && d.deviceId)) {
+          try {
+            cam = await acquireCamera({ deviceId: d.deviceId, width: 1280, height: 720, who: "HostCamera" });
+            console.log(`[HOSTCAM] fell back to enumerated camera ${d.label || d.deviceId.slice(0, 8)}`);
+            break;
+          } catch { /* try the next one */ }
+        }
+      }
+      if (!cam) throw new Error("no camera could be opened");
+
+      // ── Microphone. NOT fatal any more. A missing mic used to throw here, which
+      // took the camera down with it and left the guest with no picture AND no sound.
+      // Video ships; the missing audio is stated loudly instead of hiding a failure.
+      let usedDefaultMic = false;
+      try {
+        mic = await acquireMic({ deviceId: micDeviceId || undefined, who: "HostCamera" });
+      } catch (err: any) {
+        console.warn(`[HOSTCAM] mic failed (${micDeviceId ? "selected device" : "default"}): ${err?.name || "Error"}: ${err?.message || String(err)}`);
+        if (micDeviceId) {
+          try {
+            mic = await acquireMic({ who: "HostCamera" });
+            usedDefaultMic = true;
+          } catch (err2: any) {
+            console.error(`[HOSTCAM] default mic also failed: ${err2?.name || "Error"}: ${err2?.message || String(err2)}`);
+          }
+        }
+      }
+
+      handlesRef.current = mic ? [cam, mic] : [cam];
+      // Our own container over the SHARED tracks. acceptGuest adds these to every guest
+      // peer connection, so the guest gets host video — and host audio when there is a mic.
+      const s = new MediaStream(mic ? [cam.track, mic.track] : [cam.track]);
       streamRef.current = s;
+      if (!mic) {
+        console.error("[HOSTCAM] NO MICROPHONE — guests will SEE the host but not HEAR them. Video is live; fix the mic and reopen Show+.");
+        setError("No microphone available — guests can see you but not hear you");
+      }
+
+      const settings = cam.track.getSettings();
+      console.log("[HOSTCAM] acquired via device service", {
+        video: s.getVideoTracks().length,
+        audio: s.getAudioTracks().length,
+        camera: cam.deviceId.slice(0, 8) + "…",
+        mic: mic ? mic.deviceId.slice(0, 8) + "…" : "NONE",
+        resolution: settings ? `${settings.width}x${settings.height}` : "unknown",
+      });
+
       onStream(s);
-      const vt = s.getVideoTracks()[0];
-      const settings = vt?.getSettings();
       if (settings) setActualRes(`${settings.width}×${settings.height}`);
       if (videoRef.current) { videoRef.current.srcObject = s; videoRef.current.muted = true; }
-      if (error && !error.includes("4K")) setError(null);
-    } catch (e: any) { setError(e.message); onStream(null); }
+      if (usedDefaultMic) setError("Selected microphone unavailable — using the system default");
+      else if (error && !error.includes("4K")) setError(null);
+    } catch (e: any) {
+      // Never leave a half-acquired device held on the failure path.
+      try { cam?.release(); } catch { /* ignore */ }
+      try { mic?.release(); } catch { /* ignore */ }
+      handlesRef.current = [];
+      streamRef.current = null;
+      console.error(`[HOSTCAM] FAILED to open the host camera/mic — the host will transmit NOTHING (acceptGuest falls back to recvonly transceivers): ${e?.name || "Error"}: ${e?.message || String(e)}`);
+      setError(e?.message || String(e));
+      onStream(null);
+    }
   }, [onStream, micDeviceId]); // eslint-disable-line
 
   useEffect(() => {
     if (!active) {
-      // Stop camera when navigating away
-      streamRef.current?.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
+      // Navigating away releases our reference. The device closes only if nothing
+      // else — a stage source, another consumer — is still holding it.
+      releaseHandles();
       onStream(null);
       return;
     }
     start(resolution);
-    return () => { streamRef.current?.getTracks().forEach(t => t.stop()); };
+    return () => { releaseHandles(); };
   }, [resolution, active, micDeviceId]); // eslint-disable-line
 
   const ltPos = (i: number): React.CSSProperties => ({ position: "absolute", bottom: 48 + i * 56, left: 16 });
@@ -1913,6 +2078,7 @@ function EmbeddedStudio({
   isRecording, isStreaming, setIsStreaming, showGrid, setShowGrid,
   teleScript, setTeleScript, teleScrollRef, hostLevel, toggleRecord,
   guests, acceptGuest, denyGuest, removeGuest, toggleMute, guestsEnabled, setGuestsEnabled,
+  turnState,
   sessionToken, stationId, roomCode,
   micDeviceId, setMicDeviceId, outputDeviceId, setOutputDeviceId,
   selfMonitor, setSelfMonitor, micVolume, setMicVolume, monitorVolume, setMonitorVolume,
@@ -1928,6 +2094,7 @@ function EmbeddedStudio({
   hostLevel: number; toggleRecord: () => void;
   guests: GuestPeer[]; acceptGuest: (id: string) => void; denyGuest: (id: string) => void; removeGuest: (id: string) => void; toggleMute: (id: string) => void;
   guestsEnabled: boolean; setGuestsEnabled: (fn: (v: boolean) => boolean) => void;
+  turnState: { status: "waiting" | "ready" | "error"; error?: string };
   sessionToken: string; stationId: string; roomCode: string;
   micDeviceId: string;    setMicDeviceId:    (s: string) => void;
   outputDeviceId: string; setOutputDeviceId: (s: string) => void;
@@ -2053,11 +2220,27 @@ function EmbeddedStudio({
                 <EmailInviteForm inviteLink={inviteLink} stationId={stationId} roomCode={roomCode} />
               </div>
             )}
+            {/* Same relay-credential state as the main GUESTS panel — an Accept that
+                cannot build a connection must say so, not sit there looking live. */}
+            {guestsEnabled && turnState.status !== "ready" && (
+              <div style={{
+                margin: "0 0 8px", padding: "7px 10px", fontSize: 12, lineHeight: 1.4,
+                background: turnState.status === "error" ? "rgba(239,68,68,0.10)" : "rgba(148,163,184,0.10)",
+                border: `1px solid ${turnState.status === "error" ? RED : BOR}`,
+                color: turnState.status === "error" ? RED : TXT2,
+              }}>
+                {turnState.status === "error"
+                  ? `Connection relay unavailable — ${turnState.error || "guests cannot connect."}`
+                  : "Getting connection credentials…"}
+              </div>
+            )}
             {guests.filter(g => g.status === "pending").map(g => (
               <div key={g.id} style={{ padding: "10px 12px", marginBottom: 6, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "#a78bfa", marginBottom: 4 }}>"{g.name}" wants to join</div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => acceptGuest(g.id)} style={{ flex: 1, padding: "6px", fontSize: 12, fontWeight: 700, background: "#22c55e", border: "none", color: "#000", cursor: "pointer" }}>Accept</button>
+                  <button onClick={() => acceptGuest(g.id)} disabled={turnState.status !== "ready"}
+                    title={turnState.status !== "ready" ? "Waiting for connection credentials" : undefined}
+                    style={{ flex: 1, padding: "6px", fontSize: 12, fontWeight: 700, background: turnState.status === "ready" ? "#22c55e" : BG3, border: "none", color: turnState.status === "ready" ? "#000" : TXT2, cursor: turnState.status === "ready" ? "pointer" : "not-allowed" }}>Accept</button>
                   <button onClick={() => denyGuest(g.id)} style={{ flex: 1, padding: "6px", fontSize: 12, fontWeight: 700, background: "transparent", border: `1px solid ${RED}`, color: RED, cursor: "pointer" }}>Deny</button>
                 </div>
               </div>
@@ -2252,7 +2435,7 @@ function SectionHeader({ open, title, onClick }: { open: boolean; title: string;
 // ─────────────────────────────────────────────────────────────
 
 function ShowPlusPanel({
-  guests, onMute, onRemove, onAccept, onDeny,
+  guests, onMute, onRemove, onAccept, onDeny, turnState,
   guestsEnabled, onToggleGuests, sessionToken, roomCode,
   script, setScript, mode, setMode, speed, setSpeed,
   opacity, setOpacity, fontSize, setFontSize, scrolling, setScrolling, scrollRef,
@@ -2263,6 +2446,7 @@ function ShowPlusPanel({
 }: {
   guests: GuestPeer[]; onMute: (id: string) => void; onRemove: (id: string) => void;
   onAccept: (id: string) => void; onDeny: (id: string) => void;
+  turnState: { status: "waiting" | "ready" | "error"; error?: string };
   guestsEnabled: boolean; onToggleGuests: () => void;
   sessionToken: string; roomCode: string;
   script: string; setScript: (v: string) => void;
@@ -2330,13 +2514,30 @@ function ShowPlusPanel({
               </>
             )}
           </div>
+          {/* Relay-credential state. Guests cannot connect without server-minted ICE
+              servers, so this says so plainly instead of letting Accept build a call
+              that will fail at "checking". */}
+          {guestsEnabled && turnState.status !== "ready" && (
+            <div style={{
+              margin: "0 8px 8px", padding: "6px 8px", fontSize: 11, lineHeight: 1.4,
+              background: turnState.status === "error" ? "rgba(239,68,68,0.10)" : "rgba(148,163,184,0.10)",
+              border: `1px solid ${turnState.status === "error" ? RED : BOR}`,
+              color: turnState.status === "error" ? RED : TXT2,
+            }}>
+              {turnState.status === "error"
+                ? `Connection relay unavailable — ${turnState.error || "guests cannot connect."}`
+                : "Getting connection credentials…"}
+            </div>
+          )}
           {pendingGuests.length > 0 && (
             <div style={{ padding: "0 8px 8px" }}>
               {pendingGuests.map(g => (
                 <div key={g.id} style={{ padding: "8px 10px", marginBottom: 4, background: "rgba(167,139,250,0.08)", border: "1px solid rgba(167,139,250,0.3)" }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: "#a78bfa", marginBottom: 5 }}>"{g.name}" wants to join</div>
                   <div style={{ display: "flex", gap: 5 }}>
-                    <button onClick={() => onAccept(g.id)} style={{ flex: 1, padding: "5px 8px", background: GRN, color: "#000", border: "none", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Accept</button>
+                    <button onClick={() => onAccept(g.id)} disabled={turnState.status !== "ready"}
+                      title={turnState.status !== "ready" ? "Waiting for connection credentials" : undefined}
+                      style={{ flex: 1, padding: "5px 8px", background: turnState.status === "ready" ? GRN : BG3, color: turnState.status === "ready" ? "#000" : TXT2, border: "none", fontSize: 11, fontWeight: 700, cursor: turnState.status === "ready" ? "pointer" : "not-allowed" }}>Accept</button>
                     <button onClick={() => onDeny(g.id)} style={{ flex: 1, padding: "5px 8px", background: "transparent", color: TXT2, border: `1px solid ${BOR}`, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Deny</button>
                   </div>
                 </div>
@@ -2505,7 +2706,7 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
   useEffect(() => { (window as any).ether.installConfigKv.upsertByKey('video_monitor_volume', String(monitorVolume)); }, [monitorVolume]);
 
   const hostLevel = useLevelMeter(hostStream);
-  const { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode } = useWebRTCGuests(guestsEnabled, hostStream);
+  const { guests, acceptGuest, denyGuest, removeGuest, toggleMute, sessionToken, roomCode, turnState } = useWebRTCGuests(guestsEnabled, hostStream);
   const { enabled: captionsEnabled, lines: captionLines, status: captionsStatus, toggle: toggleCaptions, micDevices, micDeviceId: captionsMicId, selectMic } = useCaptions(active);
 
   // Smart cut sources — host + accepted guests
@@ -2585,6 +2786,7 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
         hostLevel={hostLevel} toggleRecord={toggleRecord}
         guests={guests} acceptGuest={acceptGuest} denyGuest={denyGuest} removeGuest={removeGuest} toggleMute={toggleMute}
         guestsEnabled={guestsEnabled} setGuestsEnabled={setGuestsEnabled}
+        turnState={turnState}
         sessionToken={sessionToken} stationId="" roomCode={roomCode}
         micDeviceId={micDeviceId} setMicDeviceId={setMicDeviceId}
         outputDeviceId={outputDeviceId} setOutputDeviceId={setOutputDeviceId}
@@ -2663,6 +2865,7 @@ export default function ShowPlus({ embedded, active = true }: { embedded?: boole
               <DestinationsSection />
               <ShowPlusPanel
                 guests={guests} onMute={toggleMute} onRemove={removeGuest} onAccept={acceptGuest} onDeny={denyGuest}
+                turnState={turnState}
                 guestsEnabled={guestsEnabled} onToggleGuests={() => setGuestsEnabled(v => !v)}
                 sessionToken={sessionToken} roomCode={roomCode}
                 script={teleScript} setScript={setTeleScript}

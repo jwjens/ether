@@ -2414,6 +2414,7 @@ export default function App() {
 
                 {/* Pop-out windows for every bottom-toolbar feature — drag to another monitor */}
                 {([
+                  { key: "po-videostudio",label: "Show+",      panel: "videostudio" },
                   { key: "po-studiopro",  label: "Show+ DAW",  panel: "studiopro" },
                   { key: "po-decks",      label: "Decks",      panel: "decks" },
                   { key: "po-carts",      label: "Carts",      panel: "carts" },
