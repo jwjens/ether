@@ -585,11 +585,29 @@ export default function VideoEnginePanel({ view = "engine" }: { view?: "engine" 
           />
           <Btn small onClick={chooseRecordPath}>…</Btn>
         </Row>
+        {/* The requirement is stated BEFORE the click, not discovered by clicking. The
+            picker is dialog:saveFile (main.js:3322-3325 → showSaveDialog), so it chooses a
+            destination FILE with a name, not a folder — the wording matches that exactly.
+            Once a file is chosen the instruction is replaced by where the recording will
+            actually go. */}
+        {!isRecording && (
+          <div style={{ fontSize: 10, marginTop: 6, lineHeight: 1.45, color: recordPath ? TXT2 : "#f59e0b" }}>
+            {recordPath
+              ? <>Recording to <span style={{ fontFamily: "ui-monospace, monospace", color: TXT }}>{recordPath}</span></>
+              : "First choose a destination file — click … above to pick where the recording is saved."}
+          </div>
+        )}
         <div style={{ marginTop: 4 }}>
           {isRecording ? (
             <Btn danger onClick={stopRecording} style={{ width: "100%" }}>◼ Stop Recording</Btn>
           ) : (
-            <Btn red onClick={startRecording} style={{ width: "100%" }}>● Start Recording</Btn>
+            // Disabled until there is somewhere to write. The guard in startRecording()
+            // (VideoEngineContext.tsx:744) still exists and is unchanged — this just stops
+            // the operator clicking into it and seeing nothing happen.
+            <Btn red onClick={startRecording} disabled={!recordPath} style={{ width: "100%" }}
+                 title={recordPath ? `Record to ${recordPath}` : "Choose a destination file first"}>
+              ● Start Recording
+            </Btn>
           )}
         </div>
       </Section>
@@ -607,8 +625,11 @@ export default function VideoEnginePanel({ view = "engine" }: { view?: "engine" 
             </div>
           </Row>
         ))}
+        {/* What is actually true of buildRecorder today (VideoEngineContext.tsx:646-664):
+            the composited canvas video plus the FIRST audio track it finds among the
+            sources — one source's audio, not a mix. Says so plainly; claims nothing more. */}
         <div style={{ fontSize: 9, color: TXT2, marginTop: 6 }}>
-          Phase 0 — video-only. Audio routing arrives in Phase 4.
+          Records program video with one source's audio — full audio mixing not available yet.
         </div>
       </Section>
       </>)}
@@ -645,21 +666,26 @@ function Label({ children }: { children: React.ReactNode }) {
   return <div style={{ width: 92, fontSize: 12, fontWeight: 600, color: TXT2, flexShrink: 0 }}>{children}</div>;
 }
 
-function Btn({ children, onClick, small, danger, red, pur, style, title }: {
+function Btn({ children, onClick, small, danger, red, pur, style, title, disabled }: {
   children: React.ReactNode;
   onClick: (e: React.MouseEvent) => void;
   small?: boolean; danger?: boolean; red?: boolean; pur?: boolean;
-  style?: React.CSSProperties; title?: string;
+  style?: React.CSSProperties; title?: string; disabled?: boolean;
 }) {
   const bg = danger ? "#401a20" : red ? "#401a20" : pur ? "#1f1a3a" : BG3;
   const bord = danger ? RED : red ? RED : pur ? PUR : BOR;
   const color = danger ? RED : red ? RED : pur ? PUR : TXT;
   return (
-    <button onClick={onClick} title={title}
+    <button onClick={onClick} title={title} disabled={disabled}
       style={{
         padding: small ? "4px 9px" : "7px 12px",
-        background: bg, border: `1px solid ${bord}`, color,
-        fontSize: small ? 11 : 12, cursor: "pointer", borderRadius: 0,
+        background: disabled ? BG3 : bg,
+        border: `1px solid ${disabled ? BOR : bord}`,
+        color: disabled ? TXT2 : color,
+        fontSize: small ? 11 : 12,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.55 : 1,
+        borderRadius: 0,
         fontWeight: 700, letterSpacing: "0.03em", ...style,
       }}
     >{children}</button>
