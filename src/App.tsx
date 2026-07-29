@@ -3665,7 +3665,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Individual deck order — A, B, C, mic can be dragged to any position
-  type DeckSlot = "A" | "B" | "C" | "mic";
+  // Slot ids come from deck_configs rows, so this is a plain string — a union of
+  // specific letters made a new slot a COMPILE ERROR, which is the opposite of "adding a
+  // deck is a plain insert". (Note the union did not even include D/E/F.)
+  type DeckSlot = string;
   // Always derive deck order directly from deckConfigs — no separate state needed
   const DEFAULT_DECK_ORDER: DeckSlot[] = ["A", "B", "C", "mic"];
   const rawDeckOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0

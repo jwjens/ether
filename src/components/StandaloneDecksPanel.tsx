@@ -7,6 +7,7 @@
 import { useState, useEffect } from "react";
 import type { DeckState } from "../audio/engine-rodio";
 import type { DeckConfig, DeckType } from "./DeckConfigurator";
+import { compareSlots } from "./DeckConfigurator";
 import OnAirDeck from "./OnAirDeck";
 import MicDeck from "./MicDeck";
 import { queryScoped } from "../db/stationScoped";
@@ -72,10 +73,9 @@ export default function StandaloneDecksPanel() {
     // station_id scoping: Strategy B (refactored from ether.db.query to standard queryScoped path)
     queryScoped<any>("SELECT slot, type, label, color, enabled FROM deck_configs ORDER BY slot", [], stationId)
       .then((rows: any[]) => {
-        const SLOT_ORDER = ["A", "B", "C", "D", "E", "F"];
-        const sorted = [...rows].sort(
-          (a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)
-        );
+        // Was a second copy of a hardcoded ["A".."F"] list. Shares the data-driven
+        // comparator now, so a new slot needs no edit here either.
+        const sorted = [...rows].sort(compareSlots);
         setConfigs(
           sorted
             .filter(r => r.enabled === 1 || r.enabled === true)

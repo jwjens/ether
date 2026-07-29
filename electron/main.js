@@ -1375,9 +1375,11 @@ function runMigrations() {
     }
   }
 
-  // Enable all 6 deck slots — Apply Layout was broken in Phase 3b, so existing
-  // installs may have D/E/F stuck at disabled. Re-enable them so all 6 show.
-  db.exec("UPDATE deck_configs SET enabled=1 WHERE slot IN ('D','E','F')");
+  // (Removed 2026-07-29) A blanket "UPDATE deck_configs SET enabled=1 WHERE slot IN
+  // ('D','E','F')" used to run here. It hardcoded a specific slot set, and it overrode
+  // the operator's own choice on every startup. Which decks are enabled is data the
+  // operator owns — the seeder supplies defaults for a station that has none and never
+  // touches a station that already has rows.
 
   // v2 (station-provisioning): the default "Station 1" seed is REMOVED. A fresh install starts with
   // ZERO stations; onboarding/sign-in provisioning is the only creator of the first station, which
@@ -1491,26 +1493,75 @@ function _slugifyName(name) {
 // Deck slots A-F are defined HERE, in the database, on every startup.
 // Do NOT hardcode deck slot lists in any React component or UI file.
 // UI code reads from this table; it never defines which slots exist.
-function seedDeckConfigs() {
-  const defaults = [
-    { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: 1 },
-    { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: 1 },
-    { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: 1 },
-    { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 0 },
-    { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 0 },
-    { slot: "F", type: "guest", label: "Guest 2", color: "#a78bfa", enabled: 0 },
-  ];
+// ── Deck config seeding ───────────────────────────────────────────────────────
+// A station is a data binding, not a variant: EVERY station gets the same default deck
+// set, seeded for its own station_id. Before v35 the table's PK was `slot` alone, so
+// only one station's decks could exist at all (all of them landing on station 1 by the
+// station_id column default) and every other station read zero rows.
+//
+// DEFAULT_DECKS is the single source of the default set. Nothing counts it, nothing
+// assumes six, nothing pattern-matches the letters — adding a slot here (or inserting a
+// row later) is all that is needed.
+const DEFAULT_DECKS = [
+  { slot: "A", type: "music", label: "Deck A", color: "#34d399", enabled: 1 },
+  { slot: "B", type: "music", label: "Deck B", color: "#38bdf8", enabled: 1 },
+  { slot: "C", type: "music", label: "Deck C", color: "#a78bfa", enabled: 1 },
+  { slot: "D", type: "music", label: "Deck D", color: "#f97316", enabled: 0 },
+  { slot: "E", type: "music", label: "Deck E", color: "#ef4444", enabled: 0 },
+  { slot: "F", type: "guest", label: "Guest 2", color: "#a78bfa", enabled: 0 },
+];
+
+/**
+ * Seed the default deck set for one station. Existing rows are NEVER overwritten —
+ * INSERT OR IGNORE against the (station_id, slot) PK — so an operator's drifted layout
+ * survives every startup. Mints a uuid per row (the UNIQUE uuid index, and the sync
+ * mutation log, both key on it) and copies the station's uuid into station_uuid, without
+ * which the row is invisible to peer sync.
+ */
+function seedDeckConfigsForStation(stationId) {
+  const stationUuid = (() => {
+    try { return db.prepare("SELECT uuid FROM stations WHERE id = ?").get(stationId)?.uuid ?? null; }
+    catch { return null; }
+  })();
+  const now = new Date().toISOString();
   const insert = db.prepare(
-    "INSERT OR IGNORE INTO deck_configs (slot, type, label, color, enabled) VALUES (?, ?, ?, ?, ?)"
+    `INSERT OR IGNORE INTO deck_configs
+       (station_id, slot, type, label, color, enabled, purpose, uuid, station_uuid, created_at, updated_at, deleted_at)
+     VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, NULL)`
   );
+  let added = 0;
   const seed = db.transaction((decks) => {
-    for (const d of decks) insert.run(d.slot, d.type, d.label, d.color, d.enabled);
+    for (const d of decks) {
+      const r = insert.run(stationId, d.slot, d.type, d.label, d.color, d.enabled,
+                           require("crypto").randomUUID(), stationUuid, now, now);
+      added += r.changes;
+    }
   });
-  seed(defaults);
-  // Fix any D/E/F rows incorrectly seeded as enabled=1 by pre-AUX code
-  db.prepare("UPDATE deck_configs SET enabled=0 WHERE slot IN ('D','E','F') AND enabled=1").run();
-  const { c } = db.prepare("SELECT COUNT(*) as c FROM deck_configs").get();
-  console.log(`[DeckGuard] ✓ deck_configs: ${c}/6 slots present — A B C D E F guaranteed in database`);
+  seed(DEFAULT_DECKS);
+  return added;
+}
+
+/**
+ * Startup guard: every station that has no deck rows gets the default set. Idempotent —
+ * a station that already has rows (even a partial or heavily customised set) is left
+ * exactly as it is.
+ */
+function seedDeckConfigs() {
+  let stations = [];
+  try { stations = db.prepare("SELECT id, name FROM stations ORDER BY id").all(); }
+  catch { stations = []; }
+  if (!stations.length) {
+    console.log("[DeckGuard] no stations yet — deck seeding deferred to stations:create");
+    return;
+  }
+  const report = [];
+  for (const s of stations) {
+    const have = db.prepare("SELECT COUNT(*) c FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL").get(s.id).c;
+    const added = have === 0 ? seedDeckConfigsForStation(s.id) : 0;
+    const total = db.prepare("SELECT COUNT(*) c FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL").get(s.id).c;
+    report.push(`${s.id}:${total}${added ? ` (+${added} seeded)` : ""}`);
+  }
+  console.log(`[DeckGuard] ✓ deck_configs per station — ${report.join("  ")}`);
 }
 
 // ── Window ────────────────────────────────────────────────────
@@ -6821,6 +6872,13 @@ ipcMain.handle('stations:create', (_, data) => {
     // safe for onboarding-created AND reconcile-materialized stations. Never blocks station creation.
     try { require('./seed-station-config').seedStationConfig(db, row.id); }
     catch (e) { console.error('[stations:create] seedStationConfig (§8) failed:', e.message); }
+    // Decks are part of a station's shell, not a thing station 1 alone gets. Seed the
+    // default set for the new station the moment it exists, so Configure Decks and the
+    // live console have rows to read instead of falling back silently.
+    try {
+      const added = seedDeckConfigsForStation(row.id);
+      console.log(`[stations:create] seeded ${added} deck slot(s) for station ${row.id}`);
+    } catch (e) { console.error('[stations:create] seedDeckConfigsForStation failed:', e.message); }
     return { ok: true, id: row.id };
   } catch (e) { return { ok: false, error: e.message }; }
 });

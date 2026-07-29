@@ -142,12 +142,33 @@ function deckConfigsDelete(db, uuid, stationId) {
 
 
 
+// UPSERT by (station_id, slot). This used to be update-only and THREW "slot not found"
+// on any station with no rows — which was every station except station 1, because the
+// old `slot`-only PK could not hold a second station's decks. The IPC wrapper turned
+// that throw into {ok:false} and the caller ignored it, so Apply Layout reported a
+// success it never had. A write for a slot that does not exist yet now creates it.
 function deckConfigsUpdateBySlot(db, stationId, slot, patch) {
   validateScope();
   let existing = db.prepare(
     `SELECT * FROM ${TABLE} WHERE station_id = ? AND slot = ? AND deleted_at IS NULL`
   ).get(stationId, slot);
-  if (!existing) throw new Error(`[deck_configs] slot not found: ${slot} for station ${stationId}`);
+  if (!existing) {
+    // No row for this station+slot — create it, carrying the station's uuid so the row
+    // is visible to peer sync, and log it as an insert mutation like any other create.
+    let stationUuid = null;
+    try { stationUuid = db.prepare('SELECT uuid FROM stations WHERE id = ?').get(stationId)?.uuid ?? null; }
+    catch { /* stations table unavailable — leave null */ }
+    return deckConfigsCreate(db, {
+      station_id:   stationId,
+      station_uuid: stationUuid,
+      slot,
+      type:    patch.type    ?? 'music',
+      label:   patch.label   ?? `Deck ${slot}`,
+      color:   patch.color   ?? '#34d399',
+      enabled: patch.enabled ?? 0,
+      purpose: patch.purpose ?? '',
+    });
+  }
   if (!existing.uuid) {
     const uuid = crypto.randomUUID();
     db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE station_id = ? AND slot = ?`).run(uuid, stationId, slot);
@@ -163,8 +184,12 @@ function deckConfigsClearAll(db, stationId) {
   for (const row of rows) {
     let uuid = row.uuid;
     if (!uuid) {
+      // deck_configs has no `id` column — this used to be `WHERE id = ?`, which throws
+      // "no such column: id" the moment a uuid-less row is reached. Key on the row's own
+      // identity instead: (station_id, slot).
       uuid = crypto.randomUUID();
-      db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+      db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE station_id = ? AND slot = ?`)
+        .run(uuid, row.station_id, row.slot);
     }
     deckConfigsDelete(db, uuid, stationId);
   }

@@ -27,7 +27,13 @@ export interface PlaylistTrack {
 // Deck slots are defined in the database (electron/main.js seedDeckConfigs).
 // Do not hardcode deck lists here. UI code only reads from the database.
 
-const SLOT_ORDER = ["A", "B", "C", "D", "E", "F"];
+// Slot ordering is DATA-DRIVEN — no fixed list, no six-slot ceiling. Slots sort
+// naturally (A, B, C … Z, then AA), so a slot added by a plain INSERT lands in the right
+// place with no code change. The old `["A".."F"].indexOf()` sorted any unknown slot to
+// -1, silently placing it first.
+export function compareSlots(a: { slot: string }, b: { slot: string }): number {
+  return String(a.slot).localeCompare(String(b.slot), undefined, { numeric: true, sensitivity: "base" });
+}
 
 const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; desc: string }> = {
   music:  { label: "Music",        icon: "🎵", color: "#34d399", desc: "Play tracks from library or playlist" },
@@ -46,28 +52,47 @@ const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; 
 export function useDeckConfig() {
   const { stationId, isReady } = useActiveStation();
   const [configs, setConfigs] = useState<DeckConfig[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isReady) return;
+    // Depends on stationId: switching station must RE-READ that station's decks. With
+    // [isReady] alone the list loaded at mount persisted across switches, so a station
+    // could show another station's deck layout.
     queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string }>(
       "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose FROM deck_configs ORDER BY slot",
       [], stationId
     ).then(rows => {
-      const sorted = [...rows].sort(
-        (a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)
-      );
+      const sorted = [...rows].sort(compareSlots);
       setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1 })));
-    }).catch(e => console.error("[DeckConfig] Failed to load from DB:", e));
-  }, [isReady]);
+      setError(null);
+    }).catch(e => {
+      console.error("[DeckConfig] Failed to load from DB:", e);
+      setError(String(e?.message || e));
+    });
+  }, [isReady, stationId]);
 
   const save = async (next: DeckConfig[]) => {
-    await Promise.all(next.map(c =>
-      (window as any).ether.deckConfigs.updateBySlot(stationId, c.slot, {
+    // Every write is INSPECTED. This used to fire and forget, then update the UI
+    // unconditionally — so on a station with no rows the panel showed the new layout
+    // while the database received nothing, and the failure was invisible.
+    const results = await Promise.all(next.map(async c => {
+      const res = await (window as any).ether.deckConfigs.updateBySlot(stationId, c.slot, {
         type: c.type, label: c.label, color: c.color,
         enabled: c.enabled ? 1 : 0, purpose: c.purpose || "",
-      })
-    ));
-    setConfigs([...next].sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)));
+      });
+      return { slot: c.slot, res };
+    }));
+    const failed = results.filter(r => r.res && r.res.ok === false);
+    if (failed.length) {
+      const msg = `Could not save ${failed.length} deck slot(s): ` +
+        failed.map(f => `${f.slot} (${f.res.error || "unknown error"})`).join(", ");
+      console.error("[DeckConfig]", msg);
+      setError(msg);
+      throw new Error(msg);       // the caller decides what to show; never a silent success
+    }
+    setError(null);
+    setConfigs([...next].sort(compareSlots));
   };
 
   const enabled = useMemo(() => configs.filter(c => c.enabled), [configs]);
