@@ -2789,6 +2789,50 @@ ipcMain.handle("ha:readLog", (_e, lines) => {
   }
 });
 
+// activity:tail — FOLLOW ether-audiod.log from a byte offset (the Live Activity terminal in the
+// Health Monitor). Display-only: this reads an existing log the daemon already writes; it adds no
+// instrumentation, no new event channel, and never touches audio, the daemon or the engine.
+//
+// The RENDERER holds the cursor and passes it back each call, so main stays stateless and several
+// windows (the health panel + its popout) can each tail independently without fighting over one
+// offset. Efficiency: we read only [offset, size) — never the whole file — capped per call.
+//
+// Rotation/truncation: daemon-log.js rotates at 5 MB to `.log.1` and starts a fresh `.log`
+// (audiod/daemon-log.js:23,51). After that the file is SMALLER than our cursor, so `offset > size`
+// is the rotation signal — restart from the head of the new file and tell the caller (`reset`).
+ipcMain.handle("activity:tail", (_e, fromOffset) => {
+  const MAX_CHUNK = 256 * 1024;   // bound one call's work — a burst can never stall the UI
+  try {
+    const p = path.join(app.getPath("userData"), "logs", "ether-audiod.log");
+    const size = fs.statSync(p).size;
+    const prev = Number(fromOffset);
+    const seeding = !Number.isFinite(prev) || prev < 0;      // first call → seed from the tail
+    const rotated = !seeding && prev > size;                 // file shrank → rotated/truncated
+    let start = seeding ? Math.max(0, size - MAX_CHUNK) : rotated ? 0 : prev;
+    if (size - start > MAX_CHUNK) start = size - MAX_CHUNK;  // clamp a large catch-up
+    if (start >= size) return { ok: true, offset: size, lines: [], reset: rotated };
+
+    const len = size - start;
+    const fd = fs.openSync(p, "r");
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, start);
+    fs.closeSync(fd);
+    const text = buf.toString("utf8");
+
+    // Only consume up to the last complete line, so a line still being written is never split
+    // across two polls. The remainder is picked up next call.
+    const nl = text.lastIndexOf("\n");
+    if (nl < 0) return { ok: true, offset: start, lines: [], reset: rotated };
+    const complete = text.slice(0, nl + 1);
+    const lines = complete.split(/\r?\n/).filter(Boolean);
+    // If we did not begin at a known line boundary (seeded or clamped mid-line), drop the partial head.
+    if (start !== prev && start > 0) lines.shift();
+    return { ok: true, offset: start + Buffer.byteLength(complete, "utf8"), lines, reset: rotated };
+  } catch (e) {
+    return { ok: false, offset: 0, lines: [], reset: false, error: e.code === "ENOENT" ? "no daemon log yet" : e.message };
+  }
+});
+
 // ── Phase 4: auto-logon installer (ha:enable / ha:disable / ha:repair) ─────────
 // The customer-facing Settings toggle lands here. Two things need admin — the
 // HKLM Winlogon values and the LSA "DefaultPassword" secret — so they're done by
@@ -3295,13 +3339,30 @@ ipcMain.handle("fs:readDir", (_, dirPath) => {
   } catch { return []; }
 });
 
-// Rotation diagnostic log — renderer sends fire-and-forget, main appends to file
-const _rotationLogPath = path.join(__dirname, "..", "tmp-userdata", "rotation.log");
+// Rotation log — the renderer's own record of what IT decided (rotate/preload/end-detection, and the
+// one line that says whether it is daemon-driven or running its own advance). Renderer sends
+// fire-and-forget; main appends.
+//
+// REPAIRED 2026-07-30. This wrote to `__dirname/../tmp-userdata/rotation.log` — a dev-tree relative path
+// that does not exist in a packaged install, inside a silent try/catch. Every [ROT] line this app has
+// ever produced on a customer machine was discarded, including `[ROT] daemon-driven: local advance
+// DISABLED` vs `[ROT] in-process engine (daemon not active)` — the single line that answers which engine
+// is driving a station. It now lands beside the other userData logs, the same convention audio-health
+// uses (_healthLogDir, :476). WHAT IS LOGGED IS UNCHANGED — only where it goes.
+const _rotationLogDir = path.join(app.getPath("userData"), "logs");
+const _rotationLogPath = path.join(_rotationLogDir, "rotation.log");
+try { fs.mkdirSync(_rotationLogDir, { recursive: true }); } catch {}
+let _rotationLogWarned = false;   // warn ONCE — this is a diagnostic channel; it must never spam or throw
 ipcMain.on("log:rotation", (_, msg) => {
   try {
     const ts = new Date().toISOString().replace("T", " ").slice(0, 23);
     fs.appendFileSync(_rotationLogPath, `[${ts}] ${msg}\n`);
-  } catch {}
+  } catch (e) {
+    if (!_rotationLogWarned) {
+      _rotationLogWarned = true;
+      console.warn(`[rotation-log] cannot write ${_rotationLogPath} — rotation logging disabled for this session: ${e.message}`);
+    }
+  }
 });
 
 // Dialog

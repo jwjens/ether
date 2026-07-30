@@ -195,6 +195,11 @@ contextBridge.exposeInMainWorld("ether", {
     disable:     ()         => ipcRenderer.invoke("ha:disable"),
     repair:      (password) => ipcRenderer.invoke("ha:repair", password),
   },
+  // Live Activity terminal (Health Monitor): follow ether-audiod.log from a byte offset. Pass the
+  // offset returned by the previous call; pass -1 (or nothing) to seed from the tail. Read-only.
+  activity: {
+    tail: (offset) => ipcRenderer.invoke("activity:tail", offset),
+  },
   iris: {
     // Fires when Iris sends a command — payload: { action, label }
     onCommand:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('iris:command-received', h); return h; },

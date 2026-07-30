@@ -1,10 +1,41 @@
-import { useState, useEffect, useCallback, Component, ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, Component, ReactNode } from "react";
 import { query, dbHealthCheck } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 import { deriveHaRollup, type HaDashboard, type HaRollupLevel } from "../lib/haRollup";
 import { PopoutBtn } from "./PopoutShell";
 import { LiveHealthMonitor } from "../audio/health";
+import { LiveActivityTerminal } from "./LiveActivityTerminal";
+
+// Two-column breakpoint for the Health Monitor. Below this the terminal drops BELOW the sections
+// (one column) rather than squeezing both. 820 = the sections' comfortable minimum (~360) plus the
+// terminal column (460). The first cut used 1000 measured against window.innerWidth, which put the
+// ~950px Station Health popout into the stacked layout — right code, wrong thing measured.
+const TWO_COL_MIN_PX = 820;
+
+/** Two columns or one, decided by THE PANEL'S OWN WIDTH — not the window's.
+ *  This panel renders both docked in the main window (where it is one of several regions) and as its
+ *  own popout, so the window is not a proxy for the space it actually has. A ResizeObserver on the
+ *  panel element gets it right in both, and reacts to the docked panel being resized without the
+ *  window changing at all. Falls back to a window listener where ResizeObserver is unavailable. */
+function useTwoColumn(): readonly [React.RefObject<HTMLDivElement>, boolean] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setWide(el.getBoundingClientRect().width >= TWO_COL_MIN_PX);
+    measure();
+    if (typeof ResizeObserver === "undefined") {
+      window.addEventListener("resize", measure);
+      return () => window.removeEventListener("resize", measure);
+    }
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, wide] as const;
+}
 
 // ═══════════════════════════════════════════════════════════════
 // 1. ERROR BOUNDARY
@@ -289,21 +320,63 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // Log-Reader Flip CANARY toggle — per-station flag (station_config_kv 'log_reader_flip', LOCAL-ONLY,
   // never syncs). Flips a station's playout to the §2.7 time-anchored log-reader. Read via get-value,
   // written via set-local (the mutation-less local writer). Refreshed when the station list changes.
-  const [flipFlags, setFlipFlags] = useState<Record<number, boolean>>({});
-  const refreshFlipFlags = useCallback(async () => {
+  // 2026-07-30 — this control is now READ-DERIVED ONLY. It previously kept a boolean map and computed
+  // the write as `toggleFlip(sid, !on)` — i.e. the value written was derived from what was ON SCREEN.
+  // That makes a stale render self-perpetuating: if the map ever holds `true` while the stored value is
+  // '0', every click writes '0' again and the button can never recover. Confirmed on 4.4.106 (DevTools:
+  // get-value returned {ok:true,value:'0'} while the button rendered ON). Three rules now:
+  //   1. the write target is computed from a FRESH read of the stored value, never from render state;
+  //   2. what renders is the value READ BACK AFTER the write — never an assumption that it landed;
+  //   3. unknown is its own state (null), and a refused/ignored write is shown, not swallowed.
+  // `null` = we could not read it — never guess OFF, which would invite exactly the wrong click.
+  const [flipFlags, setFlipFlags] = useState<Record<number, boolean | null>>({});
+  const [flipBusy, setFlipBusy] = useState<number | null>(null);
+  const [flipErr, setFlipErr] = useState<Record<number, string>>({});
+
+  /** The single source of truth for this control: what station_config_kv actually holds. */
+  const readFlip = useCallback(async (sid: number): Promise<boolean | null> => {
     try {
-      const sts = (libHealth?.stations || []) as any[];
-      const out: Record<number, boolean> = {};
-      for (const st of sts) {
-        const r = await (window as any).ether?.invoke?.("station_config_kv:get-value", st.stationId, "log_reader_flip");
-        out[st.stationId] = !!(r && r.ok && (r.value === "1" || r.value === "true"));
-      }
-      setFlipFlags(out);
-    } catch { /* IPC absent */ }
-  }, [libHealth]);
+      const r = await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "log_reader_flip");
+      if (!r || !r.ok) return null;
+      return r.value === "1" || r.value === "true";
+    } catch { return null; }
+  }, []);
+
+  // Merge per station with a functional update instead of replacing the whole map. Two overlapping
+  // refreshes (libHealth re-polls, so this effect can re-enter) can no longer clobber each other, and
+  // one station failing to read leaves the others alone instead of resetting everything.
+  const refreshFlipFlags = useCallback(async () => {
+    const sts = (libHealth?.stations || []) as any[];
+    for (const st of sts) {
+      const v = await readFlip(st.stationId);
+      setFlipFlags(prev => ({ ...prev, [st.stationId]: v }));
+    }
+  }, [libHealth, readFlip]);
   useEffect(() => { refreshFlipFlags(); }, [refreshFlipFlags]);
-  const toggleFlip = async (sid: number, on: boolean) => {
-    try { await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, "log_reader_flip", on ? "1" : "0"); await refreshFlipFlags(); } catch { /* IPC absent */ }
+
+  /** Flip a station. Reads the stored value, writes its opposite, then renders the read-back. */
+  const toggleFlip = async (sid: number) => {
+    setFlipBusy(sid);
+    setFlipErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
+    try {
+      const current = await readFlip(sid);
+      if (current === null) {
+        setFlipErr(prev => ({ ...prev, [sid]: "can't read the stored value — not writing blind" }));
+        setFlipFlags(prev => ({ ...prev, [sid]: null }));
+        return;
+      }
+      const target = !current;
+      const w = await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, "log_reader_flip", target ? "1" : "0");
+      // The write's own verdict matters — set-local REFUSES a non-local-only key and returns {ok:false}.
+      const writeRefused = !w || w.ok === false;
+      // Render the stored value, whatever the write claimed.
+      const after = await readFlip(sid);
+      setFlipFlags(prev => ({ ...prev, [sid]: after }));
+      if (writeRefused) setFlipErr(prev => ({ ...prev, [sid]: `write refused: ${(w && w.error) || "no response"}` }));
+      else if (after !== target) setFlipErr(prev => ({ ...prev, [sid]: `write did not stick — still ${after === null ? "unreadable" : after ? "ON" : "OFF"}` }));
+    } finally {
+      setFlipBusy(null);
+    }
   };
 
   // 5s poll, skipped while the panel isn't visible (minimized / occluded / hidden
@@ -433,9 +506,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
   const uptime = health ? Math.floor((Date.now() - health.sessionStart) / 60000) : 0;
   const uptimeStr = uptime < 60 ? `${uptime}m` : `${Math.floor(uptime / 60)}h ${uptime % 60}m`;
+  const [panelRef, twoCol] = useTwoColumn();
 
   return (
-    <div style={{
+    <div ref={panelRef} style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
       fontFamily: "'Inter', system-ui, sans-serif",
       background: "var(--bg-primary)",
@@ -460,7 +534,15 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </p>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto" as const, padding: "0 32px" }}>
+      {/* ── TWO COLUMNS: sections left, live activity terminal right ─────────────────────────────
+          Each column scrolls independently (no outer scroller), so the terminal stays put while the
+          sections are scrolled and vice-versa. Below TWO_COL_MIN_PX this collapses to one column
+          with the terminal underneath. */}
+      <div style={{
+        flex: 1, minHeight: 0, display: "flex",
+        flexDirection: twoCol ? ("row" as const) : ("column" as const),
+      }}>
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" as const, padding: "0 32px" }}>
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
         <LiveHealthMonitor />
 
@@ -658,16 +740,36 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               Switch a station to the §2.7 time-anchored log-reader (playout reads the calendar directly). Per-station and local-only — it never syncs. Flip <strong>Magical Forest</strong> first and verify on air before the next.
             </div>
             {libHealth.stations.map((st: any) => {
-              const on = !!flipFlags[st.stationId];
+              // Tri-state, straight from the last READ: true = ON, false = LEGACY, null/undefined = we
+              // do not know. `!!` is deliberately NOT used — coercing unknown to OFF is what invites the
+              // wrong click. The button never derives its write from this value (see toggleFlip).
+              const state = flipFlags[st.stationId];
+              const busy = flipBusy === st.stationId;
+              const err = flipErr[st.stationId];
+              const known = state === true || state === false;
+              const on = state === true;
+              const label = busy ? "…" : !known ? "UNKNOWN" : on ? "LOG-READER ON" : "LEGACY";
               return (
-                <div key={st.stationId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 2px", borderBottom: "1px solid var(--border-primary)" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
-                  <button onClick={() => toggleFlip(st.stationId, !on)} title={on ? "Playout: time-anchored log-reader" : "Playout: legacy queue"} style={{
-                    fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 0, cursor: "pointer",
-                    background: on ? "#8868D8" : "transparent",
-                    border: `1px solid ${on ? "#8868D8" : "var(--border-primary)"}`,
-                    color: on ? "#fff" : "var(--text-tertiary)",
-                  }}>{on ? "LOG-READER ON" : "LEGACY"}</button>
+                <div key={st.stationId} style={{ padding: "6px 2px", borderBottom: "1px solid var(--border-primary)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
+                    <button
+                      onClick={() => toggleFlip(st.stationId)}
+                      disabled={busy}
+                      title={busy ? "Reading the stored value…" : !known ? "Stored value unreadable — click to re-read and set" : on ? "Playout: time-anchored log-reader" : "Playout: legacy queue"}
+                      style={{
+                        fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 0,
+                        cursor: busy ? "wait" : "pointer",
+                        background: on ? "#8868D8" : "transparent",
+                        border: `1px solid ${on ? "#8868D8" : !known ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"}`,
+                        color: on ? "#fff" : !known ? "var(--accent-amber, #fbbf24)" : "var(--text-tertiary)",
+                        opacity: busy ? 0.6 : 1,
+                      }}
+                    >{label}</button>
+                  </div>
+                  {err && (
+                    <div style={{ fontSize: 9, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
+                  )}
                 </div>
               );
             })}
@@ -752,6 +854,18 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             ))}
           </div>
         </div>
+      </div>
+      {/* ── RIGHT COLUMN: live activity terminal ──────────────────────────────────────────────
+          Fixed width beside the sections; a fixed-height band below them when narrow. */}
+      <div style={{
+        flexShrink: 0, minHeight: 0, display: "flex", flexDirection: "column" as const,
+        width: twoCol ? 460 : "auto",
+        height: twoCol ? "auto" : 340,
+        borderLeft: twoCol ? "1px solid var(--border-primary)" : "none",
+        borderTop: twoCol ? "none" : "1px solid var(--border-primary)",
+      }}>
+        <LiveActivityTerminal />
+      </div>
       </div>
     </div>
   );
