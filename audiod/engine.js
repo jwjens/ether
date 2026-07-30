@@ -101,6 +101,18 @@ class DaemonEngine {
     // cut). Delivered from the app via setSegueOverlap; the daemon default matches the app default.
     this.segueOverlap = 3;
     this.segueTriggered = new Set();     // decks whose early overlap-rotate has begun (double-trigger guard)
+    // ── liveDeck OBSERVER (2026-07-29, observation-only) ─────────────────────────────────────────
+    // The deck the engine ACTUALLY put on air, set by _play(). This exists because every consumer
+    // today derives "the playing deck" by ALPHABETICAL SCAN — `["A","B","C"].find(playing)` in
+    // _segueTick/_jingleTick — which silently hands P to whichever letter sorts first when a deck
+    // starts outside the advance chain. On 2026-07-29 station 4 that flipped C→A mid-song: C was
+    // never any rotate's fromId, so no deferred stop was ever armed and two decks aired for 85s
+    // with nothing in the log (docs/station4-double-play-root-cause-2026-07-29.md).
+    // THIS RELEASE OBSERVES ONLY. liveDeck is read by nothing but the observer below — P is
+    // untouched, no rotate/stop/timing path consults it, and nothing is ever stopped on its word.
+    this.liveDeck = null;
+    this._foreignSince = 0;      // when the current foreign-deck condition started (0 = none)
+    this._foreignLastLogAt = 0;  // last anomaly line emitted, for the re-log cadence
     this.advanceP = Promise.resolve();
     // Stage 3b: stall-recovery watchdog state. The invariant it enforces: content present + nobody
     // playing ⇒ somebody playing within ~1s. Without this, an "all decks stopped" state had no
@@ -223,9 +235,18 @@ class DaemonEngine {
 
   // ── addon wrappers (synchronous) ──
   _load(deck, fp, title, artist, gainDb) { return A.audioLoad(deck, fp, title || "", artist || "", gainDb ?? 0, this.stationId); }
+  // Pure + testable: which deck ids are rotation decks. CART is the jingle overlay, not a rotation deck.
+  _isRotationDeck(deck) { return deck === "A" || deck === "B" || deck === "C"; }
   // A deck plays at whatever fader the OPERATOR set — automation NEVER moves a deck fader (those are
   // operator controls). Just clear the overlap guard so this deck's next seam can early-start again.
-  _play(deck) { this.segueTriggered.delete(deck); return A.audioPlay(deck, this.stationId); }
+  // liveDeck observer (2026-07-29): also record the deck the engine itself put on air. Every path that
+  // puts a MUSIC deck live funnels through here — handleRotate, load-next, play-now, skip, top-of-hour,
+  // resume-playout, automationStart — so this one assignment covers all of them with no per-site edits.
+  // Bookkeeping only: the audioPlay call is unchanged and nothing reads liveDeck except the observer.
+  _play(deck) {
+    if (this._isRotationDeck(deck)) this.liveDeck = deck;
+    this.segueTriggered.delete(deck); return A.audioPlay(deck, this.stationId);
+  }
   _stop(deck) { try { return A.audioStop(deck, this.stationId); } catch {} }
   _state() { try { return JSON.parse(A.audioGetState(this.stationId)); } catch { return null; } }
   _dur(fp) { try { return A.getFileDuration(fp); } catch { return 0; } }
@@ -273,6 +294,12 @@ class DaemonEngine {
     this.stateA = { ...makeState("A", s.deckA), durationSec: dur.A, positionSec: pos.A };
     this.stateB = { ...makeState("B", s.deckB), durationSec: dur.B, positionSec: pos.B };
     this.stateC = { ...makeState("C", s.deckC), durationSec: dur.C, positionSec: pos.C };
+
+    // liveDeck GUARD: at most one rotation deck audible. Sits HERE, immediately after the deck states
+    // are rebuilt from Rust and BEFORE any decision work, so a throw anywhere later in the tick can
+    // never skip it — the 2026-07-30 incidents ran ~50s each with nothing else able to end them. It
+    // reads the freshest state and does its stop on the advance chain, never inline.
+    this._liveDeckObserverTick(now);
 
     for (const id of ["A", "B", "C"]) this._maybeEmitDeck(id);
 
@@ -1284,6 +1311,96 @@ class DaemonEngine {
     j.outgoingEndedAt = now;
     j.phase = "bridging";
     this._log(`jingle BRIDGING — deck ${deckId} ended; incoming enters now under the jingle tail (continuous weave)`);
+  }
+
+  // ── liveDeck OBSERVER — OBSERVATION ONLY, stops nothing ────────────────────────────────────────
+  // Pure + testable (audiod/smoke-seam-stop.js). Given the deck the engine put on air and the three
+  // deck statuses, return the MUSIC decks that are playing but are NOT the deck the engine believes
+  // is live. In healthy operation this is empty except during a legitimate segue overlap, where the
+  // incoming deck IS liveDeck (set by _play at the rotate) and the OUTGOING deck is briefly foreign
+  // — which is why the caller applies a grace before it says anything.
+  // Returns [] when liveDeck is unknown: never report an anomaly we cannot attribute.
+  _foreignPlayingDecks(liveDeck, statuses) {
+    if (!liveDeck) return [];
+    return ["A", "B", "C"].filter(d => d !== liveDeck && statuses[d] === "playing");
+  }
+
+  // The grace a foreign deck is allowed before it is reported. Derived from the settings that produce
+  // legitimate overlap so it tracks them instead of hardcoding: the incoming starts segueOverlap early
+  // and the outgoing's deferred stop lands at crossfadeDuration + 500ms after the rotate, so a NORMAL
+  // overlap clears well inside this. Nothing about playout reads this — it is a reporting threshold.
+  _foreignGraceMs() { return (this.segueOverlap + this.crossfadeDuration) * 1000 + 1500; }
+
+  // Poll-driven ENFORCEMENT (2026-07-30, was observation-only in 4.4.105). A rotation deck that is
+  // playing but is NOT the deck this engine put on air is stopped once it has held past the grace.
+  //
+  // Justified by live evidence, not inference: two incidents on 2026-07-30 (16:35:10→16:35:51, 46.0s;
+  // 16:37:24→16:38:14, 50.6s) put two songs on air for ~50s each, and BOTH ended only when the Bug-A
+  // guard happened to catch deck A on its next real rotate. Nothing else would have stopped them —
+  // the deferred stop is armed only by handleRotate, so a deck started outside the chain is invisible
+  // to it (docs/auto-cycle-double-play-and-flip-engagement-2026-07-30.md).
+  //
+  // The invariant: AT MOST ONE ROTATION DECK IS AUDIBLE. What this must never do:
+  //   • never stop this.liveDeck — the deck the engine itself put on air is by definition correct;
+  //   • never touch CART — the jingle overlay is not a rotation deck (_foreignPlayingDecks: A/B/C only);
+  //   • never fire during a legitimate segue overlap — the grace (segueOverlap + crossfadeDuration +
+  //     1.5s = 7.5s at defaults) outlasts the deferred stop that ends a normal overlap (cf + 500ms =
+  //     3.5s) by a factor of two;
+  //   • never act on an unknown live deck — _foreignPlayingDecks returns [] when liveDeck is null;
+  //   • never throw into playout — same try/catch contract as _segueTick/_jingleTick.
+  // The stop runs ON the advance chain (_advance), serialized with preload/rotate exactly like the
+  // Bug-A deferred stop, so it cannot land in the middle of a rotate. deckReady/endTriggered are
+  // cleared alongside, matching that guard — a nulled Rust source is never left marked "ready".
+  _liveDeckObserverTick(now) {
+    try {
+      const statuses = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
+      const foreign = this._foreignPlayingDecks(this.liveDeck, statuses);
+
+      if (foreign.length === 0) {
+        if (this._foreignSince) {
+          this._log(`liveDeck GUARD — foreign deck cleared after ${((now - this._foreignSince) / 1000).toFixed(1)}s (live=${this.liveDeck})`);
+          this._foreignSince = 0; this._foreignLastLogAt = 0;
+        }
+        return;
+      }
+
+      if (!this._foreignSince) this._foreignSince = now;
+      const heldMs = now - this._foreignSince;
+      if (heldMs < this._foreignGraceMs()) return;   // a normal segue overlap never gets this far
+
+      // Loud on the transition, then at most every 10s while it persists (a stop that cannot land —
+      // e.g. the source is being re-started faster than we stop it — must not spam the log).
+      const speak = !this._foreignLastLogAt || (now - this._foreignLastLogAt >= 10000);
+      if (speak) {
+        this._foreignLastLogAt = now;
+        const describe = (d) => {
+          const st = this._deckState(d) || {};
+          return `${d}="${st.title || "(untitled)"}" ${(st.positionSec || 0).toFixed(1)}/${(st.durationSec || 0).toFixed(1)}s`;
+        };
+        this._log(
+          `liveDeck GUARD — TWO DECKS ON AIR (station ${this.stationId}): engine live deck ${describe(this.liveDeck)} ` +
+          `| FOREIGN ${foreign.map(describe).join(" | ")} — held ${(heldMs / 1000).toFixed(1)}s past grace → STOPPING ${foreign.join(",")}. ` +
+          `alphabetical P would pick ${["A", "B", "C"].find(d => statuses[d] === "playing")}.`
+        );
+        // Surface it beyond the log — the Health Monitor consumes engine errors (play-skip does the same).
+        try { this.emit("error", { stationId: this.stationId, where: "liveDeckGuard", deck: foreign.join(","), error: `foreign deck(s) ${foreign.join(",")} on air past grace with live deck ${this.liveDeck} — stopped` }); } catch {}
+      }
+
+      // ENFORCE — on the advance chain, so this can never interleave with a rotate/preload.
+      const live = this.liveDeck;
+      const targets = foreign.slice();
+      this._advance("liveDeck-guard", async () => {
+        for (const d of targets) {
+          // Re-check under the chain: the world may have moved between the tick and our turn.
+          if (d === this.liveDeck) continue;                       // it became the live deck legitimately
+          if (this._deckState(d).status !== "playing") continue;    // it already stopped
+          if (this.liveDeck !== live) continue;                     // a rotate happened — that owns the decks now
+          this._stop(d);
+          this.deckReady.delete(d);
+          this.endTriggered.delete(d);
+        }
+      });
+    } catch (e) { this._log("liveDeckGuard error (playout unaffected): " + String(e)); }
   }
 
   // Routine segue OVERLAP brain (poll-driven, never throws into playout). The whole feature: when the
