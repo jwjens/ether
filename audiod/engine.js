@@ -863,12 +863,36 @@ class DaemonEngine {
 
     const freshPending = this._ensureIds(ordered);
     // Only emit if the pending region actually changed (avoid a queue-event storm on the 2s tick).
-    const oldPending = this.queue.filter(q => !this.boundQids.has(q.qid)).map(q => q.schedId).join(",");
+    const oldPendingItems = this.queue.filter(q => !this.boundQids.has(q.qid));
+    const oldPending = oldPendingItems.map(q => q.schedId).join(",");
     const newPending = freshPending.map(q => q.schedId).join(",");
     this.queue = [...boundHead, ...freshPending];
     if (oldPending !== newPending) {
       this.emit("queue", { stationId: this.stationId, source: "logreader", items: this.queue });
       this._log("logreader refill: " + freshPending.length + " pending from log (mode=" + r.mode + ", queue=" + this.queue.length + ")");
+
+      // RECONCILIATION IS A DECISION, NOT A SILENT TIDY-UP (2026-07-30). The rebuild above drops rows
+      // that are already cued on a deck (the `seen.has(it.schedId)` continue). That is correct — but
+      // when the operator was LOOKING at one of those rows in Up Next, it vanishes with no explanation,
+      // which is indistinguishable from a bug. Observed live: "Soak Up The Sun" showed on deck C AND in
+      // Up Next, the dedup resolved it, and NOTHING appeared in Live Activity.
+      //
+      // Only fires on a REAL visible change: we are already inside `oldPending !== newPending`, and we
+      // name only rows that were in the previous pending region. The routine per-refill dedup of the
+      // cued decks never reaches here, so this cannot become 2s noise.
+      const newIds = new Set(freshPending.map(q => q.schedId).filter(x => x != null));
+      const dropped = oldPendingItems.filter(q => q.schedId != null && !newIds.has(q.schedId));
+      if (dropped.length) {
+        const cuedIds = new Set(boundSchedIds);
+        const names = dropped.slice(0, 4).map(q =>
+          `"${q.title || "(untitled)"}"${cuedIds.has(q.schedId) ? " (already cued on a deck)" : ""}`).join(", ");
+        this._log(`logreader reconciled: removed ${dropped.length} row(s) from Up Next — ${names}` +
+          (dropped.length > 4 ? ` +${dropped.length - 4} more` : ""));
+      }
+      if (promoted) {
+        const head = freshPending[0];
+        this._log(`logreader reconciled: nearest-anchor promoted "${head && head.title ? head.title : "(untitled)"}" to the head of Up Next`);
+      }
     }
     // COMPANION RE-CUE — a promotion only reaches air if a deck can take it. Without this the spot waits
     // behind whatever was already cued, i.e. "closest" degrades to within-one-SONG instead of

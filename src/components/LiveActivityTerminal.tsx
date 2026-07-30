@@ -31,8 +31,13 @@ export type ActivityLine = {
 // NOTE on the observer: only "TWO DECKS ON AIR" is a warning. `liveDeck OBSERVER — foreign deck
 // cleared` fires on ordinary segue overlaps too (the daemon sets its start-marker before the grace and
 // logs the clear regardless), so it is NOT a warning — treating it as one would flag every rotation.
-const WARNING_RE = /liveDeck OBSERVER — TWO DECKS|watchdog: STALL|Bug-A guard|play-skip GUARD|FORCE stop|\[ERROR\]|\[WARN\]|advance ✗|\berrors?\b|\bfailed\b|SHADOW\] behind|emergency floor|dead-file|unresolvable|logreader-(missed|floor)/i;
-const DECISION_RE = /deck [A-F] LIVE|segue overlap|advance → (handleRotate|stop:|top-of-hour|jingle-fire|skip)|top-of-hour|jingle (FIRE|FIRING|ARMED|BRIDGING)|automationStart|automationStop|deck [A-F] ended|clean spot edge|refill:|engine-state →|resume-playout|liveDeck OBSERVER/i;
+//
+// 2026-07-30 — the LOG-READER lines were all landing in `routine` and therefore HIDDEN by default,
+// including `LOG-READER FLOOR` (the log ran dry and the emergency fill took over — dead-air-adjacent)
+// and the behind/missed catch-up. `LOG-READER FLOOR` and `LOG-READER: behind` are warnings; everything
+// else the reader decides is a DECISION and belongs beside rotates and stops.
+const WARNING_RE = /liveDeck OBSERVER — TWO DECKS|watchdog: STALL|Bug-A guard|play-skip GUARD|FORCE stop|\[ERROR\]|\[WARN\]|advance ✗|\berrors?\b|\bfailed\b|SHADOW\] behind|LOG-READER FLOOR|LOG-READER: behind|emergency floor|dead-file|unresolvable|logreader-(missed|floor)/i;
+const DECISION_RE = /deck [A-F] LIVE|segue overlap|advance → (handleRotate|stop:|top-of-hour|jingle-fire|skip)|top-of-hour|jingle (FIRE|FIRING|ARMED|BRIDGING)|automationStart|automationStop|deck [A-F] ended|clean spot edge|refill:|engine-state →|resume-playout|liveDeck (OBSERVER|GUARD)|LOG-READER|logreader|nearest-anchor/i;
 
 function classify(raw: string): Level {
   if (WARNING_RE.test(raw)) return "warning";

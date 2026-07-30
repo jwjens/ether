@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, Component, ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
 import { query, dbHealthCheck } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -6,6 +6,7 @@ import { deriveHaRollup, type HaDashboard, type HaRollupLevel } from "../lib/haR
 import { PopoutBtn } from "./PopoutShell";
 import { LiveHealthMonitor } from "../audio/health";
 import { LiveActivityTerminal } from "./LiveActivityTerminal";
+import { projectSpots, driftLevel, fmtDrift, fmtClock, type ProjectedSpot, type SpotRow } from "../lib/spotProjection";
 
 // Two-column breakpoint for the Health Monitor. Below this the terminal drops BELOW the sections
 // (one column) rather than squeezing both. 820 = the sections' comfortable minimum (~360) plus the
@@ -508,6 +509,52 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const uptimeStr = uptime < 60 ? `${uptime}m` : `${Math.floor(uptime / 60)}h ${uptime % 60}m`;
   const [panelRef, twoCol] = useTwoColumn();
 
+  // ── SPOT SCHEDULE (display-only) ────────────────────────────────────────────────────────────────
+  // This hour's + next hour's SPOT anchors, with what actually fired and what is PROJECTED to fire, so a
+  // spot that is about to miss its anchor goes amber/red BEFORE it misses. Reads generated_schedule
+  // read-only plus engine state already exposed; issues no command and writes nothing.
+  const [spotRows, setSpotRows] = useState<ProjectedSpot[]>([]);
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        const now = Math.floor(Date.now() / 1000);
+        const hourStart = new Date(); hourStart.setMinutes(0, 0, 0);
+        const from = Math.floor(hourStart.getTime() / 1000);
+        const to = from + 7200;                                   // this hour + next
+        const rows = await query<{ scheduled_at: number; duration_s: number; state: string; played_at: number | null; title: string }>(
+          `SELECT scheduled_at, duration_s, state, played_at, title FROM generated_schedule
+            WHERE station_id = ? AND content_class = 'SPOT' AND deleted_at IS NULL
+              AND scheduled_at BETWEEN ? AND ? ORDER BY scheduled_at`, [stationId, from, to]);
+        if (stop) return;
+        const spots: SpotRow[] = rows.map(r => ({
+          scheduledAt: r.scheduled_at, durationS: r.duration_s || 0, state: r.state,
+          playedAt: r.played_at ?? null, title: r.title || "",
+        }));
+        // Seam + queue from the engine — the same fields the deck UI already reads.
+        let seamTs = now, queue: any[] = [];
+        try {
+          queue = (engine as any)?.getQueue?.() ?? [];
+          const playing = (["A", "B", "C"] as const)
+            .map(d => (engine as any)?.getDeck?.(d)?.getState?.())
+            .find((s: any) => s?.status === "playing");
+          if (playing) seamTs = now + Math.max(0, Math.round((playing.durationSec || 0) - (playing.positionSec || 0)));
+        } catch { /* engine not ready — project from now */ }
+        // Flip state decides whether the nearest-anchor selector can promote a spot ahead of a song.
+        let flipped = false;
+        try {
+          const f = await (window as any).ether?.invoke?.("station_config_kv:get-value", stationId, "log_reader_flip");
+          flipped = !!(f && f.ok && (f.value === "1" || f.value === "true"));
+        } catch { /* leave false — legacy projection is the honest default */ }
+        const nextHourTs = from + 3600;
+        if (!stop) setSpotRows(projectSpots(spots, queue, seamTs, flipped, nextHourTs));
+      } catch { if (!stop) setSpotRows([]); }
+    };
+    load();
+    const id = setInterval(load, 5000);   // the section's own cadence — the 1s poll is far more than this needs
+    return () => { stop = true; clearInterval(id); };
+  }, [stationId, engine]);
+
   // §3.4 — poll the active station's engine for its committed playout mode (1s; it is a local getter,
   // no IPC). Read-only: this reports the mode, it never sets it.
   const [playoutMode, setPlayoutMode] = useState<{ stationId: number; mode: "daemon" | "in-process"; daemonEnabled: boolean | null; contradiction: boolean; localAdvanceSec: number } | null>(null);
@@ -555,6 +602,45 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" as const, padding: "0 32px" }}>
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
         <LiveHealthMonitor />
+
+        {/* ── SPOT SCHEDULE — anchors vs what actually airs. Display-only. ────────────────────────
+            The point of this table is the PROJECTED column: a spot that is going to miss its anchor
+            goes amber/red before it misses, not after. */}
+        {spotRows.length > 0 && (
+          <div style={{ paddingTop: 18, marginTop: 12, borderTop: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Spot Schedule — this hour &amp; next</div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, fontStyle: "italic" }}>
+              Drift is fired−anchor once aired, projected−anchor while pending. Green ≤15s · amber ≤60s · red beyond.
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto auto auto 1fr", gap: "2px 12px", fontSize: 10, fontFamily: "'DM Mono', ui-monospace, monospace" }}>
+              {["Anchor", "Projected", "Fired", "Drift"].map(h => (
+                <div key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, paddingBottom: 4 }}>{h}</div>
+              ))}
+              {spotRows.map((s, i) => {
+                const lvl = driftLevel(s.driftSec);
+                const col = lvl === "ok" ? "var(--accent-green)" : lvl === "warn" ? "var(--accent-amber, #fbbf24)" : lvl === "error" ? "#f87171" : "var(--text-tertiary)";
+                const played = s.state === "played" || !!s.playedAt;
+                return (
+                  <Fragment key={`${s.scheduledAt}-${i}`}>
+                    <div style={{ color: "var(--text-secondary)" }}>
+                      {fmtClock(s.scheduledAt)}
+                      {s.hardCutOwned && <span style={{ color: "var(--text-tertiary)", fontSize: 9 }}> ⏻</span>}
+                    </div>
+                    <div style={{ color: played ? "var(--text-tertiary)" : col }}>{played ? "—" : fmtClock(s.projectedAt)}</div>
+                    <div style={{ color: "var(--text-tertiary)" }}>{played ? fmtClock(s.playedAt) : "pending"}</div>
+                    <div style={{ color: col, fontWeight: lvl === "error" ? 700 : 400 }}>
+                      {fmtDrift(s.driftSec)}
+                      {s.hardCutOwned && <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}> · hard cut</span>}
+                    </div>
+                  </Fragment>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 6 }}>
+              ⏻ = top-of-hour anchor, fired by the hard cut — it lands exact by construction, not by scheduling.
+            </div>
+          </div>
+        )}
 
         {/* ── Legacy diagnostics — slow-refresh session/HA panels; may be stale ── */}
         <div style={{ paddingTop: 18, marginTop: 12, borderTop: "2px solid var(--border-primary)" }}>
