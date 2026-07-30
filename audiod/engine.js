@@ -853,7 +853,15 @@ class DaemonEngine {
       if (it.schedId != null) seen.add(it.schedId);
       kept.push(it);
     }
-    const freshPending = this._ensureIds(kept);
+    // NEAREST-ANCHOR SEAM SELECTION — order the pending region so the next seam lands a due spot as close
+    // to its anchor as possible (early or late; closest wins). Pure reorder of rows that were already
+    // going to air: no deck command, no effect on the playing deck, and it cannot produce silence.
+    // Design: docs/design-nearest-anchor-seam-selection-2026-07-30.md
+    const seamTs = this._projectedSeamTs();
+    const ordered = loggen.orderForNearestAnchor(kept, seamTs, { nextHourTs: this._nextTopOfHourTs() });
+    const promoted = ordered !== kept;   // the selector returns the SAME array when nothing changed
+
+    const freshPending = this._ensureIds(ordered);
     // Only emit if the pending region actually changed (avoid a queue-event storm on the 2s tick).
     const oldPending = this.queue.filter(q => !this.boundQids.has(q.qid)).map(q => q.schedId).join(",");
     const newPending = freshPending.map(q => q.schedId).join(",");
@@ -862,6 +870,54 @@ class DaemonEngine {
       this.emit("queue", { stationId: this.stationId, source: "logreader", items: this.queue });
       this._log("logreader refill: " + freshPending.length + " pending from log (mode=" + r.mode + ", queue=" + this.queue.length + ")");
     }
+    // COMPANION RE-CUE — a promotion only reaches air if a deck can take it. Without this the spot waits
+    // behind whatever was already cued, i.e. "closest" degrades to within-one-SONG instead of
+    // within-one-SEAM. Strictly bounded: SPOT promotions only, UNSTARTED standby decks only, and never
+    // the deck that is playing.
+    if (promoted) this._recueForPromotedSpot(freshPending[0]);
+  }
+
+  /** The next seam, in epoch SECONDS: now + what remains on the playing deck. No deck playing → now.
+   *  Reads only the state _segueTick already uses; never writes. */
+  _projectedSeamTs() {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const P = ["A", "B", "C"].find(d => this._deckState(d).status === "playing");
+    if (!P) return nowSec;
+    const st = this._deckState(P);
+    const remaining = (st.durationSec || 0) - (st.positionSec || 0);
+    return nowSec + (remaining > 0 ? Math.round(remaining) : 0);
+  }
+
+  /** Start of the NEXT top of the hour, epoch seconds — anchors at or beyond it belong to the hard cut. */
+  _nextTopOfHourTs() {
+    const d = new Date();
+    d.setMinutes(0, 0, 0);
+    return Math.floor(d.getTime() / 1000) + 3600;
+  }
+
+  /** Re-cue an UNSTARTED standby deck to the promoted spot so it can actually air at the next seam.
+   *  Never touches a playing deck, never touches the deck the engine has live, and does nothing unless
+   *  the head of the pending region really is a SPOT. Best-effort — a failure just leaves the old cue. */
+  _recueForPromotedSpot(head) {
+    try {
+      if (!head || head.contentClass !== "SPOT") return;
+      const live = this.liveDeck;
+      // The standby deck that would be rotated into next, if it is cued and NOT playing.
+      const target = ["A", "B", "C"].find(d =>
+        d !== live &&
+        this._deckState(d).status !== "playing" &&      // never re-cue something already sounding
+        this.deckReady.has(d)                            // it holds a cued source we would have aired
+      );
+      if (!target) return;
+      const cur = this._deckState(target);
+      if (cur.filePath && head.filePath && cur.filePath === head.filePath) return;   // already the spot
+      if (!this.loadToDeck(target, head)) return;        // load failed — leave the previous cue intact
+      this.deckChainType[target] = head.chainType || "segue";
+      this.deckReady.add(target);
+      this.dequeue();                                    // the head is now ON the deck, not pending
+      this._log(`nearest-anchor: re-cued deck ${target} to SPOT "${head.title || "(untitled)"}" (was "${cur.title || "(empty)"}") — anchor ${head.scheduledAt ?? "?"}`);
+      this._maybeEmitDeck(target);
+    } catch (e) { this._log("nearest-anchor re-cue error (playout unaffected): " + String(e)); }
   }
 
   // Log-Reader Flip (ACTIVATION, §2.5) — a jock hand-loading a deck is FIRST-CLASS in the one file: write

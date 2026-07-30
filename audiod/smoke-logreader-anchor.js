@@ -2,6 +2,8 @@
 // loggen.readLogAnchored (§2.7 anchor + rider A) and DaemonEngine._logReaderOn (per-station flag) against
 // an in-memory SQLite — NO audio device, NO live DB, NO pipe — so it is safe to run anytime.
 // Run:  ELECTRON_RUN_AS_NODE=1 electron.exe audiod/smoke-logreader-anchor.js   (exit 0 = pass)
+// NOTE: plain `node` CRASHES here with ERR_DLOPEN_FAILED — better-sqlite3 is built for Electron's ABI,
+// not system node's. That is the environment, NOT a regression; run it the way the line above says.
 "use strict";
 const path = require("path");
 const Database = require(path.join(__dirname, "..", "node_modules", "better-sqlite3"));

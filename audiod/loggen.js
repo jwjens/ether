@@ -313,6 +313,81 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
   return { items, mode: d.mode, missedRowIds, driftSec: d.driftSec, aheadBySec: d.mode === "ahead" ? Math.max(0, -d.driftSec) : 0 };
 }
 
+// ── NEAREST-ANCHOR SEAM SELECTION (2026-07-30) ────────────────────────────────────────────────────────
+// THE RULE (Jeff): early or late does not matter — CLOSEST TO THE ANCHOR WINS. At each seam, compare
+// airing the spot now against airing it after the next music row, and take whichever lands nearer:
+//
+//     air the spot NOW     → |seamTs − A|
+//     air the music first  → |(seamTs + d) − A|
+//
+// Pure, deterministic, no I/O — the same shape as selectRowForNow/_outgoingStopAction so it is benchable
+// off-air (audiod/smoke-nearest-anchor.js). It only REORDERS rows that were already going to air: it
+// issues no deck command, never touches the playing deck, and cannot produce silence.
+//
+// Worked case, live 2026-07-30, clock minute=0/20/40, anchor A = 11:19:50:
+//   seam 11:17:18 → spot now 152s early vs music(164s) first 12s late  → MUSIC (log order)
+//   seam 11:20:49 → spot now  59s late  vs music(211s) first 259s late → SPOT promoted
+//
+// Design of record: docs/design-nearest-anchor-seam-selection-2026-07-30.md
+const NEAREST_ANCHOR_TIE_SEC = 2;
+
+/** The contiguous run of SPOT rows sharing an anchor, starting at idx. A break is ATOMIC — splitting one
+ *  across a song is worse than either option being compared — so it moves as a block, order preserved. */
+function spotBlockAt(items, idx, groupSec = 5) {
+  const a0 = items[idx].scheduledAt ?? 0;
+  let end = idx;
+  while (end + 1 < items.length
+         && items[end + 1].contentClass === "SPOT"
+         && Math.abs((items[end + 1].scheduledAt ?? 0) - a0) <= groupSec) end++;
+  return { start: idx, end };
+}
+
+/**
+ * Reorder the pending region so the next seam lands the spot as close to its anchor as possible.
+ * Returns the SAME array (identity) when nothing should change, so callers can cheaply detect a no-op.
+ *
+ * @param items    pending rows in schedule order (loggen item shape: contentClass/scheduledAt/durationMs)
+ * @param seamTs   projected next seam, epoch SECONDS (now + remaining on the playing deck)
+ * @param opts     { tieSec, nextHourTs } — nextHourTs excludes anchors the top-of-hour hard cut owns
+ */
+function orderForNearestAnchor(items, seamTs, opts = {}) {
+  try {
+    if (!Array.isArray(items) || items.length < 2 || !Number.isFinite(seamTs)) return items;
+    const tieSec = Number.isFinite(opts.tieSec) ? opts.tieSec : NEAREST_ANCHOR_TIE_SEC;
+
+    const spotIdx = items.findIndex(it => it && it.contentClass === "SPOT");
+    if (spotIdx < 0) return items;                       // no anchor in reach — nothing to weigh
+    const musicIdx = items.findIndex(it => it && it.contentClass !== "SPOT");
+    if (musicIdx < 0) return items;                      // nothing but spots — log order stands
+    if (spotIdx < musicIdx) return items;                // the spot is ALREADY next; nothing to promote
+
+    const A = items[spotIdx].scheduledAt;
+    if (!Number.isFinite(A)) return items;               // unanchored row — never guess a time
+    const d = (items[musicIdx].durationMs || 0) / 1000;
+    if (!(d > 0)) return items;                          // unknown duration — cannot compare honestly
+
+    // §4 — the top-of-hour hard cut owns :00. Never pre-empt an anchor it will fire itself.
+    if (Number.isFinite(opts.nextHourTs) && A >= opts.nextHourTs) return items;
+
+    // §1 REACH — only weigh an anchor that airing at THIS seam could actually serve. A PAST anchor is
+    // always in reach (A − seamTs is negative), which is what "closest to" demands for an overdue spot.
+    if ((A - seamTs) > d) return items;
+
+    const nowDist = Math.abs(seamTs - A);
+    const afterDist = Math.abs((seamTs + d) - A);
+
+    // §2 NEAR-TIE — promote only on a clear win. seamTs is a projection that shifts between refills, so a
+    // strict `<` would flap the queue head back and forth; log order is the tie-break with meaning.
+    if ((afterDist - nowDist) <= tieSec) return items;
+
+    // §3 — promote the whole break block, order preserved.
+    const { start, end } = spotBlockAt(items, spotIdx);
+    const block = items.slice(start, end + 1);
+    const rest = items.slice(0, start).concat(items.slice(end + 1));
+    return [...block, ...rest];
+  } catch { return items; }                              // never throw into the fill path
+}
+
 // ── JINGLES overlay v1: read the transition-attached JIN placement for the upcoming seam ──────────────
 // The daemon is a LOG-READER (D1=A′): Generate placed JIN rows in generated_schedule bound to the seam
 // (scheduled_at = the incoming music row's start). Given the currently-playing row's scheduled_at (afterTs)
@@ -476,4 +551,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored };
+module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored, orderForNearestAnchor };
