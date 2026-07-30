@@ -136,7 +136,6 @@ export class AudioEngine {
   private daemonUnsub: Array<() => void> = [];
   private daemonDetectStarted = false;
   private daemonQueuePollN = 0; // low-frequency Up-Next resync counter (daemon mode)
-  private daemonDeckPollN  = 0; // low-frequency deck-position re-anchor counter (daemon mode)
   // Honest engine-state truth layer (Slice 1): the daemon's live | stalled | off, mirrored from its
   // `enginestate` events (+ a one-shot resync pull on attach). In daemon mode this cached value is the
   // authoritative answer engineState() returns; in-process mode derives it live. Seeds "off".
@@ -278,35 +277,29 @@ export class AudioEngine {
       (["A", "B", "C"] as DeckId[]).forEach(id => {
         const ds = id === "A" ? s.deckA : id === "B" ? s.deckB : s.deckC;
         if (!ds) return;
-        const auth = makeState(id, ds);         // the daemon's authoritative view of this deck
-        const cur  = id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC;
-
-        // Volume — unchanged behaviour (defaults to unity when the daemon omits it).
-        const merged: DeckState = { ...cur, volume: auth.volume };
-
-        // POSITION — observed, not extrapolated. Between deck events poll() advances
-        // positionSec from the wall clock and CLAMPS it at durationSec
-        // (`Math.min(pos + elapsed, dur || 9999)`), so if the event stream is interrupted for
-        // any reason the countdown reaches the end of the track and stays there forever —
-        // there was no correction path at all. Re-anchoring here every resync bounds the
-        // drift at one cycle instead of unbounded, and a clamped position self-heals.
+        // Volume ONLY — defaults to unity when the daemon omits it.
         //
-        // Only for a deck the DAEMON says is playing, and only the measurement: `status` stays
-        // owned by the onDeck event stream. Deciding a deck had stopped from a poll would race
-        // the daemon's own end/advance sequencing, which is a decision the daemon owns.
-        if (auth.status === "playing" && typeof auth.positionSec === "number") {
-          merged.positionSec = auth.positionSec;
-          if (typeof auth.durationSec === "number" && auth.durationSec > 0) {
-            merged.durationSec = auth.durationSec;   // anchors the clamp the tick applies
-          }
-        }
-
-        if (id === "A") this.stateA = merged;
-        else if (id === "B") this.stateB = merged;
-        else this.stateC = merged;
-        // Keep poll()'s change-detector aligned so this resync cannot cause a double-fire.
-        this.lastFiredState[id] = merged;
-        this.listeners.forEach(l => l(id, merged));
+        // REVERTED 2026-07-30 (was 4.4.104 / commit 29640ef): this merge also re-anchored
+        // positionSec and durationSec here, to bound countdown drift. It could never work.
+        // `getState` is the daemon's RAW RUST state (audiod/ether-audiod.js:112 →
+        // A.audioGetState), and Rust's per-deck payload — DeckMeta::info, native/src/audio.rs:82
+        // — carries { id, status, title, artist, file_path, volume, is_finished } and NO
+        // position_sec / duration_sec at all. So makeState() below yields positionSec === 0 on
+        // every single call. The position write was unguarded (`typeof 0 === "number"` passes,
+        // unlike the duration write's `> 0` test), so every resync slammed the countdown to 0:00
+        // and poll() spent the next seconds climbing back — an oscillation for the whole song,
+        // on every daemon-driven station. See docs/countdown-oscillation-regression-2026-07-30.md.
+        //
+        // Position and duration belong to the onDeck event stream, which the daemon maintains by
+        // wall-clock accumulation (audiod/engine.js:288-296) and delivers atomically. Nothing here
+        // has a correct source for them. Do not re-add a re-anchor without one — that needs a new
+        // daemon command exposing the ENGINE's tracked deck state, not audio_get_state.
+        const vol = makeState(id, ds).volume;
+        if (id === "A") this.stateA = { ...this.stateA, volume: vol };
+        else if (id === "B") this.stateB = { ...this.stateB, volume: vol };
+        else this.stateC = { ...this.stateC, volume: vol };
+        const st = id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC;
+        this.listeners.forEach(l => l(id, st));
       });
     } catch { /* daemon not answering yet — the next deck event resyncs it */ }
   }
@@ -408,12 +401,9 @@ export class AudioEngine {
       // daemon's authoritative queue (~every 5s). Cheap safety net against any missed event
       // (daemon respawn without a renderer reload, dropped IPC, etc.).
       if (this.daemonDriven && (++this.daemonQueuePollN % 20 === 0)) void this.resyncDaemonQueue();
-      // Deck position re-anchor, same 5 s cadence and same daemon gate as the queue resync
-      // above. poll() interpolates positionSec locally between deck events for smooth motion;
-      // this pulls the authoritative value back in so that interpolation can never drift, and
-      // can never sit clamped at durationSec if the event stream is interrupted. Per station,
-      // no active-station special case — every engine whose poll runs re-anchors its own decks.
-      if (this.daemonDriven && (++this.daemonDeckPollN % 20 === 10)) void this.resyncDaemonDecks();
+      // NOTE: there is deliberately NO periodic resyncDaemonDecks() here. 4.4.104 added one on this
+      // same 5 s cadence to re-anchor deck position; it wrote 0 every time (see the method) and was
+      // reverted 2026-07-30. resyncDaemonDecks is volume-only and one-shot on attach, as before.
 
       const s = await invoke("audio_get_state", { stationId: this.stationId });
       const now = Date.now();
