@@ -135,6 +135,12 @@ export class AudioEngine {
   private daemonDriven = false;
   private daemonUnsub: Array<() => void> = [];
   private daemonDetectStarted = false;
+  // §3 gate state. `daemonEnabledObserved` is the daemon's OWN last answer — distinct from
+  // `daemonDriven`, which is this engine's committed mode. They disagreeing IS the fault to catch.
+  private daemonEnabledObserved: boolean | null = null;
+  private daemonDetectPollN = 0;      // low-frequency re-ask counter (only runs while not daemon-driven)
+  private contradictionWarned = false;
+  private localAdvanceSince = Date.now();
   private daemonQueuePollN = 0; // low-frequency Up-Next resync counter (daemon mode)
   // Honest engine-state truth layer (Slice 1): the daemon's live | stalled | off, mirrored from its
   // `enginestate` events (+ a one-shot resync pull on attach). In daemon mode this cached value is the
@@ -185,6 +191,15 @@ export class AudioEngine {
   /** Resolves when the daemon-vs-in-process decision is settled. */
   awaitDaemonReady(): Promise<void> { return this.daemonReady || Promise.resolve(); }
 
+  // ── DAEMON-MODE GATE (§3 of docs/design-renderer-as-pure-view-2026-07-30.md) ────────────────────
+  // The decision used to be ONE-SHOT: whatever daemonEnabled() answered at init was final, forever, with
+  // no retry. If it answered false because the socket wasn't up yet (the known cold-stage race), this
+  // engine ran its OWN advance chain for the life of the station — issuing loads and plays into the very
+  // Rust engine the daemon was driving. That is what put two brains on station 4 on 2026-07-30 (46.0s and
+  // 50.6s of double air; the loads are visible as source='operator' rows 1.24s apart, the renderer's
+  // post-rotate preload signature).
+  //
+  // The rule now: TRUE LATCHES, FALSE NEVER DOES. "Not yet" is not "no".
   private detectDaemon() {
     if (this.daemonDetectStarted) return;
     this.daemonDetectStarted = true;
@@ -192,10 +207,49 @@ export class AudioEngine {
     const a = (window as any).ether?.audio;
     if (!a?.daemonEnabled) { this.resolveDaemonReady(); return; }
     a.daemonEnabled().then((on: boolean) => {
-      this.daemonDriven = !!on;
-      if (on) { rotLog("[ROT] daemon-driven: local advance DISABLED, mirroring ether-audiod"); this.attachDaemonEvents(); }
-      else rotLog("[ROT] in-process engine (daemon not active — fallback or disabled)");
+      this.daemonEnabledObserved = !!on;
+      if (on) { this.daemonDriven = true; rotLog("[ROT] daemon-driven: local advance DISABLED, mirroring ether-audiod"); this.attachDaemonEvents(); }
+      // NOT latched false — poll() keeps asking until the daemon answers yes (recheckDaemon below).
+      else rotLog("[ROT] in-process engine (daemon not active — fallback or disabled); will re-check every 5s");
     }).catch(() => {}).finally(() => this.resolveDaemonReady());
+  }
+
+  /** Re-ask while we are NOT daemon-driven. Only a `true` is acted on; a `false` just means "ask again",
+   *  so a daemon that comes up late is adopted instead of being missed for the life of the engine. */
+  private async recheckDaemon(): Promise<void> {
+    if (this.daemonDriven) return;
+    const a = (window as any).ether?.audio;
+    if (!a?.daemonEnabled) return;
+    let on = false;
+    try { on = !!(await a.daemonEnabled()); } catch { return; }
+    this.daemonEnabledObserved = on;
+    if (!on) return;                      // still absent — try again next cycle. NEVER latch false.
+    rotLog(`[ROT] daemon LATE-DETECTED after ${((Date.now() - this.localAdvanceSince) / 1000).toFixed(0)}s of in-process advance — local advance DISABLED, attaching`);
+    console.warn(`[ENGINE] station ${this.stationId}: daemon became available after init — switching to daemon-driven. Local advance had been active; if any deck was started locally the daemon's liveDeck guard will clear it.`);
+    this.daemonDriven = true;
+    this.attachDaemonEvents();
+  }
+
+  /** THE SINGLE CHOKE POINT (§3.2). One decision gates every autonomous path — end-detection, and
+   *  therefore handleRotate → preloadDeck / refillIfNeeded, which are only ever reached through it.
+   *  The six existing per-call-site `if (this.daemonDriven) return;` guards stay as belt-and-braces;
+   *  this is what makes them unreachable rather than merely correct.
+   *
+   *  CONTRADICTION ASSERTION: if the daemon reports ENABLED while this engine still thinks it is
+   *  in-process, running the local advance would be the two-brains fault by definition. Refuse, loudly,
+   *  once — and keep refusing silently until recheckDaemon() resolves it. */
+  private localAdvanceAllowed(): boolean {
+    if (this.daemonDriven) return false;
+    if (this.daemonEnabledObserved === true) {
+      if (!this.contradictionWarned) {
+        this.contradictionWarned = true;
+        const msg = `[ROT] CONTRADICTION — daemon reports ENABLED but this engine (station ${this.stationId}) is not daemon-driven. REFUSING local advance (this is the two-brains fault).`;
+        rotLog(msg);
+        console.error("[ENGINE] " + msg);
+      }
+      return false;
+    }
+    return true;
   }
 
   private attachDaemonEvents() {
@@ -360,6 +414,20 @@ export class AudioEngine {
   /** True when the out-of-process daemon owns playout (renderer is a display/control proxy). */
   get isDaemonDriven(): boolean { return this.daemonDriven; }
 
+  /** §3.4 — the playout mode this engine is actually in, for the Health Monitor. Honest by construction:
+   *  `mode` is what this engine committed to, `daemonEnabled` is the daemon's own last answer, and
+   *  `contradiction` is true when they disagree — a station running its own advance while the daemon is
+   *  up. That is a FAULT, and it must be visible rather than inferred from log forensics days later. */
+  getPlayoutMode(): { stationId: number; mode: "daemon" | "in-process"; daemonEnabled: boolean | null; contradiction: boolean; localAdvanceSec: number } {
+    return {
+      stationId: this.stationId,
+      mode: this.daemonDriven ? "daemon" : "in-process",
+      daemonEnabled: this.daemonEnabledObserved,
+      contradiction: !this.daemonDriven && this.daemonEnabledObserved === true,
+      localAdvanceSec: this.daemonDriven ? 0 : Math.round((Date.now() - this.localAdvanceSince) / 1000),
+    };
+  }
+
   /** Honest engine state for reporting: live | stalled | off (Slice 1). Daemon-driven → the daemon's
    *  authoritative value (mirrored via enginestate). In-process → derived locally from the SAME honest
    *  criterion: live iff a deck is actually playing; off iff automation disengaged; otherwise stalled.
@@ -401,6 +469,9 @@ export class AudioEngine {
       // daemon's authoritative queue (~every 5s). Cheap safety net against any missed event
       // (daemon respawn without a renderer reload, dropped IPC, etc.).
       if (this.daemonDriven && (++this.daemonQueuePollN % 20 === 0)) void this.resyncDaemonQueue();
+      // §3.1 — while NOT daemon-driven, keep asking whether the daemon has come up (~5s). A daemon that
+      // starts late must be adopted; the old one-shot detect missed it for the life of the engine.
+      if (!this.daemonDriven && (++this.daemonDetectPollN % 20 === 5)) void this.recheckDaemon();
       // NOTE: there is deliberately NO periodic resyncDaemonDecks() here. 4.4.104 added one on this
       // same 5 s cadence to re-anchor deck position; it wrote 0 every time (see the method) and was
       // reverted 2026-07-30. resyncDaemonDecks is volume-only and one-shot on attach, as before.
@@ -442,9 +513,16 @@ export class AudioEngine {
       const rustEndedB = s.deckB?.status === "ended" && prevB === "playing";
       const rustEndedC = s.deckC?.status === "ended" && prevC === "playing";
 
-      this.checkEndByPosition("A", posA, durA, prevA, rustEndedA);
-      this.checkEndByPosition("B", posB, durB, prevB, rustEndedB);
-      this.checkEndByPosition("C", posC, durC, prevC, rustEndedC);
+      // §3.2 SINGLE CHOKE POINT — one decision, not six call-site guards. End-detection is the ONLY
+      // entry to the autonomous chain (handleRotate → preloadDeck / refillIfNeeded are reached solely
+      // through it), so gating here makes the whole chain unreachable in daemon mode rather than merely
+      // guarded inside. localAdvanceAllowed() also refuses when the daemon says ENABLED while we are not
+      // daemon-driven — the two-brains contradiction.
+      if (this.localAdvanceAllowed()) {
+        this.checkEndByPosition("A", posA, durA, prevA, rustEndedA);
+        this.checkEndByPosition("B", posB, durB, prevB, rustEndedB);
+        this.checkEndByPosition("C", posC, durC, prevC, rustEndedC);
+      }
       // Reset per-tick end gate — only one deck end is processed per 250ms poll cycle.
       this.processingEnd = false;
 

@@ -508,6 +508,16 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const uptimeStr = uptime < 60 ? `${uptime}m` : `${Math.floor(uptime / 60)}h ${uptime % 60}m`;
   const [panelRef, twoCol] = useTwoColumn();
 
+  // §3.4 — poll the active station's engine for its committed playout mode (1s; it is a local getter,
+  // no IPC). Read-only: this reports the mode, it never sets it.
+  const [playoutMode, setPlayoutMode] = useState<{ stationId: number; mode: "daemon" | "in-process"; daemonEnabled: boolean | null; contradiction: boolean; localAdvanceSec: number } | null>(null);
+  useEffect(() => {
+    const read = () => { try { setPlayoutMode((engine as any)?.getPlayoutMode?.() ?? null); } catch { setPlayoutMode(null); } };
+    read();
+    const id = setInterval(read, 1000);
+    return () => clearInterval(id);
+  }, [engine]);
+
   return (
     <div ref={panelRef} style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
@@ -560,6 +570,22 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           {health ? (
             <>
               <HealthRow label="Audio Engine" value={health.audioEngine === "ok" ? "Running" : "Error"} status={health.audioEngine} sub="Rodio audio backend" />
+              {/* §3.4 — playout mode, beside the engine row. A station running its own advance while the
+                  daemon is up is the two-brains fault (2026-07-30, station 4); it must be visible here
+                  rather than inferred from the log days later. Only the ACTIVE station has a renderer
+                  engine to report — the others are created but never init()-ed, which is the point. */}
+              {playoutMode && (
+                <HealthRow
+                  label="Playout mode"
+                  value={playoutMode.contradiction ? "IN-PROCESS — daemon is up" : playoutMode.mode === "daemon" ? "Daemon-driven" : "In-process"}
+                  status={playoutMode.contradiction ? "error" : playoutMode.mode === "daemon" ? "ok" : "warn"}
+                  sub={playoutMode.contradiction
+                    ? `station ${playoutMode.stationId} is running its own advance while the daemon reports enabled — two engines on one output. Local advance refused.`
+                    : playoutMode.mode === "daemon"
+                      ? `station ${playoutMode.stationId} mirrors ether-audiod — local advance disabled`
+                      : `station ${playoutMode.stationId} owns playout (daemon ${playoutMode.daemonEnabled === null ? "not answering" : "off"}) — ${playoutMode.localAdvanceSec}s`}
+                />
+              )}
               <HealthRow label="Database" value={health.database === "ok" ? "Connected" : "Error"} status={health.database} sub={`${health.playLogCount.toLocaleString()} play log entries · WAL mode`} />
               <HealthRow label="Schema" value={`v${dbSchemaVersion}`} status="ok" sub="Versioned migrations — never destructive" />
               <HealthRow label="Dead Air Protection" value={health.deadAirProtection ? "Active" : "Disabled"} status={health.deadAirProtection ? "ok" : "warn"} sub="Auto-recovery on silence" />
