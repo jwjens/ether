@@ -626,11 +626,14 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       {fmtClock(s.scheduledAt)}
                       {s.hardCutOwned && <span style={{ color: "var(--text-tertiary)", fontSize: 9 }}> ⏻</span>}
                     </div>
-                    <div style={{ color: played ? "var(--text-tertiary)" : col }}>{played ? "—" : fmtClock(s.projectedAt)}</div>
+                    <div style={{ color: played ? "var(--text-tertiary)" : col }}>
+                      {played ? "—" : (s.beyondQueue ? "≥ " : "") + fmtClock(s.projectedAt)}
+                    </div>
                     <div style={{ color: "var(--text-tertiary)" }}>{played ? fmtClock(s.playedAt) : "pending"}</div>
                     <div style={{ color: col, fontWeight: lvl === "error" ? 700 : 400 }}>
-                      {fmtDrift(s.driftSec)}
+                      {(!played && s.beyondQueue && s.driftSec !== null ? "≥ " : "") + fmtDrift(s.driftSec)}
                       {s.hardCutOwned && <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}> · hard cut</span>}
+                      {!played && s.beyondQueue && <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}> · past queue</span>}
                     </div>
                   </Fragment>
                 );

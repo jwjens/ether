@@ -17,11 +17,16 @@ export type QueueItem = { title?: string; durationMs?: number; contentClass?: st
 export type SpotRow = { scheduledAt: number; durationS: number; state: string; playedAt: number | null; title: string };
 
 export type ProjectedSpot = SpotRow & {
-  /** epoch seconds this spot is projected to air; null = not reachable in the visible queue */
+  /** epoch seconds this spot is projected to air. When `beyondQueue` it is a LOWER BOUND — the end of
+   *  the visible queue — not an exact time. null only when there is nothing to compute from at all. */
   projectedAt: number | null;
+  /** true when the projection ran off the end of the visible queue: the spot airs at or after
+   *  `projectedAt`, we just cannot see far enough to say when. An honest "≥", never a blank. */
+  beyondQueue: boolean;
   /** true when the top-of-hour hard cut owns this anchor (minute 0) — it lands exact by construction */
   hardCutOwned: boolean;
-  /** signed seconds: fired−anchor when played, projected−anchor when pending; null when unknown */
+  /** signed seconds: fired−anchor when played, projected−anchor when pending; null when unknown.
+   *  With `beyondQueue` this is a lower bound too (it can only get later, never earlier). */
   driftSec: number | null;
 };
 
@@ -57,44 +62,76 @@ function wouldPromote(seamTs: number, A: number, d: number, nextHourTs: number):
 export function projectSpots(
   spots: SpotRow[], queue: QueueItem[], seamTs: number, flipped: boolean, nextHourTs: number,
 ): ProjectedSpot[] {
-  const out: ProjectedSpot[] = [];
-  // Pending anchors we still need to place, soonest first.
-  const pending = spots.filter(s => s.state !== "played" && !s.playedAt).map(s => s.scheduledAt).sort((a, b) => a - b);
+  // A WALK, not a predicate. Earlier this only placed a spot when the nearest-anchor selector WOULD
+  // promote it — a promotion test, not a projection — so any anchor out of reach got no answer and the
+  // board read "—" everywhere. Now every pending spot is placed where it will actually air given the
+  // queue as it stands; promotion is a MODIFIER that can move a spot earlier, never the gate.
+  const pendingSpots = spots
+    .filter(s => s.state !== "played" && !s.playedAt)
+    .sort((a, b) => a.scheduledAt - b.scheduledAt);
   const placed = new Map<number, number>();     // anchor → projected epoch seconds
+  const durOf = (a: number) => pendingSpots.find(s => s.scheduledAt === a)?.durationS ?? 0;
 
   let t = seamTs;
-  let nextPending = 0;
+  let next = 0;                                  // index into pendingSpots of the soonest unplaced anchor
   for (const item of queue) {
-    if (nextPending >= pending.length) break;
     const dur = (item.durationMs || 0) / 1000;
 
-    // A spot already sitting in the queue airs at this seam — that is its projection, no arithmetic.
+    // A SPOT sitting in the queue airs at this seam — that IS its projection, no arithmetic needed.
     if (item.contentClass === "SPOT") {
-      const anchor = Number.isFinite(item.scheduledAt as number) ? (item.scheduledAt as number) : pending[nextPending];
-      if (!placed.has(anchor)) { placed.set(anchor, t); if (anchor === pending[nextPending]) nextPending++; }
+      const anchor = Number.isFinite(item.scheduledAt as number)
+        ? (item.scheduledAt as number)
+        : (pendingSpots[next]?.scheduledAt ?? NaN);
+      if (Number.isFinite(anchor) && !placed.has(anchor)) placed.set(anchor, t);
+      while (next < pendingSpots.length && placed.has(pendingSpots[next].scheduledAt)) next++;
       t += dur;
       continue;
     }
 
-    // A music row. On a flipped station the selector may jump the next spot ahead of it.
-    if (flipped && wouldPromote(t, pending[nextPending], dur, nextHourTs)) {
-      placed.set(pending[nextPending], t);
-      // the spot's own duration pushes the seam along before this music row plays
-      const spotDur = spots.find(s => s.scheduledAt === pending[nextPending])?.durationS ?? 0;
-      t += spotDur;
-      nextPending++;
+    // A music row. On a FLIPPED station the selector may jump the next unplaced spot ahead of it — that
+    // moves the projection EARLIER. On legacy it simply waits its turn in the queue, which is the honest
+    // truth of legacy and exactly what the operator should see.
+    if (flipped && next < pendingSpots.length) {
+      const a = pendingSpots[next].scheduledAt;
+      if (!placed.has(a) && wouldPromote(t, a, dur, nextHourTs)) {
+        placed.set(a, t);
+        t += durOf(a);                           // the spot's own duration pushes the seam along
+        while (next < pendingSpots.length && placed.has(pendingSpots[next].scheduledAt)) next++;
+      }
     }
     t += dur;
   }
+  const queueEndTs = t;                          // everything unplaced airs at or after here
 
+  const out: ProjectedSpot[] = [];
   for (const s of spots) {
     const hardCutOwned = isHardCutOwned(s.scheduledAt);
     const played = s.state === "played" || !!s.playedAt;
-    const projectedAt = played ? null : (placed.get(s.scheduledAt) ?? null);
-    const driftSec = played
-      ? (s.playedAt ? s.playedAt - s.scheduledAt : null)
-      : (projectedAt !== null ? projectedAt - s.scheduledAt : null);
-    out.push({ ...s, projectedAt, hardCutOwned, driftSec });
+    if (played) {
+      out.push({ ...s, projectedAt: null, beyondQueue: false, hardCutOwned,
+        driftSec: s.playedAt ? s.playedAt - s.scheduledAt : null });
+      continue;
+    }
+    // A top-of-hour anchor is FIRED BY THE HARD CUT, not reached by the queue. Walking the queue to it
+    // gives a meaningless "late" (the cut pre-empts whatever the walk predicted), so project it AT its
+    // anchor — which is what actually happens, and why these land exact.
+    if (hardCutOwned) {
+      out.push({ ...s, projectedAt: s.scheduledAt, beyondQueue: false, hardCutOwned, driftSec: 0 });
+      continue;
+    }
+
+    const exact = placed.get(s.scheduledAt);
+    // Unplaced = past the end of the visible queue. Report the queue end as a LOWER BOUND rather than a
+    // blank: it can only get later, so if the bound is already past the anchor that is a real warning.
+    const projectedAt = exact ?? (queue.length ? queueEndTs : null);
+    const beyondQueue = exact === undefined && projectedAt !== null;
+    // A lower bound EARLIER than the anchor carries no information — it does not mean the spot airs
+    // early, only that we cannot see that far yet. Report drift as unknown rather than a confident
+    // negative, which would paint a red "−31:14" on a spot that is perfectly fine.
+    const driftSec = projectedAt === null ? null
+      : (beyondQueue && projectedAt < s.scheduledAt) ? null
+      : projectedAt - s.scheduledAt;
+    out.push({ ...s, projectedAt, beyondQueue, hardCutOwned, driftSec });
   }
   return out;
 }

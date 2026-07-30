@@ -87,7 +87,7 @@ export class AudioEngine {
   private lastPollTime = Date.now();
   private lastFiredState: { A?: DeckState; B?: DeckState; C?: DeckState } = {};
 
-  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number; qid?: string; scheduledAt?: number }[] = [];
+  private queue: { filePath: string; title: string; artist: string; gainDb?: number; chainType?: "segue" | "stop"; durationMs?: number; qid?: string; scheduledAt?: number; contentClass?: string | null }[] = [];
   // generated_schedule scheduled_at of the row currently on each deck — the exact single-source
   // identity the Calendar matches (no text/clock guessing). Lives here so native state
   // round-trips don't wipe it.
@@ -264,8 +264,12 @@ export class AudioEngine {
       const h = a.onQueue((m: any) => {
         if (m && m.stationId != null && m.stationId !== this.stationId) return; // only THIS station's queue — never another station's
         if (Array.isArray(m?.items)) {
+          // contentClass + scheduledAt are carried through (2026-07-30): without them the renderer
+          // cannot tell a SPOT row from a music row or place it against its anchor, which left the
+          // Health Monitor's Spot Schedule projection with nothing to compute and every cell reading "—".
           this.queue = m.items.map((it: any) => ({
             filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs, chainType: it.chainType, qid: it.qid,
+            contentClass: it.contentClass ?? null, scheduledAt: it.scheduledAt,
           }));
           // Stage 2a: engine-rodio is the SOLE consumer of the raw daemon queue event; it re-emits
           // the app-standard `ether:queue-changed` signal so Up Next (and any queue UI) re-renders
