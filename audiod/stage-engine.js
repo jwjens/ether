@@ -16,10 +16,23 @@ const os = require("os");
 
 // The daemon runtime files (NOT the smoke/accept test scripts) + the runtime data files a
 // renamed Electron needs to boot as node (proven empirically: exe + icu + the two snapshots).
-// daemon-log.js MUST be staged — ether-audiod.js require()s it at startup; omitting it shipped a staged
-// daemon that hit MODULE_NOT_FOUND and went blind/crashed (regression; fixed 2026-07-09,
-// docs/overnight-rotation-stop-forensics-2026-07-09.md).
-const DAEMON_FILES = ["ether-audiod.js", "daemon-log.js", "engine.js", "loggen.js", "playlog.js", "stream.js"];
+// ⚠ THIS WAS A HAND-MAINTAINED LIST, AND IT FAILED TWICE.
+//   2026-07-09 — daemon-log.js was left out; the staged daemon hit MODULE_NOT_FOUND and went blind
+//                (docs/overnight-rotation-stop-forensics-2026-07-09.md).
+//   2026-07-30 — autofit.js was left out when engine.js began require()ing it. The PACKAGE was correct
+//                (asarUnpack "audiod/**" ships everything) and verify-packaged.js passed, because the
+//                daemon does not run from the package — it runs from THIS staged copy. Stations went
+//                silent-while-playing with the app in in-process fallback.
+// The list itself was the defect: it has to be updated by hand every time the daemon gains a require,
+// and nothing enforces that. It is now DERIVED. Every runtime .js in audiod/ is staged; only the test
+// scripts are excluded, and they are excluded by a naming rule, not by omission.
+const isTestScript = (n) => /^(smoke|accept|verify)-/.test(n);
+const isDaemonRuntimeFile = (n) => n.endsWith(".js") && !isTestScript(n);
+function daemonFiles(audiodDir) {
+  return fs.readdirSync(audiodDir, { withFileTypes: true })
+    .filter(e => e.isFile() && isDaemonRuntimeFile(e.name))
+    .map(e => e.name);
+}
 const RUNTIME_DATA = ["icudtl.dat", "v8_context_snapshot.bin", "snapshot_blob.bin"];
 
 function engineBaseDir() {
@@ -75,7 +88,8 @@ function stageEngine({ srcRoot, unpacked, version }) {
     const exeOk = cpSoft(path.join(srcRoot, "Ether.exe"), t.exe);              // renamed runtime (may be locked)
     if (!exeOk && !fs.existsSync(t.exe)) throw new Error("ether-engine.exe: source locked and no prior staged copy");
     for (const f of RUNTIME_DATA) { const s = path.join(srcRoot, f); if (fs.existsSync(s)) cpSoft(s, path.join(dir, f)); }
-    for (const f of DAEMON_FILES)  cp1(path.join(unpacked, "audiod", f), path.join(dir, "audiod", f));   // CODE — must refresh (not locked)
+    // CODE — must refresh (not locked). Enumerated from the source dir, never from a hand-kept list.
+    for (const f of daemonFiles(path.join(unpacked, "audiod"))) cp1(path.join(unpacked, "audiod", f), path.join(dir, "audiod", f));
     cpSoft(path.join(unpacked, "native", "ether-audio.node"), path.join(dir, "native", "ether-audio.node")); // may be loaded/locked
     for (const f of ["mutation-writer.js", "synced-tables.js"]) cp1(path.join(unpacked, "electron", "sync", f), path.join(dir, "electron", "sync", f));
     const ffSrc = path.join(unpacked, "node_modules", "ffmpeg-static");        // whole pkg (index.js resolves the binary)
@@ -90,4 +104,7 @@ function stageEngine({ srcRoot, unpacked, version }) {
   }
 }
 
-module.exports = { stageEngine, stagedTarget, engineBaseDir };
+// daemonFilesForVerify: the SAME derivation the stage uses, exposed so the release gate
+// (audiod/verify-packaged.js) can assert every daemon require resolves to something that gets staged.
+// Exported deliberately — the gate must check what staging actually does, not a copy of the rule.
+module.exports = { stageEngine, stagedTarget, engineBaseDir, daemonFilesForVerify: daemonFiles };
