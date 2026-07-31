@@ -73,9 +73,24 @@ pub fn audio_load(deck: String, file_path: String, title: String, artist: String
 }
 
 #[napi]
+/// Returns FALSE — without claiming "playing" — when the deck has nothing to play.
+///
+/// Before 2026-07-31 this set status="playing" unconditionally and returned is_ok() of the send, which
+/// is true even when the audio thread then skips the play (`source=None, path empty — skipping`). A
+/// hand-pressed play on an empty deck produced dead air while every layer above reported success: the
+/// deck meta said playing, the daemon said ok, and the UI drew a playing deck. Silence that claims to be
+/// audio is the worst failure this engine can have, so the refusal is now a VALUE the caller can see.
+///
+/// `file_path` is the honest signal: audio_stop clears it (below) exactly when it drops the sink and the
+/// loaded file, so "no file_path" means "no content on this deck" and nothing else.
+#[napi]
 pub fn audio_play(deck: String, station_id: Option<u32>) -> bool {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);
     let Ok(mut audio) = engine.lock() else { return false };
+    if deck_meta_mut(&mut audio, &deck).file_path.is_empty() {
+        eprintln!("[RUST] Play deck {}: REFUSED — no content loaded on this deck", deck);
+        return false;   // status is NOT set to "playing": nothing above may claim it is
+    }
     audio.finished.clear(&deck);
     deck_meta_mut(&mut audio, &deck).status = "playing".to_string();
     audio.sender.send(AudioCmd::Play(deck)).is_ok()
@@ -94,7 +109,14 @@ pub fn audio_stop(deck: String, station_id: Option<u32>) -> bool {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);
     let Ok(mut audio) = engine.lock() else { return false };
     audio.finished.clear(&deck);
-    deck_meta_mut(&mut audio, &deck).status = "idle".to_string();
+    {
+        // AudioCmd::Stop drops the sink AND loaded_files, so the deck genuinely has no content
+        // afterwards. Clear file_path to match (2026-07-31) — it is what audio_play now trusts, and a
+        // stale path here would let a play claim success on a deck Rust would silently skip.
+        let m = deck_meta_mut(&mut audio, &deck);
+        m.status = "idle".to_string();
+        m.file_path = String::new();
+    }
     audio.sender.send(AudioCmd::Stop(deck)).is_ok()
 }
 

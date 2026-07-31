@@ -101,10 +101,26 @@ function getStream(stationId) {
 
 // ── Command surface (addon-backed) ────────────────────────────────────────────
 // Each returns a JSON-serializable result (or throws → { ok:false, error }).
+// Per-station promise chain for the MANUAL/AUTO toggle. Per station, so a jock toggling one station
+// never queues behind another station's automation — the three untouched stations keep deciding.
+const _modeChain = new Map();
+function modeToggle(stationId, fn) {
+  const prev = _modeChain.get(stationId) || Promise.resolve();
+  const next = prev.then(fn, fn);   // a failed toggle must not wedge the chain for the next press
+  _modeChain.set(stationId, next.catch(() => {}));
+  return next;
+}
+
 const handlers = {
   init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); return true; },
   load:               (m) => { stations.add(m.stationId); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck); return r; },
-  play:               (m) => A.audioPlay(m.deck, m.stationId),
+  // A refused play is a DECISION the operator must see, not a silent no-op (2026-07-31). audioPlay
+  // returns false when the deck has no content; say so, name the deck, and tell them what to do.
+  play:               (m) => {
+    const ok = A.audioPlay(m.deck, m.stationId);
+    if (!ok) log(`[engine s${m.stationId}] deck ${m.deck}: play REFUSED — no content loaded (load a track onto this deck first)`);
+    return ok;
+  },
   pause:              (m) => A.audioPause(m.deck, m.stationId),
   stop:               (m) => A.audioStop(m.deck, m.stationId),
   setVolume:          (m) => A.audioSetVolume(m.deck, m.volume, m.stationId),
@@ -131,8 +147,12 @@ const handlers = {
 
   // ── autonomous playout engine (Phase 1 step 3): queue + advance + scheduler ──
   // Additive — the live app does not drive these yet (Phase-2 cutover does).
-  automationStart:    (m) => getEngine(m.stationId).start(),                  // fill (if empty) + play + preload
-  automationStop:     (m) => { const e = engines.get(m.stationId); if (e) e.stop(); return true; },
+  // MODE TOGGLE — SERIALIZED per station (2026-07-31). A fast MANUAL/AUTO double-click used to
+  // interleave: on 2026-07-31 an automationStop landed 2ms after an automationStart mid-adopt, and it
+  // took the jock four presses to recover. Chaining each toggle onto the previous one makes rapid
+  // clicking QUEUE rather than race, so the last press wins and one press is always enough.
+  automationStart:    (m) => modeToggle(m.stationId, () => getEngine(m.stationId).start()),
+  automationStop:     (m) => modeToggle(m.stationId, () => { const e = engines.get(m.stationId); if (e) e.stop(); return true; }),
   // Slice 4 — STOP: silence a station and keep it silent. Stop automation (e.stop() disables the stall
   // watchdog so it can't auto-recover) AND stop all three decks. Idempotent; no-op if never started.
   stopAll:            (m) => { const e = engines.get(m.stationId); if (e) e.stop(); for (const d of ["A", "B", "C"]) { try { A.audioStop(d, m.stationId); } catch {} } return true; },
@@ -262,7 +282,9 @@ function shutdown() {
   log("shutting down — stopping streams + engines + decks + closing pipe");
   clearInterval(eventTimer);
   for (const s of streams.values()) { try { s.stop(); } catch {} }
-  for (const e of engines.values()) { try { e.stop(); } catch {} }
+  // dispose(), not stop(): stop() no longer tears down timers (MANUAL keeps the poll alive), so the
+  // shutdown path must clear them explicitly or every station leaks a 250ms interval on exit.
+  for (const e of engines.values()) { try { e.dispose(); } catch {} }
   for (const sid of stations) { try { A.audioStop("A", sid); A.audioStop("B", sid); A.audioStop("C", sid); } catch {} }
   try { if (_db) _db.close(); } catch {}
   try { server.close(); } catch {}

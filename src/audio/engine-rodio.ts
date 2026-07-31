@@ -104,6 +104,9 @@ export class AudioEngine {
   private deckReady = new Set<DeckId>();
   // Callback fired when a "stop" chain type prevents auto-advance.
   onChainStop: ((deckId: DeckId) => void) | null = null;
+  /** Fired when the engine REFUSES a deck command (today: play on a deck with no content). The UI must
+   *  tell the operator rather than leave a button that silently does nothing — MANUAL runs on these. */
+  onDeckRefused: ((deckId: DeckId, reason: string) => void) | null = null;
 
   private _autoAdvance = false;
   get autoAdvance() { return this._autoAdvance; }
@@ -723,13 +726,25 @@ export class AudioEngine {
     const getState = () => isCart ? this.stateCart : deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
     return {
       getState,
-      play: () => {
+      // NEVER CLAIM PLAYING UNCONFIRMED (2026-07-31). This used to mark the deck "playing" BEFORE the
+      // command went out and never look at the result, so a play the engine refused still drew a playing
+      // deck — dead air with a confident UI. Now the engine's answer decides: on refusal the deck is left
+      // exactly as it was and the reason is surfaced. In daemon mode the onDeck event is the confirmation
+      // that follows; the poll stays alive in MANUAL, so those events flow there too.
+      play: async () => {
+        this.endTriggered.delete(deckId);
+        const ok = await invoke("audio_play", { deck: deckId, stationId: this.stationId });
+        if (ok === false) {
+          rotLog(`[ROT] deck ${deckId}: play REFUSED by the engine — no content loaded`);
+          this.onDeckRefused?.(deckId, "No track loaded on this deck — load one first.");
+          return false;
+        }
         if (isCart) this.stateCart = { ...this.stateCart, status: "playing" };
         else if (deckId === "A") this.stateA = { ...this.stateA, status: "playing" };
         else if (deckId === "B") this.stateB = { ...this.stateB, status: "playing" };
         else if (deckId === "C") this.stateC = { ...this.stateC, status: "playing" };
-        this.endTriggered.delete(deckId);
-        return invoke("audio_play", { deck: deckId, stationId: this.stationId });
+        this.listeners.forEach(l => l(deckId, getState()));
+        return ok;
       },
       pause: () => invoke("audio_pause", { deck: deckId, stationId: this.stationId }),
       resume: () => invoke("audio_play", { deck: deckId, stationId: this.stationId }),

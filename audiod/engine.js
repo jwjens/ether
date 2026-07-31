@@ -218,7 +218,9 @@ class DaemonEngine {
   // channel gated to ON. Quiet unless processing is on AND automation is engaged (no silence spam). The
   // meters are OBSERVED at the stage taps (in/out LUFS, gain-reduction, in/out peak) — never claimed.
   _emitProcMeters() {
-    if (!this._procOn || !this._started) return;
+    // NOT gated on _started (2026-07-31): meters are the jock's level check, and MANUAL is exactly when
+    // a human is watching them. Processing is still running in MANUAL, so reporting it is honest.
+    if (!this._procOn) return;
     let lv; try { lv = JSON.parse(A.audioGetLevels(this.stationId)); } catch { return; }
     if (!lv || (!lv.proc_local && !lv.proc_stream)) return;   // native says processing off → stay quiet
     const dbfs = (p) => (p > 0 ? Math.max(-70, 20 * Math.log10(p)) : -70);
@@ -259,13 +261,38 @@ class DaemonEngine {
     // Audio Processing v1: dedicated ~15Hz meter emit (self-gates to processing-on + automation-engaged).
     if (!this._procMeterTimer) this._procMeterTimer = setInterval(() => this._emitProcMeters(), 66);
   }
+  // ── MANUAL MODE (2026-07-31) — stop DECIDING, never stop RUNNING ───────────────────────────────
+  // This used to tear the engine down: it cleared the poll timer and stopped all three decks. That made
+  // MANUAL unusable for a live jock — Rust's Stop drops the sink AND loaded_files, so every deck was
+  // EMPTY, a hand-pressed play hit `source=None … skipping` and produced dead air, and with the poll
+  // dead no deck event could ever correct the UI's optimistic "playing".
+  // (docs/manual-mode-dead-air-trace-2026-07-31.md, docs/design-manual-mode-contract-2026-07-31.md)
+  //
+  // THE CONTRACT: press MANUAL mid-song and the song keeps playing, because nothing tells it to stop.
+  // Automation stops deciding — see _mayDecide() — and the engine keeps running: poll, deck events,
+  // meters, telemetry and the two-decks observer all continue, so the jock's UI stays live.
+  //
+  // "Stop automating" and "silence the station" are now TWO VERBS. This is the first; `stopAll`
+  // (ether-audiod.js) is the second and stops the decks explicitly. Nothing may depend on the old
+  // conflation. Timer teardown belongs to dispose(), called only on daemon shutdown.
   stop() {
-    if (this._started) this._log("_started: true → false (automation stopped)");
-    this._started = false;   // Stage 3b: automation stopped — disable the stall watchdog (don't fight a deliberate stop).
+    if (this._started) this._log("_started: true → false (automation stopped — MANUAL: decks and poll left running)");
+    this._started = false;
+  }
+
+  /** Real teardown — daemon shutdown ONLY. Never on automationStop: a jock pressing MANUAL must not
+   *  lose the poll loop (deck events, meters, the liveDeck observer all ride on it). */
+  dispose() {
+    this._started = false;
     if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     if (this._procMeterTimer) { clearInterval(this._procMeterTimer); this._procMeterTimer = null; }
-    this._stop("A"); this._stop("B"); this._stop("C");
   }
+
+  /** THE SINGLE CHOKE POINT — may automation make decisions right now? MANUAL = no.
+   *  The engine keeps RUNNING either way; this gates only the paths that CHOOSE what airs.
+   *  Per-station by construction (_started is per-engine): one station in MANUAL leaves the other
+   *  three deciding, untouched. */
+  _mayDecide() { return this._started; }
 
   _deckState(id) { return id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC; }
   _setDeck(id, patch) {
@@ -522,6 +549,9 @@ class DaemonEngine {
   // fills) and marks the deck ready (→ handleRotate crossfades instead of the bare load-next path).
   // The deckReady/not-playing guards + preload's own idempotent guard keep this off handleRotate's toes.
   _maintain() {
+    // MANUAL: no refill, and above all no preload — the self-heal must never load over a deck the jock
+    // cued by hand. (The second of the two paths that were ungated before 2026-07-31.)
+    if (!this._mayDecide()) return;
     if (this.continuous && this.queue.length < 5) this.refillIfNeeded();
     const order = ["A", "B", "C"];
     const playing = order.find(d => this._deckState(d).status === "playing");
@@ -533,6 +563,9 @@ class DaemonEngine {
   }
 
   checkEnd(deckId, pos, dur, prevStatus, backendEnded = false) {
+    // MANUAL: automation does not decide what follows. A deck ending is the jock's business — no
+    // end-detection, therefore no handleRotate. (One of the two paths that were ungated before 2026-07-31.)
+    if (!this._mayDecide()) return;
     if (this.processingEnd) return;
     const positionEnd = prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3;
     const genuineBackendEnd = backendEnded && (dur <= 5 || (dur - pos) < 5);
@@ -836,7 +869,15 @@ class DaemonEngine {
         this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending'`).run(...r.missedRowIds, this.stationId);
       } catch { /* stamping is best-effort; never break playout */ }
       try { this.emit("logreader-missed", { stationId: this.stationId, count: r.missedRowIds.length, driftSec: r.driftSec }); } catch {}
-      this._log("LOG-READER: behind " + Math.round(r.driftSec / 60) + "m — stamped " + r.missedRowIds.length + " skipped-past rows 'missed' (day-bounded)");
+      // WORDING (2026-07-31): after a manual shift this is a HANDOVER, not a fault. The rows are retired
+      // as bookkeeping — nothing is aired, nothing is caught up — and without it they sit `pending`
+      // forever and become the stale-row debris cleaned out of station 4 on 2026-07-30. The alarm
+      // wording ("behind Xm") read like a failure when the jock had simply been driving.
+      const _hhmm = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      this._log(this._resumingFromManual
+        ? `calendar resumed at ${_hhmm} — ${r.missedRowIds.length} rows from the manual shift retired`
+        : "LOG-READER: behind " + Math.round(r.driftSec / 60) + "m — stamped " + r.missedRowIds.length + " skipped-past rows 'missed' (day-bounded)");
+      this._resumingFromManual = false;
     }
 
     // AHEAD (rider A) — the early row is already in r.items and will air when the current song ends. NEVER
@@ -1293,6 +1334,8 @@ class DaemonEngine {
   async start() {
     this.init();
     const wasStarted = this._started;
+    // Coming back from MANUAL: the next refill's row-retirement is a handover, not a "behind" alarm.
+    this._resumingFromManual = !wasStarted;
     this._started = true;   // Stage 3b: automation engaged — the stall watchdog is now allowed to recover.
     this._log("automationStart: requested" + (wasStarted ? " (already _started)" : " — _started false → true (automation engaged)"));
     // Log-Reader Flip Phase 3: announce the gate so a burn-in run (flag OFF) vs a flip run (flag ON) is
@@ -1531,12 +1574,18 @@ class DaemonEngine {
         };
         this._log(
           `liveDeck GUARD — TWO DECKS ON AIR (station ${this.stationId}): engine live deck ${describe(this.liveDeck)} ` +
-          `| FOREIGN ${foreign.map(describe).join(" | ")} — held ${(heldMs / 1000).toFixed(1)}s past grace → STOPPING ${foreign.join(",")}. ` +
+          `| FOREIGN ${foreign.map(describe).join(" | ")} — held ${(heldMs / 1000).toFixed(1)}s past grace → ` +
+          (this._mayDecide() ? `STOPPING ${foreign.join(",")}. ` : `MANUAL: observing only, the jock owns the decks. `) +
           `alphabetical P would pick ${["A", "B", "C"].find(d => statuses[d] === "playing")}.`
         );
         // Surface it beyond the log — the Health Monitor consumes engine errors (play-skip does the same).
         try { this.emit("error", { stationId: this.stationId, where: "liveDeckGuard", deck: foreign.join(","), error: `foreign deck(s) ${foreign.join(",")} on air past grace with live deck ${this.liveDeck} — stopped` }); } catch {}
       }
+
+      // MANUAL: OBSERVE ONLY (2026-07-31, Jeff's ruling). A jock may deliberately run two decks — a bed
+      // under a talk break — and the guard exists to catch AUTOMATION losing track of itself, not to
+      // overrule a person. It still logs, so the operator sees what it sees; it just never acts.
+      if (!this._mayDecide()) return;
 
       // ENFORCE — on the advance chain, so this can never interleave with a rotate/preload.
       const live = this.liveDeck;

@@ -87,6 +87,10 @@ obs._play = (d) => acted.push(["PLAY", d]);
 obs._load = (d) => acted.push(["LOAD", d]);
 obs.handleRotate = (f, t) => acted.push(["ROTATE", f, t]);
 obs._advance = (where, fn) => { acted.push(["ADVANCE", where]); return fn(); };
+// AUTO: the guard ENFORCES only while automation is deciding. In MANUAL it observes and never stops a
+// jock's deliberate second deck (docs/design-manual-mode-contract-2026-07-31.md) - covered by
+// audiod/smoke-manual-mode.js. This bench is the AUTO case, so automation is engaged.
+obs._started = true;
 obs.liveDeck = "C";
 obs.stateA = { status: "playing", title: "Foreign", positionSec: 12, durationSec: 136.8 };
 obs.stateB = { status: "paused", title: "", positionSec: 0, durationSec: 0 };
