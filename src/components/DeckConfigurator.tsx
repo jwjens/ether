@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -475,14 +475,42 @@ export function PlaylistPlayer({ deckSlot, color }: PlaylistProps) {
 
 interface CartSlot {
   key: string;
+  /** slot_number in cart_slots — the DB's identity for this tile, and the wall's ordering. */
+  slot: number;
   label: string;
   filePath?: string;
   color: string;
   playing: boolean;
 }
 
-const DEFAULT_CART_KEYS = ["1","2","3","4","5","6","7","8","9","0","Q","W","E","R","T","Y","U","I"];
+// ── CART WALL SIZING — derived, never hardcoded at a use site ─────────────────────────────────────
+// Every count below is a named constant so the wall can grow without a rebuild. The 18-slot literal
+// that used to live here (and a matching `18` in ProducerDesk, and a slice(0, 8) in the strip render)
+// was the ceiling this replaces.
+export const CART_SLOT_COUNT = 64;        // the full wall
+export const CART_STRIP_COUNT = 24;       // the bottom push-up strip — 3 rows of 8
+export const CART_ROW = 8;                // tiles per row at full width
+
+// HOTKEYS: the first CART_STRIP_COUNT slots only — three keyboard rows, no bank/shift modifier, no
+// modes (Jeff, 2026-07-31). Slots beyond that are click- and MIDI-only and keep hotkey NULL, which is
+// exactly what the cart_slots.hotkey column stores.
+const CART_HOTKEYS = [
+  "1","2","3","4","5","6","7","8",
+  "Q","W","E","R","T","Y","U","I",
+  "A","S","D","F","G","H","J","K",
+];
+const cartHotkey = (slot: number): string => CART_HOTKEYS[slot] ?? "";
+/** Stable per-slot identity. The DB keys by slot_number; the UI keeps using `key` internally. */
+const cartKeyFor = (slot: number): string => cartHotkey(slot) || `c${slot + 1}`;
 const CART_COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","var(--accent-blue)","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16"];
+
+/** The default wall for a station that has never had one — labels only, no audio. */
+function defaultCarts(): CartSlot[] {
+  return Array.from({ length: CART_SLOT_COUNT }, (_, i) => ({
+    key: cartKeyFor(i), slot: i, label: `Cart ${i + 1}`,
+    color: CART_COLORS[i % CART_COLORS.length], playing: false,
+  }));
+}
 
 interface CartProps {
   deckSlot: string;
@@ -497,11 +525,58 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
   // play out over the music regardless of how the decks are configured. deckSlot is now
   // only a label/positioning hint.
   const CART_CHANNEL = "CART";
-  const [carts, setCarts] = useState<CartSlot[]>(
-    DEFAULT_CART_KEYS.map((k, i) => ({
-      key: k, label: `Cart ${i + 1}`, color: CART_COLORS[i % CART_COLORS.length], playing: false,
-    }))
-  );
+  const { stationId } = useActiveStation();
+  const [carts, setCarts] = useState<CartSlot[]>(defaultCarts);
+
+  // ── PERSISTENCE (2026-07-31) ────────────────────────────────────────────────────────────────────
+  // Before this, the wall lived entirely in React state seeded from a constant: every assignment died
+  // on unmount, never mind restart. The `cart_slots` table, its sync registration and the full
+  // cartSlots IPC surface were all ALREADY BUILT — nothing was wired to them, and main.js:55 pointed at
+  // a `CartWall.tsx` that does not exist. (docs/cart-persistence-trace-2026-07-31.md)
+  //
+  // Station-scoped by slot_number, so each station has its own wall — a park station's carts are not
+  // the Christmas station's. Rows carry uuid/station_uuid and are registered in synced-tables, so a
+  // wall built here follows the account to another machine like everything else.
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      try {
+        const rows = await (window as any).ether?.cartSlots?.list?.(stationId);
+        if (stop) return;
+        const list: any[] = Array.isArray(rows) ? rows : (rows?.rows ?? []);
+        // No rows for this station → first run. Seed the defaults in memory only; a slot is written
+        // when the operator actually puts something in it, so an untouched wall stays absent from the DB.
+        if (!list.length) { setCarts(defaultCarts()); return; }
+        const byslot = new Map(list.map(r => [Number(r.slot_number), r]));
+        setCarts(defaultCarts().map(c => {
+          const r = byslot.get(c.slot);
+          return r ? { ...c, label: r.title || c.label, filePath: r.file_path || undefined, color: r.color || c.color } : c;
+        }));
+      } catch { /* IPC absent (dev/browser) — the in-memory default wall still works */ }
+    })();
+    return () => { stop = true; };
+  }, [stationId]);
+
+  /** Write one slot through the SAME upsert the Producer Desk already uses. Best-effort: a failed save
+   *  must never swallow the operator's action — the tile still updates and the console says why. */
+  const persistSlot = useCallback(async (c: CartSlot) => {
+    try {
+      await (window as any).ether?.cartSlots?.upsertBySlotNumber?.(stationId, c.slot, {
+        title: c.label, file_path: c.filePath ?? null, color: c.color, hotkey: cartHotkey(c.slot),
+      });
+    } catch (e) { console.warn("[cart] slot", c.slot, "did not save:", e); }
+  }, [stationId]);
+
+  /** Mutate one slot in state AND persist it — the single path every editor goes through, so no
+   *  future editor can change a cart without saving it. */
+  const updateSlot = useCallback((key: string, patch: Partial<CartSlot>) => {
+    setCarts(prev => {
+      const next = prev.map(c => (c.key === key ? { ...c, ...patch } : c));
+      const changed = next.find(c => c.key === key);
+      if (changed) void persistSlot(changed);
+      return next;
+    });
+  }, [persistSlot]);
   const [dragOver, setDragOver] = useState<string | null>(null);
   const playingKeyRef = useRef<string | null>(null);
   const [remainingMs, setRemainingMs] = useState(0);
@@ -562,14 +637,14 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     e.preventDefault();
     const label = e.dataTransfer.getData("text/plain");
     const filePath = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-    setCarts(p => p.map(c => c.key === key ? { ...c, label: label || c.label, filePath } : c));
+    updateSlot(key, { ...(label ? { label } : {}), filePath });   // persisted
     setDragOver(null);
   };
 
   const editLabel = (key: string) => {
     const cart = carts.find(c => c.key === key);
     const newLabel = prompt("Cart label:", cart?.label);
-    if (newLabel) setCarts(p => p.map(c => c.key === key ? { ...c, label: newLabel } : c));
+    if (newLabel) updateSlot(key, { label: newLabel });   // persisted
   };
 
   const assignCart = async (key: string) => {
@@ -577,7 +652,14 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     if (!f) return;
     const fp = Array.isArray(f) ? f[0] : f;
     const label = (fp.split(/[\\/]/).pop() || fp).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-    setCarts(p => p.map(c => c.key === key ? { ...c, label, filePath: fp } : c));
+    updateSlot(key, { label, filePath: fp });   // persisted
+  };
+
+  /** Empty a slot — clears the audio and restores the default label, persisted like any other edit. */
+  const clearCart = (key: string) => {
+    const c = carts.find(x => x.key === key);
+    if (!c) return;
+    updateSlot(key, { label: `Cart ${c.slot + 1}`, filePath: undefined });
   };
 
   // Strip layout (#4 refinement): one row of even SQUARE carts + a side VU. Lives docked
@@ -586,7 +668,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
-        {carts.slice(0, 8).map(cart => (
+        {carts.slice(0, CART_ROW).map(cart => (
           <div
             key={cart.key}
             onClick={() => { if (cart.filePath) fireCart(cart.key); else assignCart(cart.key); }}

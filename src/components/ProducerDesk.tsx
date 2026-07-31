@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
+import { CART_SLOT_COUNT } from "./DeckConfigurator";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -275,9 +276,11 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
     try {
       const rows = await queryScoped<{ slot_number: number }>("SELECT slot_number FROM cart_slots ORDER BY slot_number", [], stationId);
       const used = new Set(rows.map(r => r.slot_number));
+      // Derived, not hardcoded (2026-07-31): this said 18 while the wall had its own 18 in a different
+      // file. One constant now owns the count — see CART_SLOT_COUNT in DeckConfigurator.
       let slot = -1;
-      for (let i = 0; i < 18; i++) { if (!used.has(i)) { slot = i; break; } }
-      if (slot === -1) { alert("All 18 cart slots are full."); return; }
+      for (let i = 0; i < CART_SLOT_COUNT; i++) { if (!used.has(i)) { slot = i; break; } }
+      if (slot === -1) { alert(`All ${CART_SLOT_COUNT} cart slots are full.`); return; }
       const label = text.slice(0, 40).replace(/\n/g, " ").trim();
       await (window as any).ether.cartSlots.upsertBySlotNumber(stationId, slot, { title: label, file_path: null, color: "#f59e0b", hotkey: "" });
     } catch (e) { console.error("Cart push failed", e); }
