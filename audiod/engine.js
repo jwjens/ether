@@ -18,6 +18,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const loggen = require("./loggen");
+const autofit = require("./autofit");   // §2.7 auto-fitter — OBSERVATION ONLY this release (writes nothing)
 const playlog = require("./playlog");
 
 // One play-log session id per daemon process (mirrors the renderer's getSessionId()).
@@ -894,11 +895,82 @@ class DaemonEngine {
         this._log(`logreader reconciled: nearest-anchor promoted "${head && head.title ? head.title : "(untitled)"}" to the head of Up Next`);
       }
     }
+    // AUTO-FITTER — OBSERVATION ONLY (§2.7). Computes what it WOULD do to make a seam land on the next
+    // hard anchor, logs it as a DECISION, and WRITES NOTHING. No row is altered, no queue is reordered,
+    // no deck is touched. One observation day on real air before authoring is even proposed.
+    this._observeFit(seamTs);
+
     // COMPANION RE-CUE — a promotion only reaches air if a deck can take it. Without this the spot waits
     // behind whatever was already cued, i.e. "closest" degrades to within-one-SONG instead of
     // within-one-SEAM. Strictly bounded: SPOT promotions only, UNSTARTED standby decks only, and never
     // the deck that is playing.
     if (promoted) this._recueForPromotedSpot(freshPending[0]);
+  }
+
+  // ── AUTO-FITTER, OBSERVATION PHASE (§2.7) ───────────────────────────────────────────────────────
+  // Computes the fit and says what it WOULD do. It writes nothing — no generated_schedule row, no queue
+  // change, no deck command. The whole point of the observation release is a day of real air saying what
+  // it would have swapped, BEFORE it is allowed to author a row.
+  //
+  // Throttled by SIGNATURE, not by time: the refill runs every couple of seconds and the fit for a given
+  // window is stable, so re-logging it would drown the Decisions view. A line appears when the window or
+  // the proposed action actually changes.
+  _observeFit(seamTs) {
+    try {
+      const anchorTs = this._nextHardAnchorTs(seamTs);
+      if (!anchorTs) { this._lastFitSig = ""; return; }
+
+      // Pending MUSIC/SPOT rows in play order — the same region the reader just published.
+      const pending = this.queue.filter(q => !this.boundQids.has(q.qid));
+      if (!pending.length) { this._lastFitSig = ""; return; }
+
+      // Candidates are separation-filtered by loggen, so a proposed swap can never break separation.
+      // Narrow to the category of the row most likely to be swapped (the last one in the window).
+      let categoryId = null;
+      try {
+        const last = pending[pending.length - 1];
+        if (last && last.schedId != null) {
+          const r = this.db.prepare("SELECT s.category_id c FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id WHERE gs.id = ?").get(last.schedId);
+          categoryId = r && r.c != null ? r.c : null;
+        }
+      } catch { /* fall through to the whole on-format set */ }
+      const candidates = loggen.eligibleForFit(this.db, this.stationId, categoryId, 200);
+
+      const fit = autofit.computeFit(seamTs, anchorTs, pending, candidates);
+      const a = fit.action;
+      const sig = `${anchorTs}|${fit.mode}|${a ? (a.type + ":" + (a.from ? a.from.filePath : "") + ">" + (a.to ? a.to.filePath : a.fill ? a.fill.filePath : "")) : ""}`;
+      if (sig === this._lastFitSig) return;
+      this._lastFitSig = sig;
+
+      const line = autofit.describeFit(fit, anchorTs, /* observationOnly */ true);
+      if (line) this._log(line);
+
+      // A window the fitter cannot close is the condition that starves it — surface it beyond the log.
+      if (fit.mode === "no-fit") {
+        try {
+          this.emit("error", { stationId: this.stationId, where: "autofit",
+            error: `no fit for the ${new Date(anchorTs * 1000).toLocaleTimeString([], { hour12: false })} window — ${fit.reason}` });
+        } catch {}
+      }
+    } catch (e) { this._log("autofit observe error (playout unaffected): " + String(e)); }
+  }
+
+  /** The next HARD anchor at or after the seam: the top of the hour, or the next pending SPOT row —
+   *  whichever comes first. Null when neither is inside the fitter's look-ahead. */
+  _nextHardAnchorTs(seamTs) {
+    const candidates = [];
+    const hourTs = this._nextTopOfHourTs();
+    if (hourTs > seamTs) candidates.push(hourTs);
+    try {
+      const r = this.db.prepare(
+        `SELECT scheduled_at FROM generated_schedule
+          WHERE station_id = ? AND content_class = 'SPOT' AND state = 'pending' AND deleted_at IS NULL
+            AND scheduled_at > ? ORDER BY scheduled_at LIMIT 1`).get(this.stationId, seamTs);
+      if (r && Number.isFinite(r.scheduled_at)) candidates.push(r.scheduled_at);
+    } catch { /* the hour anchor alone is still a valid window */ }
+    if (!candidates.length) return null;
+    const next = Math.min(...candidates);
+    return (next - seamTs) <= autofit.LOOKAHEAD_SEC ? next : null;
   }
 
   /** The next seam, in epoch SECONDS: now + what remains on the playing deck. No deck playing → now.

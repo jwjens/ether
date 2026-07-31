@@ -36,8 +36,8 @@ export type ActivityLine = {
 // including `LOG-READER FLOOR` (the log ran dry and the emergency fill took over — dead-air-adjacent)
 // and the behind/missed catch-up. `LOG-READER FLOOR` and `LOG-READER: behind` are warnings; everything
 // else the reader decides is a DECISION and belongs beside rotates and stops.
-const WARNING_RE = /liveDeck OBSERVER — TWO DECKS|watchdog: STALL|Bug-A guard|play-skip GUARD|FORCE stop|\[ERROR\]|\[WARN\]|advance ✗|\berrors?\b|\bfailed\b|SHADOW\] behind|LOG-READER FLOOR|LOG-READER: behind|emergency floor|dead-file|unresolvable|logreader-(missed|floor)/i;
-const DECISION_RE = /deck [A-F] LIVE|segue overlap|advance → (handleRotate|stop:|top-of-hour|jingle-fire|skip)|top-of-hour|jingle (FIRE|FIRING|ARMED|BRIDGING)|automationStart|automationStop|deck [A-F] ended|clean spot edge|refill:|engine-state →|resume-playout|liveDeck (OBSERVER|GUARD)|LOG-READER|logreader|nearest-anchor/i;
+const WARNING_RE = /liveDeck OBSERVER — TWO DECKS|watchdog: STALL|Bug-A guard|play-skip GUARD|FORCE stop|\[ERROR\]|\[WARN\]|advance ✗|\berrors?\b|\bfailed\b|SHADOW\] behind|LOG-READER FLOOR|LOG-READER: behind|autofit: window .* NO FIT|autofit: .*hard cut will trim|emergency floor|dead-file|unresolvable|logreader-(missed|floor)/i;
+const DECISION_RE = /deck [A-F] LIVE|segue overlap|advance → (handleRotate|stop:|top-of-hour|jingle-fire|skip)|top-of-hour|jingle (FIRE|FIRING|ARMED|BRIDGING)|automationStart|automationStop|deck [A-F] ended|clean spot edge|refill:|engine-state →|resume-playout|liveDeck (OBSERVER|GUARD)|LOG-READER|logreader|nearest-anchor|autofit/i;
 
 function classify(raw: string): Level {
   if (WARNING_RE.test(raw)) return "warning";

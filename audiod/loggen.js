@@ -313,6 +313,31 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
   return { items, mode: d.mode, missedRowIds, driftSec: d.driftSec, aheadBySec: d.mode === "ahead" ? Math.max(0, -d.driftSec) : 0 };
 }
 
+// ── AUTO-FITTER SUPPORT (2026-07-30) — the ELIGIBLE pool a fit may draw from ──────────────────────────
+// The fitter never invents a pick: it size-matches against whatever this returns. Eligibility uses the
+// SAME separation predicates as every other selection path (baseConditions + sepConfig, station-scoped
+// via play_log), so a swap the fitter proposes cannot break separation — a fit that violates separation
+// is not a fit. On-format only, MUSIC only, read-only, never throws.
+//
+// `categoryId` narrows to one category (an overshoot swap replaces like with like); omit it to draw from
+// the whole on-format set (an undershoot fill, which the ruling says comes from the clock's current
+// category — the caller passes that in).
+function eligibleForFit(db, stationId, categoryId, limit = 200) {
+  try {
+    const hour = new Date().getHours();
+    const cfg = sepConfig(db, stationId);
+    const clock = getActiveShowClock(db, stationId);
+    const fmt = getFormatCategoryIds(db, stationId, clock && clock.clockId);
+    if (!fmt.length) return [];
+    const params = [];
+    const cond = baseConditions(hour, params, stationId, { daypart: true, songSep: true, artistSepSec: cfg.artistSepSec });
+    const cats = (categoryId != null && fmt.includes(categoryId)) ? [categoryId] : fmt;
+    const catClause = `AND s.category_id IN (${cats.map(() => "?").join(",")})`;
+    const rows = db.prepare(`${SELECT} WHERE ${cond} ${catClause} LIMIT ?`).all(...params, ...cats, limit);
+    return rows.filter(r => r.file_path && r.duration_ms > 0).map(toItem);
+  } catch { return []; }
+}
+
 // ── NEAREST-ANCHOR SEAM SELECTION (2026-07-30) ────────────────────────────────────────────────────────
 // THE RULE (Jeff): early or late does not matter — CLOSEST TO THE ANCHOR WINS. At each seam, compare
 // airing the spot now against airing it after the next music row, and take whichever lands nearer:
@@ -551,4 +576,4 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored, orderForNearestAnchor };
+module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored, orderForNearestAnchor, eligibleForFit };
