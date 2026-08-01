@@ -732,14 +732,14 @@ function AudioProcessingSection() {
   // Live processing meters — the daemon's dedicated ~15Hz "audio:proc-meters" feed (emitted ONLY while a
   // toggle is on). Observed at the taps: IN/OUT LUFS, gain-reduction, IN/OUT peak (dBFS). Null until a
   // frame arrives (processing on + audio flowing). Auto-stales to null after 1s of no frames.
-  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; inPeakDb: number; outPeakDb: number }>(null);
+  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; inPeakDb: number; outPeakDb: number }>(null);
   useEffect(() => {
     const audio = (window as any).ether?.audio;
     if (!audio?.onProcMeters || !stationId) return;
     let staleTimer: any = null;
     const h = audio.onProcMeters((m: any) => {
       if (!m || m.stationId !== stationId) return;
-      setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb });
+      setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb });
       if (staleTimer) clearTimeout(staleTimer);
       staleTimer = setTimeout(() => setMeters(null), 1000);   // no frames for 1s → meters idle
     });
@@ -777,15 +777,40 @@ function AudioProcessingSection() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
             <Meter label="IN" lufs={meters?.inLufs} peakDb={meters?.inPeakDb} />
             <Meter label="OUT" lufs={meters?.outLufs} peakDb={meters?.outPeakDb} accent />
-            <div>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>GAIN REDUCTION</div>
-              <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: (meters?.grDb ?? 0) > 0.3 ? "var(--accent-blue)" : "var(--text-primary)" }}>
-                {meters ? `−${(meters.grDb || 0).toFixed(1)}` : "—"}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> dB</span>
-              </div>
-              <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, marginTop: 6, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${Math.min(100, (meters?.grDb ?? 0) / 12 * 100)}%`, background: "var(--accent-blue)", transition: "width .1s" }} />
-              </div>
-            </div>
+            {/* RIDE GAIN — the number that MOVES. Bidirectional from unity: right/green when boosting
+                quiet material toward the target, left/amber when pulling loud material down. Limiter GR
+                gets its own small indicator below, because it is 0 at steady state BY DESIGN and a bar
+                bound to it read as broken (2026-08-01). */}
+            {(() => {
+              const ride = meters?.rideGainDb ?? 0;
+              const gr = Math.abs(meters?.grDb ?? 0);
+              const SPAN = 12;                                    // ±12 dB across the bar
+              const pct = Math.min(50, (Math.abs(ride) / SPAN) * 50);
+              const boosting = ride >= 0;
+              return (
+                <div>
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>RIDE GAIN</div>
+                  <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: !meters ? "var(--text-primary)" : Math.abs(ride) > 0.3 ? (boosting ? "var(--accent-green)" : "var(--accent-amber, #fbbf24)") : "var(--text-primary)" }}>
+                    {meters ? `${ride >= 0 ? "+" : "−"}${Math.abs(ride).toFixed(1)}` : "—"}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> dB</span>
+                  </div>
+                  <div style={{ position: "relative" as const, height: 6, background: "var(--bg-tertiary)", borderRadius: 3, marginTop: 6, overflow: "hidden" }}>
+                    <div style={{ position: "absolute" as const, left: "50%", top: 0, bottom: 0, width: 1, background: "var(--border-secondary)", zIndex: 1 }} />
+                    <div style={{
+                      position: "absolute" as const, top: 0, bottom: 0,
+                      left: boosting ? "50%" : `${50 - pct}%`, width: `${pct}%`,
+                      background: boosting ? "var(--accent-green)" : "var(--accent-amber, #fbbf24)",
+                      transition: "left .1s, width .1s",
+                    }} />
+                  </div>
+                  <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    limiter{" "}
+                    <span style={{ color: gr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)", fontWeight: gr > 0.1 ? 700 : 400 }}>
+                      {gr > 0.1 ? `clamping −${gr.toFixed(1)} dB` : "idle"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 8 }}>
             Riding to {target} LUFS · limiter holds −1 dBTP · {local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
@@ -801,13 +826,28 @@ function AudioProcessingSection() {
 }
 
 // Compact LUFS + peak readout for one processing stage (IN or OUT).
+/** dBFS → 0-100% across a -60..0 scale, the usual broadcast meter span. */
+export function dbfsPct(db?: number): number {
+  if (db == null || !Number.isFinite(db)) return 0;
+  return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+}
+
 function Meter({ label, lufs, peakDb, accent }: { label: string; lufs?: number; peakDb?: number; accent?: boolean }) {
   const fmt = (v?: number) => (v == null || v <= -70 ? "—" : v.toFixed(1));
+  // A LEVEL BAR, not just a number (2026-08-01). The IN and OUT peaks are the actual signal and they
+  // move with the audio — that is what tells an operator the chain is passing and what it is doing to
+  // the level. Amber above -6 dBFS, red at -1 and up (the limiter's ceiling).
+  const pct = dbfsPct(peakDb);
+  const col = (peakDb ?? -70) >= -1 ? "#f87171" : (peakDb ?? -70) >= -6 ? "var(--accent-amber, #fbbf24)"
+            : accent ? "var(--accent-blue)" : "var(--accent-green)";
   return (
     <div>
       <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>{label} LOUDNESS</div>
       <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: accent ? "var(--accent-blue)" : "var(--text-primary)" }}>
         {fmt(lufs)}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> LUFS</span>
+      </div>
+      <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, marginTop: 6, overflow: "hidden", position: "relative" as const }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: col, transition: "width .08s linear" }} />
       </div>
       <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>peak {fmt(peakDb)} dBFS</div>
     </div>

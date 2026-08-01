@@ -563,7 +563,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // OFF is a real state, shown honestly: "processing off" rather than a blank row or a permanent
   // "waiting", which is what the panel showed for the whole time the meters were unwired.
   const [procOn, setProcOn] = useState<{ local: boolean; stream: boolean } | null>(null);
-  const [procMeters, setProcMeters] = useState<{ inLufs: number; outLufs: number; grDb: number; target: number } | null>(null);
+  const [procMeters, setProcMeters] = useState<{ inLufs: number; outLufs: number; grDb: number; rideGainDb: number; target: number; inPeakDb: number; outPeakDb: number } | null>(null);
   useEffect(() => {
     // The daemon only emits while processing is ON, so absence of frames IS the off signal — but read
     // the KV too, so the row can distinguish "off" from "on but not yet reporting".
@@ -585,7 +585,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     let staleTimer: any = null;
     const h = audio.onProcMeters((m: any) => {
       if (!m || m.stationId !== stationId) return;
-      setProcMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, target: m.target });
+      setProcMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, target: m.target, inPeakDb: m.inPeakDb ?? -70, outPeakDb: m.outPeakDb ?? -70 });
       if (staleTimer) clearTimeout(staleTimer);
       staleTimer = setTimeout(() => setProcMeters(null), 1500);   // frames stopped → stale, not stuck
     });
@@ -652,9 +652,13 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 : [procOn.local ? "monitor" : null, procOn.stream ? "stream" : null].filter(Boolean).join(" + ");
               const m = procMeters;
               const lufs = (v?: number) => (v == null || v <= -70 ? "—" : `${v.toFixed(1)}`);
-              // Gain reduction is reported negative-going; show magnitude, and scale the bar over 12 dB.
+              // RIDE GAIN is what moves — bidirectional from unity. Limiter GR sits at 0 at steady
+              // state by design, so a bar bound to it read as permanently broken (2026-08-01).
+              const ride = m ? m.rideGainDb : 0;
               const gr = m ? Math.abs(m.grDb) : 0;
-              const grPct = Math.max(0, Math.min(100, (gr / 12) * 100));
+              const SPAN = 12;
+              const ridePct = Math.min(50, (Math.abs(ride) / SPAN) * 50);
+              const boosting = ride >= 0;
               return (
                 <>
                   <HealthRow
@@ -667,13 +671,44 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   />
                   {anyOn && m && (
                     <div style={{ padding: "2px 2px 8px" }}>
+                      {/* BEFORE and AFTER level meters — the actual signal, moving. These are what say
+                          the chain is passing audio and what it is doing to the level; the ride bar
+                          below says how hard it is working. -60..0 dBFS, amber over -6, red at -1. */}
+                      {([["in", m.inPeakDb], ["out", m.outPeakDb]] as const).map(([which, pk]) => {
+                        const pct = Math.max(0, Math.min(100, ((pk + 60) / 60) * 100));
+                        const col = pk >= -1 ? "#f87171" : pk >= -6 ? "var(--accent-amber, #fbbf24)"
+                                  : which === "out" ? "var(--accent-blue)" : "var(--accent-green)";
+                        return (
+                          <div key={which} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', ui-monospace, monospace", marginBottom: 3 }}>
+                            <span style={{ minWidth: 96 }}>{which === "in" ? "level before" : "level after"}</span>
+                            <div style={{ flex: 1, height: 6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" as const }}>
+                              <div style={{ position: "absolute" as const, top: 0, bottom: 0, left: 0, width: `${pct}%`, background: col, transition: "width .08s linear" }} />
+                            </div>
+                            <span style={{ minWidth: 62, textAlign: "right" as const, color: "var(--text-tertiary)" }}>
+                              {pk <= -70 ? "—" : `${pk.toFixed(1)} dBFS`}
+                            </span>
+                          </div>
+                        );
+                      })}
                       <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', ui-monospace, monospace" }}>
-                        <span style={{ minWidth: 96 }}>gain reduction</span>
+                        <span style={{ minWidth: 96 }}>ride gain</span>
                         <div style={{ flex: 1, height: 6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" as const }}>
-                          <div style={{ position: "absolute" as const, inset: 0, width: `${grPct}%`, background: gr > 6 ? "var(--accent-amber, #fbbf24)" : "var(--accent-green)" }} />
+                          {/* unity mark — the bar grows right when boosting, left when cutting */}
+                          <div style={{ position: "absolute" as const, left: "50%", top: 0, bottom: 0, width: 1, background: "var(--border-secondary)" }} />
+                          <div style={{
+                            position: "absolute" as const, top: 0, bottom: 0,
+                            left: boosting ? "50%" : `${50 - ridePct}%`, width: `${ridePct}%`,
+                            background: boosting ? "var(--accent-green)" : "var(--accent-amber, #fbbf24)",
+                            transition: "left .1s, width .1s",
+                          }} />
                         </div>
-                        <span style={{ minWidth: 54, textAlign: "right" as const, color: gr > 0.1 ? "var(--text-secondary)" : "var(--text-tertiary)" }}>
-                          {gr > 0.1 ? `−${gr.toFixed(1)} dB` : "0 dB"}
+                        <span style={{ minWidth: 62, textAlign: "right" as const, color: Math.abs(ride) > 0.3 ? "var(--text-secondary)" : "var(--text-tertiary)" }}>
+                          {`${ride >= 0 ? "+" : "−"}${Math.abs(ride).toFixed(1)} dB`}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4, paddingLeft: 104 }}>
+                        limiter <span style={{ color: gr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)", fontWeight: gr > 0.1 ? 700 : 400 }}>
+                          {gr > 0.1 ? `clamping −${gr.toFixed(1)} dB` : "idle"}
                         </span>
                       </div>
                     </div>

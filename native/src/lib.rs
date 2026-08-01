@@ -199,21 +199,21 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     // panel read "waiting for audio" forever. The processing itself was running; only its meters were
     // blind. Adding a field to AudioLevels is NOT enough — it has to be named here too.
     let (la, lb, lc, lcart, lmaster, frames, active, mon, decks,
-         p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak) = match levels_arc.lock() {
+         p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak, p_ride) = match levels_arc.lock() {
         Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master,
                     lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone(),
                     lvl.proc_local, lvl.proc_stream, lvl.proc_target_lufs,
                     lvl.proc_in_lufs, lvl.proc_out_lufs, lvl.proc_gr_db,
-                    lvl.proc_in_peak, lvl.proc_out_peak),
+                    lvl.proc_in_peak, lvl.proc_out_peak, lvl.proc_ride_gain_db),
         Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0u32, 0.0f32, Vec::new(),
-                    false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32),
+                    false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32),
     };
     serde_json::json!({
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster,
         "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks,
         "proc_local": p_local, "proc_stream": p_stream, "proc_target_lufs": p_target,
         "proc_in_lufs": p_in_lufs, "proc_out_lufs": p_out_lufs, "proc_gr_db": p_gr,
-        "proc_in_peak": p_in_peak, "proc_out_peak": p_out_peak
+        "proc_in_peak": p_in_peak, "proc_out_peak": p_out_peak, "proc_ride_gain_db": p_ride
     }).to_string()
 }
 

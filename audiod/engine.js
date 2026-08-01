@@ -231,6 +231,10 @@ class DaemonEngine {
         target: lv.proc_target_lufs ?? -14,
         inLufs: lv.proc_in_lufs ?? -70, outLufs: lv.proc_out_lufs ?? -70,
         grDb: lv.proc_gr_db ?? 0,
+        // The RIDE's applied gain (signed): + boosting quiet material, - pulling loud material down.
+        // This is what the meter bars show — grDb is the LIMITER's reduction and sits at 0 at steady
+        // state by design, which made a bar bound to it look permanently broken (2026-08-01).
+        rideGainDb: lv.proc_ride_gain_db ?? 0,
         inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
       });
     } catch { /* never break playout for a meter frame */ }

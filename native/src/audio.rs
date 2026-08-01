@@ -135,6 +135,11 @@ pub struct AudioLevels {
     #[serde(default)] pub proc_in_lufs:  f32,
     #[serde(default)] pub proc_out_lufs: f32,
     #[serde(default)] pub proc_gr_db:    f32,
+    /// The loudness ride's CURRENT APPLIED GAIN in dB, signed: + = boosting quiet material toward the
+    /// target, - = pulling loud material down. This is the number that MOVES and the one the meters
+    /// exist to show. proc_gr_db is the LIMITER's reduction, which sits at 0 at steady state by design —
+    /// binding a bar to it made the bar look broken (2026-08-01).
+    #[serde(default)] pub proc_ride_gain_db: f32,
     #[serde(default)] pub proc_in_peak:  f32,
     #[serde(default)] pub proc_out_peak: f32,
     /// Per-deck A/B/C telemetry snapshot (source/active/paused/volume/gain).
@@ -343,6 +348,7 @@ pub struct BusState {
     pub proc_in_lufs:  f32,
     pub proc_out_lufs: f32,
     pub proc_gr_db:    f32,
+    pub proc_ride_gain_db: f32,
 }
 
 impl BusState {
@@ -367,7 +373,7 @@ impl BusState {
             proc_target_lufs: -14.0,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_in_peak: 0.0, proc_out_peak: 0.0,
-            proc_in_lufs: -70.0, proc_out_lufs: -70.0, proc_gr_db: 0.0,
+            proc_in_lufs: -70.0, proc_out_lufs: -70.0, proc_gr_db: 0.0, proc_ride_gain_db: 0.0,
         }
     }
 }
@@ -853,6 +859,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_in_lufs     = bus.proc_in_lufs;
                                     lvl.proc_out_lufs    = bus.proc_out_lufs;
                                     lvl.proc_gr_db       = bus.proc_gr_db;
+                                    lvl.proc_ride_gain_db = bus.proc_ride_gain_db;
                                     lvl.proc_in_peak     = bus.proc_in_peak;
                                     lvl.proc_out_peak    = bus.proc_out_peak;
                                     let mut active = 0u32;
@@ -1114,11 +1121,11 @@ fn mixer_callback(
         let meters = if let Ok(mut p) = bus.processor.try_lock() {
             p.set_target(target);
             p.process_planar(&mut pl, &mut pr);
-            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db()))
+            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
         } else { None };
-        if let Some((il, ol, gr)) = meters {
+        if let Some((il, ol, gr, ride)) = meters {
             let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
-            bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr;
+            bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
             bus.proc_in_peak  = peak.max(bus.proc_in_peak * VU_RELEASE);
             bus.proc_out_peak = op.max(bus.proc_out_peak * VU_RELEASE);
             (Some(pl), Some(pr))
