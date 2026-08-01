@@ -72,7 +72,6 @@ pub fn audio_load(deck: String, file_path: String, title: String, artist: String
     audio.sender.send(AudioCmd::Load { deck, file_path, title, artist, gain_db: g }).is_ok()
 }
 
-#[napi]
 /// Returns FALSE — without claiming "playing" — when the deck has nothing to play.
 ///
 /// Before 2026-07-31 this set status="playing" unconditionally and returned is_ok() of the send, which
@@ -192,14 +191,29 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     // (frames_total / active_decks / mon_vol / per-deck), so the daemon's `[mix sN]` heartbeat can
     // read it off the existing getLevels call. Additive JSON fields — existing consumers (renderer
     // VU: a/b/c/master) ignore the extra keys; no behaviour change.
-    let (la, lb, lc, lcart, lmaster, frames, active, mon, decks) = match levels_arc.lock() {
+    // ── Audio Processing meters (2026-07-31) ──────────────────────────────────────────────────────
+    // These eight fields were computed by the DSP, published to AudioLevels by the audio thread
+    // (audio.rs:850-857) — and then DROPPED HERE, because this function hand-builds its JSON from an
+    // explicit field list rather than serializing the struct. So `proc_local` never reached JS, the
+    // daemon's _emitProcMeters returned at `if (!lv.proc_local …)` on every frame, and the Settings
+    // panel read "waiting for audio" forever. The processing itself was running; only its meters were
+    // blind. Adding a field to AudioLevels is NOT enough — it has to be named here too.
+    let (la, lb, lc, lcart, lmaster, frames, active, mon, decks,
+         p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak) = match levels_arc.lock() {
         Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master,
-                    lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone()),
-        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0u32, 0.0f32, Vec::new()),
+                    lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone(),
+                    lvl.proc_local, lvl.proc_stream, lvl.proc_target_lufs,
+                    lvl.proc_in_lufs, lvl.proc_out_lufs, lvl.proc_gr_db,
+                    lvl.proc_in_peak, lvl.proc_out_peak),
+        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0u32, 0.0f32, Vec::new(),
+                    false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32),
     };
     serde_json::json!({
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster,
-        "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks
+        "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks,
+        "proc_local": p_local, "proc_stream": p_stream, "proc_target_lufs": p_target,
+        "proc_in_lufs": p_in_lufs, "proc_out_lufs": p_out_lufs, "proc_gr_db": p_gr,
+        "proc_in_peak": p_in_peak, "proc_out_peak": p_out_peak
     }).to_string()
 }
 

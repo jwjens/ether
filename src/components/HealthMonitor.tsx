@@ -555,6 +555,43 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     return () => { stop = true; clearInterval(id); };
   }, [stationId, engine]);
 
+  // ── AUDIO PROCESSING METERS (2026-07-31) ────────────────────────────────────────────────────────
+  // The operator's day-to-day view of the loudness chain. Same emitter as the Settings panel — the
+  // daemon's `audio:proc-meters` push — so this is a SECOND SUBSCRIBER, not a second poll. Settings
+  // keeps its meters for while you are adjusting the target; this is the one you leave open.
+  //
+  // OFF is a real state, shown honestly: "processing off" rather than a blank row or a permanent
+  // "waiting", which is what the panel showed for the whole time the meters were unwired.
+  const [procOn, setProcOn] = useState<{ local: boolean; stream: boolean } | null>(null);
+  const [procMeters, setProcMeters] = useState<{ inLufs: number; outLufs: number; grDb: number; target: number } | null>(null);
+  useEffect(() => {
+    // The daemon only emits while processing is ON, so absence of frames IS the off signal — but read
+    // the KV too, so the row can distinguish "off" from "on but not yet reporting".
+    let stop = false;
+    const readFlags = async () => {
+      try {
+        const g = async (k: string) => (await (window as any).ether?.invoke?.("station_config_kv:get-value", stationId, k))?.value;
+        const [l, s] = [await g("proc_local"), await g("proc_stream")];
+        if (!stop) setProcOn({ local: l === "1" || l === "true", stream: s === "1" || s === "true" });
+      } catch { if (!stop) setProcOn(null); }
+    };
+    readFlags();
+    const id = setInterval(readFlags, 5000);
+    return () => { stop = true; clearInterval(id); };
+  }, [stationId]);
+  useEffect(() => {
+    const audio = (window as any).ether?.audio;
+    if (!audio?.onProcMeters || !stationId) return;
+    let staleTimer: any = null;
+    const h = audio.onProcMeters((m: any) => {
+      if (!m || m.stationId !== stationId) return;
+      setProcMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, target: m.target });
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = setTimeout(() => setProcMeters(null), 1500);   // frames stopped → stale, not stuck
+    });
+    return () => { try { audio.offProcMeters?.(h); } catch { /* ignore */ } if (staleTimer) clearTimeout(staleTimer); };
+  }, [stationId]);
+
   // §3.4 — poll the active station's engine for its committed playout mode (1s; it is a local getter,
   // no IPC). Read-only: this reports the mode, it never sets it.
   const [playoutMode, setPlayoutMode] = useState<{ stationId: number; mode: "daemon" | "in-process"; daemonEnabled: boolean | null; contradiction: boolean; localAdvanceSec: number } | null>(null);
@@ -602,6 +639,50 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" as const, padding: "0 32px" }}>
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
         <LiveHealthMonitor />
+
+        {/* ── AUDIO PROCESSING — the loudness chain, at a glance ──────────────────────────────────
+            IN → OUT LUFS and the gain-reduction bar say whether the ride is actually riding. OFF is
+            stated, never blank. Fed by the same audio:proc-meters push the Settings panel uses. */}
+        {procOn && (
+          <div style={{ paddingTop: 18, marginTop: 12, borderTop: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Audio Processing</div>
+            {(() => {
+              const anyOn = procOn.local || procOn.stream;
+              const paths = !anyOn ? "off on both paths"
+                : [procOn.local ? "monitor" : null, procOn.stream ? "stream" : null].filter(Boolean).join(" + ");
+              const m = procMeters;
+              const lufs = (v?: number) => (v == null || v <= -70 ? "—" : `${v.toFixed(1)}`);
+              // Gain reduction is reported negative-going; show magnitude, and scale the bar over 12 dB.
+              const gr = m ? Math.abs(m.grDb) : 0;
+              const grPct = Math.max(0, Math.min(100, (gr / 12) * 100));
+              return (
+                <>
+                  <HealthRow
+                    label="Loudness processing"
+                    value={!anyOn ? "Off" : m ? `${lufs(m.inLufs)} → ${lufs(m.outLufs)} LUFS` : "On — waiting for audio"}
+                    status={!anyOn ? "warn" : m ? "ok" : "warn"}
+                    sub={!anyOn
+                      ? "no loudness ride or limiter on this station — quiet tracks stay quiet"
+                      : `${paths} · riding to ${m ? m.target : -14} LUFS · limiter holds −1 dBTP`}
+                  />
+                  {anyOn && m && (
+                    <div style={{ padding: "2px 2px 8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', ui-monospace, monospace" }}>
+                        <span style={{ minWidth: 96 }}>gain reduction</span>
+                        <div style={{ flex: 1, height: 6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" as const }}>
+                          <div style={{ position: "absolute" as const, inset: 0, width: `${grPct}%`, background: gr > 6 ? "var(--accent-amber, #fbbf24)" : "var(--accent-green)" }} />
+                        </div>
+                        <span style={{ minWidth: 54, textAlign: "right" as const, color: gr > 0.1 ? "var(--text-secondary)" : "var(--text-tertiary)" }}>
+                          {gr > 0.1 ? `−${gr.toFixed(1)} dB` : "0 dB"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+          </div>
+        )}
 
         {/* ── SPOT SCHEDULE — anchors vs what actually airs. Display-only. ────────────────────────
             The point of this table is the PROJECTED column: a spot that is going to miss its anchor
