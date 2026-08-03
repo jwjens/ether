@@ -188,7 +188,10 @@ const handlers = {
   "queue:move":       (m) => getEngine(m.stationId).intentMove(m.qid, m.where),
   "queue:clear":      (m) => getEngine(m.stationId).intentClearPending(),
   "deck:cue":         (m) => getEngine(m.stationId).intentCueDeck(m.deck, m.songRef || {}),
+  // Operator start / safety skip — the deck ON button. Serialized, guarded, honest result.
   "deck:crossfade":   (m) => getEngine(m.stationId).intentCrossfade(m.from, m.to),
+  // Board-style channel OFF — audio off now, not a pause.
+  "deck:off":         (m) => getEngine(m.stationId).intentDeckOff(m.deck),
   // PLAY NOW (Slice 4) — manual stall escape: load+play a song now (with songRef), else play the next
   // cued/queued track. Returns true if it put a deck on air.
   "deck:playNow":     (m) => getEngine(m.stationId).intentPlayNow(m.songRef || null),

@@ -654,43 +654,9 @@ export default function App() {
   };
   const [globalSearch, setGlobalSearch] = useState("");
   const [autoXfade, setAutoXfade] = useState(true);
-  const [xfadeActive, setXfadeActive] = useState(false);
-  const handleXfade = () => {
-    // Stage 2a (Item 10): in daemon mode the daemon owns deck rotation — send an explicit
-    // deck:crossfade intent (it picks the ready target + performs the fade) instead of crossfading
-    // locally, which would race the daemon. The renderer mutates nothing here. In-process below.
-    if (engine.isDaemonDriven) { engine.deckCrossfade(); return; }
-    const playingDeck = deckA?.status === "playing" ? "A" : deckB?.status === "playing" ? "B" : deckC?.status === "playing" ? "C" : null;
-    if (!playingDeck) return;
-    const order: Array<"A"|"B"|"C"> = ["A", "B", "C"];
-    const currentIdx = order.indexOf(playingDeck as "A"|"B"|"C");
-    let targetDeck: "A"|"B"|"C" | null = null;
-    for (let i = 1; i <= 2; i++) {
-      const candidate = order[(currentIdx + i) % 3];
-      if (engine.isDeckReady(candidate)) { targetDeck = candidate; break; }
-    }
-    if (!targetDeck) return;
-    engine.crossfade(playingDeck, targetDeck, xfadeDuration * 1000);
-    // Dequeue targetDeck's song and clear its ready slot immediately — it just went live.
-    const qBefore = engine.getQueue();
-    if (qBefore.length > 0) engine.replaceQueue(qBefore.slice(1));
-    engine.clearDeckReady(targetDeck as "A"|"B"|"C");
-    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    // Load next song into old playing deck AFTER the crossfade's own stop fires (ms+100).
-    // Loading before the stop clears the source and the audio thread silently skips Play.
-    setTimeout(async () => {
-      const readyCount = (["A","B","C"] as const).filter(id => engine.isDeckReady(id)).length;
-      const q = engine.getQueue();
-      if (q.length > readyCount) {
-        const next = q[readyCount];
-        await engine.loadToDeck(playingDeck, next.filePath, next.title, next.artist, next.gainDb, next.durationMs);
-        engine.markDeckReady(playingDeck as "A" | "B" | "C");
-      }
-      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    }, (xfadeDuration * 1000) + 300);
-    setXfadeActive(true);
-    setTimeout(() => setXfadeActive(false), 2200);
-  };
+  // handleXfade/xfadeActive removed 2026-08-02 with the XFADE button. The deck ON button is the only
+  // start control now, and it routes through the daemon's serialized rotate (deckCrossfade →
+  // intentCrossfade → _rotateBody) rather than this renderer-side crossfade.
   const [toolsCollapsed, setToolsCollapsed] = useState(() => localStorage.getItem("ether_tools_collapsed") === "1");
   const toggleToolsCollapsed = () => setToolsCollapsed(c => { const next = !c; localStorage.setItem("ether_tools_collapsed", next ? "1" : "0"); return next; });
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -2545,8 +2511,6 @@ export default function App() {
                   toggleToolsCollapsed={toggleToolsCollapsed}
                   autoXfade={autoXfade}
                   setAutoXfade={(v) => { setAutoXfade(v); engine.outroCrossfade = v; }}
-                  xfadeActive={xfadeActive}
-                  handleXfade={handleXfade}
                   onOpenCarts={() => setPanel("cartwall")}
                   libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
                 />
@@ -2845,15 +2809,8 @@ export default function App() {
             cursor: (delayArmed && delayFill >= 1) ? "pointer" : "not-allowed",
           }}>DUMP</button>
 
-        {/* XFADE */}
-        <button onClick={handleXfade} style={{
-          height: 36, padding: "0 14px", borderRadius: 0,
-          background: xfadeActive ? "#ef4444" : "transparent",
-          border: `1px solid ${xfadeActive ? "#ef4444" : "var(--border-primary)"}`,
-          color: xfadeActive ? "#fff" : "var(--text-secondary)",
-          fontSize: 11, fontWeight: 800, letterSpacing: "0.1em",
-          cursor: "pointer", transition: "all 0.12s",
-        }}>XFADE</button>
+        {/* XFADE removed 2026-08-02 — the deck ON button is the only start control. Its machinery
+            (deckCrossfade → intentCrossfade → the serialized rotate) is what ON now calls. */}
 
         {/* IRIS — far right; the ONE purple button (Iris's brand). Standard bar rectangle; replaces the
             old floating circle. Opens exactly what the circle opened (the chat panel). */}
@@ -3506,7 +3463,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, xfadeActive, handleXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3527,8 +3484,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   toggleToolsCollapsed: () => void;
   autoXfade: boolean;
   setAutoXfade: (v: boolean) => void;
-  xfadeActive: boolean;
-  handleXfade: () => void;
   onOpenCarts: () => void;
   libraryDock: JSX.Element;
   jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;
@@ -3921,9 +3876,31 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     isPlaying={deck?.status === "playing"}
                     isOn={true}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
-                    onToggleOn={() => {
-                      if (deck?.status === "playing") engine.getDeck(slot)?.pause();
-                      else engine.getDeck(slot)?.play();
+                    // ── DECK ON — the board's start control, and the ONLY one (2026-08-02) ──────────
+                    // This used to be a solo play/pause: `getDeck(slot).play()` → a RAW audioPlay
+                    // straight to Rust, outside the advance chain. No serialization, no guards, no stop
+                    // of the outgoing, no liveDeck update — the out-of-chain start shape that put two
+                    // decks on air on 2026-07-29. Pressing ON on a cued deck while another played gave
+                    // you both, caught only by the liveDeck guard after its 7.5s grace.
+                    //
+                    // Now: PLAYING → board-style channel OFF (audio off now, not a pause — a real
+                    // board's ON kills the channel). Otherwise → the serialized, guarded rotate, which
+                    // starts this deck and stops the outgoing via the deferred Bug-A stop.
+                    // (docs/auto-xfade-contract-trace-2026-08-02.md)
+                    onToggleOn={async () => {
+                      const eng: any = engine;
+                      if (deck?.status === "playing") {
+                        if (eng.isDaemonDriven) await eng.deckOff(slot);
+                        else engine.getDeck(slot)?.stop();
+                        return;
+                      }
+                      if (eng.isDaemonDriven) {
+                        const r = await eng.deckCrossfade(undefined, slot);
+                        // Honest feedback: a press the daemon absorbed must not look like it worked.
+                        if (r && r.ok === false) console.warn(`[deck ${slot}] start not applied: ${r.reason}`);
+                        return;
+                      }
+                      engine.getDeck(slot)?.play();   // in-process: no daemon chain to route through
                     }}
                   />
                 </div>

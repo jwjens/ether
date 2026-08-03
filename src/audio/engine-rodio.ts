@@ -459,7 +459,13 @@ export class AudioEngine {
   queueMove(qid: string, where: "top" | "bottom"): Promise<any> { return this.daemonCmd("queue:move", { qid, where }); }
   queueClearPending(): Promise<any> { return this.daemonCmd("queue:clear", {}); }
   deckCue(deck: DeckId, songRef: { filePath: string; title: string; artist: string; gainDb?: number; durationMs?: number; chainType?: "segue" | "stop" }): Promise<any> { return this.daemonCmd("deck:cue", { deck, songRef }); }
+  /** Operator START / safety skip — the deck ON button's start path. Serialized and guarded in the
+   *  daemon; returns an honest { ok, reason } so the UI never reports a silently-absorbed press as
+   *  success. NEVER use getDeck().play() to start a deck against automation: that is a raw audioPlay
+   *  outside the advance chain — the shape that put two decks on air on 2026-07-29. */
   deckCrossfade(from?: DeckId, to?: DeckId): Promise<any> { return this.daemonCmd("deck:crossfade", { from, to }); }
+  /** Board-style channel OFF — audio off now (not a pause). */
+  deckOff(deck: DeckId): Promise<any> { return this.daemonCmd("deck:off", { deck }); }
   // Routine segue overlap (auto). Stored locally + pushed to the daemon (the daemon resets to its
   // default on respawn, so this is re-pushed on every daemon (re)connect + automation start).
   setSegueOverlap(seconds: number): Promise<any> | void {

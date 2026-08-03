@@ -32,6 +32,7 @@ const SESSION = crypto.randomUUID();
 // shadow (_shadowEvalTimeAnchor) records, at every go-live, what the flipped reader WOULD have aired
 // vs what legacy aired. That divergence ledger is the burn-in that gates the flip. Inherited from the
 // Electron process env via the daemon spawn (audio-daemon-client.js) — no spawn change needed.
+const SAFETY_CUT_MS = 300;   // operator skip: outgoing off in ~300ms, not the 3s musical overlap
 const LOG_READER_FLIP = process.env.ETHER_LOG_READER === "1";   // DEV global override (forces ALL stations on)
 // Rider A slack (§2.7): AHEAD airs the next row EARLY silently within this window; beyond it, a health
 // event fires (still never waits, never dead-airs — music floats forward).
@@ -697,15 +698,26 @@ class DaemonEngine {
     return "stop";
   }
 
-  handleRotate(fromId, toId) {
-    this._advance("handleRotate", async () => {
+  // The outgoing deck's stop delay for an OPERATOR safety skip. The routine musical segue keeps
+  // crossfadeDuration (3s of overlap); a panic press must not leave the offending audio up that long.
+  // (docs/auto-xfade-contract-trace-2026-08-02.md clause 1)
+  handleRotate(fromId, toId, opts) {
+    this._advance("handleRotate", async () => { await this._rotateBody(fromId, toId, opts); });
+  }
+
+  /** The rotate itself — shared by automation's handleRotate and the operator's start/skip. MUST be
+   *  called from inside _advance (both callers are). Guards unchanged: spurious-end, play-skip, the
+   *  deferred Bug-A stop. `opts.cutMs` overrides the outgoing stop delay; preloads are gated on
+   *  _mayDecide() so nothing auto-cues in MANUAL. */
+  async _rotateBody(fromId, toId, opts) {
+    {
         const live = this._state();
         const liveTo = live ? (toId === "A" ? live.deckA : toId === "B" ? live.deckB : live.deckC) : null;
         const otherPlaying = live ? (
           (fromId !== "A" && live.deckA?.status === "playing") ||
           (fromId !== "B" && live.deckB?.status === "playing") ||
           (fromId !== "C" && live.deckC?.status === "playing")) : false;
-        if (liveTo?.status === "playing" || otherPlaying) return; // spurious-end guard
+        if (liveTo?.status === "playing" || otherPlaying) return false; // spurious-end guard (absorbed)
         // Play-skip guard (Bug A safety net): only segue to a deck that truly holds a loaded source
         // (deckReady is now authoritative — the deferred stop below clears it). If it doesn't, never
         // silently play an empty deck (the "[RUST] Play … source=None … skipping" dead-air) — emit a
@@ -714,10 +726,10 @@ class DaemonEngine {
           this._log("play-skip GUARD: deck " + toId + " has no ready source — reloading instead of silent skip");
           this.emit("error", { stationId: this.stationId, where: "play-skip", deck: toId, error: "source missing at rotate — reloading deck " + toId });
           setTimeout(() => { this.preload(toId, 0).then(() => { if (this.deckReady.has(toId)) this.handleRotate(fromId, toId); }); }, 0);
-          return;
+          return false;
         }
         this._play(toId);
-        const cfMs = this.crossfadeDuration * 1000;
+        const cfMs = Number.isFinite(opts && opts.cutMs) ? opts.cutMs : this.crossfadeDuration * 1000;
         // Bug A (source-wipe race): run the outgoing deck's post-crossfade stop ON the advance chain
         // (serialized with preload) and GUARD it — skip if the deck was re-loaded since (deckGen changed)
         // or went live again; when it does stop, clear deckReady/endTriggered so a nulled Rust source can
@@ -744,11 +756,23 @@ class DaemonEngine {
         // an unrelated upcoming song). Auto-cued decks DO consume their queue slot.
         if (this.manualCue.has(toId)) this.manualCue.delete(toId);
         else if (this.queue.length > 0) this.dequeue();
-        const nearDelay = cfMs + 800;
-        if (toId === "B") { setTimeout(() => this.preload("C", 0), 800); setTimeout(() => this.preload("A", 1), nearDelay); }
-        else if (toId === "C") { setTimeout(() => this.preload("A", 0), 800); setTimeout(() => this.preload("B", 1), nearDelay); }
-        else if (toId === "A") { setTimeout(async () => { await this.refillIfNeeded(); this.preload("B", 0); }, 800); setTimeout(() => this.preload("C", 1), nearDelay); }
-    });
+        this._armAfterRotate(toId, cfMs);
+        return true;
+    }
+  }
+
+  /** Re-arm after any rotate/start: refill the log, then cue the two standby decks.
+   *  - refillIfNeeded on EVERY target letter (it used to fire only for "A", so the log-reader continued
+   *    from the skipped-to position on one letter in three).
+   *  - Gated on _mayDecide(): in MANUAL nothing auto-cues — the jock owns the hour. */
+  _armAfterRotate(toId, cfMs) {
+    if (!this._mayDecide()) return;
+    const near = (Number.isFinite(cfMs) ? cfMs : this.crossfadeDuration * 1000) + 800;
+    const order = ["A", "B", "C"];
+    const i = order.indexOf(toId);
+    const n1 = order[(i + 1) % 3], n2 = order[(i + 2) % 3];
+    setTimeout(async () => { await this.refillIfNeeded(); this.preload(n1, 0); }, 800);
+    setTimeout(() => this.preload(n2, 1), near);
   }
 
   handleLoadNext(deckId) {
@@ -1371,15 +1395,75 @@ class DaemonEngine {
   // deck:crossfade — fade the playing deck to a ready one. Args optional: from defaults to the
   // playing deck, to defaults to the next ready deck in rotation. No-op if there's no playing deck
   // or no ready target. Reuses handleRotate (carries its own spurious-end guards + dequeue).
+  // ── OPERATOR START / SAFETY SKIP (2026-08-02) ───────────────────────────────────────────────────
+  // This is what the deck ON button now calls. It used to back the XFADE button; ON previously issued a
+  // RAW audioPlay straight to Rust (App.tsx:3924) — no serialization, no guards, no stop of the
+  // outgoing, no liveDeck update. That is the out-of-chain start shape that put two decks on air on
+  // 2026-07-29. Every start now goes through the advance chain.
+  //
+  // THE DECISION IS MADE INSIDE THE CHAIN. It used to be resolved synchronously before queuing, so a
+  // rapid double-press read pre-rotate state twice and queued two identical rotates — the second was
+  // absorbed by the spurious-end guard (a guard written for spurious END DETECTION, not for
+  // double-presses) while the caller was still told `true`. For a SAFETY control, "I pressed it, nothing
+  // happened, and it said OK" is the worst possible feedback.
+  //
+  // Returns an honest outcome: { ok, reason, from, to }.
   intentCrossfade(from, to) {
-    const order = ["A", "B", "C"];
-    const playing = from && order.includes(from) ? from : order.find(d => this._deckState(d).status === "playing");
-    if (!playing) return false;
-    let target = to && order.includes(to) ? to : null;
-    if (!target) { const i = order.indexOf(playing); for (let k = 1; k <= 2; k++) { const c = order[(i + k) % 3]; if (this.deckReady.has(c)) { target = c; break; } } }
-    if (!target || target === playing || !this.deckReady.has(target)) return false;
-    this.handleRotate(playing, target);
-    return true;
+    return this._advance("operator-start", async () => {
+      const order = ["A", "B", "C"];
+      // liveDeck FIRST: during the cut window the outgoing still reports "playing", so a status scan
+      // resolves against the deck on its way out and a double-press claims a skip that was absorbed.
+      const playing = from && order.includes(from) ? from
+        : (this.liveDeck && order.includes(this.liveDeck) ? this.liveDeck
+          : order.find(d => this._deckState(d).status === "playing")) || null;
+
+      // Requested deck is ALREADY the live one — nothing to do, and say so rather than claiming a skip.
+      if (to && to === playing) return { ok: false, reason: "already-live", from: playing, to };
+
+      let target = to && order.includes(to) ? to : null;
+      if (!target) { const i = order.indexOf(playing || "A"); for (let k = 1; k <= 2; k++) { const c = order[(i + k) % 3]; if (this.deckReady.has(c)) { target = c; break; } } }
+      if (!target) return { ok: false, reason: "no-target" };
+      if (!this.deckReady.has(target) && this._deckState(target).status !== "playing") {
+        return { ok: false, reason: "target-not-cued", to: target };
+      }
+
+      // COLD START — nothing on air. Start the target on the chain; there is no outgoing to stop.
+      // Never a raw audioPlay: this runs inside _advance, so it is serialized with preload and stops.
+      if (!playing) {
+        this._play(target);
+        this._setDeck(target, { status: "playing", positionSec: 0 });
+        this._fireStart(target);
+        this._log("operator start: deck " + target + " LIVE — " + (this._deckState(target).title || "(untitled)"));
+        this.deckReady.delete(target); this.endTriggered.delete(target);
+        if (this.manualCue.has(target)) this.manualCue.delete(target);
+        else if (this.queue.length > 0) this.dequeue();
+        this._armAfterRotate(target);
+        return { ok: true, reason: "started", to: target };
+      }
+
+      // TAKE-OVER — the safety skip. SAFETY_CUT_MS, not the 3s musical overlap: the reasons an operator
+      // hits this in an emergency (profanity, wrong track, garbled file) are all reasons the outgoing
+      // must come OFF, not linger under the incoming for three and a half seconds.
+      const rotated = await this._rotateBody(playing, target, { cutMs: SAFETY_CUT_MS });
+      if (!rotated) return { ok: false, reason: "absorbed", from: playing, to: target };
+      return { ok: true, reason: "took-over", from: playing, to: target };
+    });
+  }
+
+  /** Board-style channel OFF — audio off NOW. Serialized like every other transport change, so it can
+   *  never interleave with a rotate. Not a pause: the board button kills the channel. */
+  intentDeckOff(deckId) {
+    return this._advance("operator-off:" + deckId, async () => {
+      if (!["A", "B", "C"].includes(deckId)) return { ok: false, reason: "bad-deck" };
+      this._stop(deckId);
+      this.deckReady.delete(deckId);
+      this.endTriggered.delete(deckId);
+      if (this.liveDeck === deckId) this.liveDeck = null;
+      this._setDeck(deckId, { status: "idle", positionSec: 0 });
+      this._log("operator: deck " + deckId + " OFF (channel killed)");
+      this._maybeEmitDeck(deckId);
+      return { ok: true, reason: "stopped", to: deckId };
+    });
   }
 
   // PLAY NOW — the manual stall escape: get audio on air immediately, bypassing the picker. With a

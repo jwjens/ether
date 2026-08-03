@@ -69,7 +69,7 @@ describe("isStationScopedCommand", () => {
   it("station-scoped commands route by station_uuid", () => {
     for (const c of ["skip", "automation_on", "automation_off", "stop_all", "play", "pause", "play_now",
                      "set_volume", "play_emergency_cart", "mic_on",
-                     "deck:load", "deck:cue", "deck:crossfade",
+                     "deck:load", "deck:cue", "deck:crossfade", "deck:off",
                      "queue:enqueue", "queue:reorder", "queue:remove", "queue:move", "queue:clear",
                      "stream:start", "stream:stop"]) {
       expect(isStationScopedCommand(c)).toBe(true);
