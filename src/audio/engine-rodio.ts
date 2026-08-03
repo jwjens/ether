@@ -492,9 +492,17 @@ export class AudioEngine {
       const prevB = this.stateB.status;
       const prevC = this.stateC.status;
 
-      const durA = this.stateA.durationSec;
-      const durB = this.stateB.durationSec;
-      const durC = this.stateC.durationSec;
+      // §1 IDENTITY-KEYED CARRY (2026-08-02) — in-process branch only; daemon mode never reaches the
+      // rebuild below. Duration must be carried (Rust supplies none — the withdrawn §3 lesson), but it
+      // must not outlive its track: carry ONLY while filePath is unchanged, else 0/unknown. A stale
+      // duration clamps position, stateChanged() then sees nothing move, and the UI stops repainting.
+      const carryDur = (cur: DeckState, live: any) => {
+        const nextPath = (live && (live.file_path ?? live.filePath)) || "";
+        return nextPath && nextPath === cur.filePath ? cur.durationSec : 0;
+      };
+      const durA = carryDur(this.stateA, s?.deckA);
+      const durB = carryDur(this.stateB, s?.deckB);
+      const durC = carryDur(this.stateC, s?.deckC);
 
       const posA = (this.stateA.status === "playing") ? Math.min(this.stateA.positionSec + elapsed, durA || 9999) : this.stateA.positionSec;
       const posB = (this.stateB.status === "playing") ? Math.min(this.stateB.positionSec + elapsed, durB || 9999) : this.stateB.positionSec;
@@ -503,9 +511,9 @@ export class AudioEngine {
       // Stage 0: in daemon mode A/B/C status/title/duration are authoritative from onDeck events;
       // here we only advance positionSec locally for a smooth countdown between those events. The
       // in-process engine keeps reading the native deck state directly (unchanged).
-      this.stateA = this.daemonDriven ? { ...this.stateA, positionSec: posA } : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA, contentClass: this.deckContentClass["A"] ?? null };
-      this.stateB = this.daemonDriven ? { ...this.stateB, positionSec: posB } : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB, contentClass: this.deckContentClass["B"] ?? null };
-      this.stateC = this.daemonDriven ? { ...this.stateC, positionSec: posC } : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC, contentClass: this.deckContentClass["C"] ?? null };
+      this.stateA = this.daemonDriven ? { ...this.stateA, positionSec: posA } : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA, contentClass: (s?.deckA?.file_path ?? "") === this.stateA.filePath ? (this.deckContentClass["A"] ?? null) : null };
+      this.stateB = this.daemonDriven ? { ...this.stateB, positionSec: posB } : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB, contentClass: (s?.deckB?.file_path ?? "") === this.stateB.filePath ? (this.deckContentClass["B"] ?? null) : null };
+      this.stateC = this.daemonDriven ? { ...this.stateC, positionSec: posC } : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC, contentClass: (s?.deckC?.file_path ?? "") === this.stateC.filePath ? (this.deckContentClass["C"] ?? null) : null };
 
       if (this.stateChanged(this.lastFiredState.A, this.stateA)) { this.listeners.forEach(l => l("A", this.stateA)); }
       this.lastFiredState.A = this.stateA;

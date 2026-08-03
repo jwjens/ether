@@ -305,6 +305,42 @@ class DaemonEngine {
     else if (id === "C") this.stateC = { ...this.stateC, ...patch };
   }
 
+  /** THE ONE PATH THAT CHANGES A DECK'S OCCUPANT (2026-08-02).
+   *
+   *  Every identity-bearing field is replaced together from ONE track object — title, artist, filePath,
+   *  duration, contentClass, schedule identity — and position is reset. No caller can produce a deck
+   *  showing one track's title with another's duration or class, because no caller sets them separately.
+   *
+   *  This exists because two paths used to change an occupant and only one of them set everything:
+   *  the automation loadToDeck did it correctly, while the inbound `load` command (a library drag, a
+   *  queue click, JockStrip, cart assign — every renderer-initiated load in daemon mode) called
+   *  audioLoad + noteManualCue and left contentClass and duration belonging to the PREVIOUS track.
+   *
+   *  `durationSec` is 0 when unknown. It is NEVER inherited — an unknown duration is honest; a stale one
+   *  freezes the countdown. And it is never read from audio_get_state: Rust carries no duration, which
+   *  is what made the withdrawn §3 fix wrong.
+   */
+  _setDeckTrack(id, track) {
+    const t = track || {};
+    const filePath = t.filePath || "";
+    let durationSec = Number.isFinite(t.durationSec) ? t.durationSec
+      : (Number.isFinite(t.durationMs) ? t.durationMs / 1000 : 0);
+    if (!(durationSec > 0) && filePath) {
+      const d = this._dur(filePath);            // getFileDuration — the ONLY other honest source
+      if (d > 0) durationSec = d;
+    }
+    this.deckContentClass[id] = t.contentClass || null;   // set on every occupant change; never inherited
+    this.deckSched[id]   = t.scheduledAt ?? null;
+    this.deckSchedId[id] = t.schedId ?? null;
+    this.deckGen[id] = (this.deckGen[id] || 0) + 1;       // Bug-A: a fresh source invalidates a pending stop
+    this.endTriggered.delete(id);
+    this._setDeck(id, {
+      title: t.title || "", artist: t.artist || "", filePath,
+      durationSec, positionSec: 0, status: t.status || "idle", volume: t.volume ?? 1,
+    });
+    return durationSec;
+  }
+
   // ── poll (mirrors engine-rodio poll + checkEndByPosition) ──
   poll() {
     const s = this._state();
@@ -317,7 +353,23 @@ class DaemonEngine {
     this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
-    const dur = { A: this.stateA.durationSec, B: this.stateB.durationSec, C: this.stateC.durationSec };
+    // ── IDENTITY-KEYED CARRY (2026-08-02) ───────────────────────────────────────────────────────────
+    // Rust supplies NO duration (DeckMeta::info has no duration_sec — see the withdrawn §3 lesson), so
+    // duration MUST be carried between ticks. What it must never do is outlive its track: this used to
+    // re-impose the previous tick's duration unconditionally, so a deck whose occupant changed showed
+    // the NEW title with the OLD duration — position then clamped there, _changed() saw nothing move,
+    // and the countdown froze. Live reproducer: a track loaded onto a deck holding an 0:11 spot read
+    // "Jack's Lament 0:11/0:11" with the spot's gold class.
+    // (docs/deck-state-mixing-reproducer-2026-08-02.md)
+    //
+    // The carry is now keyed on filePath — the deck's identity. Same file → keep the duration we know;
+    // different file → 0 (unknown) until the load path supplies one, never the previous track's number.
+    const carryDur = (id, live) => {
+      const prev = this._deckState(id);
+      const nextPath = (live && (live.file_path ?? live.filePath)) || "";
+      return nextPath && nextPath === prev.filePath ? prev.durationSec : 0;
+    };
+    const dur = { A: carryDur("A", s.deckA), B: carryDur("B", s.deckB), C: carryDur("C", s.deckC) };
     const pos = {
       A: this.stateA.status === "playing" ? Math.min(this.stateA.positionSec + elapsed, dur.A || 9999) : this.stateA.positionSec,
       B: this.stateB.status === "playing" ? Math.min(this.stateB.positionSec + elapsed, dur.B || 9999) : this.stateB.positionSec,
@@ -529,7 +581,11 @@ class DaemonEngine {
 
   _changed(prev, next) {
     if (!prev) return true;
-    return prev.status !== next.status || prev.filePath !== next.filePath || prev.title !== next.title ||
+    // IDENTITY FIRST (2026-08-02): a track change must ALWAYS emit, whatever position does. The frozen
+    // countdown was position clamped at a stale duration so nothing here moved and the UI stopped being
+    // told anything. filePath/title are the identity; they are checked before any position arithmetic.
+    if (prev.filePath !== next.filePath || prev.title !== next.title) return true;
+    return prev.status !== next.status ||
       Math.floor(prev.positionSec) !== Math.floor(next.positionSec) || prev.durationSec !== next.durationSec ||
       prev.volume !== next.volume;   // fader truth: re-emit on any volume change so the UI can never lag it
   }
@@ -1117,14 +1173,8 @@ class DaemonEngine {
     try { ok = this._load(id, item.filePath, item.title, item.artist, item.gainDb); }
     catch (e) { this.emit("error", { stationId: this.stationId, where: "loadToDeck", error: String(e) }); return false; }
     if (ok === false) return false;
-    this.deckGen[id] = (this.deckGen[id] || 0) + 1;   // Bug A: fresh source loaded → invalidate any pending deferred stop for this deck
-    this.deckSched[id] = item.scheduledAt ?? null;   // remember this deck's schedule-row identity
-    this.deckSchedId[id] = item.schedId ?? null;     // Phase 1 shadow: the generated_schedule row id (null = off-log)
-    this.deckContentClass[id] = item.contentClass || null;   // clean-edges: SPOT decks never overlap / take a jingle
-    this._setDeck(id, { title: item.title || "", artist: item.artist || "", filePath: item.filePath, positionSec: 0, durationSec: (item.durationMs ?? 0) / 1000, status: "idle", volume: 1 });
-    this.endTriggered.delete(id);
-    const d = this._dur(item.filePath);
-    if (d > 0) this._setDeck(id, { durationSec: d });
+    // ONE path for an occupant change — identity, duration and class replaced together (2026-08-02).
+    this._setDeckTrack(id, item);
     this._maybeEmitDeck(id);
     return true;
   }
@@ -1211,14 +1261,38 @@ class DaemonEngine {
   // The renderer hand-loaded a deck (A/B/C button → audio:load). The native deck is already
   // loaded; flag it here so the self-heal (_maintain) won't preload over it and the rotate path
   // treats it as a manual cue. No-op for a playing deck (the load guard already blocks that).
-  noteManualCue(deckId) {
+  /** A deck was loaded from OUTSIDE the advance chain — the inbound `load` command, which is where
+   *  every renderer-initiated load lands in daemon mode (library drag, queue click, JockStrip, cart
+   *  assign). `track` carries what the caller knows; the fields Rust already holds are read back when
+   *  it does not.
+   *
+   *  THIS WAS THE HOLE (2026-08-02). It used to set deckReady/manualCue and nothing else, so the deck
+   *  kept the PREVIOUS occupant's duration and contentClass while Rust supplied the new title — the
+   *  "Jack's Lament 0:11/0:11 with a spot's gold outline" reproducer. It now goes through the same
+   *  single occupant-change path automation uses. */
+  noteManualCue(deckId, track) {
     if (!["A", "B", "C"].includes(deckId)) return;
     if (this._deckState(deckId).status === "playing") return;
+    // Rust has already been told to load; read back what it holds so the identity is right even when the
+    // caller passed nothing. Duration is NOT available from Rust — _setDeckTrack resolves it from the
+    // file — which is precisely why it must not be inherited from the previous occupant.
+    const live = this._state();
+    const rust = live ? (deckId === "A" ? live.deckA : deckId === "B" ? live.deckB : live.deckC) : null;
+    const t = track || {};
+    this._setDeckTrack(deckId, {
+      title:    t.title    ?? rust?.title    ?? "",
+      artist:   t.artist   ?? rust?.artist   ?? "",
+      filePath: t.filePath ?? rust?.file_path ?? "",
+      durationMs: t.durationMs,
+      contentClass: t.contentClass ?? null,   // unknown → cleared, never the previous track's class
+      status: "idle",
+    });
     this.deckReady.add(deckId);
     this.manualCue.add(deckId);
     // Flip §2.5: the jock hand-loaded this deck — write it to the log as an operator row so it airs on-log.
     const st = this._deckState(deckId);
     this._writeOperatorLogRow({ title: st.title, artist: st.artist, filePath: st.filePath, durationMs: (st.durationSec || 0) * 1000 });
+    this._maybeEmitDeck(deckId);
   }
   addToQueue(items) { this.queue.push(...this._ensureIds(this._playable(items))); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
   replaceQueue(items) { this.queue = this._ensureIds(this._playable(items)); this._pruneBound(); this.emit("queue", { stationId: this.stationId, items: this.queue }); }

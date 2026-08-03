@@ -113,7 +113,7 @@ function modeToggle(stationId, fn) {
 
 const handlers = {
   init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); return true; },
-  load:               (m) => { stations.add(m.stationId); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck); return r; },
+  load:               (m) => { stations.add(m.stationId); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck, { title: m.title, artist: m.artist, filePath: m.filePath, durationMs: m.durationMs, contentClass: m.contentClass ?? null }); return r; },
   // A refused play is a DECISION the operator must see, not a silent no-op (2026-07-31). audioPlay
   // returns false when the deck has no content; say so, name the deck, and tell them what to do.
   play:               (m) => {
