@@ -4734,7 +4734,7 @@ function sendToAllWindows(channel, payload) {
 //    Iris-independent regardless.
 const IRIS_TRANSPORT_VERBS = new Set(['play', 'stop', 'skip', 'next', 'auto-on', 'auto-off']);
 
-function routeIrisCommand(cmd) {
+async function routeIrisCommand(cmd) {
   const { action, payload = {} } = cmd;
   // Command-executed gate: a transport verb is honored ONLY with explicit operator provenance
   // (cmd.source === 'operator' = a verbatim relay of the operator's voice/chat instruction). Iris-
@@ -4781,7 +4781,7 @@ function routeIrisCommand(cmd) {
       }
       if (!fromTs || !toTs) return { ok: false, error: "generate needs {month:'YYYY-MM'} or {fromTs,toTs}" };
       try {
-        const r = _generateRange(stationId, fromTs, toTs);
+        const r = await _generateRange(stationId, fromTs, toTs);
         sendToAllWindows('iris:command-received', { action: 'generate', label: `Generated ${r.count} for ${r.station}` });
         return r;
       } catch (e) { return { ok: false, error: e.message }; }
@@ -5041,8 +5041,10 @@ const irisHttpServer = require('http').createServer((req, res) => {
   if (req.method === 'POST' && url === '/') {
     let body = '';
     req.on('data', d => { body += d; });
-    req.on('end', () => {
-      try { const cmd = JSON.parse(body); irisConnected = true; irisLastSeen = Date.now(); res.end(JSON.stringify(routeIrisCommand(cmd))); }
+    req.on('end', async () => {
+      // routeIrisCommand is async since 2026-08-03 (generate yields per hour) — this MUST await or the
+      // response body becomes "{}" (a stringified Promise).
+      try { const cmd = JSON.parse(body); irisConnected = true; irisLastSeen = Date.now(); res.end(JSON.stringify(await routeIrisCommand(cmd))); }
       catch (e) { res.statusCode = 400; res.end(JSON.stringify({ ok: false, error: e.message })); }
     }); return;
   }
@@ -6043,9 +6045,15 @@ function _placeJingles(db, stationId, rows) {
 }
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
-function _generateDayRows(dayBaseDate, ctx, minTs = 0) {
+// `onlyHour` (0-23) runs exactly ONE hour of the day and returns — the slice the chunked driver
+// below uses to keep main's event loop alive. Omit it for the original all-24-hours behaviour.
+// Equivalence: every per-hour accumulator (usedSongIds/usedArtistIds/usedTitles) is declared inside
+// the loop, and every cross-hour accumulator (generatedRows, *LastTs, diag, relaxed) lives on ctx —
+// so slicing changes scheduling not at all.
+function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
   const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, stmtClockBreaks, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
+    if (onlyHour !== null && h !== onlyHour) continue;
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
     const hourStartTs = Math.floor(slotDate.getTime() / 1000);
@@ -6292,20 +6300,104 @@ function _hourRanges(hourSet) {
   return out.map(r => ({ startHour: r.startHour, endHour: r.endHour, label: `${_fmtHour(r.startHour)}–${_fmtHour(r.endHour)}` }));
 }
 
-ipcMain.handle('schedule:generateDay', (_, dayTs) => {
+// ── CHUNKED GENERATE (2026-08-03) ────────────────────────────────────────────────────────────────
+// Generate ran synchronously on MAIN's thread. On 2026-08-03 a week generate froze the app: title bar
+// "EtherCast (Not Responding)", main pid pegged >1 core for minutes, window ghosted. Main's event loop
+// was dead, so every renderer IPC — deck state, meters, health — queued behind it.
+// Design + mechanism reasoning: docs/generate-off-main-thread-design-2026-08-03.md
+//
+// MECHANISM: chunked-with-yields, NOT a utility process. The design doc first recommended a utility
+// process; reading the code reversed that, and the reason is load-bearing: ctx carries LIVE
+// better-sqlite3 prepared statements (stmtShows/stmtSlots/stmtCandidates/...) bound to main's handle.
+// Those cannot cross a process boundary, so off-process would mean re-implementing the scheduler's
+// whole data layer against a second SQLite binding and keeping two pickers in step — precisely the
+// "never rebuild what exists" trap. The hour loop ALREADY existed inside _generateDayRows, so slicing
+// it and yielding between hours is the surgical fix: identical picks, live event loop.
+let _genCancel = false;
+function _genEmit(payload) {
+  try { BrowserWindow.getAllWindows().forEach(w => { try { w.webContents.send("schedule:generate-progress", payload); } catch {} }); } catch {}
+}
+// Drive ONE day an hour at a time, yielding to the event loop between hours. The yield is the whole
+// point: main pumps its message queue there, so the window keeps painting and decks keep animating.
+async function _generateDayChunked(dayBase, ctx, effStart, meta) {
+  for (let h = 0; h < 24; h++) {
+    if (_genCancel) return { cancelled: true };
+    const t0 = Date.now();
+    _generateDayRows(dayBase, ctx, effStart, h);   // one hour, bounded (self-skips already-aired hours)
+    _genEmit({ phase: "hour", hour: h, hoursDone: h + 1, hoursTotal: 24, rows: ctx.generatedRows.length,
+               hourMs: Date.now() - t0, ...meta });
+    await new Promise(r => setImmediate(r));       // ← the yield that keeps main alive
+  }
+  return { cancelled: false };
+}
+// Delete + insert as ONE transaction. Previously the DELETE committed in autocommit and the INSERT
+// landed minutes later, so generated_schedule — the single playout source for flipped stations
+// (docs/log-reader-single-source-playout-design-2026-07-20.md) — sat EMPTY for the whole pick. A
+// reader now sees either the old day or the new one, never a hole.
+function _commitDayRows(stationId, effStart, dayEnd, rows) {
+  const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+  db.transaction(() => {
+    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(stationId, effStart, dayEnd);
+    generatedScheduleBulkCreate(db, stationId, rows);
+  })();
+}
+ipcMain.handle('schedule:generateCancel', () => { _genCancel = true; return { ok: true }; });
+
+// ONE call for a whole range — the week loop used to fire seven BLOCKING generateDay calls back to
+// back, so progress moved only seven times and CANCEL could only break BETWEEN days. Now: hour-level
+// progress across the range, cancel honoured at every hour boundary, and each day committed atomically
+// as it completes (so a cancel leaves whole finished days, never a half day).
+// One shared ctx across the range also carries separation + the LRP ladder ACROSS day boundaries —
+// the seven-call loop rebuilt ctx per day and lost it.
+ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
   try {
+    _genCancel = false;
+    const stationId = getActiveStationId();
+    const days = Array.isArray(dayTsList) ? dayTsList : [];
+    const nowTs = Math.floor(Date.now() / 1000);
+    const ctx = _buildScheduleCtx(stationId);
+    let total = 0, committed = 0, cancelled = false;
+    for (let i = 0; i < days.length; i++) {
+      if (_genCancel) { cancelled = true; break; }
+      const dayBase = new Date(days[i] * 1000); dayBase.setHours(0, 0, 0, 0);
+      const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
+      const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600);
+      if (effStart >= dayEnd) continue;                       // already aired — leave it
+      const before = ctx.generatedRows.length;                // this day's slice starts here
+      const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: i, dayTotal: days.length });
+      if (run.cancelled) { cancelled = true; break; }         // in-flight day discarded, never written
+      const dayRows = ctx.generatedRows.slice(before);
+      _placeJingles(db, stationId, dayRows);
+      _commitDayRows(stationId, effStart, dayEnd, dayRows);   // atomic, per day
+      committed++; total += dayRows.length;
+      _genEmit({ phase: "day-committed", day: dayBase.toDateString(), dayIdx: i, dayTotal: days.length, rows: dayRows.length });
+    }
+    const d = ctx.diag, gaps = {
+      noShow: _hourRanges(d.noShowHours), noClock: _hourRanges(d.noClock),
+      emptyCats: [...d.emptyCats], emptyClocks: [...d.emptyClocks],
+    };
+    const station = (db.prepare("SELECT name FROM stations WHERE id = ?").get(stationId) || {}).name || ("station #" + stationId);
+    console.log(`[schedule:generateDays] ${committed}/${days.length} day(s), ${total} tracks${cancelled ? " — CANCELLED" : ""}`);
+    return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length };
+  } catch (e) { console.error('[schedule:generateDays]', e.message); return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
+  try {
+    _genCancel = false;
     const activeStationId = getActiveStationId();
-    const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
     const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
     const nowTs = Math.floor(Date.now() / 1000);
     const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600); // next top-of-hour; never the past
     if (effStart >= dayEnd) return { ok: true, count: 0, skipped: true }; // whole day already aired — leave it
-    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(activeStationId, effStart, dayEnd);
+    // Build ctx BEFORE any delete — it reads play_log/separation_rules/songs, never generated_schedule,
+    // so moving the delete after the pick cannot change what gets picked.
     const ctx = _buildScheduleCtx(activeStationId);
-    _generateDayRows(dayBase, ctx, effStart);
+    const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: 0, dayTotal: 1 });
+    if (run.cancelled) return { ok: true, cancelled: true, count: 0 };   // nothing written — the day is untouched
     _placeJingles(db, activeStationId, ctx.generatedRows);
-    generatedScheduleBulkCreate(db, activeStationId, ctx.generatedRows);
+    _commitDayRows(activeStationId, effStart, dayEnd, ctx.generatedRows);
     // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
     // Health Monitor (health events + a per-station summary), not just the calendar diagnostics panel.
     try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
@@ -6344,22 +6436,27 @@ ipcMain.handle('schedule:generateDay', (_, dayTs) => {
 // allowed). Generates each day in [fromTs, toTs), never regenerating already-aired hours; the shared ctx
 // carries separation + the LRP ladder across days. Returns operator-readable diagnostics: count,
 // relaxedPicks (Tier 2/3 fallback fills), throughDate, runwayDays (schedule tail − now), station, reasons.
-function _generateRange(stationId, fromTs, toTs) {
-  const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+async function _generateRange(stationId, fromTs, toTs) {
   const nowTs = Math.floor(Date.now() / 1000);
   const ctx = _buildScheduleCtx(stationId);
   const start = new Date(Math.max(fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
   const endMs = toTs * 1000;
+  let dayIdx = 0;
   for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
     const dayBase = new Date(d); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
     const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600);
     if (effStart >= dayEnd) continue;
-    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(stationId, effStart, dayEnd);
-    _generateDayRows(dayBase, ctx, effStart);
+    // Chunked + yielding, exactly like the operator path: the unattended auto-extend must never be
+    // able to freeze the window either. Each day commits atomically as it finishes, so the range no
+    // longer leaves days deleted-and-unwritten while it works.
+    const before = ctx.generatedRows.length;
+    const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: dayIdx++, dayTotal: 0 });
+    if (run.cancelled) break;
+    const dayRows = ctx.generatedRows.slice(before);
+    _placeJingles(db, stationId, dayRows);
+    _commitDayRows(stationId, effStart, dayEnd, dayRows);
   }
-  _placeJingles(db, stationId, ctx.generatedRows);
-  generatedScheduleBulkCreate(db, stationId, ctx.generatedRows);
   const dg = ctx.diag, reasons = [];
   if (dg.emptyCats.size) reasons.push("Empty/over-filtered categories: " + [...dg.emptyCats].map(id => (db.prepare("SELECT code FROM categories WHERE id = ?").get(id) || {}).code || ("#" + id)).join(", "));
   if (dg.emptyClocks.size) reasons.push(dg.emptyClocks.size + " clock(s) have no elements");
@@ -6407,7 +6504,7 @@ function _scheduleIsSparse(stationId, nowTs) {
   } catch { return false; }
 }
 
-function _autoExtendTick() {
+async function _autoExtendTick() {
   if (!db) return;
   let stations = [];
   try { stations = db.prepare("SELECT id, name FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
@@ -6425,7 +6522,7 @@ function _autoExtendTick() {
     if (!_sparseHealed.has(st.id) && _scheduleIsSparse(st.id, nowTs)) {
       _sparseHealed.add(st.id);
       try {
-        const r = _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
+        const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
         console.log(`[auto-extend] ${st.name}: sparse schedule detected (<2 rows/hr) → regenerated ${r.count} tracks (${r.relaxedPicks} relaxed)`);
         try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons, sparseHeal: true }); } catch {}
       } catch (e) { console.error(`[auto-extend] ${st.name} sparse-heal failed:`, e.message); }
@@ -6433,7 +6530,7 @@ function _autoExtendTick() {
     }
     if (runwaySec >= AUTO_EXTEND_THRESHOLD_H * 3600) continue;
     try {
-      const r = _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
+      const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
       console.log(`[auto-extend] ${st.name}: runway ${Math.round(runwaySec / 3600)}h < ${AUTO_EXTEND_THRESHOLD_H}h → +${r.count} tracks (runway now ${r.runwayDays}d, ${r.relaxedPicks} relaxed)`);
       try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons }); } catch {}
     } catch (e) { console.error(`[auto-extend] ${st.name} failed:`, e.message); }
