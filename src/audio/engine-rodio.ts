@@ -203,6 +203,81 @@ export class AudioEngine {
   // post-rotate preload signature).
   //
   // The rule now: TRUE LATCHES, FALSE NEVER DOES. "Not yet" is not "no".
+  /** D4 — the app's attach state, honestly reported. "unknown" is the pre-attach answer: the daemon
+   *  has not yet said whether it is there, so NOTHING may be painted as fact (2026-08-03 launch receipt:
+   *  the UI painted AUTO from KV while the daemon's _started was false, contradicting the live engine on
+   *  the same screen). Callers show UNKNOWN, never a default. */
+  private attachState: "unknown" | "daemon" | "in-process" = "unknown";
+  get daemonAttachState(): "unknown" | "daemon" | "in-process" { return this.attachState; }
+
+  /** ADOPT — pull the daemon's full state as ONE unit, immediately on attach.
+   *  THE BUG THIS FIXES: attach and populate were separate. attachDaemonEvents() only SUBSCRIBES, so the
+   *  renderer saw nothing until the daemon next pushed a change. Miss the attach window (cold stage) and
+   *  the queue/decks were never requested again — panels stayed empty until the app was restarted, when
+   *  a warm daemon answered instantly. That is the whole "close and reopen once" ritual.
+   *  Runs on EVERY attach, including every re-attach after a daemon respawn. */
+  private async adoptFromDaemon(reason: string): Promise<void> {
+    const a = (window as any).ether?.audio;
+    if (!a) return;
+    try {
+      // Queue AND decks, as ONE unit — the whole point of adopt. deck:snapshot re-emits A/B/C through
+      // the normal `deck` event, so the existing onDeck handler applies them with full fidelity.
+      const [q] = await Promise.all([
+        this.daemonCmd("getQueue", {}).catch(() => null),
+        this.daemonCmd("deck:snapshot", {}).catch(() => null),
+      ]);
+      if (Array.isArray(q)) {
+        this.queue = q.map((it: any) => ({
+          filePath: it.filePath, title: it.title, artist: it.artist || "", durationMs: it.durationMs,
+          chainType: it.chainType, qid: it.qid, contentClass: it.contentClass ?? null, scheduledAt: it.scheduledAt,
+        }));
+      }
+      // Decks are NOT adopted from getState. `audio_get_state` returns the raw Rust
+      // DeckInfo, which carries NO position_sec/duration_sec — painting decks from it yields a 0:00
+      // countdown on every deck (the 4.4.104 regression, reverted in 4.4.106). The correct source is
+      // the daemon engine's OWN deck state (duration set by _setDeckTrack), which today is only ever
+      // pushed on CHANGE — so it needs a daemon-side `deck:snapshot` re-emit command. Until that
+      // exists, adopt restores the QUEUE only and the decks fill on the next daemon deck event.
+      // deck:snapshot (2026-08-03) is that command — requested above, applied by onDeck.
+      await this.assertMonitorSilence();   // D2: silence from the moment the engine exists
+      rotLog(`[ROT] ADOPT (${reason}): queue=${this.queue.length} — populated on attach, not on next change`);
+      try { window.dispatchEvent(new CustomEvent("ether:queue-changed")); } catch {}
+      try { window.dispatchEvent(new CustomEvent("ether:daemon-adopted", { detail: { stationId: this.stationId, reason } })); } catch {}
+    } catch (e: any) {
+      console.warn(`[ENGINE] station ${this.stationId}: adopt failed (${reason}) — will re-adopt on next attach:`, e?.message || e);
+    }
+  }
+
+  /** D4 — RETRY UNTIL ATTACH, with bounded backoff. A fixed window was the wrong instrument: the daemon
+   *  is staged cold on first launch after an update (MEASURED on this box: 24 files, 307.1 MB; 539 ms
+   *  copy with a WARM cache), and on a managed box that scans every byte (OV/McAfee) the cold case is a
+   *  different order of magnitude. So there is no constant to pick — retry until the daemon answers, and
+   *  report UNKNOWN meanwhile rather than falling back to a wrong answer.
+   *  The ceiling is a runaway stop, NOT a deadline. */
+  private attachRetryTimer: any = null;
+  private attachRetryDelay = 250;                     // ms — doubles to ATTACH_RETRY_MAX
+  private attachRetryStarted = 0;
+  private static readonly ATTACH_RETRY_MAX = 2000;    // backoff ceiling per attempt
+  private static readonly ATTACH_GIVEUP_MS = 120000;  // runaway stop only — never a 5s cliff
+  private scheduleAttachRetry() {
+    if (this.daemonDriven || this.attachRetryTimer) return;
+    if (!this.attachRetryStarted) this.attachRetryStarted = Date.now();
+    const waited = Date.now() - this.attachRetryStarted;
+    if (waited > AudioEngine.ATTACH_GIVEUP_MS) {
+      console.warn(`[ENGINE] station ${this.stationId}: daemon never attached after ${Math.round(waited / 1000)}s — staying in-process`);
+      this.attachState = "in-process";
+      return;
+    }
+    this.attachRetryTimer = setTimeout(async () => {
+      this.attachRetryTimer = null;
+      await this.recheckDaemon();                     // adopts on success (late-attach)
+      if (!this.daemonDriven) {
+        this.attachRetryDelay = Math.min(this.attachRetryDelay * 2, AudioEngine.ATTACH_RETRY_MAX);
+        this.scheduleAttachRetry();
+      }
+    }, this.attachRetryDelay);
+  }
+
   private detectDaemon() {
     if (this.daemonDetectStarted) return;
     this.daemonDetectStarted = true;
@@ -211,9 +286,9 @@ export class AudioEngine {
     if (!a?.daemonEnabled) { this.resolveDaemonReady(); return; }
     a.daemonEnabled().then((on: boolean) => {
       this.daemonEnabledObserved = !!on;
-      if (on) { this.daemonDriven = true; rotLog("[ROT] daemon-driven: local advance DISABLED, mirroring ether-audiod"); this.attachDaemonEvents(); }
+      if (on) { this.daemonDriven = true; this.attachState = "daemon"; rotLog("[ROT] daemon-driven: local advance DISABLED, mirroring ether-audiod"); this.attachDaemonEvents(); void this.adoptFromDaemon("first-attach"); }
       // NOT latched false — poll() keeps asking until the daemon answers yes (recheckDaemon below).
-      else rotLog("[ROT] in-process engine (daemon not active — fallback or disabled); will re-check every 5s");
+      else { rotLog("[ROT] in-process engine (daemon not answering YET) — retrying with backoff; state=UNKNOWN until it answers"); this.scheduleAttachRetry(); }
     }).catch(() => {}).finally(() => this.resolveDaemonReady());
   }
 
@@ -230,7 +305,9 @@ export class AudioEngine {
     rotLog(`[ROT] daemon LATE-DETECTED after ${((Date.now() - this.localAdvanceSince) / 1000).toFixed(0)}s of in-process advance — local advance DISABLED, attaching`);
     console.warn(`[ENGINE] station ${this.stationId}: daemon became available after init — switching to daemon-driven. Local advance had been active; if any deck was started locally the daemon's liveDeck guard will clear it.`);
     this.daemonDriven = true;
+    this.attachState = "daemon";
     this.attachDaemonEvents();
+    await this.adoptFromDaemon("late-attach");   // the cold-stage case — this is what fills empty panels
   }
 
   /** THE SINGLE CHOKE POINT (§3.2). One decision gates every autonomous path — end-detection, and
@@ -313,6 +390,8 @@ export class AudioEngine {
       const h = a.onEngineState((m: any) => {
         if (m && m.stationId != null && m.stationId !== this.stationId) return;
         if (m?.state === "live" || m?.state === "stalled" || m?.state === "off") this._daemonEngineState = m.state;
+        // D3: automation engaged is OBSERVED here, never inferred from KV.
+        if (typeof m?.started === "boolean") this._daemonStarted = m.started;
       });
       this.daemonUnsub.push(() => a.offEngineState?.(h));
     }
@@ -395,11 +474,56 @@ export class AudioEngine {
 
   /** Kick off unattended playout in the daemon (fill + play + advance). The renderer's
    *  go-on-air calls this instead of starting playback locally when daemon-driven. */
-  async startDaemonAutomation(): Promise<boolean> {
+  /** THE AUTOMATION CHOKE POINT (D3, 2026-08-03). Jeff's contract: on an ATTENDED launch, AUTO is off —
+   *  displayed AND engaged — until the operator presses it. Stored KV is the operator's preference for
+   *  what the button DOES when pressed; it is never a trigger and never a display source.
+   *  The ONE narrow exception stays: a watchdog respawn while a station was live resumes unattended,
+   *  because no human is there and the alternative is dead air.
+   *  Every caller must name itself. An unnamed or startup-origin call is REFUSED and logged loudly —
+   *  the 2026-08-03 cold launch issued `automationStart station=2` before the operator reached the
+   *  dashboard, and static reading did not explain which caller did it. This makes the next one say so. */
+  async startDaemonAutomation(reason: "operator" | "remote" | "watchdog-resume" = "operator"): Promise<boolean> {
     if (!this.daemonDriven) return false;
+    if (reason !== "operator" && reason !== "remote" && reason !== "watchdog-resume") {
+      console.error(`[ENGINE] station ${this.stationId}: automationStart REFUSED — origin "${reason}" is not an operator act`);
+      return false;
+    }
+    rotLog(`[ROT] automationStart station=${this.stationId} origin=${reason}`);
     this.pushSegueOverlap();   // ensure the daemon has the operator's segue setting before it airs
     try { const r = await (window as any).ether?.audio?.daemon?.("automationStart", { stationId: this.stationId }); return !!(r && r.ok); }
     catch { return false; }
+  }
+
+  /** D3 — the daemon's OBSERVED automation state, or null while unknown. Never KV, never a default.
+   *  null means "the daemon has not answered yet" and the UI must render UNKNOWN, not MANUAL. */
+  get observedAutomation(): boolean | null {
+    if (this.attachState !== "daemon") return null;
+    return this._daemonStarted;
+  }
+  private _daemonStarted: boolean | null = null;
+
+  /** D2 — SILENCE IS ASSERTED AT ATTACH, not at dashboard render. The Rust bus default is
+   *  monitor_vol: 1.0 (audio.rs:368) — full local speakers — so an engine that exists is audible unless
+   *  something says otherwise, and until now the only thing that said otherwise was the board painting.
+   *  That left every station monitoring at unity from daemon start until the dashboard rendered
+   *  (2026-08-03: four stations over each other at the on-shift screen, silent the instant the board
+   *  opened). Raising a monitor is an operator act; once raised, the operator's level is re-applied on
+   *  reattach instead of being re-muted, because a daemon respawn resets the bus to 1.0.
+   *  NEVER touches the program bus — monitor_vol applies to the device branch only (audio.rs:1157),
+   *  so this cannot affect what goes to air. */
+  private monitorRaisedByOperator = false;
+  private operatorMonitorLevel = 0;
+  async assertMonitorSilence(): Promise<void> {
+    const level = this.monitorRaisedByOperator ? this.operatorMonitorLevel : 0;
+    try {
+      await (window as any).ether?.audio?.setMonitorVolume?.(this.stationId, level);
+      rotLog(`[ROT] monitor asserted to ${level.toFixed(2)} at attach (station ${this.stationId})${this.monitorRaisedByOperator ? " — operator level restored" : " — SILENT by default"}`);
+    } catch { /* monitor assert is best-effort; never block attach on it */ }
+  }
+  /** Called by the operator's monitor control so the level survives a daemon respawn. */
+  noteOperatorMonitor(level: number) {
+    this.operatorMonitorLevel = level;
+    this.monitorRaisedByOperator = level > 0;
   }
 
   /** Stop the daemon's unattended playout (AUTO off, daemon-driven). */
@@ -484,7 +608,7 @@ export class AudioEngine {
       if (this.daemonDriven && (++this.daemonQueuePollN % 20 === 0)) void this.resyncDaemonQueue();
       // §3.1 — while NOT daemon-driven, keep asking whether the daemon has come up (~5s). A daemon that
       // starts late must be adopted; the old one-shot detect missed it for the life of the engine.
-      if (!this.daemonDriven && (++this.daemonDetectPollN % 20 === 5)) void this.recheckDaemon();
+      // D4: attach retry is no longer piggybacked on this poll at a fixed 5s — see scheduleAttachRetry().
       // NOTE: there is deliberately NO periodic resyncDaemonDecks() here. 4.4.104 added one on this
       // same 5 s cadence to re-anchor deck position; it wrote 0 every time (see the method) and was
       // reverted 2026-07-30. resyncDaemonDecks is volume-only and one-shot on attach, as before.

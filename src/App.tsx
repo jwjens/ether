@@ -614,10 +614,26 @@ export default function App() {
   // AUTO state persists across restarts — broadcasters expect their automation
   // to remain in whatever state they left it in, especially after a power cycle
   // or app restart. Default false on first install.
-  const [autoAdv, setAutoAdv] = useState<boolean>(() => readAutoAdv(getActiveStationIdSync()));
+  // D3 (2026-08-03): AUTO is OBSERVED, never remembered. This was seeded from readAutoAdv() — the UI
+  // painted AUTO from its own KV memory and could contradict the live engine on the same screen (the
+  // launch-day photo: AUTO lit while the daemon's _started was false). null = UNKNOWN: the daemon has
+  // not answered yet, so the button renders neither AUTO nor MANUAL. KV survives ONLY as the operator's
+  // stored preference for what the button does when pressed — never a trigger, never a display source.
+  const [autoAdv, setAutoAdv] = useState<boolean | null>(null);
   // Reflect the active station's OWN AUTO state whenever the viewed station changes, so the AUTO
   // button shows this station's automation — never the previously-viewed station's.
-  useEffect(() => { setAutoAdv(readAutoAdv(stationId)); }, [stationId]);
+  // Station switch → UNKNOWN again until this station's daemon state arrives. Never KV.
+  useEffect(() => { setAutoAdv((engine as any).observedAutomation ?? null); }, [stationId, engine]);
+  // Observed automation, polled off the engine's daemon-fed state (engine-rodio tracks `started` from
+  // the enginestate stream, which the adopt snapshot also emits — so an attaching renderer learns it
+  // without waiting for a change).
+  useEffect(() => {
+    const t = setInterval(() => {
+      const obs = (engine as any).observedAutomation;
+      setAutoAdv(prev => (prev === obs ? prev : (obs ?? null)));
+    }, 500);
+    return () => clearInterval(t);
+  }, [engine]);
   // Slice 4: keep the active-station id fresh for the []-deps SSE command handler (its closure would
   // otherwise pin the mount-time station — the stale-closure bug the routing fix depends on closing).
   useEffect(() => { activeStationIdRef.current = stationId; }, [stationId]);
@@ -1535,7 +1551,7 @@ export default function App() {
         // advances on song-end) AND so main records the automation intent that powers auto-resume across a
         // stale-daemon reload. The old "deck A already playing → return" guard skipped this in daemon mode,
         // which left audio playing but B/C empty and no transition until a manual AUTO reset.
-        if (engine.isDaemonDriven) { rotLog("[ROT] STARTUP daemon-driven → automationStart"); await engine.startDaemonAutomation(); return; }
+        if (engine.isDaemonDriven) { rotLog("[ROT] STARTUP daemon-driven → automationStart (watchdog-resume: a station was live and no human is here)"); await engine.startDaemonAutomation("watchdog-resume"); return; }
         // in-process path: if crash recovery already restored & started deck A, don't double-start over it.
         if (engine.getDeck("A")?.getState().status === "playing") return;
         rotLog(`[ROT] STARTUP autofill begin — queue: [${engine.getQueue().map(q => q.title).join(", ")}]`);
@@ -1706,7 +1722,7 @@ export default function App() {
           engine.addToQueue(queue); setQueueLen(queue.length); console.log('Restored', queue.length, 'items from crash recovery');
         }
         // When AUTO is on, the startup timer loads from schedule instead — skip deck A restore
-        if (!autoAdv && row.deck_a_path && row.deck_a_title) {
+        if (autoAdv === false && row.deck_a_path && row.deck_a_title) {   // D3: UNKNOWN (null) must not act like MANUAL
           const deckASong = await queryOne<{ duration_ms: number | null }>(
             "SELECT duration_ms FROM songs WHERE file_path = ?", [row.deck_a_path]
           );
@@ -2228,14 +2244,15 @@ export default function App() {
             style={{
               height: 44, padding: "0 20px", borderRadius: 0, cursor: "pointer",
               fontSize: 16, fontWeight: 800, letterSpacing: "0.08em",
-              background: autoAdv ? "#10b981" : "var(--bg-tertiary)",
+              background: autoAdv === true ? "#10b981" : "var(--bg-tertiary)",
               color: "#fff",
-              border: autoAdv ? "1px solid #10b981" : "1px solid var(--border-primary)",
+              border: autoAdv === true ? "1px solid #10b981" : autoAdv === null ? "1px dashed var(--border-primary)" : "1px solid var(--border-primary)",
               transition: "all 0.15s",
               display: "flex", alignItems: "center", gap: 7,
             }}
           >
-            {autoAdv ? "● AUTO" : "MANUAL"}
+            {/* D3: three states. null = the daemon has not answered — show UNKNOWN, never fall back to MANUAL. */}
+            {autoAdv === true ? "● AUTO" : autoAdv === null ? "— UNKNOWN" : "MANUAL"}
           </button>
 
           <GlobalOnAirBadge
@@ -3465,7 +3482,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
 
 function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
-  autoAdv: boolean; shuffle: boolean;
+  autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
   progPanel: null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles";

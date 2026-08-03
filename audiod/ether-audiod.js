@@ -192,6 +192,8 @@ const handlers = {
   "deck:crossfade":   (m) => getEngine(m.stationId).intentCrossfade(m.from, m.to),
   // Board-style channel OFF — audio off now, not a pause.
   "deck:off":         (m) => getEngine(m.stationId).intentDeckOff(m.deck),
+  // D4 adopt: populate-on-attach. Safe to call at any time — it only re-emits current state.
+  "deck:snapshot":    (m) => getEngine(m.stationId).emitDeckSnapshot(),
   // PLAY NOW (Slice 4) — manual stall escape: load+play a song now (with songRef), else play the next
   // cued/queued track. Returns true if it put a deck on air.
   "deck:playNow":     (m) => getEngine(m.stationId).intentPlayNow(m.songRef || null),

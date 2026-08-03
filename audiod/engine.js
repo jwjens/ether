@@ -437,7 +437,10 @@ class DaemonEngine {
     const next = this._computeEngineState();
     if (next === this._engineState) return;
     this._engineState = next;
-    this.emit("enginestate", { stationId: this.stationId, state: next });
+    // D3 (2026-08-03): carry `started` — whether AUTOMATION is engaged — so the renderer can paint
+    // AUTO/MANUAL from OBSERVED daemon state instead of its own KV memory. The UI showed AUTO lit
+    // while _started was false, contradicting the live engine on the same screen.
+    this.emit("enginestate", { stationId: this.stationId, state: next, started: !!this._started });
     this._log("engine-state → " + next);
   }
 
@@ -590,6 +593,37 @@ class DaemonEngine {
       Math.floor(prev.positionSec) !== Math.floor(next.positionSec) || prev.durationSec !== next.durationSec ||
       prev.volume !== next.volume;   // fader truth: re-emit on any volume change so the UI can never lag it
   }
+  /** D4 ADOPT — re-emit ALL three decks unconditionally, through the SAME `deck` event the poll uses.
+   *  Deck events are normally emitted only on CHANGE (_maybeEmitDeck), so a renderer that attaches late
+   *  — the cold-stage race, where the ~307 MB engine stage outruns the app's connect window — subscribes
+   *  to a stream that then says nothing until the next track change. Its decks stayed empty until the
+   *  app was restarted, which is the entire "close and reopen once" ritual.
+   *  Source is the ENGINE's own deck state (duration set by _setDeckTrack) plus the authoritative
+   *  scheduledAt/contentClass maps — NEVER raw Rust DeckInfo, which carries no duration and would paint
+   *  a 0:00 countdown on every deck (the 4.4.104 regression). Identical payload to _maybeEmitDeck, so
+   *  every existing listener applies it with no new plumbing.
+   *  Also refreshes lastFired/lastReady so this re-emit cannot make the next poll double-fire. */
+  emitDeckSnapshot() {
+    const decks = [];
+    for (const id of ["A", "B", "C"]) {
+      const st = this._deckState(id);
+      const ready = this.deckReady.has(id);
+      this.emit("deck", { stationId: this.stationId, deck: id, state: { ...st, scheduledAt: this.deckSched[id] ?? null, contentClass: this.deckContentClass[id] ?? null }, ready });
+      this.lastFired[id] = st;
+      this.lastReady[id] = ready;
+      decks.push({ deck: id, title: st.title || "", filePath: st.filePath || "", durationSec: st.durationSec || 0, status: st.status, ready });
+    }
+    // CART/jingle deliberately NOT snapshotted: the overlay rides its own `jingle` event as a transient
+    // arm/fire/bridge LIFECYCLE (_emitJingle), not standing state — there is no "current jingle" field to
+    // re-emit, and inventing an "idle" would be a claim the engine never made. An adopting renderer picks
+    // up the overlay at the next arm, which is at most one seam away.
+    // Automation state rides the adopt as well — otherwise an attaching renderer knows the decks but
+    // not whether automation is engaged, and would have to fall back to KV (the defect D3 removes).
+    try { this.emit("enginestate", { stationId: this.stationId, state: this._engineState || "off", started: !!this._started }); } catch {}
+    this._log("adopt: deck snapshot re-emitted (A/B/C) + automation state for a (re)attaching renderer");
+    return { ok: true, stationId: this.stationId, decks };
+  }
+
   _maybeEmitDeck(id) {
     const st = this._deckState(id);
     const ready = this.deckReady.has(id);

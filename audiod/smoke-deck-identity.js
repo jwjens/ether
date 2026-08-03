@@ -118,8 +118,12 @@ console.log("\n── 7 · REGRESSION GUARD — duration is never read from audi
   // Scope to the METHOD BODY only — a fixed-size window overran into poll(), which legitimately reads
   // _state() and produced a false positive on the first run.
   const start = src.indexOf("_setDeckTrack(id, track) {");
-  const END = ["\n", "  }", "\n"].join("");
-  const body = src.slice(start, start + src.slice(start).indexOf(END));
+  // CRLF-TOLERANT (2026-08-03). This was a literal "\n  }\n", which never matches in a CRLF file: the
+  // marker then landed at some unrelated later offset, so the "body" swallowed half the file and any
+  // _state() call in it produced a false FAIL. It passed only by accident of where that offset fell —
+  // adding a method above _maybeEmitDeck moved it and the guard fired on correct code.
+  const k = src.slice(start).search(/\r?\n  \}/);
+  const body = k < 0 ? src.slice(start) : src.slice(start, start + k);
   check("7 · _setDeckTrack does not call _state()", /_state\(\)/.test(body), false);
 }
 
