@@ -1,3 +1,4 @@
+import { bootSeq } from "./boot-seq";
 // Tee [ROT] diagnostic logs to tmp-userdata/rotation.log via the main-process IPC channel.
 // console.log fires first (DevTools), then fire-and-forget to file. Safe to call before
 // window.ether is ready — the optional chain silently drops the message.
@@ -137,6 +138,10 @@ export class AudioEngine {
   // Up Next UI and the now-playing/log path (App.tsx onPlayStart) keep working.
   private daemonDriven = false;
   private daemonUnsub: Array<() => void> = [];
+  // TRACE: stable per-instance id — is the pill reading a DIFFERENT AudioEngine than the one that attached?
+  readonly engineInstanceId = `e${++AudioEngine._instanceSeq}`;
+  private static _instanceSeq = 0;
+  private static _lastObsTrace = 0;
   private daemonDetectStarted = false;
   // §3 gate state. `daemonEnabledObserved` is the daemon's OWN last answer — distinct from
   // `daemonDriven`, which is this engine's committed mode. They disagreeing IS the fault to catch.
@@ -157,6 +162,7 @@ export class AudioEngine {
 
   init() {
     if (this.pollTimer) return;
+    bootSeq(`engine.init() station=${this.stationId} — 250ms poll + daemon detect START`);
     this.processingEnd = false;  // clear any flag left over from a previous session
     this.pollTimer = setInterval(() => this.poll(), 250);
     this.detectDaemon();
@@ -335,6 +341,7 @@ export class AudioEngine {
   private attachDaemonEvents() {
     const a = (window as any).ether?.audio;
     if (!a) return;
+    bootSeq(`attachDaemonEvents station=${this.stationId}`);
     // Re-push the routine segue overlap — the daemon resets to its default on respawn, so a
     // (re)connect (incl. the update/crash respawn) must restore the operator's setting.
     this.pushSegueOverlap();
@@ -388,10 +395,13 @@ export class AudioEngine {
     // playing payload + keepalive report the real state. Only THIS station's events.
     if (a.onEngineState) {
       const h = a.onEngineState((m: any) => {
+        // TRACE 1 — does the enginestate event ARRIVE, for which station, carrying what?
+        bootSeq(`ENGINESTATE-IN inst=${this.engineInstanceId} myStation=${this.stationId} msgStation=${m?.stationId} state=${m?.state} started=${JSON.stringify(m?.started)} typeof=${typeof m?.started}`);
         if (m && m.stationId != null && m.stationId !== this.stationId) return;
         if (m?.state === "live" || m?.state === "stalled" || m?.state === "off") this._daemonEngineState = m.state;
         // D3: automation engaged is OBSERVED here, never inferred from KV.
-        if (typeof m?.started === "boolean") this._daemonStarted = m.started;
+        if (typeof m?.started === "boolean") { this._daemonStarted = m.started; bootSeq(`ENGINESTATE-APPLIED inst=${this.engineInstanceId} _daemonStarted=${m.started}`); }
+        else bootSeq(`ENGINESTATE-NOT-APPLIED inst=${this.engineInstanceId} started field absent/non-boolean`);
       });
       this.daemonUnsub.push(() => a.offEngineState?.(h));
     }
@@ -497,8 +507,16 @@ export class AudioEngine {
   /** D3 — the daemon's OBSERVED automation state, or null while unknown. Never KV, never a default.
    *  null means "the daemon has not answered yet" and the UI must render UNKNOWN, not MANUAL. */
   get observedAutomation(): boolean | null {
-    if (this.attachState !== "daemon") return null;
-    return this._daemonStarted;
+    // TRACE 2 — what does the pill actually read, from WHICH instance, and why null?
+    const out = this.attachState !== "daemon" ? null : this._daemonStarted;
+    const now = Date.now();                        // throttled: a 500ms poll reads this
+    if (now - AudioEngine._lastObsTrace > 1000) {
+      AudioEngine._lastObsTrace = now;
+      bootSeq("OBSERVED-AUTO inst=" + this.engineInstanceId + " station=" + this.stationId
+        + " attachState=" + this.attachState + " _daemonStarted=" + JSON.stringify(this._daemonStarted)
+        + " returns=" + JSON.stringify(out));
+    }
+    return out;
   }
   private _daemonStarted: boolean | null = null;
 
@@ -513,8 +531,20 @@ export class AudioEngine {
    *  so this cannot affect what goes to air. */
   private monitorRaisedByOperator = false;
   private operatorMonitorLevel = 0;
+  private monitorAssertedOnce = false;
   async assertMonitorSilence(): Promise<void> {
+    // FIRST ATTACH: silence is asserted, because the Rust bus default is monitor_vol 1.0 — an engine
+    // that exists is audible unless something says otherwise.
+    // RE-ATTACH (a station switch tears the engine down, so switching back lands here again): NEVER
+    // re-impose silence on a station the operator was already listening to. Re-apply their level if
+    // they raised one; otherwise leave the bus alone — it is already silent from the first assert, and
+    // re-zeroing it is what dropped the monitor for a couple of seconds on every switch.
+    if (this.monitorAssertedOnce && !this.monitorRaisedByOperator) {
+      rotLog(`[ROT] monitor re-attach (station ${this.stationId}) — already silent, leaving it alone`);
+      return;
+    }
     const level = this.monitorRaisedByOperator ? this.operatorMonitorLevel : 0;
+    this.monitorAssertedOnce = true;
     try {
       await (window as any).ether?.audio?.setMonitorVolume?.(this.stationId, level);
       rotLog(`[ROT] monitor asserted to ${level.toFixed(2)} at attach (station ${this.stationId})${this.monitorRaisedByOperator ? " — operator level restored" : " — SILENT by default"}`);

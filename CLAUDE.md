@@ -114,6 +114,13 @@ npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (
 - Jeff often relays between a separate chat (architecture/planning) and Claude Code. He's frequently copy-pasting and relies on the tools to hold the thread — DO NOT make him repeat himself, and DO NOT run ahead.
 
 ### Hard rules
+- **JEFF'S REPORTS ARE RECORDED VERBATIM, NEVER REFRAMED.** If Jeff says "the button is gone," the bug is
+  "the button is gone" — not "mislabeled," not "technically rendered." **The operator's experience IS the
+  defect definition.** A technical restatement may be ADDED as diagnosis, but it never replaces or softens
+  the report, and **the fix is sized to the report**. Softening an operator report in a doc or design is
+  itself a defect — it is how issues persist for months. **Receipts:** "AUTO engaged without pressing"
+  → softened to "primarily a truthfulness defect," and the command kept firing for days. "The button is
+  gone" → reframed as a label change, so the control stayed unrecognisable. Both cost real time.
 - **STAY STRICTLY ON THE REQUESTED TASK.** Do NOT run unrequested audits, security scans, repo-wide health checks, or inspect repo/account contents beyond what the task needs. If something concerning is noticed incidentally, mention it in ONE line and STOP — do not investigate further, escalate, or start fixing it without Jeff's ask. Finish the task given, report, stop.
 - **Propose first, change nothing, wait for explicit confirmation.** Investigate read-only before edits. Never run ahead or overstep.
 - **Never commit or push before Jeff verifies.** Local commits only unless told otherwise. Never tag/release without explicit go-ahead (tagging triggers CI + client auto-update).

@@ -1,3 +1,4 @@
+import { bootSeq, bootMarkAuthComplete } from "./audio/boot-seq";
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import TrialGate from "./components/TrialGate";
@@ -585,7 +586,9 @@ export default function App() {
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const apiKeyRef = useRef<string>("");
   // Slice 4: the CURRENT active station id (the SSE command handler reads this, not its captured stationId).
-  const activeStationIdRef = useRef<number>(getActiveStationIdSync());
+  const activeStationIdRef = useRef<number>((() => { const id = getActiveStationIdSync();
+    bootSeq(`STATION ADOPTED station=${id} ← useRef(getActiveStationIdSync()) at first render`);
+    return id; })());
   const panelRef = useRef<Panel>("live");
   useEffect(() => {
     panelRef.current = panel;
@@ -620,17 +623,49 @@ export default function App() {
   // not answered yet, so the button renders neither AUTO nor MANUAL. KV survives ONLY as the operator's
   // stored preference for what the button does when pressed — never a trigger, never a display source.
   const [autoAdv, setAutoAdv] = useState<boolean | null>(null);
+  // COMMAND IN FLIGHT (2026-08-03). Observation is authoritative about everything EXCEPT a command that
+  // has not landed yet. Receipt: press AUTO -> the 500ms poll reads the daemon's PRE-command truth
+  // (_daemonStarted=false, honestly) and overwrote the operator's press, flashing MANUAL before the
+  // confirmation arrived. Jeff read the flash as failure, pressed again, and turned automation OFF by
+  // accident. So: after a press, hold the commanded value until the daemon CONFIRMS it (observation
+  // matches) or the window expires (the command genuinely failed — then observation must win).
+  const autoCmdRef = useRef<{ value: boolean; until: number } | null>(null);
   // Reflect the active station's OWN AUTO state whenever the viewed station changes, so the AUTO
   // button shows this station's automation — never the previously-viewed station's.
   // Station switch → UNKNOWN again until this station's daemon state arrives. Never KV.
-  useEffect(() => { setAutoAdv((engine as any).observedAutomation ?? null); }, [stationId, engine]);
+  useEffect(() => {
+    // TRACE 3 — the station-switch reset. THIS is the line Jeff sees: "when i return to a station auto
+    // doesnt stay on it resets to manual after i leave a station". It writes whatever observation says,
+    // and when observation says null the pill falls to MANUAL while the daemon is still in AUTO.
+    const eng: any = engine;
+    const read = eng.observedAutomation;
+    bootSeq("SWITCH-EFFECT station=" + stationId + " inst=" + eng.engineInstanceId + " attachState=" + eng.daemonAttachState + " read=" + JSON.stringify(read) + " -> writes=" + JSON.stringify(read ?? null));
+    setAutoAdv(autoCmdRef.current ? autoCmdRef.current.value : (read ?? null));   // never clobber a press in flight
+  }, [stationId, engine]);
   // Observed automation, polled off the engine's daemon-fed state (engine-rodio tracks `started` from
   // the enginestate stream, which the adopt snapshot also emits — so an attaching renderer learns it
   // without waiting for a change).
   useEffect(() => {
     const t = setInterval(() => {
-      const obs = (engine as any).observedAutomation;
-      setAutoAdv(prev => (prev === obs ? prev : (obs ?? null)));
+      const eng: any = engine;
+      const obs = eng.observedAutomation;                    // boolean, or null when not observable
+      const cmd = autoCmdRef.current;
+      if (cmd) {
+        if (obs === cmd.value) autoCmdRef.current = null;          // daemon confirmed — release the hold
+        else if (Date.now() < cmd.until) { setAutoAdv(cmd.value); return; }   // in flight — hold the press
+        else autoCmdRef.current = null;                            // timed out — the command failed; observation wins
+      }
+      setAutoAdv(prev => {
+        if (obs === true || obs === false) return obs;        // observation always wins
+        // NO observation available. "?" is legal ONLY while attach is still in flight. Once attach has
+        // resolved the operator must see a definite state — never a resting question mark, and never a
+        // pressed AUTO falling back to "?" a second later.
+        // Jeff, verbatim: "when i do click auto it turns green automates and then shut off again and
+        // shows a black button with a question mark it needs to say manual when its off".
+        if (eng.daemonAttachState === "unknown") return prev;        // still attaching — leave as-is
+        return prev === null ? false : prev;                          // resolved: default MANUAL, and
+                                                                      // NEVER clobber a known value
+      });
     }, 500);
     return () => clearInterval(t);
   }, [engine]);
@@ -1291,6 +1326,7 @@ export default function App() {
     setStationName(profile.name);
     setWizardDone(true);
     setAccountJoined(true); // completing onboarding means an account was signed in
+    bootMarkAuthComplete();
     setAccountSignedIn(true); // session sign-in complete — gate can advance past the sign-in screen
   };
 
@@ -1787,8 +1823,27 @@ export default function App() {
   const handleOutputChange = (deviceId: string) => { setOutputDevice(deviceId); engine.setOutputDevice(deviceId); };
   const handleInputChange = (deviceId: string) => { setInputDevice(deviceId); };
 
-  const toggleAuto = async () => {
-    const n = !autoAdv;
+  // ── ABSOLUTE AUTOMATION COMMANDS (2026-08-03) ──────────────────────────────────────────────────
+  // The press IS the state. These NEVER read autoAdv / observedAutomation / the pill. The label was
+  // stuck on MANUAL while the daemon was provably _started, and because the old toggle computed
+  // `!autoAdv` it could ONLY ever send START — there was no way for the operator to stop automation
+  // from the board. A control whose meaning depends on a display that can lie is not a control.
+  const stopAutomation = async () => {
+    autoCmdRef.current = { value: false, until: Date.now() + 4000 };   // hold MANUAL until confirmed
+    setAutoAdv(false);                        // optimistic; observation corrects it once it works
+    engine.autoAdvance = false;
+    engine.continuous = false; setContinuous(false);
+    writeAutoAdv(stationId, false);           // stored PREFERENCE only — never a trigger
+    // Manual-mode contract: stop DECIDING, not stop the engine. The current song finishes; nothing
+    // advances after it, no spots, no jingles, no top-of-hour.
+    if (engine.isDaemonDriven) await (engine as any).stopDaemonAutomation?.();
+  };
+  // AUTO toggles: pressing it while it reads AUTO STOPS automation, otherwise it ENGAGES. Each branch
+  // then sends an ABSOLUTE command (never `!label` arithmetic passed down to the daemon).
+  const toggleAuto = async () => { if (autoAdv === true) await stopAutomation(); else await runEngage(); };
+  const runEngage = async () => {
+    autoCmdRef.current = { value: true, until: Date.now() + 4000 };    // hold AUTO until confirmed
+    const n = true;
     setAutoAdv(n);
     engine.autoAdvance = n;
     writeAutoAdv(stationId, n);
@@ -1811,7 +1866,7 @@ export default function App() {
         }
       } catch {}
       // daemon-driven → hand the whole fill+play+advance to the daemon.
-      if (engine.isDaemonDriven) { (engine as any).queueClearPending?.(); await engine.startDaemonAutomation(); return; }
+      if (engine.isDaemonDriven) { (engine as any).queueClearPending?.(); await engine.startDaemonAutomation("operator"); return; }
       resetScheduleCursor(stationId);
       engine.clearQueue?.();   // the schedule is the source — always (re)load from the now-scheduled song,
       {                         // never inherit a stale queue from a prior session that has to "catch up"
@@ -2128,7 +2183,14 @@ export default function App() {
   // self-relaunch (so the app's relaunches can't loop the user back to sign-in). Only AFTER an
   // account session exists does the PIN profile picker (UserLogin) render.
   if (firstRunChecked && !accountSignedIn) return <EtherErrorBoundary><OnboardingFlow forceAuth onComplete={handleWizardComplete} /></EtherErrorBoundary>;
-  if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={setCurrentUser} /></EtherErrorBoundary>;
+  if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={(u) => {
+    // THE DIVIDING LINE (D1): auth is complete only after account sign-in AND the PIN. The marker used to
+    // sit on setAccountSignedIn alone, so the PIN step — the LAST gate — never marked it, and the boot map
+    // had no post-auth side at all.
+    bootSeq("PIN accepted — profile selected");
+    bootSeq("ACCOUNT SIGN-IN complete — PIN still required");
+    setCurrentUser(u);
+  }} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
   // Bottom-toolbar view tabs — rendered inline on wide screens, collapsed into a
@@ -2238,9 +2300,11 @@ export default function App() {
           <button
             data-tour="auto-btn"
             onClick={() => { toggleAuto(); }}
-            title={autoAdv
+            title={autoAdv === true
               ? "Automation is ON — click to switch to MANUAL (you control the decks)"
-              : "MANUAL mode — click to switch to AUTO (automated rotation)"}
+              : autoAdv === null
+                ? "Waiting for the engine to report its automation state — click to engage AUTO"
+                : "MANUAL mode — click to switch to AUTO (automated rotation)"}
             style={{
               height: 44, padding: "0 20px", borderRadius: 0, cursor: "pointer",
               fontSize: 16, fontWeight: 800, letterSpacing: "0.08em",
@@ -2251,8 +2315,11 @@ export default function App() {
               display: "flex", alignItems: "center", gap: 7,
             }}
           >
-            {/* D3: three states. null = the daemon has not answered — show UNKNOWN, never fall back to MANUAL. */}
-            {autoAdv === true ? "● AUTO" : autoAdv === null ? "— UNKNOWN" : "MANUAL"}
+            {/* D3: three states — but the CONTROL always names itself. Replacing the label with
+                "— UNKNOWN" erased the operator's AUTO button from the board (it was still there and
+                still clickable, which is worse: a control you cannot recognise). Unknown is carried by
+                the dashed border + "?", never by taking the word AUTO away. */}
+            {autoAdv === true ? "● AUTO" : autoAdv === null ? "AUTO ?" : "MANUAL"}
           </button>
 
           <GlobalOnAirBadge

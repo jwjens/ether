@@ -277,7 +277,19 @@ const _automationIntent = new Map();
 // stopStream (and on automationStop — no automation means nothing to air). Replayed on daemon
 // (re)connect alongside automationStart so a reload restores the Icecast stream, not just playout.
 const _streamIntent = new Map();
-const { replayIntents } = require('./daemon-auto-resume');
+const { replayIntents: _replayIntentsRaw } = require('./daemon-auto-resume');
+// BOOT-SEQUENCE SENSE (permanent, 2026-08-03). Main's auto-resume is a SENDER of automationStart that
+// the renderer never sees — the halloVeen start on the 4.4.124 launch came from here, and a
+// renderer-side guard could not have caught it. Every replay now announces itself WITH the intent set
+// and whether this launch is watchdog-spawned, so this sender is never anonymous again.
+const replayIntents = (client, autoIntent, streamIntent, opts) => {
+  try {
+    logStartup(`[BOOTSEQ] replayIntents FIRING — automation intent=[${[...autoIntent.keys()].join(',')}] `
+      + `stream intent=[${[...streamIntent.keys()].join(',')}] `
+      + `watchdogSpawned=${!!process.env.ETHER_WATCHDOG_PID}`);
+  } catch { /* never break resume to log */ }
+  return _replayIntentsRaw(client, autoIntent, streamIntent, opts);
+};
 
 // DURABLE on-air intent (2026-07-15 silent-while-playing fix). _automationIntent is IN-MEMORY, so an app
 // RELAUNCH (every version update) resets it to empty — then only the renderer's boot auto-start (the active
@@ -618,17 +630,25 @@ if (AUDIO_DAEMON_DESIRED) {
         // Honest engine-state truth layer (Slice 1): live | stalled | off from the daemon → renderer,
         // which folds it into the now-playing payload + silent keepalive so a stalled station reports
         // its real state instead of going quiet (→ "offline").
-        sendToAllWindows("audio:daemon-enginestate", { stationId: m.stationId, state: m.state });
+        // FORWARD THE DAEMON'S PAYLOAD INTACT (2026-08-03). This used to hand-list two fields:
+        //   { stationId: m.stationId, state: m.state }
+        // The daemon had been sending `started` (whether automation is engaged) since 4.4.124, and this
+        // line silently DELETED it in transit. The renderer therefore saw started=undefined forever, so
+        // observedAutomation returned null and the pill showed MANUAL over a station that was provably
+        // automating — through three pill redesigns, an attach investigation, and two wrong theories.
+        // Both ENDS were benched; the WIRE between them never was.
+        // Spreading the payload kills the whole class: a field added at either end can no longer vanish
+        // here. `event` is stripped only because the channel name already carries it.
+        const { event: _evt, ...enginestatePayload } = m;
+        sendToAllWindows("audio:daemon-enginestate", enginestatePayload);
         _daemonEngineState.set(m.stationId, m.state);   // corroborates the silent-wedge watchdog reload-reason log
-        // Capture on-air intent from OBSERVED reality: any station the daemon reports genuinely LIVE is on
-        // air — register + persist its intent if the in-memory map missed it (e.g. after an app relaunch
-        // where the renderer only auto-started the active station but the surviving daemon kept the others
-        // airing). Not inference/guessing — the daemon says it's live. This makes the reload replay resume
-        // EVERY airing station, including on the very first install of this fix. (2026-07-15 incident.)
-        if (m.state === "live" && m.stationId != null && !_automationIntent.has(m.stationId)) {
-          _automationIntent.set(m.stationId, { stationId: m.stationId }); _persistAutomationIntent();
-          logStartup(`[AUDIO] auto-resume: registered on-air intent for station ${m.stationId} (observed live)`);
-        }
+        // DELETED 2026-08-03 — observation-derived intent. This registered + PERSISTED automation intent
+        // for any station the daemon reported live, so automation-intent.json refilled itself from what
+        // the daemon happened to be doing, and the next launch replayed automationStart for it. Receipt:
+        // "[AUDIO] auto-resume: registered on-air intent for station 2 (observed live)" at 20:24:34,
+        // which is how halloVeen came back automating on its own.
+        // THE RULE (Jeff, 2026-08-03): the daemon airing is NEVER evidence of the operator's intent.
+        // automation-intent.json is written ONLY by an operator press, and cleared by a clean quit.
         try { _health.noteEngineState(m.stationId, m.state); } catch {}
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
@@ -674,7 +694,13 @@ if (AUDIO_DAEMON_DESIRED) {
     if (AUDIO_DAEMON) return;
     try {
       logStartup("[AUDIO] HANDOVER (song boundary): in-process → daemon for station " + sid);
-      try { audiodClient.cmd("automationStart", { stationId: sid }).catch(() => {}); } catch {}   // prime the daemon first
+      // DELETED 2026-08-03 — the handover no longer PRIMES automation. This sent automationStart with no
+      // operator anywhere near it, every time the cold-stage race forced an in-process fallback that later
+      // reattached. Receipt: "[AUDIO] HANDOVER (song boundary): in-process -> daemon for station 2" at
+      // 20:24:33.573, the launch where halloVeen came up automating. The handover may reattach and OBSERVE;
+      // it never engages automation. If automation was genuinely engaged before the fallback, the operator's
+      // press is what re-engages it — or the watchdog path, which is untouched.
+      // THE RULE (Jeff, 2026-08-03): the AUTO button is the only thing that starts automation.
       AUDIO_DAEMON = true; _inProcessFallback = false;                                             // route audio IPC to the daemon
       for (const d of ["A", "B", "C"]) { try { audio.audioStop(d, sid); } catch {} }               // release the (already-ended) in-process decks
       try { replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) }); } catch {}

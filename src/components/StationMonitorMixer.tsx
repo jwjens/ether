@@ -1,3 +1,4 @@
+import { getEngine } from "../audio/engine-registry";
 // src/components/StationMonitorMixer.tsx
 // Per-station LOCAL monitor mixer. Each station is a collapsible strip with its own monitor
 // fader (what you HEAR on the local speakers) + output device. The monitor fader drives the
@@ -58,6 +59,12 @@ export default function StationMonitorMixer() {
 
   const setMonitor = useCallback((sid: number, value: number) => {
     setVol(prev => ({ ...prev, [sid]: value }));
+    // Tell the ENGINE the operator owns this level (2026-08-03). Without this,
+    // assertMonitorSilence() re-mutes to 0 on EVERY daemon attach — and a station switch tears the
+    // engine down, so switching back is a fresh attach. Receipt: "monitor asserted to 0.00 at attach
+    // (station 2)" three times across two switches. noteOperatorMonitor() was written for exactly this
+    // in the D2 slice and never wired to anything, so monitorRaisedByOperator was permanently false.
+    try { getEngine(sid).noteOperatorMonitor(value); } catch { /* engine not up yet — level still persists below */ }
     (window as any).ether?.audio?.setMonitorVolume?.(sid, value);
     (window as any).ether?.stationConfigKv?.upsertByKey?.(sid, "monitor_volume", String(value));
   }, []);
