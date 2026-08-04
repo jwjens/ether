@@ -489,6 +489,7 @@ interface CartSlot {
 // was the ceiling this replaces.
 export const CART_SLOT_COUNT = 64;        // the full wall
 export const CART_STRIP_COUNT = 24;       // the bottom push-up strip — 3 rows of 8
+export const CART_STRIP_ROWS = 3;         // rows VISIBLE in the push-up before it scrolls (all 64 render)
 export const CART_ROW = 8;                // tiles per row at full width
 
 // HOTKEYS: the first CART_STRIP_COUNT slots only — three keyboard rows, no bank/shift modifier, no
@@ -662,13 +663,47 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     updateSlot(key, { label: `Cart ${c.slot + 1}`, filePath: undefined });
   };
 
-  // Strip layout (#4 refinement): one row of even SQUARE carts + a side VU. Lives docked
-  // below the decks (decks-width), pushing them up — see App.tsx decksPanel.
+  // Exactly CART_STRIP_ROWS rows visible before the strip scrolls. The tiles are square and CART_ROW
+  // across, so the height that shows 3 full rows is a function of the container's WIDTH, not of the
+  // dock height — which is user-resizable and shared with the library/calendar/jingles panels, so it
+  // must not be commandeered here. Measured, never hardcoded: a fixed px height would show 3 rows at
+  // one window size and 2.4 at another.
+  const STRIP_GAP = 6;
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const [stripViewportH, setStripViewportH] = useState<number | null>(null);
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    const compute = () => {
+      const w = el.clientWidth;
+      if (!w) return;
+      const tile = (w - STRIP_GAP * (CART_ROW - 1)) / CART_ROW;          // square edge
+      setStripViewportH(Math.round(tile * CART_STRIP_ROWS + STRIP_GAP * (CART_STRIP_ROWS - 1)));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [variant]);
+
+  // Strip layout: SQUARE carts, CART_ROW across, scrolling vertically. Lives docked below the decks
+  // (decks-width), pushing them up — see App.tsx decksPanel.
+  //
+  // Was `carts.slice(0, CART_ROW)` in a single flex row, so the push-up could only ever reach the
+  // first 8 of a 64-slot wall and the other 56 were unreachable from the main window. Now it renders
+  // the SAME carts as the full wall in the same 8-across grid; the extra rows sit below and scroll.
   if (variant === "strip") {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div style={{ height: "100%", display: "flex", alignItems: "stretch", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
-        {carts.slice(0, CART_ROW).map(cart => (
+        <div ref={stripRef} style={{
+          flex: 1, minWidth: 0, overflowY: "auto" as const,
+          // 3 rows visible; rows 4+ are reachable by scrolling. All 64 render.
+          height: stripViewportH ?? undefined, maxHeight: stripViewportH ?? undefined,
+          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: STRIP_GAP,
+          alignContent: "start",
+        }}>
+        {carts.map(cart => (
           <div
             key={cart.key}
             onClick={() => { if (cart.filePath) fireCart(cart.key); else assignCart(cart.key); }}
@@ -678,7 +713,8 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             onDrop={e => handleDrop(e, cart.key)}
             title={cart.filePath ? cart.label : "Empty — click to assign"}
             style={{
-              flex: 1, aspectRatio: "1", minWidth: 0, maxWidth: 130, alignSelf: "center",
+              // Grid owns the width now (CART_ROW columns); the tile only holds its square ratio.
+              aspectRatio: "1", minWidth: 0,
               borderRadius: 4,
               background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",
               border: `1px solid ${cart.playing ? cart.color + "90" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
@@ -702,6 +738,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             )}
           </div>
         ))}
+        </div>
         {/* VU meter — side */}
         <div style={{ width: 14, alignSelf: "stretch", flexShrink: 0, display: "flex", flexDirection: "column" as const, padding: "2px 0" }}>
           <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
@@ -717,10 +754,11 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
       {/* Header — hidden in compact to save space */}
       {!compact && (
         <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.14em", color: "#fbbf24", textTransform: "uppercase" as const }}>Cart Wall · Deck {deckSlot}</div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>Press key or click to fire · Drop audio to assign</div>
-          </div>
+          {/* No "Cart Wall · Deck X" title: carts always fire on the dedicated CART channel and sum
+              to master, so naming a deck here was wrong as well as noise. No "press key / drop audio"
+              subtext either — the tiles are the affordance. The loaded counter stays; it is the one
+              thing the strip tells you that a tile cannot. */}
+          <div />
           <div style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>
             {carts.filter(c => c.filePath).length}/{carts.length} loaded
           </div>
@@ -761,9 +799,12 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
       ) : (
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
+        {/* CART_ROW tiles across, filling left-to-right then top-to-bottom: 1-8 on row 1, 9-16 on
+            row 2, and so on. Grid's default row-wise flow gives that ordering; the column count is
+            CART_ROW (8) so the wall stays consistent with the strip and can widen in one place. */}
         <div style={{
           flex: 1, padding: 12, overflowY: "auto" as const,
-          display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8,
+          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: 8,
           alignContent: "start",
         }}>
         {carts.map(cart => (
@@ -793,7 +834,9 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             <div style={{ height: 4, background: cart.filePath ? cart.color : "var(--border-primary)", flexShrink: 0, opacity: cart.playing ? 1 : 0.7 }} />
 
             {/* Name row */}
-            <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "2px 22px 2px 6px", minWidth: 0 }}>
+            {/* Right padding was 22px to clear the key badge; with the badge gone the name gets the
+                full tile width. */}
+            <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "2px 6px", minWidth: 0 }}>
               <span style={{
                 fontSize: 12, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.3,
                 color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
@@ -813,17 +856,9 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
               </div>
             )}
 
-            {/* Key badge — top-right */}
-            <div style={{
-              position: "absolute" as const, top: 6, right: 5,
-              fontSize: 8, fontWeight: 800, fontFamily: "'DM Mono', monospace",
-              color: cart.playing ? cart.color : cart.filePath ? cart.color + "cc" : "var(--text-tertiary)",
-              letterSpacing: "0.04em",
-              background: "var(--bg-primary)",
-              padding: "0px 3px",
-              border: `1px solid ${cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
-              lineHeight: "14px",
-            }}>{cart.key}</div>
+            {/* No key badge. The 1-8 / Q-W-E / c25 labels are gone from the tile — a tile is a
+                square you click. Hotkeys still fire the first 24 slots; they are just not printed
+                on the face. cart.key remains the internal per-slot identity (cartKeyFor). */}
           </div>
         ))}
         </div>
