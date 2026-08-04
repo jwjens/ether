@@ -97,33 +97,21 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
 
   const isPlaying = status === "playing";
 
-  // ── Album artwork (embedded cover; iTunes fallback for MUSIC only — 60×60 thumb + idle bg) ──
+  // ── Album artwork (iTunes song entity — 60×60 thumb + idle bg) ────────────
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   const albumArtFetchedFor = useRef<string>("");
-  const contentClass = deck?.contentClass ?? null;
 
   useEffect(() => {
     if (!title) return;
-    // contentClass is part of the key: a deck that changes occupant class must re-resolve its art
-    // rather than keep the previous occupant's.
-    const key = `${title}::${artist}::${contentClass ?? ""}`;
+    const key = `${title}::${artist}`;
     if (albumArtFetchedFor.current === key) return;
     albumArtFetchedFor.current = key;
     // Local-first: embedded cover art from the on-air file, iTunes as the fallback.
-    //
-    // CONTENT-CLASS GUARD — the rule App.tsx:439 / :2114-2118 already applies to the listener payload,
-    // which the deck tile never got: imaging and commercials (JIN/SWP/SPOT) must NEVER get a music-store
-    // lookup. A spot with no embedded cover fell through to an iTunes search on its TITLE, so a
-    // commercial wore some band's album art. Embedded cover art is still honoured for these classes —
-    // that is the file's OWN art, not a lookup. No art → the tile renders neutral, which it already does
-    // gracefully. A manual per-spot override is a separate, later half
-    // (docs/spot-artwork-override-design-2026-08-04.md).
     (async () => {
       const local = await getLocalArt((deck as any)?.filePath);
-      if (["JIN", "SWP", "SPOT"].includes(contentClass || "")) { setAlbumArtUrl(local || null); return; }
       setAlbumArtUrl(local || await fetchArt(title, artist));
     })();
-  }, [title, artist, contentClass]);
+  }, [title, artist]);
 
   // ── Artist photo (Wikipedia/iTunes artist) for blurred bg ──────────────
   const [artUrl, setArtUrl] = useState<string | null>(null);
