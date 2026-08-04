@@ -7,8 +7,7 @@ import type { DeckRole } from "../lib/deckRole";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { fetchArt } from "./UpNext";
-import { getLocalArt } from "../lib/albumArt";
+import { resolveArtwork, isImagingClass } from "../lib/albumArt";
 
 interface Props {
   deck: DeckState | null;
@@ -97,21 +96,25 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
 
   const isPlaying = status === "playing";
 
-  // ── Album artwork (iTunes song entity — 60×60 thumb + idle bg) ────────────
+  // ── Artwork (60×60 thumb + idle bg) ───────────────────────────────────────
+  // Routed by content class in resolveArtwork: a spot takes the spot chain — the artwork the
+  // operator set on it, else its embedded cover, else nothing — which has no music-store lookup
+  // in it at all. Music keeps embedded → music store.
+  const contentClass = deck?.contentClass ?? null;
   const [albumArtUrl, setAlbumArtUrl] = useState<string | null>(null);
   const albumArtFetchedFor = useRef<string>("");
 
   useEffect(() => {
     if (!title) return;
-    const key = `${title}::${artist}`;
+    // contentClass is part of the key so a deck that changes occupant class re-resolves rather
+    // than keeping the previous occupant's artwork.
+    const key = `${title}::${artist}::${contentClass ?? ""}`;
     if (albumArtFetchedFor.current === key) return;
     albumArtFetchedFor.current = key;
-    // Local-first: embedded cover art from the on-air file, iTunes as the fallback.
     (async () => {
-      const local = await getLocalArt((deck as any)?.filePath);
-      setAlbumArtUrl(local || await fetchArt(title, artist));
+      setAlbumArtUrl(await resolveArtwork((deck as any)?.filePath, contentClass, title, artist));
     })();
-  }, [title, artist]);
+  }, [title, artist, contentClass]);
 
   // ── Artist photo (Wikipedia/iTunes artist) for blurred bg ──────────────
   const [artUrl, setArtUrl] = useState<string | null>(null);
@@ -122,6 +125,11 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
   // When title/artist changes, fetch artwork using smart multi-source strategy
   useEffect(() => {
     if (!title) { setArtUrl(null); setArtReady(false); return; }
+    // A spot has no recording artist. Both strategies below are MUSICIAN searches — a Wikipedia
+    // summary filtered on "sing|music|band…" and an iTunes musicArtist query — so running them on
+    // a commercial is the same defect as the album-cover one, just on the background layer.
+    // Imaging never enters that code: no lookup, no background, the deck renders neutral.
+    if (isImagingClass(contentClass)) { setArtUrl(null); setArtReady(false); return; }
     // Cache key is artist — same artist = same photo regardless of track
     const cacheKey = `ether_artist_photo_${(artist||"").toLowerCase().replace(/\s+/g,"_")}_${(title||"").toLowerCase().replace(/\s+/g,"_").slice(0,20)}`;
     if (artLoadedFor.current === (artist || title)) return;
@@ -212,7 +220,9 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
         setArtUrl(null);
       }
     })();
-  }, [artist]); // key on artist, not title — same artist across tracks = same photo
+  }, [artist, contentClass]); // key on artist, not title — same artist across tracks = same photo.
+  // contentClass joins the deps so a deck flipping between a song and a spot re-evaluates: the
+  // imaging early-return above must fire even when the artist string happens to be unchanged.
 
   // Pulse the artwork in sync with the beat (tied to VU level)
   useEffect(() => {

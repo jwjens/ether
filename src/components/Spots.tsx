@@ -7,6 +7,7 @@ const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 // Path → fetchable URL (Windows backslashes → forward slashes, three-slash file URL). Matches StudioPro.
 const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { clearSpotArtCache } from "../lib/albumArt";
 
 interface Spot {
   id: number; title: string; file_path: string | null;
@@ -307,6 +308,9 @@ export default function Spots() {
     if (!editing || !editing.title) return;
     if (editing.id) {
       await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null, art_image: editing.art_image || null });
+      // Drop the cached artwork for this file so the new override shows on air immediately
+      // instead of after a restart.
+      clearSpotArtCache(editing.file_path ?? null);
     }
     setEditing(null); load(); loadCats();
   };

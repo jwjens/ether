@@ -1365,6 +1365,10 @@ export default function App() {
         position: stA?.positionSec || 0, duration: stA?.durationSec || 0,
         widget,
         upcoming: engine.getQueue().slice(0, 10).map(q => ({ title: q.title, artist: q.artist, duration: 0 })),
+        // Same as the other emitter: carry the file and its class so the now-playing display
+        // routes a spot down the spot artwork chain instead of a music-store search.
+        filePath: stA?.filePath || null,
+        contentClass: stA?.contentClass ?? null,
       }).catch(() => {});
     });
     return () => { unlisten.then(f => f()); };
@@ -2147,6 +2151,11 @@ export default function App() {
         durationSec: payload.duration,
         isPlaying:   true,
         upcoming:    payload.queue,
+        // filePath rides along so the now-playing display can resolve artwork by content class.
+        // Without it that window cannot tell a commercial from a song and ran a music-store
+        // lookup on every spot title. A hand-picked field bag that drops the one field the
+        // receiver needs is the same shape as the 4.4.132 relay bug — forward it.
+        filePath:    payload.filePath || null,
       }).catch(() => {});
     }
   }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName, stationUuid]);

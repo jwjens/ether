@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 const getCurrentWindow = () => ({ setTitle: (t: string) => document.title = t, close: () => window.close() });
 const listen = <T = any>(e: string, cb: (ev: { payload: T }) => void): Promise<() => void> => { const h = (window as any).ether.on(e, (p: any) => cb({ payload: p })); return Promise.resolve(() => (window as any).ether.off(e, h)); };
 import { query } from "../db/client";
+import { resolveArtwork } from "../lib/albumArt";
 
 interface TrackInfo {
   title: string; artist: string;
@@ -9,6 +10,10 @@ interface TrackInfo {
   duration?: number; durationSec?: number;
   isPlaying: boolean;
   upcoming?: { title: string; artist: string; duration: number }[];
+  // Carried by both now-playing-update emitters (App.tsx) so this window can tell a spot from a
+  // song. Before that it could not, and ran a music-store search on every spot title.
+  filePath?: string | null;
+  contentClass?: string | null;
 }
 interface UpcomingSong {
   title: string; artist_name: string | null; duration_ms: number;
@@ -24,7 +29,10 @@ function fmtDur(ms: number) {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
-async function fetchAlbumArt(artist: string, title: string): Promise<string | null> {
+// MUSIC ONLY. Both strategies below are music-store / musician searches, so nothing that might be
+// a spot may reach this function — callers go through resolveArtwork(), which routes imaging down
+// the spot chain instead. Kept private to this module for that reason.
+async function fetchAlbumArtForMusic(artist: string, title: string): Promise<string | null> {
   const cacheKey = `ether_art_${(artist || "").toLowerCase().replace(/\s+/g, "_")}_${(title || "").toLowerCase().replace(/\s+/g, "_").slice(0, 20)}`;
   const cached = sessionStorage.getItem(cacheKey);
   if (cached) return cached || null;
@@ -209,19 +217,29 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
   }, []);
 
   useEffect(() => {
-    const key = track.artist + "|" + track.title;
+    const key = track.artist + "|" + track.title + "|" + (track.contentClass ?? "");
     if (key === lastTrack) return;
     setLastTrack(key);
     setAlbumArt(null);
     if (track.artist || track.title) {
       const timer = setTimeout(() => {
-        fetchAlbumArt(track.artist, track.title).then(url => {
+        // Routed: a spot takes the spot chain (override → embedded → nothing). When the class is
+        // absent the file is checked against the spots table, so a spot can never reach the music
+        // store just because the class did not ride along.
+        (async () => {
+          if (track.filePath || track.contentClass) {
+            const url = await resolveArtwork(track.filePath, track.contentClass, track.title, track.artist);
+            setAlbumArt(url);
+            return;
+          }
+          // No file identity at all (legacy payload): fall back to the music path, as before.
+          const url = await fetchAlbumArtForMusic(track.artist, track.title);
           if (url) setAlbumArt(url);
-        });
+        })();
       }, 400);
       return () => clearTimeout(timer);
     }
-  }, [track.artist, track.title]);
+  }, [track.artist, track.title, track.contentClass, track.filePath]);
 
   const { title, artist, positionSec: pos = 0, durationSec: dur = 0, isPlaying } = track;
   const pct = dur > 0 ? (pos / dur) * 100 : 0;

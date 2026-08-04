@@ -5,7 +5,7 @@ import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { getActiveShowClock } from "../audio/loggen";
-import { getLocalArt } from "../lib/albumArt";
+import { resolveArtwork } from "../lib/albumArt";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -30,20 +30,10 @@ const DECK_COLORS: Record<"A" | "B" | "C", string> = { A: "var(--deck-a)", B: "v
 
 interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; contentClass: string | null; }
 
-// Tiny artwork cache — exported so OnAirDeck can share it
-export const artCache: Record<string, string> = {};
-export async function fetchArt(title: string, artist: string): Promise<string | null> {
-  const key = `${title}::${artist}`;
-  if (artCache[key] !== undefined) return artCache[key] || null;
-  try {
-    const q = encodeURIComponent(`${title} ${artist}`.replace(/\(feat\..*?\)/gi, "").replace(/\s*[-–]\s*remaster.*/gi, "").trim());
-    const r = await fetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`);
-    const d = await r.json();
-    const url = d?.results?.[0]?.artworkUrl100?.replace("100x100bb", "60x60bb") ?? null;
-    artCache[key] = url || "";
-    return url;
-  } catch { artCache[key] = ""; return null; }
-}
+// The iTunes lookup that used to live here has MOVED to src/lib/albumArt.ts as
+// `fetchMusicStoreArt`, reachable only through `resolveArtwork()`. It is not exported from this
+// module any more, so no component can call a music store directly for something that might be a
+// spot. Artwork resolution is routed by content class in one place — see albumArt.ts.
 
 // ── UpNext (main component) ────────────────────────────────────
 
@@ -208,7 +198,8 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     return () => { unsub(); clearInterval(tick); };
   }, [engine]);
 
-  // Resolve artwork for the songs currently on the decks (local embedded art first, iTunes fallback).
+  // Artwork for whatever is on the decks. resolveArtwork routes by content class: a spot takes the
+  // spot chain (override → embedded → nothing) which contains no music-store lookup at all.
   useEffect(() => {
     (["A", "B", "C"] as const).forEach(id => {
       const s = deckStates[id];
@@ -216,8 +207,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       const key = `${s.title}::${s.artist}`;
       if (artUrls[key] !== undefined) return;
       (async () => {
-        const local = await getLocalArt(s.filePath);
-        const url = local || await fetchArt(s.title, s.artist);
+        const url = await resolveArtwork(s.filePath, s.contentClass, s.title, s.artist);
         if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
       })();
     });
@@ -227,10 +217,9 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     queue.forEach(item => {
       const key = `${item.title}::${item.artist}`;
       if (artUrls[key] !== undefined) return;
-      // Local-first: embedded cover art from the file, then iTunes as the fallback.
       (async () => {
-        const local = await getLocalArt((item as any).filePath);
-        const url = local || await fetchArt(item.title || "", item.artist || "");
+        const cc = (item as any).contentClass ?? (item as any).content_class ?? null;
+        const url = await resolveArtwork((item as any).filePath, cc, item.title || "", item.artist || "");
         if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
       })();
     });
