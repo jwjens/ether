@@ -22,7 +22,7 @@ const EMIT_WITH_STATIONID = /(broadcast|sendToAllWindows|webContents\.send)\([^)
 
 // Integer-station emit-calls remaining. LOWER as each phase migrates a channel to stationUuid.
 // TARGET: 0 by Phase 3. Baseline captured 2026-07-07 (Phase 0).
-const BASELINE = 14;
+const BASELINE = 13;   // 14 → 13 (2026-08-04): a channel migrated; ratchet lowered, never raised.
 
 let total = 0;
 const hits = [];
