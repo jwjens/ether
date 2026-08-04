@@ -17,6 +17,9 @@ interface Spot {
   notes: string | null;
   spot_category_id: number | null;
   length_sec: number | null;
+  // v36 — operator-chosen artwork, a base64 data URL stored in the row (the station-logo
+  // pattern). NULL = no override. Local: choosing an image makes no network call.
+  art_image: string | null;
 }
 
 interface SpotCategory { id: number; name: string; color: string | null; uuid: string; }
@@ -303,10 +306,21 @@ export default function Spots() {
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
-      await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null });
+      await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null, art_image: editing.art_image || null });
     }
     setEditing(null); load(); loadCats();
   };
+
+  // ── Artwork override ──────────────────────────────────────────────────────────
+  // Reuses the station-logo picker (electron/main.js:5586): it opens an image dialog, reads the
+  // file in main, and returns a base64 data URL. It makes NO network call — the bytes go into the
+  // spots row and nowhere else. Saved by `save()` above through the existing updateById.
+  const chooseArt = async () => {
+    if (!editing) return;
+    const result = await (window as any).ether.station.uploadLogo();
+    if (result?.ok && result.dataUrl) setEditing({ ...editing, art_image: result.dataUrl });
+  };
+  const clearArt = () => { if (editing) setEditing({ ...editing, art_image: null }); };
 
   const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await (window as any).ether.spots.deleteById(id); load(); };
 
@@ -501,8 +515,34 @@ export default function Spots() {
               </div>
             </div>
           </div>
-          <textarea placeholder="Notes" value={editing.notes || ""} onChange={e => setEditing({...editing, notes: e.target.value})}
-            style={{ width: "100%", padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", height: 60, resize: "none" as any, marginBottom: 12, boxSizing: "border-box" as any }} />
+          {/* Notes + Artwork, side by side — artwork sits beside Advertiser and Notes. */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "stretch" }}>
+            <textarea placeholder="Notes" value={editing.notes || ""} onChange={e => setEditing({...editing, notes: e.target.value})}
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", height: 84, resize: "none" as any, boxSizing: "border-box" as any }} />
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center", padding: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", boxSizing: "border-box" as any, minWidth: 250 }}>
+              {/* Thumbnail, or an empty state that explains itself */}
+              {editing.art_image ? (
+                <img src={editing.art_image} alt="Spot artwork"
+                  style={{ width: 64, height: 64, objectFit: "cover" as any, border: "1px solid var(--border-secondary)", flexShrink: 0, background: "var(--bg-secondary)" }} />
+              ) : (
+                <div style={{ width: 64, height: 64, flexShrink: 0, border: "1px dashed var(--border-secondary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, lineHeight: 1.25, textAlign: "center" as any, color: "var(--text-tertiary)", padding: 4, boxSizing: "border-box" as any }}>
+                  No artwork
+                </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column" as any, gap: 6, minWidth: 0 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>Artwork</span>
+                <span style={{ fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.3 }}>
+                  {editing.art_image ? "Stays on this computer." : "Pick your own image for this spot."}
+                </span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={chooseArt} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", whiteSpace: "nowrap" as any }}>Choose image…</button>
+                  <button onClick={clearArt} disabled={!editing.art_image}
+                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: editing.art_image ? "pointer" : "default", opacity: editing.art_image ? 1 : 0.4, whiteSpace: "nowrap" as any }}>Clear</button>
+                </div>
+              </div>
+            </div>
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={save} style={{ padding: "7px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
             <button onClick={() => setEditing(null)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>

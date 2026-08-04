@@ -811,6 +811,10 @@ const REGISTRY = {
       agency:         'scalar',
       length_sec:       'scalar',
       spot_category_id: 'scalar',
+      // v36 — operator-chosen artwork for this spot, stored as a base64 data URL in the row
+      // (the station-logo pattern, main.js:5586 / SettingsPanel.tsx:245). Scalar: it is the
+      // value itself, not a reference to a file or a blob the sync engine must fetch.
+      art_image:        'scalar',
       station_id:       'scalar',
       uuid:             'scalar',
       updated_at:       'scalar',
