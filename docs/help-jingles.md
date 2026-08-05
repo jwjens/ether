@@ -67,11 +67,10 @@ error**. Nothing warns you; nothing is placed.
   - **White = armed** — the seam is imminent (within ~30s of the end); the jingle is loaded and ready.
   - **Yellow (blinking) = firing** — the jingle is on air right now.
 - The **Health Monitor** shows the same armed/firing state per station.
-- The **JINGLES fader** on the live screen has an **ON** lamp. It reports the cart/overlay channel's
-  **real** state: lit only while that channel is actually playing, dark when it is idle. Pressing **ON**
-  pauses or resumes that channel — so if you press it and the lamp goes dark, imaging and carts really are
-  paused, and pressing it again resumes them. (Before this it was always lit, which could hide a channel
-  you had paused.) With nothing loaded on the channel, pressing ON does nothing and the lamp stays dark.
+- The **JINGLES fader** on the live screen **lights up while imaging is actually on air** — its label and
+  **ON** button brighten for the length of the jingle or cart, then settle back. The channel itself stays
+  available at all times, so the fader and its ON button are always usable whether or not something is
+  playing.
 - Overlays are logged in Play History but **kept out of music reports and rotation math** — they never count
   as a song play or block an artist.
 

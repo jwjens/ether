@@ -4152,14 +4152,26 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               color="#14e0c8"
               volume={jingleVol}
               deckId="CART"
-              // OBSERVED, not asserted. Both of these were hardcoded — isPlaying={false} and
-              // isOn={true} — while onToggleOn below actually PAUSES/PLAYS the CART deck. So pressing
-              // ON could silence every cart and the button still rendered as ON: a control reporting
-              // its own assumption instead of the channel it drives, the same defect class as the
-              // AUTO pill (4.4.132) and the deck countdown. cartPlaying is polled from the CART deck's
-              // real state, so ON is lit only while the channel is actually running.
+              // isOn IS NOT A LAMP — it is this strip's whole alive/dead switch. In ConsoleStrip,
+              // isOn={false} greys the label (:264), the fader fill to opacity 0.06 (:339-340), the knob
+              // cap (:355-357), the VU gradient to opacity 0.04 (:378) AND the ON button (:406-412).
+              // 4.4.145 bound it to cartPlaying, so the entire strip read DEAD whenever no cart happened
+              // to be playing — i.e. nearly always. That is a worse defect than the one it fixed: an
+              // operator cannot use a control that looks disabled. REVERTED to true — the overlay channel
+              // is always available, so the strip is always alive and the ON button is always clickable.
+              //
+              // ConsoleStrip:152-154 already says why binding liveness here was wrong by design: the CART
+              // overlay "has no steady 'playing' status like a rotation deck (jingles fire briefly over
+              // master)" — which is exactly why its VU ignores isPlaying. A transient status must never
+              // drive a persistent control's enabled-look.
+              //
+              // isPlaying DOES stay observed: it only brightens the label and the ON button while audio is
+              // actually flowing (:248, :264-265, :406-407) and greys nothing, so it is honesty with no
+              // dead-control risk. STILL OPEN: onToggleOn below is transport on a deck that is empty
+              // between carts, so ON can still pause carts while the strip reads ON. That needs a real
+              // channel on/off, not a status read — see the build report, NOT fixed here.
               isPlaying={cartPlaying}
-              isOn={cartPlaying}
+              isOn={true}
               onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
               onToggleOn={() => { const cart = engine.getDeck("CART" as any) as any; const st = cart?.getState?.(); if (st?.status === "playing") cart?.pause(); else cart?.play(); }}
             />
