@@ -1180,18 +1180,70 @@ class DaemonEngine {
   // and it airs AS a log row (zero off-log airs). Only when the flip is ON for this station. Direct local
   // write (like playlog/shadow-stamp); best-effort, never breaks the load. info: {title,artist,filePath,
   // fileKey,songId,durationMs}.
-  _writeOperatorLogRow(info) {
+  /** Resolve what a hand-loaded FILE actually is. songs → spots → cart_slots → unknown.
+   *
+   *  The cart_slots step is the one that matters and the one a songs-only lookup misses: a cart file
+   *  may exist in NEITHER songs NOR spots. That is exactly how "Adele   Someone Like You 68" — a cart
+   *  with no songs row — took the MUSIC default and became an airable music row (2026-08-04).
+   *
+   *  Returns "MUSIC" | "JIN" | "SWP" | "SPOT" | "CART" | null. null means UNKNOWN, and unknown must
+   *  never be treated as music. */
+  _resolveHandLoadClass(filePath) {
+    if (!filePath) return null;
+    try {
+      const s = this.db.prepare(
+        "SELECT content_class FROM songs WHERE file_path = ? AND deleted_at IS NULL LIMIT 1").get(filePath);
+      if (s) return s.content_class || "MUSIC";           // a library row with no class IS music
+      const sp = this.db.prepare(
+        "SELECT 1 AS n FROM spots WHERE file_path = ? AND deleted_at IS NULL LIMIT 1").get(filePath);
+      if (sp) return "SPOT";
+      const c = this.db.prepare(
+        "SELECT 1 AS n FROM cart_slots WHERE file_path = ? LIMIT 1").get(filePath);
+      if (c) return "CART";
+      return null;                                         // in no table — unknown, NOT music
+    } catch { return null; }
+  }
+
+  /** Log-Reader Flip §2.5 — a jock hand-loading a deck is first-class in the one file: write a
+   *  generated_schedule row at the playhead stamped source='operator' so the queue/calendar reflect it
+   *  and it airs AS a log row (zero off-log airs).
+   *
+   *  THAT INTENT IS FOR MUSIC ONLY (docs/hand-load-log-design-2026-08-04.md). It used to hardcode
+   *  content_class='MUSIC' and state='pending', so hand-firing a cart, jingle or spot wrote an AIRABLE
+   *  MUSIC row and the log reader played imaging as music. state='pending' is not a record of
+   *  something that happened — it is an INSTRUCTION TO AIR.
+   *
+   *  Now: resolve the real class, and write a row ONLY for a library MUSIC song. Imaging, commercials
+   *  and unknown files write NOTHING — their airing is already recorded by play_log, which resolves
+   *  content class properly (audiod/playlog.js:27-35). Refusing to write is always safe; writing a
+   *  wrong row into the file every station airs from is not.
+   *
+   *  info: {title,artist,filePath,fileKey,songId,durationMs}. `deck` and `via` are for the log line —
+   *  a title-only message is why a cart fire was mistaken for an operator library-load for two rounds.
+   */
+  _writeOperatorLogRow(info, deck, via) {
     if (!this._logReaderOn() || !info || !info.filePath) return;
+    const where = `deck=${deck || "?"} via=${via || "?"}`;
+    const base = String(info.filePath).split(/[\\/]/).pop();
+    const cls = this._resolveHandLoadClass(info.filePath);
+
+    // REFUSALS ARE LOGGED. A silent refusal is how this class of bug hides.
+    if (cls !== "MUSIC") {
+      this._log(`LOG-READER hand-load: ${where} class=${cls || "UNKNOWN"} file="${base}" → NO ROW ` +
+                `(${cls ? "not music — imaging/commercial never enters the airable music log" : "unresolved — not in songs, spots or cart_slots"})`);
+      return;
+    }
+
     try {
       const nowTs = Math.floor(Date.now() / 1000);
       const iso = new Date().toISOString();
-      this.db.prepare(
+      const r = this.db.prepare(
         `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, file_key, duration_s, station_id, uuid, state, source, content_class, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'operator', 'MUSIC', ?, ?)`
       ).run(nowTs, info.songId ?? null, info.title || "", info.artist || "", info.filePath, info.fileKey || null,
             info.durationMs ? Math.round(info.durationMs / 1000) : null, this.stationId, crypto.randomUUID(), iso, iso);
       try { this.emit("logreader-operator-write", { stationId: this.stationId, title: info.title || "" }); } catch {}
-      this._log("LOG-READER: operator deck-load → wrote source='operator' log row \"" + (info.title || "") + "\"");
+      this._log(`LOG-READER hand-load: ${where} class=MUSIC file="${base}" → wrote row id=${r.lastInsertRowid}`);
     } catch (e) { /* never break the operator load */ }
   }
 
@@ -1349,7 +1401,7 @@ class DaemonEngine {
     this.manualCue.add(deckId);
     // Flip §2.5: the jock hand-loaded this deck — write it to the log as an operator row so it airs on-log.
     const st = this._deckState(deckId);
-    this._writeOperatorLogRow({ title: st.title, artist: st.artist, filePath: st.filePath, durationMs: (st.durationSec || 0) * 1000 });
+    this._writeOperatorLogRow({ title: st.title, artist: st.artist, filePath: st.filePath, durationMs: (st.durationSec || 0) * 1000 }, deckId, "noteManualCue");
     this._maybeEmitDeck(deckId);
   }
   addToQueue(items) { this.queue.push(...this._ensureIds(this._playable(items))); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
@@ -1422,7 +1474,7 @@ class DaemonEngine {
     this.manualCue.add(deck);
     this._maybeEmitDeck(deck);
     // Flip §2.5: cue-to-deck is an operator insert — write it to the log so it airs on-log.
-    this._writeOperatorLogRow({ title: songRef.title, artist: songRef.artist, filePath: songRef.filePath, fileKey: songRef.fileKey, songId: songRef.songId ?? songRef.id, durationMs: songRef.durationMs });
+    this._writeOperatorLogRow({ title: songRef.title, artist: songRef.artist, filePath: songRef.filePath, fileKey: songRef.fileKey, songId: songRef.songId ?? songRef.id, durationMs: songRef.durationMs }, deck, "intentDeckCue");
     return true;
   }
 

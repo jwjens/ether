@@ -314,12 +314,15 @@ export default function Jukebox({ onExit }: { onExit: () => void }) {
             color: "#fff", outline: "none", borderRadius: 8,
           }}
         />
+        {/* ✕, not ⚙. This control EXITS — the PIN-gated settings overlay is Slice 2 and does not
+            exist yet, so a gear here promised settings and delivered an exit. A glyph that lies about
+            what a control does is a defect, not a placeholder. */}
         <button onClick={onExit} title="Staff — exit jukebox (Ctrl+Shift+J)"
           style={{
             flexShrink: 0, width: 46, height: 46, borderRadius: 8, cursor: "pointer",
             background: "transparent", border: "1px solid rgba(255,255,255,0.14)",
-            color: "rgba(255,255,255,0.35)", fontSize: 16,
-          }}>⚙</button>
+            color: "rgba(255,255,255,0.35)", fontSize: 18, lineHeight: 1,
+          }}>✕</button>
       </div>
 
       <div style={{ flex: 1, minHeight: 0, display: "flex" }}>

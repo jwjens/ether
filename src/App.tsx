@@ -2213,7 +2213,15 @@ export default function App() {
     // room; the PIN gate on entry/exit is Slice 2, so this door is deliberately plain for now.
     { label: "JUKEBOX",    active: jukeboxOpen,                fn: () => setJukeboxOpen(true) },
     { label: "DECKS",      active: showDeckConfig,             fn: () => { setPanel("live"); setShowDeckConfig(true); } },
-    { label: "CARTS",      active: showCarts,                  fn: () => { setShowCarts(s => !s); setProgPanel(null); } },
+    // CARTS is SUPPRESSED when a deck slot is already configured as a cart wall — LivePanel's
+    // `cartOpen` (App.tsx ~4119) refuses to open the push-up in that case, deliberately, so you don't
+    // get two cart walls. The button still toggled its state, so it looked dead. Say so instead:
+    // dimmed, with a tooltip naming the reason.
+    { label: "CARTS",      active: showCarts,                  fn: () => { setShowCarts(s => !s); setProgPanel(null); },
+      suppressed: !!deckConfigs?.some(d => d.type === "cart" && d.enabled),
+      title: deckConfigs?.some(d => d.type === "cart" && d.enabled)
+        ? "A deck slot is already set to Cart Wall, so the push-up stays closed — change that slot in DECKS to use the push-up instead."
+        : "Show/hide the cart push-up" },
     { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
     { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
     { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
@@ -2870,19 +2878,27 @@ export default function App() {
           </div>
         )}
         {/* View tabs — inline when there's room; collapsed into a hamburger (bottom-right) on tablet */}
-        {!viewport.bottomCollapsed && viewTabs.map(({ label, active, fn }) => (
-          <button key={label} onClick={fn} style={{
+        {!viewport.bottomCollapsed && viewTabs.map((tab) => { const { label, active, fn } = tab;
+          // A tab may declare itself SUPPRESSED — it still works, but the panel it opens is being
+          // withheld by another setting. Dim it and explain why on hover, rather than let it read as
+          // a dead button.
+          const suppressed = !!(tab as any).suppressed;
+          const tabTitle = (tab as any).title as string | undefined;
+          return (
+          <button key={label} onClick={fn} title={tabTitle} style={{
             height: 36, padding: "0 14px", borderRadius: 0, marginRight: 2,
             border: `1px solid ${active ? "var(--accent-cyan)" : "var(--border-secondary)"}`,
             background: active ? "color-mix(in srgb, var(--accent-cyan) 16%, transparent)" : "transparent",
             color: active ? "var(--accent-cyan)" : "var(--text-primary)",
-            fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: "pointer",
-            transition: "color 0.12s, background 0.12s, border-color 0.12s",
+            opacity: suppressed ? 0.4 : 1,
+            fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: suppressed ? "help" : "pointer",
+            transition: "color 0.12s, background 0.12s, border-color 0.12s, opacity 0.12s",
           }}
             onMouseEnter={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
             onMouseLeave={e => { if (!active) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
           >{label}</button>
-        ))}
+          );
+        })}
         <div style={{ flex: 1 }} />
         {/* Broadcast (profanity) delay — arm builds the cushion; bar shows buffer fill */}
         <button onClick={toggleDelay} title={delayArmed ? "Broadcast delay armed — click to disarm" : "Arm broadcast (profanity) delay"} style={{
