@@ -250,6 +250,7 @@ try {
     audioPause: () => true,
     audioStop: () => true,
     audioSetVolume: () => true,
+    audioSetMuted: () => true,
     audioGetState: () => JSON.stringify({ deckA: {}, deckB: {}, deckC: {} }),
     audioGetLevels: () => JSON.stringify({ a: 0, b: 0, c: 0 }),
     getFileDuration: () => 0,
@@ -3154,6 +3155,9 @@ ipcMain.handle("audio:play", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient
 ipcMain.handle("audio:pause", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("pause", { deck, stationId }) : audio.audioPause(deck, stationId));
 ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("stop", { deck, stationId }) : audio.audioStop(deck, stationId));
 ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setVolume", { deck, volume, stationId }) : audio.audioSetVolume(deck, volume, stationId));
+// Console channel cut (CART/jingle channel today). Routed exactly like setVolume so it reaches whichever
+// engine actually owns the audio — the daemon when AUDIO_DAEMON is on, the in-process addon otherwise.
+ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setMuted", { deck, muted, stationId }) : audio.audioSetMuted(deck, muted, stationId));
 ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
 ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));
 // 10-band post-EQ master spectrum for the Master EQ rack's live FFT display. Routes to the

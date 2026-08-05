@@ -3707,9 +3707,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // Jingle overlay fader (CART slot 6) — ride level for jingles/carts, independent of each item's
   // gain_db trim. Ephemeral (resets to unity per session, like the deck faders).
   const [jingleVol, setJingleVol] = useState(1);
-  // Real CART-channel state for the JINGLES strip's ON/playing lamps. Polled rather than assumed: the
-  // strip's own toggle pauses/plays this deck, and a lamp that reports what the control last did rather
-  // than what the channel is doing is how "ON" ended up permanently lit over a silenced channel.
+  // Is the CART/jingle channel actually passing audio right now? Drives the strip's PLAYING brightening
+  // only — never its enabled-look. ConsoleStrip:152-154 notes the overlay "has no steady 'playing' status
+  // like a rotation deck (jingles fire briefly over master)", so a transient read must not gate a
+  // persistent control (that was the 4.4.145 grey-out).
   const [cartPlaying, setCartPlaying] = useState(false);
   useEffect(() => {
     const read = () => {
@@ -3722,6 +3723,32 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     const t = setInterval(read, 400);
     return () => clearInterval(t);
   }, [engine]);
+
+  // ── JINGLES CHANNEL ON/OFF — a console channel cut, per station ────────────────────────────────────
+  // This is the aux-fader OFF on a Wheatstone: while OFF the CART channel contributes nothing to the
+  // program bus, so a jingle or cart that fires still never reaches air. Enforced in the mixer
+  // (audio.rs — `let vol = if deck.muted { 0.0 } else { deck.volume }`), NOT by fader position: `Load`
+  // rewrites slot volume on every cart fire, so a mute expressed as volume 0 would be wiped by the next
+  // jingle and the channel would silently re-open.
+  //
+  // Persisted per station, and pushed DOWN to the engine on mount and on every station switch — the
+  // engine boots un-muted, so the UI must assert the operator's saved setting rather than assume it.
+  const cartOnKey = `ether:cartChannelOn:${lpStationId ?? "none"}`;
+  const [cartOn, setCartOn] = useState(true);
+  useEffect(() => {
+    let saved = true;
+    try { saved = localStorage.getItem(cartOnKey) !== "off"; } catch { /* private mode — default ON */ }
+    setCartOn(saved);
+    try { (engine.getDeck("CART" as any) as any)?.setMuted?.(!saved); } catch { /* engine not ready */ }
+  }, [engine, cartOnKey]);
+  const toggleCartChannel = () => {
+    setCartOn(prev => {
+      const next = !prev;
+      try { localStorage.setItem(cartOnKey, next ? "on" : "off"); } catch { /* non-fatal */ }
+      try { (engine.getDeck("CART" as any) as any)?.setMuted?.(!next); } catch { /* engine not ready */ }
+      return next;
+    });
+  };
 
   // Listen for guest level updates pushed from the WebRTC layer (Studio.tsx)
   useEffect(() => {
@@ -4152,28 +4179,19 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               color="#14e0c8"
               volume={jingleVol}
               deckId="CART"
-              // isOn IS NOT A LAMP — it is this strip's whole alive/dead switch. In ConsoleStrip,
-              // isOn={false} greys the label (:264), the fader fill to opacity 0.06 (:339-340), the knob
-              // cap (:355-357), the VU gradient to opacity 0.04 (:378) AND the ON button (:406-412).
-              // 4.4.145 bound it to cartPlaying, so the entire strip read DEAD whenever no cart happened
-              // to be playing — i.e. nearly always. That is a worse defect than the one it fixed: an
-              // operator cannot use a control that looks disabled. REVERTED to true — the overlay channel
-              // is always available, so the strip is always alive and the ON button is always clickable.
-              //
-              // ConsoleStrip:152-154 already says why binding liveness here was wrong by design: the CART
-              // overlay "has no steady 'playing' status like a rotation deck (jingles fire briefly over
-              // master)" — which is exactly why its VU ignores isPlaying. A transient status must never
-              // drive a persistent control's enabled-look.
-              //
-              // isPlaying DOES stay observed: it only brightens the label and the ON button while audio is
-              // actually flowing (:248, :264-265, :406-407) and greys nothing, so it is honesty with no
-              // dead-control risk. STILL OPEN: onToggleOn below is transport on a deck that is empty
-              // between carts, so ON can still pause carts while the strip reads ON. That needs a real
-              // channel on/off, not a status read — see the build report, NOT fixed here.
-              isPlaying={cartPlaying}
-              isOn={true}
+              // ON = THIS CHANNEL'S CUT, the operator's switch — not a lamp and not always-on.
+              // OFF means the channel is dead to the program bus: fire a cart or a jingle into it and
+              // nothing reaches air (enforced in the mixer, survives every Load). ON means audio passes.
+              // isPlaying stays observed and only brightens the strip while audio is genuinely flowing;
+              // it never gates the enabled-look, which is what made 4.4.145 read as broken.
+              isPlaying={cartPlaying && cartOn}
+              isOn={cartOn}
               onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
-              onToggleOn={() => { const cart = engine.getDeck("CART" as any) as any; const st = cart?.getState?.(); if (st?.status === "playing") cart?.pause(); else cart?.play(); }}
+              // Cuts/restores the channel. It is deliberately NOT transport: the old handler called
+              // pause()/play() on the CART deck, which is empty between carts (so it appeared to do
+              // nothing) and could not stop the NEXT jingle anyway, since firing one issues its own
+              // load+play. A channel switch has to gate the bus, not poke the deck.
+              onToggleOn={toggleCartChannel}
             />
             {/* Discoverability (4.4.56): unconfigured → a subtle deep-link to Settings → Programming → Jingles. */}
             {!hasJinglePool && (

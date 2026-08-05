@@ -261,7 +261,7 @@ export default function ConsoleStrip({
           )}
           <span style={{
             position: "relative", zIndex: 1,
-            color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #555)"),
+            color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #8a8a98)"),
             textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
             transition: "color 0.2s",
           }}>{label}</span>
@@ -336,8 +336,12 @@ export default function ConsoleStrip({
             bottom: KNOB_H / 2,
             height: Math.max(0, (faderH - KNOB_H) - knobY),
             width: 4,
-            background: isOn ? color : "#555",
-            opacity: isOn ? 0.7 : 0.06,
+            background: isOn ? color : "#6a6a78",
+            // OFF must read as OFF, not as BROKEN. At 0.06 the rail vanished and the whole strip looked
+            // disabled/faulty rather than switched off — that is what an operator reported on 4.4.145.
+            // A channel that is off on a real board still shows its fader and an unlit meter; only the
+            // ON lamp goes dark. These values keep the control legible and obviously present.
+            opacity: isOn ? 0.7 : 0.3,
             transition: dragging ? "none" : "height 0.08s ease-out",
           }} />
 
@@ -352,9 +356,9 @@ export default function ConsoleStrip({
             cursor: "grab",
             zIndex: 5,
             transition: dragging ? "none" : "top 0.08s ease-out",
-            background: isOn ? "#e6e6ec" : "#55555f",
+            background: isOn ? "#e6e6ec" : "#9a9aa8",   // off = a present, grabbable cap, not a dead slab
             border: dragging ? `2px solid ${color}` : `1px solid ${isOn ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.5)"}`,
-            opacity: isOn ? 1 : 0.7,
+            opacity: isOn ? 1 : 0.88,
             borderRadius: 2,
             boxShadow: dragging ? `0 0 0 3px ${color}40` : "none",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -375,7 +379,8 @@ export default function ConsoleStrip({
           <div style={{
             position: "absolute", inset: 0,
             background: "linear-gradient(to top, var(--accent-green) 0%, var(--accent-green) 66%, var(--accent-amber) 66%, var(--accent-amber) 88%, var(--accent-red) 88%, var(--accent-red) 100%)",
-            opacity: isOn ? 1 : 0.04,
+            opacity: isOn ? 1 : 0.16,   // unlit, but the meter is still visibly THERE (was 0.04 = gone)
+
           }} />
           {/* Mask — covers the UNLIT portion above the level. ref-updated at 30Hz when deckId set. */}
           <div ref={deckId ? vuFillRef : undefined} style={{
@@ -409,7 +414,9 @@ export default function ConsoleStrip({
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.12s",
         }}>
-          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: isOn ? "#fff" : "var(--text-tertiary, #666)" }}>ON</span>
+          {/* Console convention: lit = channel on, unlit = channel off. The word stays fully legible when
+              off so the control reads as a switch at rest, never as a disabled button. */}
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: isOn ? "#fff" : "#9a9aa8" }}>ON</span>
         </button>
 
         {/* PFL — solid amber when active, flat */}

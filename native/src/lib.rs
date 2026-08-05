@@ -127,6 +127,19 @@ pub fn audio_set_volume(deck: String, volume: f64, station_id: Option<u32>) -> b
     audio.sender.send(AudioCmd::SetVolume { deck, volume: volume as f32 }).is_ok()
 }
 
+/// CHANNEL ON/OFF for one mixer slot — a console channel cut, like the OFF button on a Wheatstone
+/// aux. muted=true means this channel contributes NOTHING to the program bus: a jingle or cart fired
+/// into a cut channel never reaches air. It is NOT a fader position and NOT a transport state, and it
+/// deliberately survives `Load` — expressing this as volume 0 does not work, because Load rewrites
+/// `volume` on every cart fire and would silently re-open the channel.
+#[napi]
+pub fn audio_set_muted(deck: String, muted: bool, station_id: Option<u32>) -> bool {
+    let engine = get_or_create_engine(station_id.unwrap_or(1), None);
+    let Ok(mut audio) = engine.lock() else { return false };
+    deck_meta_mut(&mut audio, &deck).muted = muted;
+    audio.sender.send(AudioCmd::SetMuted { deck, muted }).is_ok()
+}
+
 /// Local studio-monitor (speaker) gain for one station — 0.0 = silent speakers, 1.0 = unity.
 /// Affects ONLY the local device output; the program bus → Icecast stream is untouched, so an
 /// operator can mute/blend what they HEAR without changing what any station BROADCASTS.

@@ -68,9 +68,26 @@ error**. Nothing warns you; nothing is placed.
   - **Yellow (blinking) = firing** — the jingle is on air right now.
 - The **Health Monitor** shows the same armed/firing state per station.
 - The **JINGLES fader** on the live screen **lights up while imaging is actually on air** — its label and
-  **ON** button brighten for the length of the jingle or cart, then settle back. The channel itself stays
-  available at all times, so the fader and its ON button are always usable whether or not something is
-  playing.
+  **ON** button brighten for the length of the jingle or cart, then settle back.
+
+## Turning the imaging channel off (the ON button)
+
+The **ON** button on the JINGLES fader is a **channel on/off**, exactly like the OFF switch on a board
+channel. It is not a play button and not a light.
+
+- **ON (lit)** — imaging and carts pass to air normally.
+- **OFF (unlit)** — the channel is **cut**. Jingles and carts still fire on schedule, but **no audio from
+  them reaches air**. Nothing else is affected: music, spots and the decks keep playing untouched.
+
+Use it when you want a clean run with no imaging — a special broadcast, a live remote, a memorial — without
+tearing down your pools or assignments. Turn it back ON and imaging resumes on the next fire.
+
+The setting is **remembered per station**, so it survives closing and reopening the app. Each station has
+its own — cutting imaging on one station does not cut it on another. **If your imaging has gone silent,
+check this button first.**
+
+When the channel is off the fader dims but stays usable — that is "switched off," not broken. You can still
+set the level while it is off; it takes effect when you turn the channel back on.
 - Overlays are logged in Play History but **kept out of music reports and rotation math** — they never count
   as a song play or block an artist.
 

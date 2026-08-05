@@ -124,6 +124,10 @@ const handlers = {
   pause:              (m) => A.audioPause(m.deck, m.stationId),
   stop:               (m) => A.audioStop(m.deck, m.stationId),
   setVolume:          (m) => A.audioSetVolume(m.deck, m.volume, m.stationId),
+  // Console channel cut. MUST live here as well as in-process: main.js routes audio:setMuted to the
+  // daemon whenever AUDIO_DAEMON is on (the default on Windows), so a renderer-only or in-process-only
+  // mute would be a silent no-op on exactly the setup most operators run.
+  setMuted:           (m) => A.audioSetMuted(m.deck, !!m.muted, m.stationId),
   setEq:              (m) => A.audioSetEq(m.stationId, JSON.stringify(m.bands || [])),
   getState:           (m) => JSON.parse(A.audioGetState(m.stationId)),
   getLevels:          (m) => JSON.parse(A.audioGetLevels(m.stationId)),

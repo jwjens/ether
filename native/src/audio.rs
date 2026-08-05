@@ -57,6 +57,9 @@ pub struct DeckInfo {
     pub file_path: String,
     pub volume: f32,
     pub is_finished: bool,
+    /// Console channel cut for this slot — surfaced so the UI can READ the gate it is drawing
+    /// instead of asserting it. A control that gates air must be able to show observed state.
+    pub muted: bool,
 }
 
 pub struct DeckMeta {
@@ -66,6 +69,8 @@ pub struct DeckMeta {
     pub volume: f32,
     pub gain_db: f32,
     pub status: String,
+    /// Mirrors the mixer slot's channel cut so audio_get_state reports it.
+    pub muted: bool,
 }
 
 impl DeckMeta {
@@ -77,6 +82,7 @@ impl DeckMeta {
             volume: 1.0,
             gain_db: 0.0,
             status: "idle".to_string(),
+            muted: false,
         }
     }
     pub fn info(&self, id: &str, is_finished: bool) -> DeckInfo {
@@ -88,6 +94,7 @@ impl DeckMeta {
             file_path: self.file_path.clone(),
             volume: self.volume,
             is_finished,
+            muted: self.muted,
         }
     }
 }
@@ -228,6 +235,10 @@ pub enum AudioCmd {
     Pause(String),
     Stop(String),
     SetVolume { deck: String, volume: f32 },
+    /// Console channel on/off for one slot. muted=true cuts the channel to the program bus
+    /// entirely; it survives Load, so a cart fired into a cut channel stays off air. Distinct
+    /// from SetVolume (a fader position) and from Pause (a transport state).
+    SetMuted { deck: String, muted: bool },
     GetLevel,
     Ping,
     StartStream { server: String, port: u16, mount: String, password: String, station_name: String },
@@ -288,6 +299,13 @@ pub struct DeckSlot {
     pub title:    String,
     pub artist:   String,
     pub gain_db:  f32,
+    /// CHANNEL CUT — a console channel on/off, not a fader position and not a playback state.
+    /// While true this slot contributes NOTHING to the program bus, so a jingle or cart that
+    /// fires into a cut channel never reaches air. Deliberately SEPARATE from `volume`: `Load`
+    /// rewrites `volume` on every fire (see the Load arm), so a mute expressed as volume 0 is
+    /// wiped by the next cart and the channel silently re-opens. `muted` is owned by the operator
+    /// and is never touched by Load, Play, Stop or a fader move — only by SetMuted.
+    pub muted:    bool,
 }
 
 impl DeckSlot {
@@ -301,6 +319,7 @@ impl DeckSlot {
             title:   String::new(),
             artist:  String::new(),
             gain_db: 0.0,
+            muted:   false,
         }
     }
 }
@@ -546,6 +565,14 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             }
                             AudioCmd::SetVolume { deck, volume } => {
                                 if let Some(sink) = sinks.get(&deck) { sink.set_volume(volume); }
+                            }
+                            AudioCmd::SetMuted { deck, muted } => {
+                                // SUPERSEDED PATH (see the header at start_station_mixer: this function is
+                                // replaced and is not called from lib.rs). Kept compiling and behaviourally
+                                // honest — cut is cut — but note it has no separate fader store, so un-cut
+                                // returns the sink to unity rather than the operator's last fader position.
+                                // The live mixer path holds `muted` beside `volume` and has no such caveat.
+                                if let Some(sink) = sinks.get(&deck) { sink.set_volume(if muted { 0.0 } else { 1.0 }); }
                             }
                             AudioCmd::GetLevel => {
                                 if let Ok(mut lvl) = levels_clone.lock() {
@@ -835,6 +862,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     bus.decks[idx].volume = volume;
                                 }
                             }
+                            AudioCmd::SetMuted { deck, muted } => {
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    bus.decks[idx].muted = muted;
+                                }
+                            }
                             AudioCmd::GetLevel => {
                                 // REAL levels — the mixer callback writes true post-fader peaks
                                 // (per deck) + the post-EQ program peak (master) into bus.peaks;
@@ -1041,7 +1074,12 @@ fn mixer_callback(
             continue;
         };
         any_playing = true;
-        let vol = deck.volume;
+        // THE CHANNEL CUT. A muted slot contributes silence to the program bus no matter what is
+        // loaded or playing on it — the source is still advanced below (so the cut cart still runs
+        // out and its finished-flag still fires normally; cutting a channel must not strand a deck),
+        // it simply sums in at zero. This is the only place the gate is enforced, so nothing that
+        // writes `volume` can re-open a channel the operator cut.
+        let vol = if deck.muted { 0.0 } else { deck.volume };
         let mut pk = 0.0f32;
         for f in 0..prog_frames {
             // Source is always stereo (UniformSourceIterator built with 2 ch)

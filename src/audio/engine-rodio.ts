@@ -17,6 +17,7 @@ async function invoke(cmd: string, args?: any): Promise<any> {
     case "audio_pause":       return e.audio.pause(args.deck, args?.stationId);
     case "audio_stop":        return e.audio.stop(args.deck, args?.stationId);
     case "audio_set_volume":  return e.audio.setVolume(args.deck, args.volume, args?.stationId);
+    case "audio_set_muted":   return e.audio.setMuted(args.deck, args.muted, args?.stationId);
     case "audio_get_state":   return e.audio.getState(args?.stationId);
     case "get_file_duration": return e.audio.getFileDuration(args.filePath);
     case "get_levels":        return e.audio.getLevels(args?.stationId);
@@ -918,6 +919,9 @@ export class AudioEngine {
       resume: () => invoke("audio_play", { deck: deckId, stationId: this.stationId }),
       stop: () => { this.endTriggered.delete(deckId); return invoke("audio_stop", { deck: deckId, stationId: this.stationId }); },
       setVolume: (v: number) => invoke("audio_set_volume", { deck: deckId, volume: v, stationId: this.stationId }),
+      /** Console channel on/off — cuts this channel to the program bus entirely. Survives Load, so a
+       *  cart fired into a cut channel never reaches air. Not a fader move, not a transport state. */
+      setMuted: (muted: boolean) => invoke("audio_set_muted", { deck: deckId, muted, stationId: this.stationId }),
       fadeTo: (vol: number, sec: number) => {
         const steps = 20;
         const current = getState().volume;
