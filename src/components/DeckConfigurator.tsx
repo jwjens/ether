@@ -522,8 +522,40 @@ function useSquareGrid(cols: number, gap: number) {
   return { ref, tile };
 }
 
+/** Square tiles with a column count DERIVED from the available width.
+ *
+ *  The full wall hardcoded 8 columns, which is right for a pop-out or a full-width panel and wrong for
+ *  a deck slot: `App.tsx:4026` renders this same wall inside a `flex:1, minWidth:120` column, so 8
+ *  columns left 8-20px tiles — 64 unusable buttons. Fixing that by slicing the list would create a
+ *  second data path; fixing it by scrolling would just stack more cramped tiles.
+ *
+ *  So: fit as many columns as the width allows at a MINIMUM USABLE TILE SIZE, capped at maxCols. A
+ *  wide surface still lands on maxCols (pop-out and docked panel are unchanged); a narrow deck slot
+ *  lands on 2-4 real squares. One layout, no slicing, all 64 still reachable by scrolling. */
+function useSquareGridAuto(gap: number, minTile: number, maxCols: number) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [box, setBox] = useState<{ tile: number; cols: number } | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const compute = () => {
+      const w = el.clientWidth;
+      if (!w) return;
+      const cols = Math.max(1, Math.min(maxCols, Math.floor((w + gap) / (minTile + gap))));
+      setBox({ cols, tile: Math.max(minTile, Math.floor((w - gap * (cols - 1)) / cols)) });
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [gap, minTile, maxCols]);
+  return { ref, tile: box?.tile ?? null, cols: box?.cols ?? maxCols };
+}
+
 const CART_WALL_GAP = 8;
 const CART_STRIP_GAP = 6;
+/** Smallest tile that is still a usable click target with a readable label. */
+const CART_MIN_TILE = 64;
 export const CART_ROW = 8;                // tiles per row at full width
 
 // HOTKEYS: the first CART_STRIP_COUNT slots only — three keyboard rows, no bank/shift modifier, no
@@ -716,7 +748,9 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
   };
 
   // Square tiles for both grids — see useSquareGrid above for why aspect-ratio cannot do this job.
-  const wallGrid  = useSquareGrid(CART_ROW, CART_WALL_GAP);
+  // Wall: columns derived from width, capped at CART_ROW. Wide surfaces (pop-out, docked cart panel)
+  // still get 8; a narrow deck slot gets fewer, bigger squares instead of 64 cramped ones.
+  const wallGrid  = useSquareGridAuto(CART_WALL_GAP, CART_MIN_TILE, CART_ROW);
   const stripGrid = useSquareGrid(CART_ROW, CART_STRIP_GAP);
   // The push-up shows exactly CART_STRIP_ROWS rows before scrolling. That height is derived from the
   // measured square edge, so it stays 3 full rows at any window size — and it leaves the dock height
@@ -856,7 +890,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             for square rows. */}
         <div style={{ flex: 1, minHeight: 0, padding: 12, overflowY: "auto" as const }}>
         <div ref={wallGrid.ref} style={{
-          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: CART_WALL_GAP,
+          display: "grid", gridTemplateColumns: `repeat(${wallGrid.cols}, 1fr)`, gap: CART_WALL_GAP,
           gridAutoRows: wallGrid.tile ? `${wallGrid.tile}px` : undefined,   // row height = column width
           alignContent: "start",
         }}>
