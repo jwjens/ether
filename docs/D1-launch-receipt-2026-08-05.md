@@ -105,6 +105,59 @@ Answering these completes §3.0 and decides whether §1.1 can be considered sett
 
 ---
 
+## 4a · JEFF'S ANSWERS (2026-08-05) — §3.0 is CLOSED
+
+1. **Sign-in appeared ONCE.**
+2. **No audio at the PIN screen.**
+
+**§1.1 is SETTLED** — the bounce is gone, confirmed by the log AND by eye. Do not re-open it, and do not
+"fix" it again with a retry or a timeout.
+
+**Why there was no audio this launch, and why the defect is still real:** the log shows stations 1 and 4
+reporting `state=off started=false` — the pre-auth engines had nothing to play. On 2026-08-03 a station
+WAS automating and it spoke. The pre-auth construction is the same either way; audibility just depends on
+whether the daemon happens to be running that station. **Absence of audio is not absence of the defect.**
+
+---
+
+## 4b · ⚠ SCOPE CORRECTION — §2.1 is a REFACTOR, not a guard
+
+Scoped read-only 2026-08-05, before any code. The handoff implied §2.1 was "add the `accountSignedIn`
+guard its neighbours already carry". **That is only half true.**
+
+**The effects ARE simple guards** — `engine.init()`, `attachDaemonEvents`, and the `[stationId]`
+adoption effect all live in `useEffect` and take `if (!accountSignedIn) return;` cleanly.
+
+**The CONSTRUCTION does not.** The `← C7` site is:
+
+- **`src/App.tsx:533`** — `const engine = getEngine(stationId);` **in the component body**
+- **`src/audio/AudioEngineContext.tsx:37`** — `return getEngine(stationId ?? activeStationId);`
+
+A component body runs on **every render**, including the pre-auth renders that return the hold screen and
+the sign-in screen, and it runs **before** the early-return gates. **No guard placed after the gate can
+stop it.** Making it lazy changes how every downstream hook obtains its engine — that is a refactor of
+App.tsx's engine plumbing, and it must be planned, not patched.
+
+### The lever that makes it tractable
+
+**`bootAuthDone()` in `src/audio/boot-seq.ts` is a module-level, dependency-free auth flag** (set once by
+`bootMarkAuthComplete()`, idempotent). `getEngine` is not a React function and should not be gated by
+React state — the registry can consult `bootAuthDone()` directly.
+
+Design options for the next session to weigh (none chosen — do not assume):
+- **Registry refuses to construct pre-auth** — `getEngine` returns the existing instance if present, and
+  otherwise does not create one until `bootAuthDone()`. Requires deciding what callers get in the
+  meantime; `getEngine` currently has a non-null contract that many sites rely on.
+- **Lazy engine at the consumer** — App.tsx/`AudioEngineContext` stop resolving an engine during render
+  and hand hooks a getter instead. Larger, but keeps the registry contract intact.
+
+Whichever is chosen, `initializeRegistry(stationIds)` (`engine-registry.ts:37`) also constructs engines in
+a loop and must be behind the same line.
+
+**Do not gate the daemon.** Broadcast never waits for login; the APP does.
+
+---
+
 ## 5 · What the next session builds (§2.1), with the receipt in hand
 
 Nothing account-derived may run until sign-in + PIN complete. The launch names the exact offenders:
