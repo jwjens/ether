@@ -2923,7 +2923,10 @@ export default function App() {
             border: `1px solid ${active ? "var(--accent-cyan)" : "var(--border-secondary)"}`,
             background: active ? "color-mix(in srgb, var(--accent-cyan) 16%, transparent)" : "transparent",
             color: active ? "var(--accent-cyan)" : "var(--text-primary)",
-            opacity: suppressed ? 0.4 : 1,
+            // Suppressed reads as WITHHELD, not dead. 0.4 looked disabled — the button still works and
+            // still toggles; it is the panel that is being held back, and the tooltip says why. 0.72
+            // keeps it legible as a live control while still marking it as different.
+            opacity: suppressed ? 0.72 : 1,
             fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", cursor: suppressed ? "help" : "pointer",
             transition: "color 0.12s, background 0.12s, border-color 0.12s, opacity 0.12s",
           }}
@@ -3704,6 +3707,21 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // Jingle overlay fader (CART slot 6) — ride level for jingles/carts, independent of each item's
   // gain_db trim. Ephemeral (resets to unity per session, like the deck faders).
   const [jingleVol, setJingleVol] = useState(1);
+  // Real CART-channel state for the JINGLES strip's ON/playing lamps. Polled rather than assumed: the
+  // strip's own toggle pauses/plays this deck, and a lamp that reports what the control last did rather
+  // than what the channel is doing is how "ON" ended up permanently lit over a silenced channel.
+  const [cartPlaying, setCartPlaying] = useState(false);
+  useEffect(() => {
+    const read = () => {
+      try {
+        const st = (engine.getDeck("CART" as any) as any)?.getState?.();
+        setCartPlaying(st?.status === "playing");
+      } catch { setCartPlaying(false); }
+    };
+    read();
+    const t = setInterval(read, 400);
+    return () => clearInterval(t);
+  }, [engine]);
 
   // Listen for guest level updates pushed from the WebRTC layer (Studio.tsx)
   useEffect(() => {
@@ -4134,8 +4152,14 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               color="#14e0c8"
               volume={jingleVol}
               deckId="CART"
-              isPlaying={false}
-              isOn={true}
+              // OBSERVED, not asserted. Both of these were hardcoded — isPlaying={false} and
+              // isOn={true} — while onToggleOn below actually PAUSES/PLAYS the CART deck. So pressing
+              // ON could silence every cart and the button still rendered as ON: a control reporting
+              // its own assumption instead of the channel it drives, the same defect class as the
+              // AUTO pill (4.4.132) and the deck countdown. cartPlaying is polled from the CART deck's
+              // real state, so ON is lit only while the channel is actually running.
+              isPlaying={cartPlaying}
+              isOn={cartPlaying}
               onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
               onToggleOn={() => { const cart = engine.getDeck("CART" as any) as any; const st = cart?.getState?.(); if (st?.status === "playing") cart?.pause(); else cart?.play(); }}
             />
