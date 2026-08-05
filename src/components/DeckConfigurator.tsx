@@ -617,6 +617,24 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
   const [remainingMs, setRemainingMs] = useState(0);
   const [vu, setVu] = useState(0);
 
+  // ── CART LEVEL, on the cart panel itself ────────────────────────────────────────────────────────
+  // Carts fire on the dedicated CART channel (BusState slot 6). Its only fader used to live on the
+  // mixer strip labelled "JINGLES" — so from any cart surface there was no way to see or set the level
+  // of the thing you were firing, and a cart could be inaudible with nothing on the cart panel to say
+  // so. The VU sat next to it reading 0 (peaks are POST-fader, audio.rs:1051-1056) with no control to
+  // explain why. This is that control, beside the meter, in every cart surface.
+  // Seeded from the deck's REAL volume, not assumed — the renderer must not invent a value the engine
+  // does not hold (the jingleVol default-to-1 desync is exactly that mistake).
+  const [cartVol, setCartVol] = useState(1);
+  useEffect(() => {
+    const st = (engine.getDeck(CART_CHANNEL) as any)?.getState?.();
+    if (typeof st?.volume === "number") setCartVol(st.volume);
+  }, [engine]);
+  const applyCartVol = (v: number) => {
+    setCartVol(v);
+    try { (engine.getDeck(CART_CHANNEL) as any)?.setVolume?.(v); } catch { /* engine not ready */ }
+  };
+
   // Drive the playing flash + countdown off the cart deck's REAL state (not a fixed
   // timeout), and the VU off the audio levels — so a fired cart flashes for its true
   // length, shows time remaining, and you can see audio moving.
@@ -765,10 +783,16 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
         ))}
         </div>
         </div>
-        {/* VU meter — side */}
-        <div style={{ width: 14, alignSelf: "stretch", flexShrink: 0, display: "flex", flexDirection: "column" as const, padding: "2px 0" }}>
-          <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
-            <div style={{ width: "100%", height: `${Math.min(100, Math.round(vu * 100))}%`, background: vu > 0.85 ? "#ef4444" : vu > 0.6 ? "#fbbf24" : "#4ade80", transition: "height 0.08s linear" }} />
+        {/* CART LEVEL + VU — the fader for the channel these tiles fire on, beside its meter. */}
+        <div style={{ display: "flex", gap: 4, alignSelf: "stretch", flexShrink: 0, padding: "2px 0" }}>
+          <input type="range" min={0} max={1} step={0.01} value={cartVol}
+            onChange={e => applyCartVol(parseFloat(e.target.value))}
+            title={`Cart level — ${Math.round(cartVol * 100)}%`}
+            style={{ writingMode: "vertical-lr" as any, direction: "rtl" as any, width: 16, padding: 0, margin: 0, accentColor: "#14e0c8", cursor: "pointer" }} />
+          <div style={{ width: 14, display: "flex", flexDirection: "column" as const }}>
+            <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
+              <div style={{ width: "100%", height: `${Math.min(100, Math.round(vu * 100))}%`, background: vu > 0.85 ? "#ef4444" : vu > 0.6 ? "#fbbf24" : "#4ade80", transition: "height 0.08s linear" }} />
+            </div>
           </div>
         </div>
       </div>
@@ -895,17 +919,29 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
         </div>
         </div>
 
-        {/* VU meter — right side, shows cart audio level */}
-        <div style={{ width: 18, flexShrink: 0, padding: "12px 8px 12px 0", display: "flex", flexDirection: "column" as const }}>
-          <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
-            <div style={{
-              width: "100%",
-              height: `${Math.min(100, Math.round(vu * 100))}%`,
-              background: vu > 0.85 ? "#ef4444" : vu > 0.6 ? "#fbbf24" : "#4ade80",
-              transition: "height 0.08s linear",
-            }} />
+        {/* CART LEVEL + VU — right side. The fader sets the CART channel (slot 6) these tiles fire on;
+            the meter reads the same channel post-fader, so they move together. */}
+        <div style={{ flexShrink: 0, padding: "12px 8px 12px 4px", display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center" }}>
+            <input type="range" min={0} max={1} step={0.01} value={cartVol}
+              onChange={e => applyCartVol(parseFloat(e.target.value))}
+              title={`Cart level — ${Math.round(cartVol * 100)}%`}
+              style={{ flex: 1, writingMode: "vertical-lr" as any, direction: "rtl" as any, width: 18, padding: 0, margin: 0, accentColor: "#14e0c8", cursor: "pointer" }} />
+            <div style={{ fontSize: 7, fontWeight: 800, letterSpacing: "0.08em", color: "var(--text-tertiary)", textAlign: "center" as const, marginTop: 4 }}>
+              {Math.round(cartVol * 100)}
+            </div>
           </div>
-          <div style={{ fontSize: 7, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textAlign: "center" as const, marginTop: 4 }}>VU</div>
+          <div style={{ width: 18, display: "flex", flexDirection: "column" as const }}>
+            <div style={{ flex: 1, background: "var(--bg-tertiary)", borderRadius: 2, overflow: "hidden", display: "flex", alignItems: "flex-end" }}>
+              <div style={{
+                width: "100%",
+                height: `${Math.min(100, Math.round(vu * 100))}%`,
+                background: vu > 0.85 ? "#ef4444" : vu > 0.6 ? "#fbbf24" : "#4ade80",
+                transition: "height 0.08s linear",
+              }} />
+            </div>
+            <div style={{ fontSize: 7, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textAlign: "center" as const, marginTop: 4 }}>VU</div>
+          </div>
         </div>
       </div>
       )}
