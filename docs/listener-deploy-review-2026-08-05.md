@@ -94,6 +94,21 @@ https Icecast mount (e.g. https://stream.ether-technologies.com:8443/ov), so it 
 working the moment this deploys — the browser blocks http audio on an https page and the proxy that
 rescued it is gone. The removed comment names a real example (`http://44.244.52.207:8000/ov`).
 
+**Where the audio actually lives:** the streams are on **AWS Lightsail, `44.244.52.207`**, fronted by the
+https mount `stream.ether-technologies.com:8443`. So the question is precisely: **do all published
+`stream_url` values point at the https mount (`https://stream.ether-technologies.com:8443/…`), or does
+any station still publish the old `http://44.244.52.207:8000/…` AWS address?** Query the published
+values when fresh — **`PlayButton.tsx` stays HELD until that list shows all https.**
+
+Query (Railway Postgres — CLI was `Access is denied` in the 2026-08-05 session, so run it with working
+credentials):
+
+```sql
+SELECT s.slug, m.stream_url, m.public_enabled
+FROM station_metadata m LEFT JOIN stations s ON s.uuid = m.station_uuid
+WHERE m.stream_url IS NOT NULL ORDER BY 1;
+```
+
 **The one question that settles it: do ALL published `stream_url` values use `https://`?**
 If yes → clean simplification, ship it separately and confirm playback.
 If unsure → **do not let it ride along with an artwork fix.** A silent playback failure on one station is
