@@ -499,7 +499,20 @@ function buildNowPlayingPayload(
     last_error_at:     (source?.lastError && source?.lastErrorAt) ? new Date(source.lastErrorAt).toISOString() : null,
     decks: { A: mkDeck(sA), B: mkDeck(sB), C: mkDeck(sC) },
     // Full upcoming order incl. the two cued standby-deck songs (queue[0]/[1]).
-    queue: engine.getQueue().slice(0, 12).map(q => ({ title: q.title, artist: q.artist, duration: (q as any).durationMs || 0 })),
+    //
+    // content_class RIDES PER ITEM (2026-08-05). This map used to hand-pick title/artist/duration and
+    // DROP the class the engine already carries on every queue item — so the public listener could not
+    // tell a queue row was a commercial, called its artwork proxy on the title "Commercial Spot", and
+    // rendered whatever a music catalogue matched. The now-playing item carried its class; the queue
+    // did not. Same shape as the 4.4.132 relay bug and the VU-levels bug: a field the RECEIVER needs,
+    // hand-picked out in transit. Snake_case to match the top-level `content_class` the same payload
+    // already sends, so the listener reads one spelling.
+    queue: engine.getQueue().slice(0, 12).map(q => ({
+      title: q.title,
+      artist: q.artist,
+      duration: (q as any).durationMs || 0,
+      content_class: (q as any).contentClass ?? (q as any).content_class ?? null,
+    })),
   };
 }
 

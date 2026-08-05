@@ -61,6 +61,29 @@ and is independent of B. The deck already knows the content class (it drives the
 > one install; the park is carried by A + a local override. Revisit R2 only if/when spot art becomes a
 > listener-facing surface."
 
+### ⏸ TRIGGER FIRED AND DEFERRED — Jeff, 2026-08-05
+
+The revisit trigger named below ("if/when spot art becomes a listener-facing surface") **fired**: Jeff
+asked for the uploaded spot artwork to appear on the listener page and the dashboard.
+
+**Jeff's decision: NOT NOW.**
+
+> "station logo on public spots stands for now (Option A — the deployed behavior). Uploaded spot art
+> going public is the R2 revisit — file it as a roadmap feature (upload to R2/backend, art_url carries
+> it, listener renders it), NOT started now."
+
+**So the trigger is ACKNOWLEDGED and DEFERRED — not hanging open.** Public surfaces show the
+station/account logo for imaging, which is the deployed and correct behaviour. Do not treat a public
+spot showing the logo as a bug.
+
+**Roadmap feature, when it comes:** upload the operator's chosen image to R2 at save time (the pattern
+exists twice already — `electron/now-playing-art.js` and `electron/station-metadata.js:85-105`, both
+backend-signed PUT), carry the resulting URL in `payload.art_url` for `SPOT`/`JIN`/`SWP`, and the
+listener renders it with no listener change needed. The rule stays "no music-store lookup for imaging",
+never "no artwork for imaging". Full write-up: `docs/spot-art-public-surfaces-2026-08-05.md`.
+
+---
+
 **Stated limitation, chosen not accidental:** the override is visible ONLY on the install that set it.
 Other installs and the listener do not see it. This is the same shape as the library `file_path`-vs-R2
 gap — that one hurt because it was an accident. This one is a decision, recorded here, with its
