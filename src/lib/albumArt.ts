@@ -49,18 +49,37 @@ export async function fetchMusicStoreArt(title: string, artist: string): Promise
   } catch { _musicArtCache[key] = ""; return null; }
 }
 
+/** Spot-art cache key. STATION-SCOPED, deliberately: two stations can legitimately build a spot on the
+ *  SAME audio file (observed 2026-08-05 — station 2 "Commercial Spot" with art, station 3
+ *  "11 sec test spot" without). Keying by filePath alone would serve one station's artwork to the other
+ *  from cache even after the SQL below is scoped — reproducing the exact bug the scoping closes. */
+const spotArtKey = (stationId: number | null | undefined, filePath: string) => `${stationId ?? 0}:${filePath}`;
+
 /** Artwork for a spot / imaging item: the operator's override, else the file's embedded cover,
  *  else nothing. There is deliberately NO music-store fallback in this function. */
-export async function getSpotArt(filePath: string | null | undefined): Promise<string | null> {
+export async function getSpotArt(
+  filePath: string | null | undefined,
+  stationId: number | null | undefined,
+): Promise<string | null> {
   if (!filePath) return null;
-  if (filePath in _spotArtCache) return _spotArtCache[filePath];
+  const ck = spotArtKey(stationId, filePath);
+  if (ck in _spotArtCache) return _spotArtCache[ck];
 
-  // 1 · The artwork the operator set on this spot (v36 spots.art_image, a data URL in the row).
+  // 1 · The artwork the operator set on THIS STATION's spot (v36 spots.art_image, a data URL in the row).
+  //
+  // STATION-SCOPED. This query used to be `WHERE file_path = ? … LIMIT 1` with no station filter, so a
+  // file used as a spot on two stations returned whichever row SQLite handed back — halloVeen could be
+  // served Magical Forest's row, whose art_image was NULL, and the tile rendered blank while the
+  // operator's uploaded image sat on the sibling row. That is both the blank tile AND a station-isolation
+  // violation. ORDER BY is only a tiebreaker WITHIN one station (0 sorts before 1, so a row that HAS art
+  // wins) — it must never be the thing that picks between stations.
   let url: string | null = null;
   try {
-    const rows = await query<{ art_image: string | null }>(
-      "SELECT art_image FROM spots WHERE file_path = ? AND deleted_at IS NULL LIMIT 1", [filePath]
-    );
+    const rows = stationId != null
+      ? await query<{ art_image: string | null }>(
+          "SELECT art_image FROM spots WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL ORDER BY (art_image IS NULL) LIMIT 1",
+          [filePath, stationId])
+      : [];
     url = rows[0]?.art_image || null;
   } catch { /* no spots row / query failed — fall through to embedded */ }
 
@@ -68,18 +87,19 @@ export async function getSpotArt(filePath: string | null | undefined): Promise<s
   if (!url) url = await getLocalArt(filePath);
 
   // 3 · Nothing. The caller renders its neutral treatment.
-  _spotArtCache[filePath] = url;
+  _spotArtCache[ck] = url;
   return url;
 }
 
-/** True when this file is a spot by storage, regardless of what class the caller was handed.
+/** True when this file is a spot ON THIS STATION, regardless of what class the caller was handed.
  *  Mirrors App.tsx resolveContentClass's second step, for the paths that carry no contentClass. */
-async function isSpotFile(filePath: string | null | undefined): Promise<boolean> {
-  if (!filePath) return false;
-  if (filePath in _spotArtCache) return true;   // already resolved as a spot this session
+async function isSpotFile(filePath: string | null | undefined, stationId: number | null | undefined): Promise<boolean> {
+  if (!filePath || stationId == null) return false;
+  if (spotArtKey(stationId, filePath) in _spotArtCache) return true;   // already resolved this session
   try {
     const rows = await query<{ n: number }>(
-      "SELECT 1 AS n FROM spots WHERE file_path = ? AND deleted_at IS NULL LIMIT 1", [filePath]
+      "SELECT 1 AS n FROM spots WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1",
+      [filePath, stationId]
     );
     return rows.length > 0;
   } catch { return false; }
@@ -97,15 +117,23 @@ export async function resolveArtwork(
   contentClass: string | null | undefined,
   title: string,
   artist: string,
+  stationId: number | null | undefined,
 ): Promise<string | null> {
-  if (isImagingClass(contentClass)) return getSpotArt(filePath);
-  if (contentClass == null && await isSpotFile(filePath)) return getSpotArt(filePath);
+  if (isImagingClass(contentClass)) return getSpotArt(filePath, stationId);
+  if (contentClass == null && await isSpotFile(filePath, stationId)) return getSpotArt(filePath, stationId);
   return (await getLocalArt(filePath)) || (await fetchMusicStoreArt(title, artist));
 }
 
 /** Drop cached spot artwork so a freshly-saved override shows up without a restart.
- *  Called by the Spots panel after a save. */
-export function clearSpotArtCache(filePath?: string | null): void {
-  if (filePath) delete _spotArtCache[filePath];
-  else for (const k of Object.keys(_spotArtCache)) delete _spotArtCache[k];
+ *  Called by the Spots panel after a save. Station-scoped like the cache itself; omit the station to
+ *  clear that file for EVERY station, and omit both to clear everything. */
+export function clearSpotArtCache(filePath?: string | null, stationId?: number | null): void {
+  if (filePath && stationId != null) { delete _spotArtCache[spotArtKey(stationId, filePath)]; return; }
+  if (filePath) {
+    // No station given — drop this file for every station rather than silently missing the right key.
+    const suffix = `:${filePath}`;
+    for (const k of Object.keys(_spotArtCache)) if (k.endsWith(suffix)) delete _spotArtCache[k];
+    return;
+  }
+  for (const k of Object.keys(_spotArtCache)) delete _spotArtCache[k];
 }

@@ -112,9 +112,9 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
     if (albumArtFetchedFor.current === key) return;
     albumArtFetchedFor.current = key;
     (async () => {
-      setAlbumArtUrl(await resolveArtwork((deck as any)?.filePath, contentClass, title, artist));
+      setAlbumArtUrl(await resolveArtwork((deck as any)?.filePath, contentClass, title, artist, stationId));
     })();
-  }, [title, artist, contentClass]);
+  }, [title, artist, contentClass, stationId]);
 
   // ── Artist photo (Wikipedia/iTunes artist) for blurred bg ──────────────
   const [artUrl, setArtUrl] = useState<string | null>(null);

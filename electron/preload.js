@@ -176,15 +176,6 @@ contextBridge.exposeInMainWorld("ether", {
     getVersion: () => ipcRenderer.invoke("system:getVersion"),
     factoryReset: () => ipcRenderer.invoke("system:factoryReset"),
   },
-  // ── Window controls (traffic lights) ──────────────────────
-  // Each call acts on the window that made it, so the same API works from the main window and from
-  // every pop-out without the renderer needing to know which window it is.
-  win: {
-    minimize:         () => ipcRenderer.invoke("win:minimize"),
-    close:            () => ipcRenderer.invoke("win:close"),
-    toggleFullscreen: () => ipcRenderer.invoke("win:toggleFullscreen"),   // → resulting boolean
-    isFullscreen:     () => ipcRenderer.invoke("win:isFullscreen"),
-  },
   autostart: {
     enable: () => ipcRenderer.invoke("autostart:enable"),
     disable: () => ipcRenderer.invoke("autostart:disable"),

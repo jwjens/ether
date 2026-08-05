@@ -228,7 +228,13 @@ export default function NowPlaying({ onExit }: { onExit?: () => void }) {
         // store just because the class did not ride along.
         (async () => {
           if (track.filePath || track.contentClass) {
-            const url = await resolveArtwork(track.filePath, track.contentClass, track.title, track.artist);
+            // stationId is null here BY NECESSITY: this is the now-playing POP-OUT, which receives a
+            // payload and has no active-station context of its own. A spot therefore resolves
+            // embedded-cover → neutral rather than the operator's station-scoped override. That is the
+            // safe end of the trade — the alternative is an unscoped lookup that can show one station's
+            // artwork on another's. If the pop-out ever needs the override, the station must ride the
+            // now-playing payload; do not reintroduce an unscoped query.
+            const url = await resolveArtwork(track.filePath, track.contentClass, track.title, track.artist, null);
             setAlbumArt(url);
             return;
           }

@@ -207,11 +207,11 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       const key = `${s.title}::${s.artist}`;
       if (artUrls[key] !== undefined) return;
       (async () => {
-        const url = await resolveArtwork(s.filePath, s.contentClass, s.title, s.artist);
+        const url = await resolveArtwork(s.filePath, s.contentClass, s.title, s.artist, stationId);
         if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
       })();
     });
-  }, [deckStates.A.title, deckStates.B.title, deckStates.C.title]);
+  }, [deckStates.A.title, deckStates.B.title, deckStates.C.title, stationId]);
 
   useEffect(() => {
     queue.forEach(item => {
@@ -219,11 +219,11 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       if (artUrls[key] !== undefined) return;
       (async () => {
         const cc = (item as any).contentClass ?? (item as any).content_class ?? null;
-        const url = await resolveArtwork((item as any).filePath, cc, item.title || "", item.artist || "");
+        const url = await resolveArtwork((item as any).filePath, cc, item.title || "", item.artist || "", stationId);
         if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
       })();
     });
-  }, [queueLen]);
+  }, [queueLen, stationId]);
 
   useEffect(() => {
     setTopScrollPx(0); // ensure title div has overflow:hidden when scrollWidth is sampled
