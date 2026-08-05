@@ -87,7 +87,9 @@ its own — cutting imaging on one station does not cut it on another. **If your
 check this button first.**
 
 When the channel is off the fader dims but stays usable — that is "switched off," not broken. You can still
-set the level while it is off; it takes effect when you turn the channel back on.
+set the level while it is off; it takes effect when you turn the channel back on, and turning the channel
+off and on **never moves your fader**. See **Channel Faders and Channel Cut** for how this works on every
+channel strip.
 - Overlays are logged in Play History but **kept out of music reports and rotation math** — they never count
   as a song play or block an artist.
 

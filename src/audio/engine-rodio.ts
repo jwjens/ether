@@ -942,7 +942,11 @@ export class AudioEngine {
     this.deckSched[String(id)] = scheduledAt;   // remember this deck's schedule-row identity
     this.deckContentClass[String(id)] = contentClass ?? null;   // for the SPOT-deck flash (in-process path)
     await invoke("audio_load", { deck: id, filePath, title, artist, gainDb: gainDb ?? 0, stationId: this.stationId });
-    const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, volume: 1, peaks: [], contentClass: contentClass ?? null };
+    // NOTE the absent `volume`. The FADER LEVEL is the jock's and a track load must not move it — not in
+    // the engine (audio.rs Load no longer writes it) and not here. This object used to carry `volume: 1`,
+    // so loading a song snapped the on-screen fader back to unity; the UI agreed with the stomp instead of
+    // catching it. Spreading over the previous state now leaves the fader exactly where it was parked.
+    const newState = { title, artist, filePath, positionSec: 0, durationSec: (durationMs ?? 0) / 1000, status: "idle" as DeckStatus, peaks: [], contentClass: contentClass ?? null };
     if (id === "A") { this.stateA = { ...this.stateA, ...newState, id: "A" }; this.listeners.forEach(l => l("A", this.stateA)); }
     if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
     if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; this.listeners.forEach(l => l("C", this.stateC)); }

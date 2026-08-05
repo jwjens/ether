@@ -3707,6 +3707,14 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // Jingle overlay fader (CART slot 6) — ride level for jingles/carts, independent of each item's
   // gain_db trim. Ephemeral (resets to unity per session, like the deck faders).
   const [jingleVol, setJingleVol] = useState(1);
+  // Seed the fader from the channel's REAL level instead of assuming unity — the renderer must not invent
+  // a level the engine does not hold (DeckConfigurator:658-659 names this exact "jingleVol default-to-1
+  // desync"). Matters now that the fader legitimately persists: on a remount the strip has to show where
+  // the jock actually parked it, not snap back to unity.
+  useEffect(() => {
+    const st = (engine.getDeck("CART" as any) as any)?.getState?.();
+    if (typeof st?.volume === "number") setJingleVol(st.volume);
+  }, [engine]);
   // Is the CART/jingle channel actually passing audio right now? Drives the strip's PLAYING brightening
   // only — never its enabled-look. ConsoleStrip:152-154 notes the overlay "has no steady 'playing' status
   // like a rotation deck (jingles fire briefly over master)", so a transient read must not gate a

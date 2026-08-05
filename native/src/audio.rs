@@ -795,10 +795,16 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     slot.path     = file_path;
                                     slot.title    = title;
                                     slot.artist   = artist;
+                                    // THE FADER LEVEL IS THE JOCK'S — a track load must never move it.
+                                    // This used to write `slot.volume` from gain_db (and slam it to unity
+                                    // whenever a track had no trim), so every song load reset the fader the
+                                    // operator had parked. A track was resetting the board. Only SetVolume
+                                    // — the jock's hand — writes the fader now.
+                                    //
+                                    // gain_db is the TRACK's own loudness trim and is stored here only; it
+                                    // is applied PRE-FADER as a separate multiplier at the mix, on top of
+                                    // whatever level the operator set. Two different things, kept apart.
                                     slot.gain_db  = gain_db;
-                                    slot.volume   = if gain_db != 0.0 {
-                                        10f32.powf(gain_db / 20.0).clamp(0.1, 4.0)
-                                    } else { 1.0 };
                                 }
                                 finished_clone.clear(&deck);
                             }
@@ -1022,9 +1028,11 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
                 // Only replace if the source is gone (e.g. after a device failover mid-track)
                 if bus.decks[idx].source.is_none() && bus.decks[idx].active {
                     bus.decks[idx].source = Some(src);
-                    bus.decks[idx].volume = if gain_db != 0.0 {
-                        10f32.powf(gain_db / 20.0).clamp(0.1, 4.0)
-                    } else { 1.0 };
+                    // The FADER LEVEL survives a device failover untouched — same rule as Load: only the
+                    // jock's hand moves it. This used to rebuild volume from gain_db, so a card switch
+                    // mid-show silently reset every deck's fader to unity. gain_db still rides pre-fader
+                    // at the mix and needs nothing done here; the slot already holds it.
+                    let _ = gain_db;
                 }
             }
         }
@@ -1074,12 +1082,26 @@ fn mixer_callback(
             continue;
         };
         any_playing = true;
-        // THE CHANNEL CUT. A muted slot contributes silence to the program bus no matter what is
-        // loaded or playing on it — the source is still advanced below (so the cut cart still runs
-        // out and its finished-flag still fires normally; cutting a channel must not strand a deck),
-        // it simply sums in at zero. This is the only place the gate is enforced, so nothing that
-        // writes `volume` can re-open a channel the operator cut.
-        let vol = if deck.muted { 0.0 } else { deck.volume };
+        // Two independent things, combined here and ONLY here:
+        //
+        //   CHANNEL CUT (deck.muted) — the door. Cut = no audio passes, exactly as if the fader were
+        //     slammed to −inf, WITHOUT moving the fader. It never reads or writes the fader level, so
+        //     the jock's level is still parked where they left it when the channel comes back.
+        //   TRACK TRIM (deck.gain_db) — the file's own loudness trim, applied PRE-FADER so the fader
+        //     rides an already-normalised signal. Clamped on its own (not on the product), so a trim
+        //     can never act as a second fader.
+        //   FADER LEVEL (deck.volume) — the jock's level. Written only by SetVolume.
+        //
+        // The source is still advanced below while cut, so a cut track runs out and its finished-flag
+        // fires normally — cutting a channel must never strand a deck.
+        let vol = if deck.muted {
+            0.0
+        } else {
+            let trim = if deck.gain_db != 0.0 {
+                10f32.powf(deck.gain_db / 20.0).clamp(0.1, 4.0)
+            } else { 1.0 };
+            deck.volume * trim
+        };
         let mut pk = 0.0f32;
         for f in 0..prog_frames {
             // Source is always stereo (UniformSourceIterator built with 2 ch)
