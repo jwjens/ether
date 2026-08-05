@@ -490,6 +490,40 @@ interface CartSlot {
 export const CART_SLOT_COUNT = 64;        // the full wall
 export const CART_STRIP_COUNT = 24;       // the bottom push-up strip — 3 rows of 8
 export const CART_STRIP_ROWS = 3;         // rows VISIBLE in the push-up before it scrolls (all 64 render)
+
+// ── SQUARE TILES — why this is measured and not `aspect-ratio: 1` ──────────────────────────────────
+// A grid item defaults to `align-items: stretch`, so its height is dictated by its ROW, and
+// `aspect-ratio` only sizes a box when the cross axis is `auto`. Both cart grids live in a tall
+// `flex: 1` container, so the rows stretched and every tile rendered as a tall RECTANGLE — aspect-ratio
+// never got a say. (Reported with a screenshot, 2026-08-04.)
+//
+// The fix is to stop asking: measure the grid's own content width, divide by the column count, and set
+// `gridAutoRows` to that pixel value. Row height then EQUALS column width, so every cell is a true
+// square regardless of how tall its container is, and the grid scrolls instead of stretching.
+// Measured, never hardcoded — the same width maths has to survive any window size or dock height.
+function useSquareGrid(cols: number, gap: number) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [tile, setTile] = useState<number | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const compute = () => {
+      // clientWidth of the GRID itself: it carries no padding (the padding lives on the scroll
+      // parent), and it already excludes any scrollbar the parent took.
+      const w = el.clientWidth;
+      if (!w) return;
+      setTile(Math.max(36, Math.floor((w - gap * (cols - 1)) / cols)));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [cols, gap]);
+  return { ref, tile };
+}
+
+const CART_WALL_GAP = 8;
+const CART_STRIP_GAP = 6;
 export const CART_ROW = 8;                // tiles per row at full width
 
 // HOTKEYS: the first CART_STRIP_COUNT slots only — three keyboard rows, no bank/shift modifier, no
@@ -663,28 +697,15 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     updateSlot(key, { label: `Cart ${c.slot + 1}`, filePath: undefined });
   };
 
-  // Exactly CART_STRIP_ROWS rows visible before the strip scrolls. The tiles are square and CART_ROW
-  // across, so the height that shows 3 full rows is a function of the container's WIDTH, not of the
-  // dock height — which is user-resizable and shared with the library/calendar/jingles panels, so it
-  // must not be commandeered here. Measured, never hardcoded: a fixed px height would show 3 rows at
-  // one window size and 2.4 at another.
-  const STRIP_GAP = 6;
-  const stripRef = useRef<HTMLDivElement | null>(null);
-  const [stripViewportH, setStripViewportH] = useState<number | null>(null);
-  useEffect(() => {
-    const el = stripRef.current;
-    if (!el) return;
-    const compute = () => {
-      const w = el.clientWidth;
-      if (!w) return;
-      const tile = (w - STRIP_GAP * (CART_ROW - 1)) / CART_ROW;          // square edge
-      setStripViewportH(Math.round(tile * CART_STRIP_ROWS + STRIP_GAP * (CART_STRIP_ROWS - 1)));
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [variant]);
+  // Square tiles for both grids — see useSquareGrid above for why aspect-ratio cannot do this job.
+  const wallGrid  = useSquareGrid(CART_ROW, CART_WALL_GAP);
+  const stripGrid = useSquareGrid(CART_ROW, CART_STRIP_GAP);
+  // The push-up shows exactly CART_STRIP_ROWS rows before scrolling. That height is derived from the
+  // measured square edge, so it stays 3 full rows at any window size — and it leaves the dock height
+  // (user-resizable, shared with the library/calendar/jingles panels) alone.
+  const stripViewportH = stripGrid.tile
+    ? stripGrid.tile * CART_STRIP_ROWS + CART_STRIP_GAP * (CART_STRIP_ROWS - 1)
+    : null;
 
   // Strip layout: SQUARE carts, CART_ROW across, scrolling vertically. Lives docked below the decks
   // (decks-width), pushing them up — see App.tsx decksPanel.
@@ -696,11 +717,14 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "stretch", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
-        <div ref={stripRef} style={{
-          flex: 1, minWidth: 0, overflowY: "auto" as const,
-          // 3 rows visible; rows 4+ are reachable by scrolling. All 64 render.
+        {/* Scroll parent holds the height; the GRID inside is what gets measured. */}
+        <div style={{
+          flex: 1, minWidth: 0, overflowY: "auto" as const, alignSelf: "flex-start",
           height: stripViewportH ?? undefined, maxHeight: stripViewportH ?? undefined,
-          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: STRIP_GAP,
+        }}>
+        <div ref={stripGrid.ref} style={{
+          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: CART_STRIP_GAP,
+          gridAutoRows: stripGrid.tile ? `${stripGrid.tile}px` : undefined,   // row height = column width
           alignContent: "start",
         }}>
         {carts.map(cart => (
@@ -713,8 +737,9 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             onDrop={e => handleDrop(e, cart.key)}
             title={cart.filePath ? cart.label : "Empty — click to assign"}
             style={{
-              // Grid owns the width now (CART_ROW columns); the tile only holds its square ratio.
-              aspectRatio: "1", minWidth: 0,
+              // No aspectRatio: the grid's row height IS the column width (gridAutoRows), so the tile
+              // is square by construction and stretch fills a square cell.
+              minWidth: 0, minHeight: 0,
               borderRadius: 4,
               background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",
               border: `1px solid ${cart.playing ? cart.color + "90" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
@@ -738,6 +763,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
             )}
           </div>
         ))}
+        </div>
         </div>
         {/* VU meter — side */}
         <div style={{ width: 14, alignSelf: "stretch", flexShrink: 0, display: "flex", flexDirection: "column" as const, padding: "2px 0" }}>
@@ -801,10 +827,13 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
         {/* CART_ROW tiles across, filling left-to-right then top-to-bottom: 1-8 on row 1, 9-16 on
             row 2, and so on. Grid's default row-wise flow gives that ordering; the column count is
-            CART_ROW (8) so the wall stays consistent with the strip and can widen in one place. */}
-        <div style={{
-          flex: 1, padding: 12, overflowY: "auto" as const,
-          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: 8,
+            CART_ROW (8) so the wall stays consistent with the strip and can widen in one place.
+            Scroll parent carries the padding and the overflow; the GRID inside is what gets measured
+            for square rows. */}
+        <div style={{ flex: 1, minHeight: 0, padding: 12, overflowY: "auto" as const }}>
+        <div ref={wallGrid.ref} style={{
+          display: "grid", gridTemplateColumns: `repeat(${CART_ROW}, 1fr)`, gap: CART_WALL_GAP,
+          gridAutoRows: wallGrid.tile ? `${wallGrid.tile}px` : undefined,   // row height = column width
           alignContent: "start",
         }}>
         {carts.map(cart => (
@@ -827,7 +856,9 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
               overflow: "hidden",
               display: "flex",
               flexDirection: "column" as const,
-              aspectRatio: "1",
+              // No aspectRatio — gridAutoRows makes the row exactly as tall as the column is wide,
+              // so the stretched tile IS a square. aspect-ratio lost to align-items:stretch here.
+              minWidth: 0, minHeight: 0,
             }}
           >
             {/* 4px color strip */}
@@ -861,6 +892,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
                 on the face. cart.key remains the internal per-slot identity (cartKeyFor). */}
           </div>
         ))}
+        </div>
         </div>
 
         {/* VU meter — right side, shows cart audio level */}
