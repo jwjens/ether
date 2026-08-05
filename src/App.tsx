@@ -72,6 +72,7 @@ import ActiveStationBadge from "./components/ActiveStationBadge";
 import GSelectorImport from "./components/GSelectorImport";
 import HelpPanel from "./components/HelpPanel";
 import NowPlaying from "./components/NowPlaying";
+import Jukebox from "./components/Jukebox";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
 import NowPlayingStationPicker from "./components/NowPlayingStationPicker";
 import Spots from "./components/Spots";
@@ -677,6 +678,9 @@ export default function App() {
   const [queueLen, setQueueLen] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
+  // Jukebox Mode — fullscreen public takeover. The rest of the app stays MOUNTED underneath so the
+  // engine, station context and daemon connection keep running; this is an overlay, not a route swap.
+  const [jukeboxOpen, setJukeboxOpen] = useState(false);
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
   const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles">(null);
@@ -2205,6 +2209,9 @@ export default function App() {
   // Bottom-toolbar view tabs — rendered inline on wide screens, collapsed into a
   // bottom-right hamburger menu on tablet/narrow widths (viewport.bottomCollapsed).
   const viewTabs = [
+    // JUKEBOX — fullscreen public takeover (docs/jukebox-mode-design-2026-08-04.md). Slice 1 is the
+    // room; the PIN gate on entry/exit is Slice 2, so this door is deliberately plain for now.
+    { label: "JUKEBOX",    active: jukeboxOpen,                fn: () => setJukeboxOpen(true) },
     { label: "DECKS",      active: showDeckConfig,             fn: () => { setPanel("live"); setShowDeckConfig(true); } },
     { label: "CARTS",      active: showCarts,                  fn: () => { setShowCarts(s => !s); setProgPanel(null); } },
     { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
@@ -2224,6 +2231,9 @@ export default function App() {
     <EtherErrorBoundary>
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
+      {/* Jukebox takeover — inside AudioEngineProvider so it uses the SAME engine and station context
+          the operator is running. Everything else stays mounted beneath it. */}
+      {jukeboxOpen && <Jukebox onExit={() => setJukeboxOpen(false)} />}
       <TrialGate />
       <IrisBadge open={irisOpen} onClose={() => setIrisOpen(false)} />{/* Iris chat panel — opened by the bottom-bar IRIS button (contract: docs/iris-ether-contract.md) */}
       <SchedulerHealthHost />{/* Movable Scheduler Health panel — opened from Tools */}
