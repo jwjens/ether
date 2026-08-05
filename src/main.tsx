@@ -9,6 +9,7 @@ Sentry.init({
 });
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import WindowControls from "./components/WindowControls";
 import NowPlaying from "./components/NowPlaying";
 import ProducerDeskWindow from "./components/ProducerDeskWindow";
 import CueEditorWindow from "./components/CueEditorWindow";
@@ -99,6 +100,10 @@ async function boot() {
     <RootBoundary>
       {DevTierBanner && <DevTierBanner />}
       {mainContent}
+      {/* Traffic lights — mounted at the ROOT, so every window the app opens gets them: the main
+          board, NowPlaying, Producer Desk, the cue editor and every pop-out. The main-process
+          handlers act on the sender's window, so one mount serves them all. */}
+      <WindowControls />
       {DebugMount && <DebugMount />}
     </RootBoundary>
   );

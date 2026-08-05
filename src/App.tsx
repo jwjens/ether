@@ -587,9 +587,12 @@ export default function App() {
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const apiKeyRef = useRef<string>("");
   // Slice 4: the CURRENT active station id (the SSE command handler reads this, not its captured stationId).
-  const activeStationIdRef = useRef<number>((() => { const id = getActiveStationIdSync();
-    bootSeq(`STATION ADOPTED station=${id} ← useRef(getActiveStationIdSync()) at first render`);
-    return id; })());
+  // D1 (docs/cold-start-contract-design-2026-08-03.md §D1.2): NO STATION IS ADOPTED BEFORE AUTH.
+  // This used to call getActiveStationIdSync() inside the useRef initialiser — i.e. at FIRST RENDER,
+  // before sign-in and before the PIN — so the app committed to the last account's station before it
+  // knew who was sitting down. Seeded to 0 ("none yet"); the effect below fills it from `stationId`
+  // once the station actually resolves, which only happens behind the auth gate.
+  const activeStationIdRef = useRef<number>(0);
   const panelRef = useRef<Panel>("live");
   useEffect(() => {
     panelRef.current = panel;
@@ -672,7 +675,13 @@ export default function App() {
   }, [engine]);
   // Slice 4: keep the active-station id fresh for the []-deps SSE command handler (its closure would
   // otherwise pin the mount-time station — the stale-closure bug the routing fix depends on closing).
-  useEffect(() => { activeStationIdRef.current = stationId; }, [stationId]);
+  // D1: this is now the ONLY writer of activeStationIdRef — the pre-auth seed is gone. The bootSeq
+  // line marks the first real adoption so the launch map proves it happened AFTER auth completed.
+  useEffect(() => {
+    const first = activeStationIdRef.current === 0 && stationId > 0;
+    activeStationIdRef.current = stationId;
+    if (first) bootSeq(`STATION ADOPTED station=${stationId} — first adoption (post-auth)`);
+  }, [stationId]);
   const [shuffle, setShuffle] = useState(false);
   const [continuous, setContinuous] = useState(false);
   const [queueLen, setQueueLen] = useState(0);
@@ -2195,13 +2204,24 @@ export default function App() {
   // (handleWizardComplete), an unattended on-air recovery, or the app's own continuation
   // self-relaunch (so the app's relaunches can't loop the user back to sign-in). Only AFTER an
   // account session exists does the PIN profile picker (UserLogin) render.
-  if (firstRunChecked && !accountSignedIn) return <EtherErrorBoundary><OnboardingFlow forceAuth onComplete={handleWizardComplete} /></EtherErrorBoundary>;
+  // D1 — THE BOUNCE FIX. The gate used to read `firstRunChecked && !accountSignedIn`, so while that
+  // flag was still false the gate was SKIPPED ENTIRELY and rendering fell through past it. The flag
+  // then resolved true, the gate fired, and the user was thrown back to sign-in A SECOND TIME. That
+  // fall-through IS the double sign-in — a conditional gate with a hole in it, not a race to tune.
+  //
+  // A HOLD cannot bounce: until we know whether this is a first run, nothing account-derived renders
+  // at all, and there is no path past this line. (docs/cold-start-contract-design-2026-08-03.md §D1.1)
+  if (!firstRunChecked) {
+    return <EtherErrorBoundary>
+      <div style={{ height: "100vh", background: "var(--bg-primary)" }} aria-busy="true" />
+    </EtherErrorBoundary>;
+  }
+  if (!accountSignedIn) return <EtherErrorBoundary><OnboardingFlow forceAuth onComplete={handleWizardComplete} /></EtherErrorBoundary>;
   if (!currentUser) return <EtherErrorBoundary><UserLogin onLogin={(u) => {
-    // THE DIVIDING LINE (D1): auth is complete only after account sign-in AND the PIN. The marker used to
-    // sit on setAccountSignedIn alone, so the PIN step — the LAST gate — never marked it, and the boot map
-    // had no post-auth side at all.
-    bootSeq("PIN accepted — profile selected");
-    bootSeq("ACCOUNT SIGN-IN complete — PIN still required");
+    // THE DIVIDING LINE (D1): auth is complete only after account sign-in AND the PIN. ONE canonical
+    // line, emitted once — the launch map's post-auth side starts here, and everything account-derived
+    // must appear AFTER it.
+    bootSeq("AUTH COMPLETE — account signed in + PIN accepted");
     setCurrentUser(u);
   }} /></EtherErrorBoundary>;
   if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;

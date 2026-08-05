@@ -4078,6 +4078,24 @@ function openPopoutWindow(panel) {
   return win;
 }
 
+// ── Window controls (macOS-style traffic lights) ──────────────────────────────
+// One set of handlers serves EVERY window the app opens — main, cart pop-out, jukebox, anything
+// created later — because each acts on the SENDER's BrowserWindow rather than a captured reference.
+// A handler that closed over `mainWindow` would close the wrong window from a pop-out.
+const _senderWin = (e) => { try { return BrowserWindow.fromWebContents(e.sender); } catch { return null; } };
+ipcMain.handle("win:minimize", (e) => { const w = _senderWin(e); if (w) w.minimize(); return true; });
+ipcMain.handle("win:close",    (e) => { const w = _senderWin(e); if (w) w.close();    return true; });
+// GREEN toggles true fullscreen ↔ a normal resizable window, and RETURNS the resulting state so the
+// button reflects what the window actually is — never what the renderer last assumed.
+ipcMain.handle("win:toggleFullscreen", (e) => {
+  const w = _senderWin(e);
+  if (!w) return false;
+  const next = !w.isFullScreen();
+  w.setFullScreen(next);
+  return next;
+});
+ipcMain.handle("win:isFullscreen", (e) => { const w = _senderWin(e); return !!(w && w.isFullScreen()); });
+
 ipcMain.handle("window:popout", async (_, panel) => { openPopoutWindow(panel); });
 
 // ── Show+ DAW dirty-state + force-close (the close-guard back-channel) ──
