@@ -1858,7 +1858,11 @@ function buildMenu() {
     const win = new BrowserWindow({
       width: size.width, height: size.height,
       minWidth: 320, minHeight: 200, x, y,
-      title: tag, frame: false, transparent: false,
+      // NATIVE TITLE BAR (2026-08-05). This was frameless, so the window had no minimize/maximize/close
+      // of its own — the 4.4.142 traffic-light overlay was briefly its only control, and removing that
+      // in 4.4.143 left it with NO way to close or minimise. Native chrome is the fix: every window the
+      // app opens gets real OS controls, and no in-app dots are needed anywhere.
+      title: tag, frame: true, transparent: false,
       backgroundColor: "#0e0e14", resizable: true,
       webPreferences: {
         preload: path.join(__dirname, "preload.js"),
@@ -4044,7 +4048,9 @@ function openPopoutWindow(panel) {
   const win = new BrowserWindow({
     width, height, minWidth: 320, minHeight: 200, x, y,
     title: tag,
-    frame: false,
+    // NATIVE TITLE BAR — see the note above the other pop-out constructor. Frameless left this window
+    // with no minimize/maximize/close once the traffic-light overlay was removed.
+    frame: true,
     transparent: false,
     backgroundColor: "#0e0e14",
     resizable: true,
@@ -4123,7 +4129,8 @@ ipcMain.handle("window:guesteditor", async () => {
     minWidth: 400, minHeight: 300,
     x, y,
     title,
-    frame: false,
+    // NATIVE TITLE BAR — same reason as the pop-out constructors above.
+    frame: true,
     transparent: false,
     backgroundColor: "#0e0e14",
     resizable: true,
