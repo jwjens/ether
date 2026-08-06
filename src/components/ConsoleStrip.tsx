@@ -169,7 +169,7 @@ export default function ConsoleStrip({
           peak.style.bottom     = `${smoothed * 100}%`;
           peak.style.background = col;
           peak.style.boxShadow  = `0 0 5px ${col}`;
-          peak.style.display    = isOnRef.current && smoothed > 0.02 ? "block" : "none";
+          peak.style.display    = smoothed > 0.02 ? "block" : "none";
         }
       });
     });
@@ -225,7 +225,11 @@ export default function ConsoleStrip({
   }, [onVolumeChange]);
 
   const db = effVol > 0.001 ? (20 * Math.log10(effVol)).toFixed(0) : "−∞";
-  const vuH = vuHeight(isOn ? level : level * 0.05);
+  // NO GREY/DIMMED STATE ANYWHERE ON THIS STRIP. Decks pass isOn={true}, so every off-branch in this
+  // component was dead code that had never rendered in the app — until JINGLES passed a real boolean and
+  // lit them all up at once, making a switched-off channel look broken. A deck fader never dims, so no
+  // fader dims. On/off is carried by the ON button alone, in blue, and by nothing else.
+  const vuH = vuHeight(level);
   const vuColor = vuZoneColor(level, color);
 
   // JINGLES indicator moved OUT of the fader strip (4.4.63): the jingle's NAME + time now lives as a third
@@ -261,7 +265,7 @@ export default function ConsoleStrip({
           )}
           <span style={{
             position: "relative", zIndex: 1,
-            color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #8a8a98)"),
+            color: isOn && isPlaying ? "#fff" : color,
             textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
             transition: "color 0.2s",
           }}>{label}</span>
@@ -336,12 +340,8 @@ export default function ConsoleStrip({
             bottom: KNOB_H / 2,
             height: Math.max(0, (faderH - KNOB_H) - knobY),
             width: 4,
-            background: isOn ? color : "#6a6a78",
-            // OFF must read as OFF, not as BROKEN. At 0.06 the rail vanished and the whole strip looked
-            // disabled/faulty rather than switched off — that is what an operator reported on 4.4.145.
-            // A channel that is off on a real board still shows its fader and an unlit meter; only the
-            // ON lamp goes dark. These values keep the control legible and obviously present.
-            opacity: isOn ? 0.7 : 0.3,
+            background: color,
+            opacity: 0.7,
             transition: dragging ? "none" : "height 0.08s ease-out",
           }} />
 
@@ -356,9 +356,9 @@ export default function ConsoleStrip({
             cursor: "grab",
             zIndex: 5,
             transition: dragging ? "none" : "top 0.08s ease-out",
-            background: isOn ? "#e6e6ec" : "#9a9aa8",   // off = a present, grabbable cap, not a dead slab
-            border: dragging ? `2px solid ${color}` : `1px solid ${isOn ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.5)"}`,
-            opacity: isOn ? 1 : 0.88,
+            background: "#e6e6ec",
+            border: dragging ? `2px solid ${color}` : "1px solid rgba(0,0,0,0.35)",
+            opacity: 1,
             borderRadius: 2,
             boxShadow: dragging ? `0 0 0 3px ${color}40` : "none",
             display: "flex", alignItems: "center", justifyContent: "center",
@@ -379,7 +379,7 @@ export default function ConsoleStrip({
           <div style={{
             position: "absolute", inset: 0,
             background: "linear-gradient(to top, var(--accent-green) 0%, var(--accent-green) 66%, var(--accent-amber) 66%, var(--accent-amber) 88%, var(--accent-red) 88%, var(--accent-red) 100%)",
-            opacity: isOn ? 1 : 0.16,   // unlit, but the meter is still visibly THERE (was 0.04 = gone)
+            opacity: 1,
 
           }} />
           {/* Mask — covers the UNLIT portion above the level. ref-updated at 30Hz when deckId set. */}
@@ -392,7 +392,7 @@ export default function ConsoleStrip({
           <div ref={deckId ? vuPeakRef : undefined} style={{
             position: "absolute", bottom: deckId ? "0%" : `${vuH * 100}%`, left: 0, right: 0,
             height: 2, background: "#fff",
-            display: deckId ? "none" : (isOn && level > 0.02 ? "block" : "none"),
+            display: deckId ? "none" : (level > 0.02 ? "block" : "none"),
           }} />
         </div>
 
@@ -412,15 +412,18 @@ export default function ConsoleStrip({
             actually flowing is told by the label fill, the progress bar and the meter — not by this lamp. */}
         <button onClick={() => { playClick(); onToggleOn(); }} style={{
           flex: 1, height: 38, borderRadius: 3,
-          background: isOn ? "#2563eb" : "var(--bg-tertiary, #232330)",
-          border: `1px solid ${isOn ? "#3b82f6" : "var(--border-primary, #333)"}`,
+          // Engaged = glowing bright blue. Resting = normal blue. NEVER grey — grey reads as disabled,
+          // and no fader on this board is ever disabled. These are the two colours the deck ON buttons
+          // already used; the only change is that the switch selects between them instead of playback.
+          background: isOn ? "#2563eb" : "#1e3358",
+          border: `1px solid ${isOn ? "#3b82f6" : "#2a4a7a"}`,
           cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.12s",
         }}>
           {/* Console convention: lit = channel on, unlit = channel off. The word stays fully legible when
               off so the control reads as a switch at rest, never as a disabled button. */}
-          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: isOn ? "#fff" : "#9a9aa8" }}>ON</span>
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: "#fff" }}>ON</span>
         </button>
 
         {/* PFL — solid amber when active, flat */}

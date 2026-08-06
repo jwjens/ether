@@ -4192,7 +4192,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               // nothing reaches air (enforced in the mixer, survives every Load). ON means audio passes.
               // isPlaying stays observed and only brightens the strip while audio is genuinely flowing;
               // it never gates the enabled-look, which is what made 4.4.145 read as broken.
-              isPlaying={cartPlaying && cartOn}
+              // Exactly what a deck passes: isPlaying is this channel's own playing status, isOn is the
+              // switch. No extra conditions — a deck passes deck?.status === "playing" and nothing else.
+              isPlaying={cartPlaying}
               isOn={cartOn}
               onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
               // Cuts/restores the channel. It is deliberately NOT transport: the old handler called
