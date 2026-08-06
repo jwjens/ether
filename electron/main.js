@@ -1051,11 +1051,47 @@ function openDb() {
 }
 
 // Full startup/restore init: open (with retry) + migrate + seed.
+// ── SELF-REPAIR ───────────────────────────────────────────────────────────────
+// Known-bad database states this build can fix by itself, silently, on launch. The operator is a DJ:
+// they double-click Ether and their station comes up. They never see a schema, a dialog, or a choice.
+// docs/migration-safety-and-customer-recovery-2026-08-06.md §4
+//
+// Runs BEFORE the baseline, the ALTERs and the migration chain, so nothing downstream can trip over a
+// shape it does not expect. Every branch is idempotent and safe to run on a healthy database.
+function repairSchema(conn) {
+  let repaired = 0;
+  // 4.4.151-156 left `songs` as a VIEW over `songs_all`. Older builds ALTER `songs` at boot and die.
+  try {
+    const obj = conn.prepare("SELECT type FROM sqlite_master WHERE name='songs'").get();
+    const hasAll = !!conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='songs_all'").get();
+    if (obj && obj.type === 'view' && hasAll) {
+      console.log('[DB] self-repair: songs is a view — restoring the real table');
+      conn.exec(`
+        DROP TRIGGER IF EXISTS trg_songs_fts_insert;
+        DROP TRIGGER IF EXISTS trg_songs_fts_update;
+        DROP TRIGGER IF EXISTS trg_songs_fts_delete;
+        DROP VIEW songs;
+        ALTER TABLE songs_all RENAME TO songs;
+      `);
+      repaired++;
+    }
+    // Half-finished rename (crash mid-migration): songs_all exists but songs does not.
+    if (!obj && hasAll) {
+      console.log('[DB] self-repair: songs missing, songs_all present — completing the rename');
+      conn.exec("ALTER TABLE songs_all RENAME TO songs");
+      repaired++;
+    }
+  } catch (e) { console.error('[DB] self-repair (songs) failed:', (e && e.message) || e); }
+  if (repaired) console.log(`[DB] self-repair applied ${repaired} fix(es) — opening normally`);
+  return repaired;
+}
+
 function initDb() {
   const dbPath = getDbPath();
   console.log("[DB] Path:", dbPath);
   openDb();
   console.log("[DB] Connected:", dbPath);
+  repairSchema(db);          // silent self-repair BEFORE anything reads or alters the schema
   runMigrations();
   seedDeckConfigs();
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
@@ -1128,7 +1164,16 @@ function runMigrationChain(db) {
   scripts.sort((a, b) => a.v - b.v);
   for (const { v, file } of scripts) {
     if (applied.has(v)) continue;
-    require(path.join(scriptsDir, file)).applyMigration(db);
+    // FAIL SOFT. An unguarded statement in here is what turned a schema difference into a dead app on
+    // a customer machine: these scripts run raw `ALTER TABLE songs ADD COLUMN`, and against an
+    // unexpected schema the throw escaped initDb() and the operator got a fatal dialog. A migration
+    // that cannot apply is a logged skip — never a station that will not start.
+    // docs/migration-safety-and-customer-recovery-2026-08-06.md
+    try {
+      require(path.join(scriptsDir, file)).applyMigration(db);
+    } catch (e) {
+      console.error(`[DB] migration ${file} skipped (non-fatal):`, (e && e.message) || e);
+    }
   }
 }
 
@@ -2108,27 +2153,77 @@ app.whenReady().then(() => {
   // unsupported on SMB, and open/mkdir can be denied. An uncaught throw here aborts this ENTIRE
   // whenReady callback BEFORE createWindow(), so the app runs windowless and looks hung (the exact
   // OV failure). Guard it: surface a visible error and exit cleanly — never vanish silently.
-  try {
-    initDb(); // runMigrations() + seedDeckConfigs() run here before window loads
-    try { _backfillAccountMarker(); } catch {}
-  } catch (e) {
+  // ── OPEN THE STATION, DO NOT INTERVIEW THE OPERATOR ─────────────────────────────────────────────
+  // The operator is a DJ. They double-click Ether and their station comes up. They do not close
+  // daemons, run scripts, read schemas, or answer dialogs about databases. So: try, self-repair, retry
+  // — silently — and only speak if the app genuinely cannot continue.
+  //
+  // A customer's station was down behind a dialog whose only button was Quit, for a schema this build
+  // can fix in milliseconds. That must never happen again.
+  // docs/migration-safety-and-customer-recovery-2026-08-06.md §4
+  const OPEN_ATTEMPTS = 5;
+  let dbOpened = false, lastErr = null;
+  for (let attempt = 1; attempt <= OPEN_ATTEMPTS && !dbOpened; attempt++) {
+    try {
+      initDb();                       // repairSchema() runs inside, before any migration
+      dbOpened = true;
+    } catch (e) {
+      lastErr = e;
+      const msg = String((e && e.message) || e);
+      console.error(`[DB] open attempt ${attempt}/${OPEN_ATTEMPTS} failed —`, msg);
+
+      // Schema we recognise → repair on a bare connection and try again immediately. No dialog.
+      try {
+        const Database = require('better-sqlite3');
+        const conn = new Database(getDbPath());
+        const fixed = repairSchema(conn);
+        try { conn.close(); } catch {}
+        if (fixed) { console.log('[DB] self-repair done — retrying open'); continue; }
+      } catch (re) { console.error('[DB] self-repair pass failed:', (re && re.message) || re); }
+
+      // Transient: a lock, a drive still mounting, antivirus holding the file. Wait briefly and retry.
+      if (attempt < OPEN_ATTEMPTS) {
+        const waitMs = 400 * attempt;
+        console.log(`[DB] retrying in ${waitMs}ms`);
+        const until = Date.now() + waitMs;
+        while (Date.now() < until) { /* short, bounded backoff before the window exists */ }
+      }
+    }
+  }
+
+  if (!dbOpened) {
+    // LAST RESORT ONLY — everything above has failed. Plain language, no jargon, no decisions about
+    // schemas. The technical detail is there for support, not for the operator to act on.
     let dbPath = "(could not resolve)";
     try { dbPath = getDbPath(); } catch {}
-    console.error("[DB] FATAL: initDb failed —", (e && e.stack) || e);
+    const msg = String((lastErr && lastErr.message) || lastErr);
+    console.error("[DB] FATAL after self-repair and retries —", (lastErr && lastErr.stack) || lastErr);
+    let choice = 2;
     try {
-      dialog.showMessageBoxSync({
+      choice = dialog.showMessageBoxSync({
         type: "error",
-        title: "Ether — Database Error",
-        message: "Ether could not open its database and has to close.",
-        detail: `Database path:\n${dbPath}\n\n${(e && e.message) || e}\n\nThis usually means the data folder is on a redirected or network drive. Ether needs a local data folder — please send this message to support.`,
-        buttons: ["Quit"],
+        title: "Ether",
+        message: "Ether could not start.",
+        detail: [
+          "Your music, schedule and airplay history are safe — nothing has been lost.",
+          "",
+          "Ether tried to repair itself and could not. Restarting the computer clears this most of the",
+          "time. If it keeps happening, send this screen to support and they will sort it out.",
+          "",
+          "Details for support: " + msg,
+          dbPath,
+        ].join("\n"),
+        buttons: ["Try again", "Quit"],
         noLink: true,
+        cancelId: 1,
       });
     } catch (dlgErr) { console.error("[DB] error dialog failed:", dlgErr && dlgErr.message); }
+    if (choice === 0) { try { app.relaunch(); } catch {} }
     app.isQuitting = true;
     app.quit();
-    return; // do NOT continue to createWindow() with an unusable / undefined db
+    return;
   }
+  try { _backfillAccountMarker(); } catch {}
   processInviteFile(); // VIP invite seeding — runs after DB is ready
 
   // Cloud backup must init AFTER initDb() so db is not undefined
