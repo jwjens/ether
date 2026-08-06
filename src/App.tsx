@@ -4143,6 +4143,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     level={guestIsOn ? guestLevel : 0}
                     isPlaying={guestIsOn && guestLevel > 0.02}
                     isOn={guestIsOn}
+                    onMode="switch"   // guest channel on/off, not transport
                     onVolumeChange={v => {
                       setConsoleGuestLevel(prev => ({ ...prev, [`${slot}_vol`]: v }));
                       window.dispatchEvent(new CustomEvent("ether:guest-volume", { detail: { slot, volume: v } }));
@@ -4196,6 +4197,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               // switch. No extra conditions — a deck passes deck?.status === "playing" and nothing else.
               isPlaying={cartPlaying}
               isOn={cartOn}
+              onMode="switch"   // this ON is the channel cut, not transport
               onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
               // Cuts/restores the channel. It is deliberately NOT transport: the old handler called
               // pause()/play() on the CART deck, which is empty between carts (so it appeared to do

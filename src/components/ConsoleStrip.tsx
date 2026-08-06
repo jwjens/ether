@@ -35,6 +35,14 @@ interface Props {
   jingle?: string | null;
   /** Overlay class ('JIN' | 'SWP') so the indicator names what's armed/firing (v2). */
   jingleClass?: string | null;
+  /** WHAT THIS STRIP'S ON BUTTON ACTUALLY IS — they are two different controls and the lamp has to
+   *  report the one it drives:
+   *    "transport" (default, DECKS)  — ON starts/stops playout (see help-deck-on.md). Lit = this deck
+   *      is playing. Decks pass isOn={true}, so binding the lamp to isOn instead left it stuck bright:
+   *      pressing ON changed the deck but never the button, which read as flicker / won't turn off.
+   *    "switch" (JINGLES, guest, mic) — ON is a channel cut. Lit = the channel is engaged.
+   *  Never grey in either mode: unlit is resting blue, because no strip on this board is disabled. */
+  onMode?: "transport" | "switch";
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -55,7 +63,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third", jingle = null, jingleClass = null,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third", jingle = null, jingleClass = null, onMode = "transport",
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
@@ -225,6 +233,9 @@ export default function ConsoleStrip({
   }, [onVolumeChange]);
 
   const db = effVol > 0.001 ? (20 * Math.log10(effVol)).toFixed(0) : "−∞";
+  // The ON lamp reports the control it actually drives — playout for a deck, the cut for a channel.
+  const onLit = onMode === "switch" ? isOn : (isOn && isPlaying);
+
   // NO GREY/DIMMED STATE ANYWHERE ON THIS STRIP. Decks pass isOn={true}, so every off-branch in this
   // component was dead code that had never rendered in the app — until JINGLES passed a real boolean and
   // lit them all up at once, making a switched-off channel look broken. A deck fader never dims, so no
@@ -412,11 +423,12 @@ export default function ConsoleStrip({
             actually flowing is told by the label fill, the progress bar and the meter — not by this lamp. */}
         <button onClick={() => { playClick(); onToggleOn(); }} style={{
           flex: 1, height: 38, borderRadius: 3,
-          // Engaged = glowing bright blue. Resting = normal blue. NEVER grey — grey reads as disabled,
-          // and no fader on this board is ever disabled. These are the two colours the deck ON buttons
-          // already used; the only change is that the switch selects between them instead of playback.
-          background: isOn ? "#2563eb" : "#1e3358",
-          border: `1px solid ${isOn ? "#3b82f6" : "#2a4a7a"}`,
+          // Lit = glowing bright blue, resting = normal blue, NEVER grey. What "lit" MEANS depends on
+          // which control this is: a deck's ON is transport, so it lights while the deck plays; a
+          // channel's ON is a cut, so it lights while the channel is engaged. Same two colours either
+          // way — the deck ON button's own originals.
+          background: onLit ? "#2563eb" : "#1e3358",
+          border: `1px solid ${onLit ? "#3b82f6" : "#2a4a7a"}`,
           cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.12s",
