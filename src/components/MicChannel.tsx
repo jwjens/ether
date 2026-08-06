@@ -128,7 +128,6 @@ export default function MicChannel({ slot, label }: { slot: string; label: strin
           level={isOn ? level : level * 0.35}
           isPlaying={isOn && level > 0.02}
           isOn={isOn}
-          onMode="switch"   // mic channel on/off, not transport
           onVolumeChange={setVolume}
           onToggleOn={() => setIsOn(v => !v)}
           onPfl={() => setPfl(p => !p)}

@@ -4143,7 +4143,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     level={guestIsOn ? guestLevel : 0}
                     isPlaying={guestIsOn && guestLevel > 0.02}
                     isOn={guestIsOn}
-                    onMode="switch"   // guest channel on/off, not transport
                     onVolumeChange={v => {
                       setConsoleGuestLevel(prev => ({ ...prev, [`${slot}_vol`]: v }));
                       window.dispatchEvent(new CustomEvent("ether:guest-volume", { detail: { slot, volume: v } }));
@@ -4188,16 +4187,18 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               color="#14e0c8"
               volume={jingleVol}
               deckId="CART"
-              // ON = THIS CHANNEL'S CUT, the operator's switch — not a lamp and not always-on.
-              // OFF means the channel is dead to the program bus: fire a cart or a jingle into it and
-              // nothing reaches air (enforced in the mixer, survives every Load). ON means audio passes.
-              // isPlaying stays observed and only brightens the strip while audio is genuinely flowing;
-              // it never gates the enabled-look, which is what made 4.4.145 read as broken.
-              // Exactly what a deck passes: isPlaying is this channel's own playing status, isOn is the
-              // switch. No extra conditions — a deck passes deck?.status === "playing" and nothing else.
-              isPlaying={cartPlaying}
-              isOn={cartOn}
-              onMode="switch"   // this ON is the channel cut, not transport
+              // ON = THIS CHANNEL'S CUT: cut means nothing from this channel reaches air, enforced in
+              // the mixer and surviving every Load.
+              //
+              // Expressed through the STOCK ConsoleStrip props — the component is untouched, exactly as
+              // the decks have always used it. isOn={true} is what every deck passes, which is what keeps
+              // this strip off the greyed/disabled branch entirely (that branch is unreachable for decks,
+              // and it must stay unreachable here). isPlaying carries the switch, so the ON button glows
+              // bright blue while the channel is engaged and sits normal blue when cut — the same two
+              // colours a deck's ON button already uses, via the same code path. No new prop, no mode
+              // flag, no special case in the shared component.
+              isPlaying={cartOn}
+              isOn={true}
               onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
               // Cuts/restores the channel. It is deliberately NOT transport: the old handler called
               // pause()/play() on the CART deck, which is empty between carts (so it appeared to do
