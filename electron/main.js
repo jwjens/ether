@@ -1082,18 +1082,44 @@ function repairSchema(conn) {
       repaired++;
     }
   } catch (e) { console.error('[DB] self-repair (songs) failed:', (e && e.message) || e); }
-  if (repaired) console.log(`[DB] self-repair applied ${repaired} fix(es) — opening normally`);
+  if (repaired) {
+    console.log(`[DB] self-repair applied ${repaired} fix(es) — opening normally`);
+    try { splashStatus("Repairing station database…"); } catch {}
+    try { bootReport.push({ label: "Repaired station database", ms: 0, ok: true, repair: true }); } catch {}
+  }
   return repaired;
+}
+
+// ── BOOT STATUS ───────────────────────────────────────────────────────────────
+// A pause with no explanation reads as a freeze. Even a fast repair, done silently, looks like the app
+// hung — the same panic the Generate progress bar fixed. So every startup step that could stall says
+// what it is doing, on the splash, while it does it; and what happened is reported into the app
+// afterwards so an engineer can see "Repaired station database — 0.3s" instead of guessing.
+// Informational only: never a decision, never blocking.
+const bootReport = [];
+function bootStep(label, fn) {
+  const t0 = Date.now();
+  try { splashStatus(label); } catch { /* splash not up yet */ }
+  try {
+    const out = fn();
+    const ms = Date.now() - t0;
+    bootReport.push({ label, ms, ok: true });
+    if (ms > 150) console.log(`[BOOT] ${label} — ${ms}ms`);
+    return out;
+  } catch (e) {
+    bootReport.push({ label, ms: Date.now() - t0, ok: false, error: String((e && e.message) || e) });
+    throw e;
+  }
 }
 
 function initDb() {
   const dbPath = getDbPath();
   console.log("[DB] Path:", dbPath);
-  openDb();
+  bootStep("Opening station database…", () => openDb());
   console.log("[DB] Connected:", dbPath);
-  repairSchema(db);          // silent self-repair BEFORE anything reads or alters the schema
-  runMigrations();
-  seedDeckConfigs();
+  bootStep("Checking station database…", () => repairSchema(db));   // in-place, offline, before anything else
+  bootStep("Updating station database…", () => runMigrations());
+  bootStep("Preparing decks…", () => seedDeckConfigs());
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
 
@@ -2153,6 +2179,12 @@ app.whenReady().then(() => {
   // unsupported on SMB, and open/mkdir can be denied. An uncaught throw here aborts this ENTIRE
   // whenReady callback BEFORE createWindow(), so the app runs windowless and looks hung (the exact
   // OV failure). Guard it: surface a visible error and exit cleanly — never vanish silently.
+  // Splash FIRST — before the database is touched. Startup work (repair, migration, seeding) can pause
+  // for a moment, and a pause on a blank screen reads as a frozen app. The splash says what is
+  // happening while it happens. It costs nothing and it is the difference between "working" and "hung".
+  createSplash();
+  logStartup('createSplash() done — startup work is now visible');
+
   // ── OPEN THE STATION, DO NOT INTERVIEW THE OPERATOR ─────────────────────────────────────────────
   // The operator is a DJ. They double-click Ether and their station comes up. They do not close
   // daemons, run scripts, read schemas, or answer dialogs about databases. So: try, self-repair, retry
@@ -2505,13 +2537,23 @@ app.whenReady().then(() => {
   try { logStartup(`sessionData: ${app.getPath('sessionData')}`); } catch (e) { logStartup(`sessionData: (unavailable) ${e.message}`); }
 
   // Show native splash first; main window stays hidden behind it
-  createSplash();
+  // createSplash() moved earlier — see the boot block above. Startup work must be VISIBLE.
   splashStatus("Starting EtherCast…");
   // Let the renderer report its own real load steps (DB migrations, station, audio).
   ipcMain.handle("splash:status", (_e, msg) => { splashStatus(String(msg || "")); return true; });
   logStartup('createSplash() done');
   splashStatus("Loading interface…");
   createWindow();
+  // Report what startup actually did — dismissable in-app, informational only. An engineer sees
+  // "Repaired station database — 0.3s"; an operator who does not care closes it. The work is done
+  // either way; this screen is never a decision.
+  try {
+    const send = () => { try { sendToAllWindows('boot:report', { steps: bootReport, at: Date.now() }); } catch {} };
+    if (mainWindow && mainWindow.webContents) {
+      if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', () => setTimeout(send, 800));
+      else setTimeout(send, 800);
+    }
+  } catch (e) { console.warn('[BOOT] report send failed:', e.message); }
   logStartup('createWindow() done — mainWindow hidden, waiting for ready-to-show');
   createTray();
   buildMenu();

@@ -4,6 +4,7 @@ import KeyboardHelp from "./components/KeyboardHelp";
 import TrialGate from "./components/TrialGate";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import GenerateProgressBar from "./components/GenerateProgressBar";
+import BootStatus from "./components/BootStatus";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
@@ -2866,6 +2867,8 @@ export default function App() {
           so a run started from the month view keeps reporting after the operator navigates away, and
           so a progress tick can never re-render the calendar's day list. */}
       <GenerateProgressBar />
+      {/* What startup did — dismissable, informational. A pause nobody can see reads as a freeze. */}
+      <BootStatus />
       <CloudInstallPrompt />
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
       {showTour && <OnboardingTour onDone={dismissTour} />}
