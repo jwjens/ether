@@ -61,7 +61,7 @@ export default function ImportDialog({ onDone }: Props) {
     for (const filePath of files) {
       try {
         // Check if already imported
-        const existing = await (query<{ id: number }>("SELECT rowid AS id FROM songs WHERE file_path = ?", [filePath]).then(r => r[0] ?? null));
+        const existing = await (query<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]).then(r => r[0] ?? null));
         if (existing) {
           // Update category if one was selected
           if (selectedCat) {
@@ -93,7 +93,7 @@ export default function ImportDialog({ onDone }: Props) {
 
         // Auto-analyze: BPM, LUFS, energy, cue points — runs in Rust background thread.
         // Non-blocking: we don't await so import stays fast; analysis happens in parallel.
-        const inserted = await (query<{ id: number }>("SELECT rowid AS id FROM songs WHERE file_path = ?", [filePath]).then(r => r[0] ?? null));
+        const inserted = await (query<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]).then(r => r[0] ?? null));
         if (inserted) {
           analyzeAndSave(inserted.id, filePath).catch(e => console.warn("[Import] analysis skipped:", title, e));
         }

@@ -252,6 +252,10 @@ pub enum AudioCmd {
     /// Local studio-monitor output gain (0..4). Affects ONLY the speakers tap — the program
     /// bus → Icecast stream is untouched, so muting the monitor never changes what airs.
     SetMonitorVolume(f32),
+    /// MASTER OUT gain (broadcast). See Bus::master_vol.
+    SetMasterVolume(f32),
+    /// MASTER MONITOR gain (the room). Per-station by law; main fans one fader out to all stations.
+    SetMasterMonitorVolume(f32),
     /// Audio Processing v1 — per-station program-bus loudness. (process_local, process_stream, target LUFS).
     /// Both bools default OFF; the daemon delivers this like the segue setting (survives respawns).
     SetProcessing { local: bool, stream: bool, target_lufs: f32 },
@@ -344,6 +348,22 @@ pub struct BusState {
     /// Local studio-monitor gain applied to the DEVICE (speaker) output only — never the
     /// program bus. 1.0 = unity; 0.0 = silent speakers while the station keeps broadcasting.
     pub monitor_vol: f32,
+    /// MASTER OUT — the broadcast gain. Applied to the program bus BEFORE the VU meter and before the
+    /// stream/device split, so it rides what LISTENERS hear and the master VU shows the level actually
+    /// going out. monitor_vol above trims only the room and never touches air. 1.0 = unity.
+    /// docs/master-monitor-faders-dead-2026-08-06.md
+    pub master_vol: f32,
+    /// MASTER MONITOR — the operator's ONE room level, held PER STATION.
+    ///
+    /// The CONTROL is single; the STATE is per-station because DESIGN-TRUTH §2 is law: "each station
+    /// acts like its own separate sound card; stations do not know each other exists" — no shared
+    /// mutable state below the engine layer. Main fans the one fader out to every station. (A global
+    /// static was tried 2026-08-06 and correctly rejected by check-no-global-audio-statics.js.)
+    ///
+    /// Distinct from monitor_vol: that is the per-station STRIP level owned by StationMonitorMixer
+    /// ("how much of this station in the room"); this is the room's overall level. Multiplied together
+    /// in the device branch ONLY, so neither can reach air. 1.0 = unity.
+    pub master_monitor_vol: f32,
     /// Per-station program-bus stream-client flag (DESIGN-TRUTH §2). Set by THIS
     /// station's drain thread on its Icecast client connect/disconnect; read by THIS
     /// station's mixer callback to gate its own program-bus push. Never shared.
@@ -385,6 +405,8 @@ impl BusState {
             master_peak: 0.0,
             spectrum:    [0.0; 10],
             monitor_vol: 1.0,
+            master_vol:  1.0,
+            master_monitor_vol: 1.0,
             stream_connected,
             frames_consumed: 0,
             proc_local:  false,   // OFF on every station on every install — opt-in per station
@@ -597,6 +619,8 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::ReopenOutput => { break; } // legacy path: drop stream → 'outer reopens
                             AudioCmd::SetEq(_) => {}
                             AudioCmd::SetMonitorVolume(_) => {}
+                            AudioCmd::SetMasterVolume(_) => {}
+                            AudioCmd::SetMasterMonitorVolume(_) => {}
                             AudioCmd::SetProcessing { .. } => {} // no-device context: applied when the stream is live
                         }
                     }
@@ -941,6 +965,14 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMonitorVolume(v) => {
                                 if let Ok(mut bus) = bus_cmd.lock() { bus.monitor_vol = v.clamp(0.0, 4.0); }
                             }
+                            AudioCmd::SetMasterVolume(v) => {
+                                // Clamped 0..=1: master is an attenuator on air. >1 would let the operator
+                                // push the program bus into clipping ahead of the limiter.
+                                if let Ok(mut bus) = bus_cmd.lock() { bus.master_vol = v.clamp(0.0, 1.0); }
+                            }
+                            AudioCmd::SetMasterMonitorVolume(v) => {
+                                if let Ok(mut bus) = bus_cmd.lock() { bus.master_monitor_vol = v.clamp(0.0, 1.0); }
+                            }
                             AudioCmd::SetProcessing { local, stream, target_lufs } => {
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     bus.proc_local  = local;
@@ -1157,6 +1189,21 @@ fn mixer_callback(
     // Publish the EQ analyzer spectrum (lock already released) for GetLevel → AudioLevels.
     if let Some(spec) = eq_spectrum { bus.spectrum = spec; }
 
+    // ── MASTER OUT ────────────────────────────────────────────────────────────────────────────────
+    // Applied HERE: after the mix + EQ, BEFORE the VU peak below and before the stream/device split.
+    //   • the stream (what listeners hear) is taken from out_l/out_r further down → master rides air;
+    //   • the master VU is computed from these same samples → the meter shows what went out;
+    //   • the device branch multiplies by monitor levels afterwards → the room gets master x monitor,
+    //     exactly like a console, and monitor still never touches air.
+    // Unity is a no-op multiply, so an untouched station is bit-identical to the previous build.
+    let master_vol = bus.master_vol;
+    let (out_l, out_r): (Vec<f32>, Vec<f32>) = if master_vol == 1.0 {
+        (out_l, out_r)
+    } else {
+        (out_l.iter().map(|&s| s * master_vol).collect(),
+         out_r.iter().map(|&s| s * master_vol).collect())
+    };
+
     // Program/master peak for VU (functional — feeds master_peak below).
     let peak = out_l.iter().chain(out_r.iter())
         .map(|&s| s.abs())
@@ -1218,7 +1265,9 @@ fn mixer_callback(
     let (dl, dr): (&[f32], &[f32]) = if bus.proc_local && proc_l.is_some() {
         (proc_l.as_ref().unwrap(), proc_r.as_ref().unwrap())
     } else { (&out_l, &out_r) };
-    let mvol = bus.monitor_vol;
+    // Room level = this station's strip level x the ONE master monitor level. Both local-only: the
+    // stream push above already happened, so neither can change what airs.
+    let mvol = bus.monitor_vol * bus.master_monitor_vol;
     if device_sr == PROGRAM_RATE || prog_frames <= 1 {
         for f in 0..device_frames {
             if ch == 2 {

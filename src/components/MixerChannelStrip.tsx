@@ -85,9 +85,11 @@ export default function MixerChannelStrip({
   React.useEffect(() => {
     if (!isMic) return;
     const update = () => {
+      // No master multiply: MASTER OUT is a real gain stage on the program bus in Rust now
+      // (docs/master-monitor-faders-dead-2026-08-06.md). Scaling here as well would apply master
+      // TWICE — once on this channel and again at the bus.
       if (gainNodeRef.current) {
-        const master = (window as any).__etherMasterVol ?? 1;
-        gainNodeRef.current.gain.value = (fader / 100) * master;
+        gainNodeRef.current.gain.value = fader / 100;
       }
     };
     update();
@@ -231,11 +233,11 @@ export default function MixerChannelStrip({
             onChange={e => {
               const v = Number(e.target.value);
               setFader(v);
-              const master = (window as any).__etherMasterVol ?? 1;
+              // Channel fader sends its OWN level. Master is applied once, at the program bus.
               if (isMic) {
-                if (gainNodeRef.current) gainNodeRef.current.gain.value = (v / 100) * master;
+                if (gainNodeRef.current) gainNodeRef.current.gain.value = v / 100;
               } else if (deckSlot) {
-                engine.getDeck(deckSlot)?.setVolume((v / 100) * master);
+                engine.getDeck(deckSlot)?.setVolume(v / 100);
               }
             }}
             style={{ width: '100%', accentColor: color, cursor: 'pointer', height: 10 }}
@@ -356,11 +358,11 @@ export default function MixerChannelStrip({
         onChange={e => {
           const v = Number(e.target.value);
           setFader(v);
-          const master = (window as any).__etherMasterVol ?? 1;
+          // Channel fader sends its OWN level. Master is applied once, at the program bus.
           if (isMic) {
-            if (gainNodeRef.current) gainNodeRef.current.gain.value = (v / 100) * master;
+            if (gainNodeRef.current) gainNodeRef.current.gain.value = v / 100;
           } else if (deckSlot) {
-            engine.getDeck(deckSlot)?.setVolume((v / 100) * master);
+            engine.getDeck(deckSlot)?.setVolume(v / 100);
           }
         }}
         style={{ width: "100%", accentColor: color, cursor: "pointer", height: 3, display: "block" }}

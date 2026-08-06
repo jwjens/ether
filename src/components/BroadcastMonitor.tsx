@@ -416,6 +416,14 @@ export default function BroadcastMonitor() {
     try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
   }, [monitorVol]);
 
+  // ── MONITOR = the ONE master room level (same control as the inline panel) ────────────────────
+  // Global by design — no station id. 4.4.154 wrote a per-station strip level here, which meant this
+  // fader silently overwrote whichever station was active. docs/master-monitor-faders-dead-2026-08-06.md §7
+  const applyMonitor = (v: number) => {
+    setMonitorVol(v);
+    try { (window as any).ether?.audio?.setMasterMonitorVolume?.(v); } catch { /* engine absent */ }
+  };
+
   // ── Now-playing updates from main window ──────────────────────
   useEffect(() => {
     const ether = (window as any).ether;
@@ -577,7 +585,7 @@ export default function BroadcastMonitor() {
           display: "flex", flexDirection: "column", justifyContent: "center", gap: 20,
         }}>
           <BigFader label="Master"  value={masterVol}  onChange={setMasterVol}  />
-          <BigFader label="Monitor" value={monitorVol} onChange={setMonitorVol} />
+          <BigFader label="Monitor" value={monitorVol} onChange={applyMonitor} />
 
           {/* Limiter indicator */}
           <div style={{

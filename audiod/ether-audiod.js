@@ -136,6 +136,12 @@ const handlers = {
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
   setOutputDevice:    (m) => A.audioSetOutputDevice(m.stationId, m.device),
   setMonitorVolume:   (m) => A.audioSetMonitorVolume(m.stationId, m.volume),
+  // MASTER OUT — the broadcast gain (rides air + the master VU). Distinct from setMonitorVolume,
+  // which trims the room speakers only. docs/master-monitor-faders-dead-2026-08-06.md
+  setMasterVolume:    (m) => A.audioSetMasterVolume(m.stationId, m.volume),
+  // MASTER MONITOR — ONE room level for all stations. No stationId: it is global by design, so it
+  // can never grab an individual station strip. docs/master-monitor-faders-dead-2026-08-06.md §7
+  setMasterMonitorVolume: (m) => A.audioSetMasterMonitorVolume(m.stationId, m.volume),
   getProgramBusPort:  (m) => A.audioGetProgramBusPort(m.stationId),
   setBroadcastDelay:  (m) => A.audioSetBroadcastDelay(m.seconds, m.stationId),
   dump:               (m) => A.audioDump(m.stationId),

@@ -3,6 +3,7 @@ import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
 import TrialGate from "./components/TrialGate";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
+import GenerateProgressBar from "./components/GenerateProgressBar";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
@@ -2861,6 +2862,10 @@ export default function App() {
         </div>
       )}
       <LibrarySyncProgressBar />
+      {/* Generate progress — bottom-left, above the station badge. Mounted here (not in the calendar)
+          so a run started from the month view keeps reporting after the operator navigates away, and
+          so a progress tick can never re-render the calendar's day list. */}
+      <GenerateProgressBar />
       <CloudInstallPrompt />
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
       {showTour && <OnboardingTour onDone={dismissTour} />}

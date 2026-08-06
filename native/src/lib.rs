@@ -150,6 +150,25 @@ pub fn audio_set_monitor_volume(station_id: u32, volume: f64) -> bool {
     audio.sender.send(AudioCmd::SetMonitorVolume(volume as f32)).is_ok()
 }
 
+/// MASTER OUT — the broadcast gain for this station. Rides the program bus pre-meter, so it changes
+/// what listeners hear and the master VU follows. Distinct from audio_set_monitor_volume, which trims
+/// only the room speakers and never touches air. docs/master-monitor-faders-dead-2026-08-06.md
+#[napi]
+pub fn audio_set_master_volume(station_id: u32, volume: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetMasterVolume(volume as f32)).is_ok()
+}
+
+/// MASTER MONITOR — the operator's ONE room level, applied to THIS station's bus. Per-station by law
+/// (DESIGN-TRUTH §2); main fans the single fader out across every station. Local-only, never airs.
+#[napi]
+pub fn audio_set_master_monitor_volume(station_id: u32, volume: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetMasterMonitorVolume(volume as f32)).is_ok()
+}
+
 // Audio Processing v1 — set this station's program-bus processing (both toggles default OFF; the daemon
 // delivers this like the segue setting on connect + respawn). Meters come back via audio_get_level (AudioLevels).
 #[napi]

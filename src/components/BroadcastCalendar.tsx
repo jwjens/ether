@@ -141,10 +141,15 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   const [generating, setGenerating] = useState(false);
   const [genMsg, setGenMsg]         = useState("");
-  // Progress meter + cancel for a week generate (2026-07-27): the per-day loop reports done/total so the
-  // user SEES it working instead of a frozen window. Cancel is checked between days.
-  const [genProgress, setGenProgress] = useState<{ done: number; total: number; label: string; hour?: string } | null>(null);
+  // Progress is NOT held here any more (2026-08-06). It lived in this component, and this component
+  // renders the ~1000-row day list — so every one of the 168 hourly ticks in a week generate forced the
+  // whole list to re-render. Progress now lives in <GenerateProgressBar/>, mounted at App top-level, so
+  // a tick can never touch this list and the bar survives navigating away mid-run.
+  // docs/generate-freeze-and-calendar-history-2026-08-06.md
   const genCancelRef = useRef(false);
+  // Explain-before-you-wait dialog. A week generate is minutes of work; without this the operator gets a
+  // long quiet stretch and concludes it crashed. Dismissible for good once they know.
+  const [confirmGen, setConfirmGen] = useState(false);
   // Generate diagnostics now flow to the movable Scheduler Health panel (Tools) via the
   // "ether:gen-report" event — structured, actionable, non-blocking (no locked modal).
 
@@ -158,18 +163,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     setGenerating(true); genCancelRef.current = false;
     const mon = getMondayOfWeek(weekOffset);
     const dates = Array.from({ length: 7 }, (_, i) => new Date(mon.getTime() + i * 86_400_000));
-    setGenProgress({ done: 0, total: dates.length, label: "Starting…" });
-    // Hour-level progress, pushed from main as each hour completes. This is the observable half of the
-    // 2026-08-03 fix: the meter now moves 168 times across a week instead of 7, so a long generate is
-    // visibly WORKING rather than indistinguishable from a frozen window.
-    const onProgress = (p: any) => {
-      if (!p) return;
-      const d = dates[p.dayIdx] || null;
-      const label = d ? `${DAY_NAMES[d.getDay()]} ${d.getMonth() + 1}/${d.getDate()}` : (p.day || "");
-      if (p.phase === "hour") setGenProgress({ done: p.dayIdx, total: dates.length, label, hour: `${String(p.hour).padStart(2, "0")}:00` });
-      else if (p.phase === "day-committed") setGenProgress({ done: p.dayIdx + 1, total: dates.length, label });
-    };
-    const handle = (window as any).ether?.on?.("schedule:generate-progress", onProgress);
+    // No progress subscription here on purpose — <GenerateProgressBar/> owns it (see above).
     try {
       // ONE call for the whole week. Previously this looped seven separate invokes, each of which
       // blocked main's thread end-to-end; main now yields between every hour.
@@ -202,9 +196,17 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       setGenMsg("Generation failed: " + String(e?.message || e));
       setTimeout(() => setGenMsg(""), 9000);
     } finally {
-      try { (window as any).ether?.off?.("schedule:generate-progress", handle); } catch {}
-      setGenerating(false); setGenProgress(null);
+      setGenerating(false);
     }
+  };
+
+  // Gate the week generate behind the explainer unless the operator has turned it off.
+  const startWeekGenerate = () => {
+    if (generating) return;
+    try {
+      if (localStorage.getItem("ether_gen_explain_dismissed") === "1") { generate(); return; }
+    } catch { /* localStorage unavailable → always explain */ }
+    setConfirmGen(true);
   };
 
   // ── Day view — click a day to open its date and see the airing log hour-by-hour ──
@@ -440,31 +442,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
         {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
-        {/* Generate meter — "tech-scene" green terminal progress (glowing left→right fill, monospace,
-            percentage) so the user plainly SEES it working instead of a frozen window. Cancelable (ABORT). */}
-        {generating && genProgress && (() => {
-          const pct = Math.round(100 * genProgress.done / Math.max(1, genProgress.total));
-          const G = "#2bff88";
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 10px", height: 26,
-              background: "#050a06", border: `1px solid ${G}`,
-              boxShadow: "0 0 10px rgba(43,255,136,0.35), inset 0 0 8px rgba(43,255,136,0.12)",
-              fontFamily: "'JetBrains Mono', ui-monospace, monospace" }}>
-              <span style={{ fontSize: 10, fontWeight: 800, color: G, letterSpacing: "0.12em", textShadow: `0 0 6px ${G}` }}>▮ GENERATING</span>
-              <div style={{ position: "relative", width: 150, height: 10, background: "#0a1a0e", border: "1px solid rgba(43,255,136,0.4)", overflow: "hidden" }}>
-                <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${pct}%`, background: G,
-                  boxShadow: `0 0 8px ${G}, 0 0 14px ${G}`, transition: "width 0.25s ease" }} />
-                {/* LED-segment overlay for the tech look */}
-                <div style={{ position: "absolute", inset: 0, background: "repeating-linear-gradient(90deg, transparent 0 6px, rgba(0,0,0,0.28) 6px 8px)", pointerEvents: "none" }} />
-              </div>
-              <span style={{ fontSize: 11, fontWeight: 800, color: G, textShadow: `0 0 6px ${G}`, minWidth: 34, textAlign: "right" }}>{pct}%</span>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(43,255,136,0.75)", letterSpacing: "0.06em", whiteSpace: "nowrap" }}>{genProgress.done}/{genProgress.total} · {genProgress.label}{genProgress.hour ? " · " + genProgress.hour : ""}</span>
-              <button onClick={() => { genCancelRef.current = true; (window as any).ether?.invoke?.("schedule:generateCancel"); }}
-                style={{ background: "transparent", border: "1px solid #ff5555", color: "#ff5555", fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", padding: "2px 8px", cursor: "pointer" }}>ABORT</button>
-            </div>
-          );
-        })()}
-        <button disabled={generating} onClick={() => generate()} title="Generate the viewed week (one week at a time)"
+        {/* The inline meter was removed 2026-08-06: it lived in this component, so painting it re-rendered
+            the day list on every one of the 168 hourly ticks. Progress is now the always-mounted
+            bottom-left <GenerateProgressBar/>, which also survives navigating away mid-run. */}
+        <button disabled={generating} onClick={startWeekGenerate} title="Generate the viewed week (one week at a time)"
           style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: generating ? 0.5 : 1, cursor: generating ? "default" : "pointer" }}>
           {generating ? "Generating…" : "Generate week"}
         </button>
@@ -658,6 +639,58 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           })}
         </div>
       </div>
+      )}
+
+      {/* ── Explain before the wait ────────────────────────────────────────────────────────────────
+          A week generate is minutes of real work. Before 4.4.152 it looked like a crash: no dialog, a
+          frozen-looking window, no way to stop. This says what is about to happen in plain language,
+          and remembers when the operator no longer needs telling. */}
+      {confirmGen && (
+        <div
+          onClick={() => setConfirmGen(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 400,
+                   display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: 430, maxWidth: "88vw", background: "var(--bg-secondary)",
+                     border: "1px solid var(--border-primary)", borderTop: "3px solid var(--accent-green)",
+                     boxShadow: "0 18px 50px rgba(0,0,0,0.5)", padding: "18px 20px 16px",
+                     fontFamily: "'Inter', system-ui, sans-serif" }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", marginBottom: 10 }}>
+              Generate this week?
+            </div>
+            <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-secondary)", marginBottom: 12 }}>
+              Ether builds the log <strong>one day at a time</strong>, picking every song against your clocks
+              and separation rules. A full week takes a few minutes.
+              <br /><br />
+              You can keep working while it runs — a progress bar appears in the bottom-left corner showing
+              which day it is on, and you can stop it at any time. Days already finished are kept.
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12,
+                            color: "var(--text-tertiary)", marginBottom: 16, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                onChange={e => { try { localStorage.setItem("ether_gen_explain_dismissed", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }}
+              />
+              Don't show this again
+            </label>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button
+                onClick={() => setConfirmGen(false)}
+                style={{ padding: "8px 16px", borderRadius: 0, fontSize: 13, fontWeight: 600,
+                         background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+                         border: "1px solid var(--border-primary)", cursor: "pointer" }}
+              >Cancel</button>
+              <button
+                onClick={() => { setConfirmGen(false); generate(); }}
+                style={{ padding: "8px 22px", borderRadius: 0, fontSize: 13, fontWeight: 800,
+                         background: "var(--accent-green)", color: "#0a160d", border: "none", cursor: "pointer" }}
+              >OK, generate</button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

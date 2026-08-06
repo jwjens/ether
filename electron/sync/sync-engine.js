@@ -20,10 +20,14 @@ const MAX_PUSH_BATCH = 500;           // [N-93]
 const CURSOR_KEY     = 'sync_cursor'; // key in system_state [N-96]
 
 // Tables excluded from push [N-92]
+// Built from REGISTRY KEYS (the wire names), because this set is matched against
+// `mutations.table_name`, which is always the wire name. Since 2026-08-06 a table's physical name can
+// differ from its wire name (`songs` is a live view over `songs_all`), so using `e.tableName` here
+// would silently stop excluding any such table.
 const EXCLUDED_TABLES = new Set(
-  Object.values(REGISTRY)
-    .filter(e => e.syncExcluded === true || e.scope === 'local-only')
-    .map(e => e.tableName)
+  Object.entries(REGISTRY)
+    .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
+    .map(([wireName]) => wireName)
 );
 
 class SyncEngine {
@@ -476,7 +480,10 @@ class SyncEngine {
 
   _uuidStmt(table) {
     if (!this._uuidStmts[table]) {
-      this._uuidStmts[table] = this._db.prepare(`SELECT uuid FROM ${table} WHERE id = ?`);
+      // Physical table, not the live view: a preserved history row referencing a DELETED song must
+      // still resolve its uuid, or its reference would push as null (§11.5).
+      const physical = (REGISTRY[table] && REGISTRY[table].tableName) || table;
+      this._uuidStmts[table] = this._db.prepare(`SELECT uuid FROM ${physical} WHERE id = ?`);
     }
     return this._uuidStmts[table];
   }

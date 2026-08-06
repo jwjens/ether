@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("ether", {
     listOutputDevices: () => ipcRenderer.invoke("audio:listOutputDevices"),
     setOutputDevice: (stationId, deviceName) => ipcRenderer.invoke("audio:setOutputDevice", stationId, deviceName),
     setMonitorVolume: (stationId, volume) => ipcRenderer.invoke("audio:setMonitorVolume", stationId, volume),
+    setMasterVolume:  (stationId, volume) => ipcRenderer.invoke("audio:setMasterVolume", stationId, volume),
+    setMasterMonitorVolume: (volume) => ipcRenderer.invoke("audio:setMasterMonitorVolume", volume),
     // Push-based level subscription — 30fps from main process, no polling
     onLevels:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:levels", h); return h; },
     offLevels: (h)  => ipcRenderer.removeListener("audio:levels", h),

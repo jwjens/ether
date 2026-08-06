@@ -630,18 +630,41 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     setOnAir(masterLevel > 0.03);
   }, [masterLevel]);
 
-  // Master fader — expose the value for read-scaling ONLY. It must NEVER write the deck faders:
-  // automation/UI never moves a deck fader (those are operator controls; a deck sits at unity unless a
-  // human drags THAT fader). Deck strips that want to scale against master read __etherMasterVol at the
-  // moment a human moves them (see MixerChannelStrip). Previously this wrote audioSetVolume('A'|'B'|'C')
-  // on every master change, which yanked the deck faders down on their own — removed.
-  useEffect(() => {
-    (window as any).__etherMasterVol = masterVol;
-  }, [masterVol]);
+  // MASTER OUT = the broadcast. Rides the program bus in Rust, pre-meter, so listeners hear it and the
+  // master VU shows what went out. __etherMasterVol is GONE: it was a workaround for the missing gain
+  // stage that only applied master at the instant somebody dragged a DECK fader, which is why the
+  // master fader appeared to do nothing. docs/master-monitor-faders-dead-2026-08-06.md
+  const applyMaster = useCallback((v: number) => {
+    setMasterVol(v);
+    try { engine?.setMasterVolume?.(v); } catch { /* engine absent */ }
+  }, [engine]);
 
   useEffect(() => {
     try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
   }, [monitorVol]);
+
+  // ── MONITOR = the ONE master room level ───────────────────────────────────────────────────────
+  // It scales the FINISHED monitor mix and calls nothing on any individual channel.
+  //
+  // 4.4.154 got this wrong: it called audio.setMonitorVolume(stationId, v) — which is the PER-STATION
+  // strip level owned by StationMonitorMixer. Pulling Halloween's strip down and then raising MONITOR
+  // wrote Halloween's own level back up, because both controls were writing the same variable. A
+  // channel pulled down must STAY down. Now it drives a separate global gain in Rust
+  // (MASTER_MONITOR_VOL), multiplied with each station's strip level in the device branch only.
+  // docs/master-monitor-faders-dead-2026-08-06.md §7
+  const applyMonitor = useCallback((v: number) => {
+    setMonitorVol(v);
+    try { (window as any).ether?.audio?.setMasterMonitorVolume?.(v); } catch { /* engine absent */ }
+  }, []);
+
+  // Re-apply the remembered room level once audio is up, so it survives a restart. Global, so it does
+  // not depend on which station is active and cannot disturb anyone's strip.
+  const monitorPrimed = useRef(false);
+  useEffect(() => {
+    if (!isReady || monitorPrimed.current) return;
+    monitorPrimed.current = true;
+    if (monitorVol !== 1) applyMonitor(monitorVol);
+  }, [isReady, monitorVol, applyMonitor]);
   useEffect(() => {
     try { localStorage.setItem("ether_station_info_collapsed", stationInfoOpen ? "0" : "1"); } catch {}
   }, [stationInfoOpen]);
@@ -790,8 +813,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       </div>
 
       {/* Faders */}
-      <Fader label="Master" value={masterVol} onChange={setMasterVol} />
-      <Fader label="Monitor" value={monitorVol} onChange={setMonitorVol} />
+      <Fader label="Master" value={masterVol} onChange={applyMaster} />
+      <Fader label="Monitor" value={monitorVol} onChange={applyMonitor} />
 
       {/* Limiter */}
       <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>

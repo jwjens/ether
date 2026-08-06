@@ -1141,26 +1141,69 @@ function runMigrations() {
 
   require('../scripts/schema-v0-baseline')(db);
 
+  // ── A DELETE IS A DELETE (2026-08-06) — songs → songs_all + a `songs` VIEW ──────────────────────
+  // Jeff's ruling: "a delete should be a delete from the foundation up… nothing downstream needs to
+  // filter deleted because nothing deleted is left to encounter."
+  //
+  // A soft-deleted song used to stay fully selectable, and the protocol's answer ([N-110]) was that
+  // every reader MUST remember `WHERE deleted_at IS NULL`. That discipline failed at 9 of ~254 read
+  // sites, silently, for weeks: "Rotten to the Core" was deleted 2026-07-20 and was still being put on
+  // air on 2026-08-05 — Generate re-created its log rows on every run, and the reader rehydrated its
+  // file path straight off the tombstoned row.
+  //
+  // So the physical table becomes `songs_all` and `songs` becomes a VIEW of the LIVE rows. Every
+  // existing reader is correct with no edit, and so is every reader written from here on. The tombstone
+  // still lives in songs_all, so sync ([N-109]/[N-112], merge-engine tombstones) is unaffected —
+  // WRITES target songs_all (a view is not writable). docs/deleted-songs-still-air-design-2026-08-06.md
+  //
+  // Idempotent: only converts when `songs` is still a physical table.
+  {
+    const songsObj = db.prepare("SELECT type FROM sqlite_master WHERE name='songs'").get();
+    const songsAllExists = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='songs_all'").get();
+    if (songsObj && songsObj.type === 'table' && !songsAllExists) {
+      console.log('[DB] Migrating songs → songs_all + live view (a delete is a delete)');
+      db.exec(`
+        DROP TRIGGER IF EXISTS trg_songs_fts_insert;
+        DROP TRIGGER IF EXISTS trg_songs_fts_update;
+        DROP TRIGGER IF EXISTS trg_songs_fts_delete;
+        ALTER TABLE songs RENAME TO songs_all;
+        CREATE VIEW songs AS SELECT * FROM songs_all WHERE deleted_at IS NULL;
+      `);
+      const live = db.prepare("SELECT COUNT(*) c FROM songs").get().c;
+      const all  = db.prepare("SELECT COUNT(*) c FROM songs_all").get().c;
+      console.log(`[DB] songs view live: ${live} of ${all} rows (${all - live} tombstoned, now unreachable)`);
+    }
+  }
+
+  // play_log(file_path, station_id, played_at) — the index the least-recently-played lookups need.
+  // Without it every LRP query does a FULL SCAN of play_log per candidate row: measured 1015ms for one
+  // 52-candidate jingle pool on a 36,900-row play_log, which is what froze Generate for minutes
+  // (docs/generate-freeze-and-calendar-history-2026-08-06.md §8). With it: 0.16ms. Also serves the
+  // daemon's loggen LRP ordering and buildRestMaps. Cheap to build (~80ms), idempotent.
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_play_log_file_station ON play_log(file_path, station_id, played_at)"); } catch {}
+
   // Add any missing columns via ALTER TABLE (safe to re-run)
+  // NOTE: these target songs_all — `songs` is a view and "Cannot add a column to a view". The view is
+  // `SELECT *`, so a column added to songs_all appears through it automatically (verified).
   const alterSafe = (sql) => { try { db.exec(sql); } catch(e) { /* column already exists */ } };
-  alterSafe("ALTER TABLE songs ADD COLUMN is_explicit INTEGER DEFAULT 0");
-  alterSafe("ALTER TABLE songs ADD COLUMN raw_metadata TEXT");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN is_explicit INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN raw_metadata TEXT");
   // Fix songs that aren't eligible to play in any (daytime) hour: daypart_mask = 127 is the old
   // default (only hours 0-6), and NULL (e.g. from a cloud-restored/synced library) means eligible
   // for NO hours at all — both make the scheduler generate nothing during the day. Normalize both
   // to 16777215 (all 24 hours) so Generate always has candidates. See _generateDayRows.
-  db.exec("UPDATE songs SET daypart_mask = 16777215 WHERE daypart_mask = 127 OR daypart_mask IS NULL");
-  alterSafe("ALTER TABLE songs ADD COLUMN daypart_mask INTEGER DEFAULT 127");
-  alterSafe("ALTER TABLE songs ADD COLUMN no_repeat_hours INTEGER DEFAULT 2");
-  alterSafe("ALTER TABLE songs ADD COLUMN rotation_status TEXT DEFAULT 'active'");
-  alterSafe("ALTER TABLE songs ADD COLUMN intro_version_path TEXT");
-  alterSafe("ALTER TABLE songs ADD COLUMN has_intro INTEGER DEFAULT 0");
+  db.exec("UPDATE songs_all SET daypart_mask = 16777215 WHERE daypart_mask = 127 OR daypart_mask IS NULL");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN daypart_mask INTEGER DEFAULT 127");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN no_repeat_hours INTEGER DEFAULT 2");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN rotation_status TEXT DEFAULT 'active'");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN intro_version_path TEXT");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN has_intro INTEGER DEFAULT 0");
   // These three live in the v0 baseline but had NO alterSafe — so a DB created by an older baseline
   // (or carried forward from an old install) lacked them, and migrate-library-phase-sync-4 (v4) does
   // `SELECT energy, last_played_at, play_count FROM songs` → "no such column: energy" on init (OV, 4.3.33).
-  alterSafe("ALTER TABLE songs ADD COLUMN energy REAL");
-  alterSafe("ALTER TABLE songs ADD COLUMN last_played_at INTEGER");
-  alterSafe("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN energy REAL");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN last_played_at INTEGER");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN play_count INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE clock_slots ADD COLUMN chain_type TEXT DEFAULT 'segue'");
@@ -1197,7 +1240,7 @@ function runMigrations() {
   // Part 7 — per-operator theme + station logo
   alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
   // Part 8 — Spotify URI on songs
-  alterSafe("ALTER TABLE songs ADD COLUMN spotify_uri TEXT DEFAULT NULL");
+  alterSafe("ALTER TABLE songs_all ADD COLUMN spotify_uri TEXT DEFAULT NULL");
   // Format clock columns missing from early migration (slots → slots_json + daypart)
   alterSafe("ALTER TABLE format_clocks ADD COLUMN daypart TEXT NOT NULL DEFAULT 'Morning Drive'");
   alterSafe("ALTER TABLE format_clocks ADD COLUMN slots_json TEXT NOT NULL DEFAULT '[]'");
@@ -1347,7 +1390,7 @@ function runMigrations() {
   // FTS index for song search
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(title, artist);
-    CREATE TRIGGER IF NOT EXISTS trg_songs_fts_insert AFTER INSERT ON songs BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_songs_fts_insert AFTER INSERT ON songs_all BEGIN
       INSERT INTO songs_fts(rowid, title, artist) SELECT NEW.id, NEW.title, a.name FROM artists a WHERE a.id = NEW.artist_id;
     END;
   `);
@@ -1357,7 +1400,7 @@ function runMigrations() {
   db.exec(`
     DROP TRIGGER IF EXISTS trg_songs_fts_delete;
     CREATE TRIGGER trg_songs_fts_delete
-      AFTER UPDATE OF deleted_at ON songs
+      AFTER UPDATE OF deleted_at ON songs_all
       WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
     BEGIN
       DELETE FROM songs_fts WHERE rowid = OLD.id;
@@ -1369,7 +1412,7 @@ function runMigrations() {
   db.exec(`
     DROP TRIGGER IF EXISTS trg_songs_fts_update;
     CREATE TRIGGER trg_songs_fts_update
-      AFTER UPDATE OF title, artist_id ON songs
+      AFTER UPDATE OF title, artist_id ON songs_all
       WHEN NEW.deleted_at IS NULL
     BEGIN
       DELETE FROM songs_fts WHERE rowid = OLD.id;
@@ -3227,6 +3270,42 @@ ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
     if (typeof audio.audioSetMonitorVolume !== "function") return false;
     return audio.audioSetMonitorVolume(stationId, volume);
   } catch { return false; }
+});
+
+// MASTER OUT — the broadcast gain for a station. Rides the program bus pre-meter in Rust, so it
+// changes what listeners hear and the master VU follows. Mirrors setMonitorVolume's plumbing exactly.
+// docs/master-monitor-faders-dead-2026-08-06.md
+ipcMain.handle("audio:setMasterVolume", (_, stationId, volume) => {
+  if (AUDIO_DAEMON) return audiodClient.cmd("setMasterVolume", { stationId, volume });
+  try {
+    if (typeof audio.audioSetMasterVolume !== "function") return false;
+    return audio.audioSetMasterVolume(stationId, volume);
+  } catch (e) { console.error("[audio:setMasterVolume]", e.message); return false; }
+});
+
+// MASTER MONITOR — the operator's ONE room level.
+//
+// The CONTROL is single; the STATE is per-station, because DESIGN-TRUTH §2 forbids shared mutable
+// audio state below the engine layer ("each station acts like its own separate sound card"). So the
+// fan-out lives HERE, in main, which knows the station list — not in the audio engine as a global.
+// A global static was tried on 2026-08-06 and correctly rejected by the station-isolation guard.
+//
+// Applied to every station's own bus, multiplied with that station's monitor strip level, device
+// branch only — so it can never reach air and one station's level can never gate another's.
+ipcMain.handle("audio:setMasterMonitorVolume", (_, volume) => {
+  let ids = [];
+  try { ids = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all().map(r => r.id); }
+  catch (e) { console.error("[audio:setMasterMonitorVolume] station list:", e.message); }
+  let applied = 0;
+  for (const stationId of ids) {
+    try {
+      if (AUDIO_DAEMON) { audiodClient.cmd("setMasterMonitorVolume", { stationId, volume }); applied++; }
+      else if (typeof audio.audioSetMasterMonitorVolume === "function") {
+        if (audio.audioSetMasterMonitorVolume(stationId, volume)) applied++;
+      }
+    } catch (e) { console.error("[audio:setMasterMonitorVolume] station", stationId, e.message); }
+  }
+  return { ok: applied > 0, stations: applied };
 });
 
 // Item 10 Phase 2 Step 2 — the renderer proxy queries this to learn whether the daemon owns
@@ -6032,9 +6111,26 @@ function _placeJingles(db, stationId, rows) {
   if (!music.length) return;
   const usedByPool = new Map();            // poolId → Set of overlay-song ids used this run (LRP anti-repeat)
   const DEFAULTS = { JIN: { lead: 5, under: 2 }, SWP: { lead: 2, under: 1 } };
+  // THE GENERATE FREEZE (2026-08-06, 4.4.153). A CPU profile of the LIVE frozen main process put
+  // 99.2% of 30s inside one native better-sqlite3 `.all()` under resolvePool. This query re-ran for
+  // EVERY music row, and its correlated MAX(played_at) subquery scanned all ~36,900 play_log rows per
+  // candidate — measured on Jeff's DB at 898ms per call, x452 music rows = 406 SECONDS per day of
+  // one uninterruptible native call. No JS-level yield can break into that: execution never returns
+  // to the event loop, which is why per-hour AND 60ms slicing both failed to stop the freeze.
+  //
+  // Resolved ONCE per run and cached. Correct because play_log is not written during a generate, so
+  // the least-recently-played ordering cannot change mid-run; rotation within the run was already
+  // handled by usedByPool, not by re-querying. Measured after: 0.29ms for the whole run.
+  // Paired with idx_play_log_file_station (runMigrations), which takes the query itself 1015ms → 0.16ms.
+  const poolCands = new Map();             // poolId → candidate rows, resolved once
+  const itemCache = new Map();             // songId → specific overlay row, resolved once
   const resolvePool = (poolId) => {
-    let type = 'JIN'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
-    let cands; try { cands = stmtPool.all(poolId, type, stationId); } catch { cands = []; }
+    let cands = poolCands.get(poolId);
+    if (cands === undefined) {
+      let type = 'JIN'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
+      try { cands = stmtPool.all(poolId, type, stationId); } catch { cands = []; }
+      poolCands.set(poolId, cands);
+    }
     if (!cands.length) return null;
     let used = usedByPool.get(poolId); if (!used) { used = new Set(); usedByPool.set(poolId, used); }
     let pick = cands.find(x => !used.has(x.id));
@@ -6064,7 +6160,10 @@ function _placeJingles(db, stationId, rows) {
       if (((activeHours >> seamHour) & 1) !== 1) continue;
       // Resolve the overlay item: a specific song, or LRP rotation within the assigned pool.
       let pick = null;
-      if (kind === 'item' && itemId != null) { try { pick = stmtItem.get(itemId); } catch { pick = null; } }
+      if (kind === 'item' && itemId != null) {
+        if (itemCache.has(itemId)) pick = itemCache.get(itemId);
+        else { try { pick = stmtItem.get(itemId); } catch { pick = null; } itemCache.set(itemId, pick); }
+      }
       else if (kind === 'pool' && poolId != null) { pick = resolvePool(poolId); }
       if (!pick || !pick.file_path) continue;
       const cls = pick.content_class === 'SWP' ? 'SWP' : 'JIN';
@@ -6091,7 +6190,27 @@ function _placeJingles(db, stationId, rows) {
 // Equivalence: every per-hour accumulator (usedSongIds/usedArtistIds/usedTitles) is declared inside
 // the loop, and every cross-hour accumulator (generatedRows, *LastTs, diag, relaxed) lives on ctx —
 // so slicing changes scheduling not at all.
-function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
+// ── TIME-SLICED YIELD (2026-08-06) ───────────────────────────────────────────────────────────────
+// Yielding once per HOUR was not enough. Measured on Jeff's install during a real week generate:
+// main ran 0.96 cores for 240s with the window unresponsive in 1028 of 1039 samples and only TWO
+// moments of recovery — ~100s apart, i.e. once per DAY, not the 168 times per-hour yielding should
+// have produced. One hour of picking is ~4s of solid CPU, and an Electron main that does not return
+// to the loop for that long stops pumping Windows messages → "(Not Responding)".
+//
+// A standalone Electron harness pinned the threshold: with setImmediate yields, 120ms and 500ms
+// slices stayed 100% responsive; a 9s slice went unresponsive with a 6.8s stall. So the fix is not a
+// different yield primitive (all three behave the same) and not a worker — it is yielding OFTEN
+// ENOUGH. This yields every ~60ms of work, inside the hour, wherever the picker loops over slots.
+// Picks are unchanged: the yield adds no state and no ordering, it only lets main breathe.
+const GEN_SLICE_MS = 60;
+let _genSliceStart = 0;
+async function _genMaybeYield() {
+  if (Date.now() - _genSliceStart < GEN_SLICE_MS) return;
+  await new Promise(r => setImmediate(r));
+  _genSliceStart = Date.now();
+}
+
+async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
   const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, stmtClockBreaks, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     if (onlyHour !== null && h !== onlyHour) continue;
@@ -6210,6 +6329,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         let breakPlaced = false, breakStartTs = null;
         // Fill music until the boundary NEAREST the target (minute 0 => nothing to fill => exact top of hour).
         while (currentTs < target) {
+          await _genMaybeYield();            // keep main's message pump alive mid-hour
           const ms = nextMusicSlot(); if (!ms) break;
           const slotDefaultDurS = (ms.duration_min || 4) * 60;
           // Final approach → duration-aware pick so the last song lands the break on its minute; before that,
@@ -6243,6 +6363,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       }
       // Fill the remainder of the hour with music (last song may overrun :00 and is cut, same as sequential).
       while (currentTs < hourEnd) {
+        await _genMaybeYield();              // keep main's message pump alive mid-hour
         const ms = nextMusicSlot(); if (!ms) break;
         const picked = selectMusic(ms.category_id, currentTs); if (!picked) break;
         const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : (ms.duration_min || 4) * 60;
@@ -6252,6 +6373,7 @@ function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     }
 
     for (const slot of slots) {
+      await _genMaybeYield();                // keep main's message pump alive mid-hour
       if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
       const slotDurationS = (slot.duration_min || 4) * 60;
       // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the
@@ -6361,10 +6483,11 @@ function _genEmit(payload) {
 // Drive ONE day an hour at a time, yielding to the event loop between hours. The yield is the whole
 // point: main pumps its message queue there, so the window keeps painting and decks keep animating.
 async function _generateDayChunked(dayBase, ctx, effStart, meta) {
+  _genSliceStart = Date.now();
   for (let h = 0; h < 24; h++) {
     if (_genCancel) return { cancelled: true };
     const t0 = Date.now();
-    _generateDayRows(dayBase, ctx, effStart, h);   // one hour, bounded (self-skips already-aired hours)
+    await _generateDayRows(dayBase, ctx, effStart, h);   // one hour, bounded (self-skips already-aired hours)
     _genEmit({ phase: "hour", hour: h, hoursDone: h + 1, hoursTotal: 24, rows: ctx.generatedRows.length,
                hourMs: Date.now() - t0, ...meta });
     await new Promise(r => setImmediate(r));       // ← the yield that keeps main alive
@@ -6395,6 +6518,9 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     _genCancel = false;
     const stationId = getActiveStationId();
     const days = Array.isArray(dayTsList) ? dayTsList : [];
+    // start/end phases: the progress UI lives in its own always-mounted component, so it must not
+    // depend on the calendar being open to know a run began or ended.
+    _genEmit({ phase: "start", dayIdx: 0, dayTotal: days.length });
     const nowTs = Math.floor(Date.now() / 1000);
     const ctx = _buildScheduleCtx(stationId);
     let total = 0, committed = 0, cancelled = false;
@@ -6419,8 +6545,13 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     };
     const station = (db.prepare("SELECT name FROM stations WHERE id = ?").get(stationId) || {}).name || ("station #" + stationId);
     console.log(`[schedule:generateDays] ${committed}/${days.length} day(s), ${total} tracks${cancelled ? " — CANCELLED" : ""}`);
+    _genEmit({ phase: "end", cancelled, daysCommitted: committed, count: total, dayTotal: days.length });
     return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length };
-  } catch (e) { console.error('[schedule:generateDays]', e.message); return { ok: false, error: e.message }; }
+  } catch (e) {
+    console.error('[schedule:generateDays]', e.message);
+    _genEmit({ phase: "end", cancelled: false, error: e.message, dayTotal: (dayTsList || []).length });
+    return { ok: false, error: e.message };
+  }
 });
 
 ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
@@ -6432,11 +6563,12 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
     const nowTs = Math.floor(Date.now() / 1000);
     const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600); // next top-of-hour; never the past
     if (effStart >= dayEnd) return { ok: true, count: 0, skipped: true }; // whole day already aired — leave it
+    _genEmit({ phase: "start", dayIdx: 0, dayTotal: 1, day: dayBase.toDateString() });
     // Build ctx BEFORE any delete — it reads play_log/separation_rules/songs, never generated_schedule,
     // so moving the delete after the pick cannot change what gets picked.
     const ctx = _buildScheduleCtx(activeStationId);
     const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: 0, dayTotal: 1 });
-    if (run.cancelled) return { ok: true, cancelled: true, count: 0 };   // nothing written — the day is untouched
+    if (run.cancelled) { _genEmit({ phase: "end", cancelled: true, daysCommitted: 0, count: 0, dayTotal: 1 }); return { ok: true, cancelled: true, count: 0 }; }
     _placeJingles(db, activeStationId, ctx.generatedRows);
     _commitDayRows(activeStationId, effStart, dayEnd, ctx.generatedRows);
     // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
@@ -6469,8 +6601,13 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
     };
     const relaxed = ctx.relaxed.map(r => ({ hour: r.hour, hourLabel: _fmtHour(r.hour), title: r.title, artist: r.artist, category: catName(r.category_id) }));
     console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}${reasons.length ? " · issues: " + reasons.length : ""}${relaxed.length ? " · relaxed: " + relaxed.length : ""}`);
+    _genEmit({ phase: "end", cancelled: false, daysCommitted: 1, count: ctx.generatedRows.length, dayTotal: 1 });
     return { ok: true, count: ctx.generatedRows.length, station, date, dateTs: Math.floor(dayBase.getTime() / 1000), gaps, relaxed, reasons };
-  } catch (e) { console.error('[schedule:generateDay]', e.message); return { ok: false, error: e.message }; }
+  } catch (e) {
+    console.error('[schedule:generateDay]', e.message);
+    _genEmit({ phase: "end", cancelled: false, error: e.message, dayTotal: 1 });
+    return { ok: false, error: e.message };
+  }
 });
 
 // Callable Generate over a date range — used by Iris's SCHEDULING-tier 'generate' command (autonomous-
@@ -7342,7 +7479,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
       } catch (e) { console.warn(`[library:sync-r2] consolidate copy failed ${base}: ${e.message}`); }
       const finalPath = fs.existsSync(dest) ? dest : src;
       if (song.file_key !== base) { try { songsUpdateById(db, song.id, { file_key: base }); } catch {} }
-      try { db.prepare('UPDATE songs SET file_path = ? WHERE id = ?').run(finalPath, song.id); } catch {}
+      try { db.prepare('UPDATE songs_all SET file_path = ? WHERE id = ?').run(finalPath, song.id); } catch {}
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:upload:progress', {
           phase: 'consolidate', done: cdone, total: songs.length, errors: notFound, current: base,
@@ -7390,7 +7527,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
             throw new Error(`R2 PUT failed: HTTP ${putRes.status} — ${text.slice(0, 200)}`);
           }
           songsUpdateById(db, song.id, { file_key: fileKey });
-          db.prepare('UPDATE songs SET r2_uploaded_at = ? WHERE id = ?').run(new Date().toISOString(), song.id);
+          db.prepare('UPDATE songs_all SET r2_uploaded_at = ? WHERE id = ?').run(new Date().toISOString(), song.id);
           uploaded++;
           lastErr = null;
           break;
@@ -7593,7 +7730,7 @@ ipcMain.handle('library:sync-r2:download:get-state', () => {
 ipcMain.handle('songs:set-local-file-path', (_, intId, filePath) => {
   try {
     const result = db.prepare(
-      'UPDATE songs SET file_path = ? WHERE id = ?'
+      'UPDATE songs_all SET file_path = ? WHERE id = ?'
     ).run(filePath, intId);
     return { ok: true, changes: result.changes };
   } catch (e) {

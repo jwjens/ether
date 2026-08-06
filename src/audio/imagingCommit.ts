@@ -45,7 +45,8 @@ export async function commitRegionToLibrary(
   let songId: number | null = created?.row?.id ?? null;
   if (!songId) {
     // create didn't echo the id — resolve it by the file_path we just wrote (matches ReelSplitter).
-    try { const rows = await query<{ id: number }>("SELECT rowid AS id FROM songs WHERE file_path = ?", [filePath]); songId = rows?.[0]?.id ?? null; } catch { /* leave null */ }
+    // `id`, not `rowid`: songs is a VIEW over songs_all (live rows only) and views have no rowid.
+    try { const rows = await query<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]); songId = rows?.[0]?.id ?? null; } catch { /* leave null */ }
   }
   if (songId && (opts.cls === "JIN" || opts.cls === "SWP")) {
     await ether().songs.updateById(songId, { content_class: opts.cls, jingle_category_id: opts.poolId ?? null });

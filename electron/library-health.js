@@ -20,6 +20,14 @@
 const fs = require('fs');
 const path = require('path');
 
+// Module-level bridge: lets code OUTSIDE this factory (the songs delete path) emit a health event
+// without threading the instance through every caller. Wired when the factory is constructed; a no-op
+// before that (or in tests), so it can never block the operation it is reporting on.
+let _appendEvent = null;
+function noteEvent(kind, data) {
+  try { if (_appendEvent) _appendEvent({ kind, ...(data || {}) }); } catch { /* never throw at a caller */ }
+}
+
 function createLibraryHealth(opts) {
   const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir } = opts;
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
@@ -31,6 +39,7 @@ function createLibraryHealth(opts) {
   const nowSec = () => Math.floor(Date.now() / 1000);
   const exists = (fp) => { try { return !!fp && fs.existsSync(fp); } catch { return false; } };
   const appendJsonl = (rec) => { try { fs.appendFileSync(jsonlPath, JSON.stringify({ t: new Date().toISOString(), ...rec }) + '\n'); } catch { /* best-effort */ } };
+  _appendEvent = appendJsonl;          // wire the module-level bridge (see noteEvent above)
 
   function stationIds(db) {
     try { return db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL ORDER BY id").all().map(r => r.id); } catch { return []; }
@@ -355,4 +364,4 @@ function createLibraryHealth(opts) {
   };
 }
 
-module.exports = { createLibraryHealth };
+module.exports = { createLibraryHealth, noteEvent };

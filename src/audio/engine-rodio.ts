@@ -550,11 +550,32 @@ export class AudioEngine {
       await (window as any).ether?.audio?.setMonitorVolume?.(this.stationId, level);
       rotLog(`[ROT] monitor asserted to ${level.toFixed(2)} at attach (station ${this.stationId})${this.monitorRaisedByOperator ? " — operator level restored" : " — SILENT by default"}`);
     } catch { /* monitor assert is best-effort; never block attach on it */ }
+    // Master rides air, so a respawn that dropped it back to unity would put the station BACK UP to
+    // full level mid-show without anyone touching the fader. Re-assert the operator's level here.
+    try { await this.reassertMaster(); } catch { /* best-effort */ }
   }
   /** Called by the operator's monitor control so the level survives a daemon respawn. */
   noteOperatorMonitor(level: number) {
     this.operatorMonitorLevel = level;
     this.monitorRaisedByOperator = level > 0;
+  }
+
+  /**
+   * MASTER OUT — the broadcast gain. Sends it to the engine and remembers it, so a daemon respawn
+   * re-asserts the operator's level instead of silently reverting to unity mid-show.
+   * docs/master-monitor-faders-dead-2026-08-06.md
+   */
+  private operatorMasterLevel = 1;
+  async setMasterVolume(level: number): Promise<void> {
+    this.operatorMasterLevel = level;
+    try { await (window as any).ether?.audio?.setMasterVolume?.(this.stationId, level); }
+    catch { /* best-effort; never throw into a fader drag */ }
+  }
+  /** Re-assert the operator's master level (called on attach, alongside the monitor assert). */
+  async reassertMaster(): Promise<void> {
+    if (this.operatorMasterLevel === 1) return;   // unity → nothing to restore
+    try { await (window as any).ether?.audio?.setMasterVolume?.(this.stationId, this.operatorMasterLevel); }
+    catch { /* best-effort */ }
   }
 
   /** Stop the daemon's unattended playout (AUTO off, daemon-driven). */

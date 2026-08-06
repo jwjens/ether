@@ -739,7 +739,12 @@ const REGISTRY = {
   },
 
   songs: {
-    tableName: 'songs',
+    // The KEY ('songs') is the WIRE name — protocol, on every mutation, must never change or peers
+    // diverge. `tableName` is the PHYSICAL table SQL writes to: `songs` is a VIEW over
+    // `songs_all WHERE deleted_at IS NULL`, so a deleted song is unreachable to every reader by
+    // construction instead of by each reader remembering to filter.
+    // docs/deleted-songs-still-air-design-2026-08-06.md
+    tableName: 'songs_all',
     primaryKey: ['id'],
     scope: 'install',
     columns: {

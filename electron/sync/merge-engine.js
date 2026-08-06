@@ -175,13 +175,25 @@ class MergeEngine {
     return 'applied';
   }
 
+  // Wire name → physical table. The WIRE name is protocol (peers key on it and it must never change);
+  // the PHYSICAL name is where SQL actually writes. They diverge for `songs`, which is now a VIEW over
+  // `songs_all WHERE deleted_at IS NULL` so a deleted song is unreachable to every reader by
+  // construction (docs/deleted-songs-still-air-design-2026-08-06.md §7.1). Views are not writable, so
+  // every apply must resolve through here. Any future table that gains a live-view gets it free.
+  _physical(tableName) {
+    const entry = REGISTRY[tableName];
+    return (entry && entry.tableName) || tableName;
+  }
+
   _applyToLiveTable(m, now) {
-    const { table_name, row_id, op, payload_after, created_at } = m;
+    const { row_id, op, payload_after, created_at } = m;
+    const table_name = this._physical(m.table_name);
     const db = this._db;
 
     if (op === 'insert' || op === 'update') {
       if (!payload_after) return;
-      const row = deserializePayload(payload_after, table_name);
+      // Deserialization is keyed on the WIRE name (the REGISTRY key), never the physical table.
+      const row = deserializePayload(payload_after, m.table_name);
 
       // UUID-identity: remap the sender's local-integer references (station_id + parent FKs) to THIS
       // install's local ids via their stable uuids before writing, so a station that is local id 1 on
@@ -240,7 +252,11 @@ class MergeEngine {
   _resolveLocalId(table, uuid) {
     if (!uuid) return null;
     if (!this._refStmts[table]) {
-      this._refStmts[table] = this._db.prepare(`SELECT id FROM ${table} WHERE uuid = ?`);
+      // IDENTITY must never be blinded by deletion: resolve against the PHYSICAL table so a row that
+      // legitimately references a deleted song (e.g. a preserved `played` history row) keeps its
+      // reference instead of silently serializing null. Product reads use the live view; identity
+      // resolution does not. docs/deleted-songs-still-air-design-2026-08-06.md §11.5.
+      this._refStmts[table] = this._db.prepare(`SELECT id FROM ${this._physical(table)} WHERE uuid = ?`);
     }
     return this._refStmts[table].get(uuid)?.id ?? null;
   }

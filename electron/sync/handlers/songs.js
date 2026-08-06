@@ -12,7 +12,17 @@ const crypto = require('crypto');
 const { withMutation, logMutation, serializePayload } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
 
+// WIRE / REGISTRY name — what peers see and what serializePayload + REGISTRY are keyed on. It MUST
+// stay 'songs' forever: changing it would make every other install treat our mutations as a different
+// table and the two would diverge.
 const TABLE    = 'songs';
+// PHYSICAL name — what SQL actually writes. Since the deleted-songs-still-air fix (2026-08-06),
+// `songs` is a VIEW over `songs_all WHERE deleted_at IS NULL`, so a deleted song is unreachable to all
+// ~254 readers by construction rather than by every reader remembering to filter. Views are not
+// writable in SQLite ("cannot modify songs because it is a view"), so every WRITE — and any read that
+// must still see tombstones (uuid/identity resolution, delete itself) — targets songs_all.
+// docs/deleted-songs-still-air-design-2026-08-06.md §7.1.
+const PHYS     = 'songs_all';
 const PATCHABLE = ["title","file_path","file_key","artist_id","album_id","category_id","genre","duration_ms","bpm","energy","mood","gender","rotation_status","daypart_mask","no_repeat_hours","lufs_measured","peak_db","gain_db","is_processed","cue_in","cue_out","cue_in_ms","cue_out_ms","intro_end","outro_start","intro_end_ms","outro_start_ms","intro_version_path","has_intro","last_played_at","play_count","is_explicit","updated_at","raw_metadata","spotify_uri","cart_id","content_class","jingle_category_id"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
@@ -30,7 +40,7 @@ function validateScope() {
 function songsList(db, opts) {
   const { limit = 500, offset = 0 } = opts || {};
   return db.prepare(
-    `SELECT * FROM ${TABLE} WHERE deleted_at IS NULL ORDER BY rowid LIMIT ? OFFSET ?`
+    `SELECT * FROM ${TABLE} ORDER BY id LIMIT ? OFFSET ?`
   ).all(limit, offset);
 }
 
@@ -62,7 +72,7 @@ function songsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (title, file_path, artist_id, album_id, category_id, genre, duration_ms, bpm, energy, mood, gender, rotation_status, daypart_mask, no_repeat_hours, lufs_measured, peak_db, gain_db, is_processed, cue_in, cue_out, cue_in_ms, cue_out_ms, intro_end, outro_start, intro_end_ms, outro_start_ms, intro_version_path, has_intro, last_played_at, play_count, is_explicit, created_at, updated_at, raw_metadata, spotify_uri, cart_id, uuid, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO ${PHYS} (title, file_path, artist_id, album_id, category_id, genre, duration_ms, bpm, energy, mood, gender, rotation_status, daypart_mask, no_repeat_hours, lufs_measured, peak_db, gain_db, is_processed, cue_in, cue_out, cue_in_ms, cue_out_ms, intro_end, outro_start, intro_end_ms, outro_start_ms, intro_version_path, has_intro, last_played_at, play_count, is_explicit, created_at, updated_at, raw_metadata, spotify_uri, cart_id, uuid, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(row.title, row.file_path, row.artist_id, row.album_id, row.category_id, row.genre, row.duration_ms, row.bpm, row.energy, row.mood, row.gender, row.rotation_status, row.daypart_mask, row.no_repeat_hours, row.lufs_measured, row.peak_db, row.gain_db, row.is_processed, row.cue_in, row.cue_out, row.cue_in_ms, row.cue_out_ms, row.intro_end, row.outro_start, row.intro_end_ms, row.outro_start_ms, row.intro_version_path, row.has_intro, row.last_played_at, row.play_count, row.is_explicit, row.created_at, row.updated_at, row.raw_metadata, row.spotify_uri, row.cart_id, row.uuid, row.deleted_at);
   });
   return songsGet(db, uuid);
@@ -70,7 +80,7 @@ function songsCreate(db, payload) {
 
 function songsUpdate(db, uuid, patch) {
   validateScope();
-  const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
+  const existing = db.prepare(`SELECT * FROM ${PHYS} WHERE uuid = ?`).get(uuid);
   if (!existing) throw new Error(`[songs] row not found: ${uuid}`);
 
   const forbidden = Object.keys(patch).filter(k => k !== 'actor_id' && !PATCHABLE.includes(k));
@@ -101,17 +111,18 @@ function songsUpdate(db, uuid, patch) {
   }, () => {
     const sets = patchFields.map(k => `${k} = ?`).join(', ');
     const vals = patchFields.map(k => patch[k]);
-    db.prepare(`UPDATE ${TABLE} SET ${sets}, updated_at = ? WHERE uuid = ?`).run(...vals, now, uuid);
+    db.prepare(`UPDATE ${PHYS} SET ${sets}, updated_at = ? WHERE uuid = ?`).run(...vals, now, uuid);
   });
   return songsGet(db, uuid);
 }
 
 function songsDelete(db, uuid) {
   validateScope();
-  const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
+  const existing = db.prepare(`SELECT * FROM ${PHYS} WHERE uuid = ?`).get(uuid);
   if (!existing) throw new Error(`[songs] row not found: ${uuid}`);
 
   const before = serializePayload(existing, TABLE);
+  let retracted = null;
 
   withMutation(db, {
     table_name:     TABLE,
@@ -124,15 +135,91 @@ function songsDelete(db, uuid) {
   }, () => {
     const now = new Date().toISOString();
     db.prepare(
-      `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
+      `UPDATE ${PHYS} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
-    // Clean cascade (2026-07-11): a deleted song must leave NO residual the scheduler can grab as a
-    // ghost. Purge its generated_schedule rows, play_log history, and station_programming entries.
-    try { db.prepare(`DELETE FROM generated_schedule WHERE song_id = ?`).run(existing.id); } catch {}
-    try { if (existing.file_path) db.prepare(`DELETE FROM play_log WHERE file_path = ?`).run(existing.file_path); } catch {}
-    try { db.prepare(`DELETE FROM station_programming WHERE song_id = ?`).run(existing.id); } catch {}
+    retracted = retractSongReferences(db, existing, now);
   });
-  return { ok: true };
+  noteSongRetraction(existing, retracted);
+  return { ok: true, retracted };
+}
+
+// ── The delete contract ───────────────────────────────────────────────────────
+// A delete RETRACTS THE SONG'S FUTURE and NEVER EDITS ITS PAST.
+// docs/deleted-songs-still-air-design-2026-08-06.md §9 (Jeff's ruling, 2026-08-06).
+//
+// PRESERVED, deliberately — do not "clean these up" in a later pass:
+//   • play_log                      — the advertiser airplay proof. The old cascade hard-DELETEd it,
+//                                     so deleting a song erased the evidence it ever aired (songs 6/11/22
+//                                     lost their history that way). Never again.
+//   • generated_schedule played/missed — the record of what actually went to air.
+//   • generated_schedule playing    — that is audio ON AIR RIGHT NOW. Never yank it out from under the
+//                                     operator (physical deck positions are sacred; Esc never kills audio).
+//
+// WHY UNLOGGED (no per-row mutations): the GUARANTEE that a deleted song never airs is the `songs` view
+// — the song is invisible to every selector and every air-time resolution join, on THIS install and on
+// every peer the moment the delete mutation lands. This cascade is local log hygiene on top of that
+// guarantee, not the guarantee itself, so it does not need to be replicated row-by-row. (The cascade it
+// replaces was also unlogged — and hard-deleted, which was worse.)
+//
+// Returns per-table counts so the delete is observable instead of silent.
+function retractSongReferences(db, song, nowIso) {
+  const out = { pendingLog: 0, programming: 0, pinned: 0, metadata: 0, clockSlots: 0, overlays: 0, legacyLog: 0 };
+  const soft = (sql, ...args) => {
+    try { return db.prepare(sql).run(...args).changes || 0; } catch { return 0; }
+  };
+
+  // FUTURE AIR — pending only. 'played'/'missed'/'playing' are history or present, and stay.
+  out.pendingLog = soft(
+    `UPDATE generated_schedule SET deleted_at = ?, updated_at = ?
+      WHERE song_id = ? AND state = 'pending' AND deleted_at IS NULL`, nowIso, nowIso, song.id);
+
+  // PROGRAMMING REFERENCES — rows that exist only to point at this song.
+  out.programming = soft(
+    `UPDATE station_programming SET deleted_at = ?, updated_at = ?
+      WHERE song_id = ? AND deleted_at IS NULL`, nowIso, nowIso, song.id);
+  out.pinned = soft(
+    `UPDATE pinned_songs SET deleted_at = ?, updated_at = ?
+      WHERE song_id = ? AND deleted_at IS NULL`, nowIso, nowIso, song.id);
+  out.metadata = soft(
+    `UPDATE song_metadata_values SET deleted_at = ?, updated_at = ?
+      WHERE song_id = ? AND deleted_at IS NULL`, nowIso, nowIso, song.id);
+  // Legacy log: retract only what has not aired. Even if this table's status vocabulary ever differs,
+  // the airplay PROOF lives in play_log, which this function never touches.
+  out.legacyLog = soft(
+    `UPDATE scheduled_log SET deleted_at = ?, updated_at = ?
+      WHERE song_id = ? AND deleted_at IS NULL AND (status IS NULL OR status <> 'played')`,
+    nowIso, nowIso, song.id);
+  // Local diagnostic table, no deleted_at/uuid — a hard delete is correct here.
+  try { db.prepare(`DELETE FROM scheduler_reasons WHERE song_id = ?`).run(song.id); } catch {}
+
+  // STRUCTURES THAT OUTLIVE THE SONG — null the reference, keep the row. A clock slot and a category
+  // are the station's programming structure; they must not vanish because one song did.
+  out.clockSlots = soft(
+    `UPDATE clock_slots SET song_id = NULL, updated_at = ?
+      WHERE song_id = ? AND deleted_at IS NULL`, nowIso, song.id);
+  out.overlays = soft(
+    `UPDATE categories SET overlay_song_id = NULL, updated_at = ?
+      WHERE overlay_song_id = ? AND deleted_at IS NULL`, nowIso, song.id);
+
+  return out;
+}
+
+// The sense: a delete that silently retracts 24 log rows is exactly how this defect survived 16 days.
+// Never throws into the delete path.
+function noteSongRetraction(song, retracted) {
+  if (!retracted) return;
+  const total = Object.values(retracted).reduce((a, b) => a + b, 0);
+  try {
+    console.log(`[songs] retracted "${song.title}" (id ${song.id}): ` +
+      `${retracted.pendingLog} pending log rows, ${retracted.programming} programming, ` +
+      `${retracted.pinned} pinned, ${retracted.metadata} metadata, ${retracted.clockSlots} clock slots, ` +
+      `${retracted.overlays} overlays, ${retracted.legacyLog} legacy log — play_log and aired history preserved`);
+  } catch {}
+  try {
+    require('../../library-health').noteEvent('song-retracted', {
+      songId: song.id, title: song.title, total, ...retracted,
+    });
+  } catch { /* health module optional — never block a delete */ }
 }
 
 function songsGetByIntId(db, intId) {
@@ -140,22 +227,22 @@ function songsGetByIntId(db, intId) {
 }
 
 function songsUpdateById(db, intId, patch) {
-  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  let existing = db.prepare(`SELECT * FROM ${PHYS} WHERE id = ?`).get(intId);
   if (!existing) throw new Error(`[songs] row not found by id: ${intId}`);
   if (!existing.uuid) {
     const newUuid = crypto.randomUUID();
-    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    db.prepare(`UPDATE ${PHYS} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
     existing = { ...existing, uuid: newUuid };
   }
   return songsUpdate(db, existing.uuid, patch);
 }
 
 function songsDeleteById(db, intId) {
-  let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
+  let existing = db.prepare(`SELECT * FROM ${PHYS} WHERE id = ?`).get(intId);
   if (!existing) throw new Error(`[songs] row not found by id: ${intId}`);
   if (!existing.uuid) {
     const newUuid = crypto.randomUUID();
-    db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
+    db.prepare(`UPDATE ${PHYS} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
     existing = { ...existing, uuid: newUuid };
   }
   return songsDelete(db, existing.uuid);
@@ -174,7 +261,7 @@ function songsMarkPlayed(db, filePath, atSec) {
   const now = new Date().toISOString();
   const playedAt = Number.isFinite(atSec) ? Math.floor(atSec) : Math.floor(Date.now() / 1000);
   let uuid = row.uuid;
-  if (!uuid) { uuid = crypto.randomUUID(); db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id); }
+  if (!uuid) { uuid = crypto.randomUUID(); db.prepare(`UPDATE ${PHYS} SET uuid = ? WHERE id = ?`).run(uuid, row.id); }
   const before  = serializePayload({ ...row, uuid }, TABLE);
   const updated = { ...row, uuid, last_played_at: playedAt, play_count: (row.play_count || 0) + 1, updated_at: now };
   const after   = serializePayload(updated, TABLE);
@@ -182,7 +269,7 @@ function songsMarkPlayed(db, filePath, atSec) {
     table_name: TABLE, row_id: uuid, op: 'update',
     payload_before: before, payload_after: after, station_id: null, actor_id: null,
   }, () => {
-    db.prepare(`UPDATE ${TABLE} SET last_played_at = ?, play_count = ?, updated_at = ? WHERE id = ?`)
+    db.prepare(`UPDATE ${PHYS} SET last_played_at = ?, play_count = ?, updated_at = ? WHERE id = ?`)
       .run(playedAt, (row.play_count || 0) + 1, now, row.id);
   });
   return { ok: true, matched: 1 };
@@ -198,14 +285,12 @@ function songsDeleteByStation(db, _stationId) {
       let uuid = row.uuid;
       if (!uuid) {
         uuid = crypto.randomUUID();
-        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+        db.prepare(`UPDATE ${PHYS} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
       }
       const before = serializePayload({ ...row, uuid }, TABLE);
-      db.prepare(`UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE id = ?`).run(now, now, row.id);
-      // Clean cascade: no residual for the scheduler to grab as a ghost.
-      try { db.prepare(`DELETE FROM generated_schedule WHERE song_id = ?`).run(row.id); } catch {}
-      try { if (row.file_path) db.prepare(`DELETE FROM play_log WHERE file_path = ?`).run(row.file_path); } catch {}
-      try { db.prepare(`DELETE FROM station_programming WHERE song_id = ?`).run(row.id); } catch {}
+      db.prepare(`UPDATE ${PHYS} SET deleted_at = ?, updated_at = ? WHERE id = ?`).run(now, now, row.id);
+      // Same delete contract as songsDelete: retract the future, never edit the past (§9).
+      retractSongReferences(db, row, now);
       logMutation(db, {
         table_name:     TABLE,
         row_id:         uuid,
@@ -231,13 +316,13 @@ function songsResetLoudnessByStation(db, _stationId) {
       let uuid = row.uuid;
       if (!uuid) {
         uuid = crypto.randomUUID();
-        db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
+        db.prepare(`UPDATE ${PHYS} SET uuid = ? WHERE id = ?`).run(uuid, row.id);
       }
       const rowWithUuid = { ...row, uuid };
       const before  = serializePayload(rowWithUuid, TABLE);
       const updated = { ...rowWithUuid, lufs_measured: null, peak_db: null, gain_db: 0, updated_at: now };
       const after   = serializePayload(updated, TABLE);
-      db.prepare(`UPDATE ${TABLE} SET lufs_measured = NULL, peak_db = NULL, gain_db = 0, updated_at = ? WHERE id = ?`).run(now, row.id);
+      db.prepare(`UPDATE ${PHYS} SET lufs_measured = NULL, peak_db = NULL, gain_db = 0, updated_at = ? WHERE id = ?`).run(now, row.id);
       logMutation(db, {
         table_name:     TABLE,
         row_id:         uuid,
