@@ -405,11 +405,15 @@ export default function ConsoleStrip({
         borderTop: "1px solid var(--strip-divider, #303040)",
       }}>
 
-        {/* ON — solid fill when active (brighter while playing), flat */}
+        {/* ON — lit means THE BUTTON IS PRESSED, i.e. this channel is on. Board convention, same as a
+            Wheatstone: the lamp reports the switch, NOT whether audio happens to be sounding through it.
+            It used to brighten only while isPlaying, which made a channel whose audio is brief and
+            intermittent (JINGLES) sit dark almost always, unreadable as on-or-off. Whether audio is
+            actually flowing is told by the label fill, the progress bar and the meter — not by this lamp. */}
         <button onClick={() => { playClick(); onToggleOn(); }} style={{
           flex: 1, height: 38, borderRadius: 3,
-          background: isOn ? (isPlaying ? "#2563eb" : "#1e3358") : "var(--bg-tertiary, #232330)",
-          border: `1px solid ${isOn ? (isPlaying ? "#3b82f6" : "#2a4a7a") : "var(--border-primary, #333)"}`,
+          background: isOn ? "#2563eb" : "var(--bg-tertiary, #232330)",
+          border: `1px solid ${isOn ? "#3b82f6" : "var(--border-primary, #333)"}`,
           cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.12s",
