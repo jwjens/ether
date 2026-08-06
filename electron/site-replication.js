@@ -125,9 +125,9 @@ function installSiteReplication(ipcMain, database) {
 // ── Tables we sync (metadata only, no audio blobs) ──────────
 
 const SYNC_TABLES = [
-  // writeName: `songs` is a VIEW over `songs_all` (live rows only), and a view is not writable. Reads
-  // go through the view on purpose — replication must never ship a deleted song to a peer site.
-  { name: "songs",                idCol: "id", tsCol: "updated_at", excludeCols: ["file_path"], writeName: "songs_all" },
+  // `songs` holds live rows only (deleted songs move to songs_deleted), so replication reads and writes
+  // the same real table and can never ship a deleted song to a peer site.
+  { name: "songs",                idCol: "id", tsCol: "updated_at", excludeCols: ["file_path"] },
   { name: "shows",                idCol: "id", tsCol: null },
   { name: "clocks",               idCol: "id", tsCol: null },
   { name: "spots",                idCol: "id", tsCol: "created_at", excludeCols: ["file_path"] },

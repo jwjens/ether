@@ -739,12 +739,11 @@ const REGISTRY = {
   },
 
   songs: {
-    // The KEY ('songs') is the WIRE name — protocol, on every mutation, must never change or peers
-    // diverge. `tableName` is the PHYSICAL table SQL writes to: `songs` is a VIEW over
-    // `songs_all WHERE deleted_at IS NULL`, so a deleted song is unreachable to every reader by
-    // construction instead of by each reader remembering to filter.
-    // docs/deleted-songs-still-air-design-2026-08-06.md
-    tableName: 'songs_all',
+    // `songs` is BOTH the wire name and the physical table, and it stays a real TABLE forever — the
+    // 4.4.151 rename-to-a-view stranded a customer whose older build ran ALTER against it. Deleted
+    // songs are unreachable because they MOVE to songs_deleted, not because the name points elsewhere.
+    // docs/migration-safety-and-customer-recovery-2026-08-06.md
+    tableName: 'songs',
     primaryKey: ['id'],
     scope: 'install',
     columns: {

@@ -242,6 +242,13 @@ class MergeEngine {
       db.prepare(
         `UPDATE ${table_name} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
       ).run(deleteTime, deleteTime, row_id);
+      // songs: a remote delete must be as final as a local one, or the song stays airable on this
+      // install. Same neutering the local path applies — rotation_status='inactive' + file_path=NULL,
+      // on fields every selector already reads. docs/migration-safety-and-customer-recovery-2026-08-06.md
+      if (m.table_name === 'songs') {
+        try { require('./handlers/songs').neuterSong(db, row_id, deleteTime); }
+        catch (e) { console.error('[merge-engine] songs neuter failed (tombstone still set):', e.message); }
+      }
       // If row not present locally: no-op — tombstone already satisfied [N-107]
     }
     // op='checkpoint': reserved; not applied to live tables in v0 [N-10]

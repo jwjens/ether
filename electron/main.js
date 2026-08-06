@@ -1141,38 +1141,52 @@ function runMigrations() {
 
   require('../scripts/schema-v0-baseline')(db);
 
-  // ── A DELETE IS A DELETE (2026-08-06) — songs → songs_all + a `songs` VIEW ──────────────────────
-  // Jeff's ruling: "a delete should be a delete from the foundation up… nothing downstream needs to
-  // filter deleted because nothing deleted is left to encounter."
+  // ── A DELETE IS A DELETE — the SAFE shape (2026-08-06, revised after a customer machine went down) ──
   //
-  // A soft-deleted song used to stay fully selectable, and the protocol's answer ([N-110]) was that
-  // every reader MUST remember `WHERE deleted_at IS NULL`. That discipline failed at 9 of ~254 read
-  // sites, silently, for weeks: "Rotten to the Core" was deleted 2026-07-20 and was still being put on
-  // air on 2026-08-05 — Generate re-created its log rows on every run, and the reader rehydrated its
-  // file path straight off the tombstoned row.
+  // Jeff's law stands: "a delete should be a delete from the foundation up — nothing downstream needs
+  // to filter deleted, because nothing deleted is left to encounter."
   //
-  // So the physical table becomes `songs_all` and `songs` becomes a VIEW of the LIVE rows. Every
-  // existing reader is correct with no edit, and so is every reader written from here on. The tombstone
-  // still lives in songs_all, so sync ([N-109]/[N-112], merge-engine tombstones) is unaffected —
-  // WRITES target songs_all (a view is not writable). docs/deleted-songs-still-air-design-2026-08-06.md
+  // 4.4.151 achieved that by renaming `songs` to `songs_all` and making `songs` a VIEW. It worked, and
+  // it STRANDED A CUSTOMER: builds already in the field run `runMigrationChain()` at boot, which
+  // executes raw `ALTER TABLE songs ADD COLUMN` from scripts/migrate-*-phase-sync-*.js. Against a view
+  // SQLite answers "Cannot add a column to a view", the exception escapes initDb(), and the operator
+  // gets a fatal dialog with one button: Quit. A machine that cannot launch, with no way back.
   //
-  // Idempotent: only converts when `songs` is still a physical table.
+  // THE RULE THAT SHAPE BROKE: a migration that reaches customers must leave the database openable by
+  // the PREVIOUS build. So `songs` stays a real TABLE forever, and deleted rows LEAVE it:
+  //   • `songs`         — live rows only. Old builds open it and see exactly what they expect.
+  //   • `songs_deleted` — the graveyard, same columns. A delete MOVES the row here.
+  // Deleted songs are unreachable to every selector because they are not in the table — the same
+  // guarantee the view gave, with nothing to remember and nothing to strand.
+  //
+  // docs/migration-safety-and-customer-recovery-2026-08-06.md
+  //
+  // Idempotent and self-healing. Runs on every boot; does nothing when already correct.
   {
-    const songsObj = db.prepare("SELECT type FROM sqlite_master WHERE name='songs'").get();
-    const songsAllExists = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='songs_all'").get();
-    if (songsObj && songsObj.type === 'table' && !songsAllExists) {
-      console.log('[DB] Migrating songs → songs_all + live view (a delete is a delete)');
+    const obj = db.prepare("SELECT type FROM sqlite_master WHERE name='songs'").get();
+    const hasSongsAll = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='songs_all'").get();
+
+    // REPAIR: a database migrated by 4.4.151–4.4.156 (songs = VIEW over songs_all). This is the branch
+    // that un-bricks a machine that cannot currently launch. One transaction; no data is discarded.
+    if (obj && obj.type === 'view' && hasSongsAll) {
+      console.log('[DB] REPAIR: songs is a view (4.4.151-156 schema) — restoring a real table so every build can open this database');
       db.exec(`
         DROP TRIGGER IF EXISTS trg_songs_fts_insert;
         DROP TRIGGER IF EXISTS trg_songs_fts_update;
         DROP TRIGGER IF EXISTS trg_songs_fts_delete;
-        ALTER TABLE songs RENAME TO songs_all;
-        CREATE VIEW songs AS SELECT * FROM songs_all WHERE deleted_at IS NULL;
+        DROP VIEW songs;
+        ALTER TABLE songs_all RENAME TO songs;
       `);
-      const live = db.prepare("SELECT COUNT(*) c FROM songs").get().c;
-      const all  = db.prepare("SELECT COUNT(*) c FROM songs_all").get().c;
-      console.log(`[DB] songs view live: ${live} of ${all} rows (${all - live} tombstoned, now unreachable)`);
+      console.log('[DB] REPAIR: songs is a table again');
     }
+
+    // NO GRAVEYARD. Moving deleted rows out of `songs` was tried and REJECTED by proof on a real
+    // database: generated_schedule.song_id, scheduled_log.song_id and song_metadata_values.song_id all
+    // reference songs(id) with NO ACTION, station_programming with RESTRICT, and pinned_songs with
+    // CASCADE. The preserved history we deliberately keep IS what holds those references — so removing
+    // the row fails with FOREIGN KEY constraint failed, and the CASCADE would silently delete pins.
+    // The row therefore STAYS in `songs`, tombstoned; unreachability is achieved in DATA (see
+    // handlers/songs.js songsDelete). docs/migration-safety-and-customer-recovery-2026-08-06.md
   }
 
   // play_log(file_path, station_id, played_at) — the index the least-recently-played lookups need.
@@ -1183,27 +1197,28 @@ function runMigrations() {
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_play_log_file_station ON play_log(file_path, station_id, played_at)"); } catch {}
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
-  // NOTE: these target songs_all — `songs` is a view and "Cannot add a column to a view". The view is
-  // `SELECT *`, so a column added to songs_all appears through it automatically (verified).
+  // NOTE: these target `songs`, which is and stays a real TABLE. It was briefly a view (4.4.151-156)
+  // and that is exactly what stranded a customer — an older build's migration chain ran ALTER against
+  // it and died. Never point schema changes at a view.
   const alterSafe = (sql) => { try { db.exec(sql); } catch(e) { /* column already exists */ } };
-  alterSafe("ALTER TABLE songs_all ADD COLUMN is_explicit INTEGER DEFAULT 0");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN raw_metadata TEXT");
+  alterSafe("ALTER TABLE songs ADD COLUMN is_explicit INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE songs ADD COLUMN raw_metadata TEXT");
   // Fix songs that aren't eligible to play in any (daytime) hour: daypart_mask = 127 is the old
   // default (only hours 0-6), and NULL (e.g. from a cloud-restored/synced library) means eligible
   // for NO hours at all — both make the scheduler generate nothing during the day. Normalize both
   // to 16777215 (all 24 hours) so Generate always has candidates. See _generateDayRows.
-  db.exec("UPDATE songs_all SET daypart_mask = 16777215 WHERE daypart_mask = 127 OR daypart_mask IS NULL");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN daypart_mask INTEGER DEFAULT 127");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN no_repeat_hours INTEGER DEFAULT 2");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN rotation_status TEXT DEFAULT 'active'");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN intro_version_path TEXT");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN has_intro INTEGER DEFAULT 0");
+  db.exec("UPDATE songs SET daypart_mask = 16777215 WHERE daypart_mask = 127 OR daypart_mask IS NULL");
+  alterSafe("ALTER TABLE songs ADD COLUMN daypart_mask INTEGER DEFAULT 127");
+  alterSafe("ALTER TABLE songs ADD COLUMN no_repeat_hours INTEGER DEFAULT 2");
+  alterSafe("ALTER TABLE songs ADD COLUMN rotation_status TEXT DEFAULT 'active'");
+  alterSafe("ALTER TABLE songs ADD COLUMN intro_version_path TEXT");
+  alterSafe("ALTER TABLE songs ADD COLUMN has_intro INTEGER DEFAULT 0");
   // These three live in the v0 baseline but had NO alterSafe — so a DB created by an older baseline
   // (or carried forward from an old install) lacked them, and migrate-library-phase-sync-4 (v4) does
   // `SELECT energy, last_played_at, play_count FROM songs` → "no such column: energy" on init (OV, 4.3.33).
-  alterSafe("ALTER TABLE songs_all ADD COLUMN energy REAL");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN last_played_at INTEGER");
-  alterSafe("ALTER TABLE songs_all ADD COLUMN play_count INTEGER DEFAULT 0");
+  alterSafe("ALTER TABLE songs ADD COLUMN energy REAL");
+  alterSafe("ALTER TABLE songs ADD COLUMN last_played_at INTEGER");
+  alterSafe("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
   alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE clock_slots ADD COLUMN chain_type TEXT DEFAULT 'segue'");
@@ -1240,7 +1255,7 @@ function runMigrations() {
   // Part 7 — per-operator theme + station logo
   alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
   // Part 8 — Spotify URI on songs
-  alterSafe("ALTER TABLE songs_all ADD COLUMN spotify_uri TEXT DEFAULT NULL");
+  alterSafe("ALTER TABLE songs ADD COLUMN spotify_uri TEXT DEFAULT NULL");
   // Format clock columns missing from early migration (slots → slots_json + daypart)
   alterSafe("ALTER TABLE format_clocks ADD COLUMN daypart TEXT NOT NULL DEFAULT 'Morning Drive'");
   alterSafe("ALTER TABLE format_clocks ADD COLUMN slots_json TEXT NOT NULL DEFAULT '[]'");
@@ -1390,7 +1405,7 @@ function runMigrations() {
   // FTS index for song search
   db.exec(`
     CREATE VIRTUAL TABLE IF NOT EXISTS songs_fts USING fts5(title, artist);
-    CREATE TRIGGER IF NOT EXISTS trg_songs_fts_insert AFTER INSERT ON songs_all BEGIN
+    CREATE TRIGGER IF NOT EXISTS trg_songs_fts_insert AFTER INSERT ON songs BEGIN
       INSERT INTO songs_fts(rowid, title, artist) SELECT NEW.id, NEW.title, a.name FROM artists a WHERE a.id = NEW.artist_id;
     END;
   `);
@@ -1400,7 +1415,7 @@ function runMigrations() {
   db.exec(`
     DROP TRIGGER IF EXISTS trg_songs_fts_delete;
     CREATE TRIGGER trg_songs_fts_delete
-      AFTER UPDATE OF deleted_at ON songs_all
+      AFTER UPDATE OF deleted_at ON songs
       WHEN OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL
     BEGIN
       DELETE FROM songs_fts WHERE rowid = OLD.id;
@@ -1412,7 +1427,7 @@ function runMigrations() {
   db.exec(`
     DROP TRIGGER IF EXISTS trg_songs_fts_update;
     CREATE TRIGGER trg_songs_fts_update
-      AFTER UPDATE OF title, artist_id ON songs_all
+      AFTER UPDATE OF title, artist_id ON songs
       WHEN NEW.deleted_at IS NULL
     BEGIN
       DELETE FROM songs_fts WHERE rowid = OLD.id;
@@ -7479,7 +7494,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
       } catch (e) { console.warn(`[library:sync-r2] consolidate copy failed ${base}: ${e.message}`); }
       const finalPath = fs.existsSync(dest) ? dest : src;
       if (song.file_key !== base) { try { songsUpdateById(db, song.id, { file_key: base }); } catch {} }
-      try { db.prepare('UPDATE songs_all SET file_path = ? WHERE id = ?').run(finalPath, song.id); } catch {}
+      try { db.prepare('UPDATE songs SET file_path = ? WHERE id = ?').run(finalPath, song.id); } catch {}
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:upload:progress', {
           phase: 'consolidate', done: cdone, total: songs.length, errors: notFound, current: base,
@@ -7527,7 +7542,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
             throw new Error(`R2 PUT failed: HTTP ${putRes.status} — ${text.slice(0, 200)}`);
           }
           songsUpdateById(db, song.id, { file_key: fileKey });
-          db.prepare('UPDATE songs_all SET r2_uploaded_at = ? WHERE id = ?').run(new Date().toISOString(), song.id);
+          db.prepare('UPDATE songs SET r2_uploaded_at = ? WHERE id = ?').run(new Date().toISOString(), song.id);
           uploaded++;
           lastErr = null;
           break;
@@ -7730,7 +7745,7 @@ ipcMain.handle('library:sync-r2:download:get-state', () => {
 ipcMain.handle('songs:set-local-file-path', (_, intId, filePath) => {
   try {
     const result = db.prepare(
-      'UPDATE songs_all SET file_path = ? WHERE id = ?'
+      'UPDATE songs SET file_path = ? WHERE id = ?'
     ).run(filePath, intId);
     return { ok: true, changes: result.changes };
   } catch (e) {
