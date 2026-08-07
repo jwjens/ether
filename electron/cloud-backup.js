@@ -234,11 +234,45 @@ async function runBackup(dbPath) {
       return { ok: false, error: msg };
     }
 
-    // 3. Read the SQLite file
+    // 3. Snapshot the database — CONSISTENTLY.
+    //
+    // This used to be `fs.readFileSync(dbPath)`: a raw read of openair.db with no WAL checkpoint.
+    // Ether runs SQLite in WAL mode, so committed transactions — including schema changes — live in
+    // openair.db-wal until a checkpoint. Reading the main file alone therefore produced a backup that
+    // was (a) ALWAYS missing whatever was in the WAL (18 MB on Jeff's install when this was measured),
+    // and (b) intermittently structurally invalid, because sqlite_master could be captured mid-write.
+    // That is what made a restore fail with "malformed database schema" and roll back.
+    //
+    // db.backup() is SQLite's ONLINE backup API: a consistent, self-contained snapshot taken safely
+    // while the database is in use, WAL content included. No checkpoint race, nothing missing.
+    // A checkpoint-then-read was considered and rejected — a write between the two reopens the tear.
+    // docs/cloud-backup-torn-wal-2026-08-07.md
     if (!dbPath || !fs.existsSync(dbPath)) {
       throw new Error("Database file not found: " + dbPath);
     }
-    const dbData = fs.readFileSync(dbPath);
+    const snapPath = dbPath + ".backup-snapshot";
+    try { fs.rmSync(snapPath, { force: true }); } catch {}
+    try {
+      await getDb().backup(snapPath);
+    } catch (e) {
+      throw new Error(`consistent snapshot failed (backup aborted rather than upload a torn file): ${e.message}`);
+    }
+    // Verify the snapshot OPENS and reads before it is ever uploaded. A backup nobody can restore is
+    // worse than no backup — it is a promise that fails on the day it matters.
+    try {
+      const Database = require('better-sqlite3');
+      const probe = new Database(snapPath, { readonly: true, fileMustExist: true });
+      const songs = probe.prepare("SELECT COUNT(*) AS n FROM songs").get().n;
+      const integrity = probe.prepare("PRAGMA integrity_check").get().integrity_check;
+      probe.close();
+      if (integrity !== 'ok') throw new Error(`integrity_check said "${integrity}"`);
+      console.log(`[CLOUD-BACKUP] snapshot verified — ${songs} songs, integrity ok`);
+    } catch (e) {
+      try { fs.rmSync(snapPath, { force: true }); } catch {}
+      throw new Error(`snapshot failed verification, not uploading: ${e.message}`);
+    }
+    const dbData = fs.readFileSync(snapPath);
+    try { fs.rmSync(snapPath, { force: true }); } catch {}
 
     // 4. Gzip the DB
     const gzippedDb = zlib.gzipSync(dbData, { level: 6 });
