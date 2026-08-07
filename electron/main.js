@@ -109,6 +109,39 @@ process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage, powerMonitor } = require("electron");
 
+// ── RESTORE GATE ────────────────────────────────────────────────────────────────────────────────
+// A database cannot be replaced while anything still holds it open. The app is the main offender: the
+// renderer polls several times a second during onboarding, and ANY db-touching IPC landing after the
+// swap closes the connection makes getDb() lazily reopen it — which instantly recreates -wal/-shm and
+// re-locks the very files the swap must remove. The restore then either corrupts the result or (since
+// 4.4.164) correctly refuses. Neither is acceptable when the app is fighting itself.
+//
+// While this gate is set: getDb() will NOT reopen, and every IPC except an explicit allowlist returns
+// a clean "restore in progress" answer without touching the database. That makes the app go quiet for
+// the duration of the swap, by construction rather than by timing.
+let _restoreGate = null;                       // reason string while a restore is in flight
+function restoreGateActive() { return _restoreGate !== null; }
+function setRestoreGate(reason) { _restoreGate = reason || "restore in progress"; try { restoreLog(`gate SET — ${_restoreGate}; the app will not reopen the database until it clears`); } catch {} }
+function clearRestoreGate() { const had = _restoreGate; _restoreGate = null; if (had) { try { restoreLog("gate CLEARED — normal database access resumed"); } catch {} } }
+
+// Channels that must keep working while gated — the restore itself, and anything that cannot touch
+// the station database.
+const _RESTORE_SAFE_CHANNELS = new Set([
+  "station:install-from-cloud", "db:restore", "restore_db", "station:cloud-install-available",
+  "restore:begin", "restore:end", "app:relaunch", "system:getAppDataDir", "get_local_ip",
+  "app:getVersion", "app:version", "system:factoryReset",
+]);
+{
+  const _origHandle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, listener) => _origHandle(channel, async (...args) => {
+    if (restoreGateActive() && !_RESTORE_SAFE_CHANNELS.has(channel)) {
+      // Uniform, harmless shape: the common readers (.rows / .data / .error) all resolve safely.
+      return { ok: false, restoreInProgress: true, error: "restore in progress", data: null, rows: [] };
+    }
+    return listener(...args);
+  });
+}
+
 // ── Sentry (main process) ─────────────────────────────────────
 try {
   const Sentry = require("@sentry/electron/main");
@@ -1129,6 +1162,12 @@ function initDb() {
 // sub-modules resolve through this so the heal holds app-wide.
 function getDb() {
   if (!db || !db.open) {
+    // While a restore holds the gate, this self-heal is exactly the bug: reopening here recreates
+    // -wal/-shm and re-locks the files the swap is trying to remove, so the sync could never succeed
+    // from a running station. Refuse, loudly and catchably, until the swap is done.
+    if (restoreGateActive()) {
+      throw new Error("RESTORE_IN_PROGRESS: the station database is being replaced — not reopening it mid-swap");
+    }
     console.warn("[DB] connection not open — reopening (self-heal)");
     openDb();
   }
@@ -1163,36 +1202,308 @@ function validateDatabaseFile(srcPath) {
   }
 }
 
-function swapDatabaseFile(srcPath) {
+// Verify a database file WITHOUT blocking the main thread — the restore's heavy reads (schema parse,
+// integrity_check on hundreds of MB) are what made the window go "Not Responding" mid-restore.
+// Falls back to the in-process check if a worker can't start, so verification is never skipped.
+function verifyDatabaseFileAsync(dbFile, { deep = false, onProgress } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    try {
+      const { Worker } = require("worker_threads");
+      const w = new Worker(path.join(__dirname, "db-verify-worker.js"), { workerData: { dbFile, deep } });
+      w.on("message", (m) => {
+        if (m && m.progress && onProgress) { try { onProgress(m.progress); } catch {} return; }
+        if (m && m.result) { done(m.result); try { w.terminate(); } catch {} }
+      });
+      w.on("error", (e) => {
+        restoreLog(`verification worker failed (${e.message}) — falling back to in-process check`);
+        done(validateDatabaseFile(dbFile));
+      });
+      w.on("exit", () => done({ ok: false, reason: "verification ended without a result" }));
+    } catch (e) {
+      restoreLog(`verification worker unavailable (${e.message}) — using in-process check`);
+      done(validateDatabaseFile(dbFile));
+    }
+  });
+}
+
+// Append a timestamped line to the restore log. Every branch of the restore writes here — the absence
+// of any record of a database-open failure is what made this take days to diagnose.
+function restoreLog(line) {
+  const stamp = new Date().toISOString();
+  try { console.log(`[RESTORE] ${line}`); } catch {}
+  try {
+    fs.appendFileSync(path.join(path.dirname(getDbPath()), "restore-failures.log"),
+      `${stamp}  ${line}\n`, "utf8");
+  } catch { /* the log must never be the thing that breaks a restore */ }
+}
+
+// "malformed database schema (<name>)" — read what SQLite is actually objecting to.
+// SQLite still permits raw sqlite_master reads when the normal schema parse fails, so the definition
+// can be recovered and LOGGED even though the database will not open normally.
+//
+// MEASURED, 2026-08-07, before writing this: the name SQLite reports on OV
+// (429310a3-7544-4bc1-8460-c4ab621e07ba) does NOT exist in sqlite_master on any database we hold. It
+// exists only as DATA, in metadata_definitions.uuid. The real schema carries 0 UUID-named objects and
+// 0 double-quoted string literals across 180 definitions, and better-sqlite3 has never been bumped
+// (^12.8.0 throughout, lockfile 12.8.0) — so the SQLITE_DQS=0 explanation has no candidate here.
+// That means the parser is reading a DATA page where a schema page belongs, and "dropping the object"
+// would be deleting something that isn't there. So: always capture and log; only remove when the
+// object genuinely EXISTS and is a view/trigger/index. Never touch tables. Never delete blind.
+function inspectMalformedSchema(dbFile, objectName) {
+  let conn = null;
+  try {
+    conn = new Database(dbFile, { fileMustExist: true });
+    conn.pragma("writable_schema=ON");
+    const row = conn.prepare("SELECT type, name, sql FROM sqlite_master WHERE name = ?").get(objectName);
+    if (!row) {
+      restoreLog(`self-heal: SQLite reported "${objectName}" but NO SUCH OBJECT exists in sqlite_master — ` +
+                 `the schema page is being misread (this name appears in this product as row DATA, not a definition). Nothing to drop.`);
+      try { conn.pragma("writable_schema=OFF"); } catch {}
+      return { found: false, removed: false };
+    }
+    restoreLog(`self-heal: offending object → type=${row.type} name=${row.name}`);
+    restoreLog(`self-heal: its SQL → ${String(row.sql ?? "(null)").replace(/\s+/g, " ").slice(0, 1000)}`);
+    if (row.type === "table") {
+      restoreLog(`self-heal: object is a TABLE — refusing to remove it; rolling back instead.`);
+      try { conn.pragma("writable_schema=OFF"); } catch {}
+      return { found: true, removed: false, type: row.type };
+    }
+    conn.prepare("DELETE FROM sqlite_master WHERE name = ?").run(objectName);
+    conn.pragma("writable_schema=OFF");
+    restoreLog(`self-heal: removed ${row.type} "${row.name}" from the schema; the app recreates its own ${row.type}s on startup.`);
+    return { found: true, removed: true, type: row.type };
+  } catch (e) {
+    restoreLog(`self-heal: could not inspect "${objectName}": ${e.message}`);
+    return { found: false, removed: false, error: e.message };
+  } finally {
+    try { if (conn) conn.close(); } catch {}
+  }
+}
+
+// Open the copied database, self-healing removable schema objects SQLite rejects. Returns the
+// validation result. Bounded at 20 passes so a pathological file can never spin.
+async function openWithSchemaSelfHeal(dbFile, onProgress) {
+  const MALFORMED = /malformed database schema \((.+?)\)/;
+  for (let pass = 0; pass < 20; pass++) {
+    const res = await verifyDatabaseFileAsync(dbFile, { onProgress });
+    if (res.ok) {
+      if (pass > 0) restoreLog(`self-heal: database opens after ${pass} repair pass(es)`);
+      return res;
+    }
+    const m = MALFORMED.exec(res.reason || "");
+    if (!m) return res;                                   // a different failure — caller rolls back
+    restoreLog(`self-heal: pass ${pass + 1} — SQLite rejects schema object "${m[1]}"`);
+    const fixed = inspectMalformedSchema(dbFile, m[1]);
+    if (!fixed.removed) return { ...res, selfHeal: fixed };   // nothing safely removable → give up
+  }
+  restoreLog(`self-heal: gave up after 20 passes`);
+  return { ok: false, reason: "the database schema could not be repaired after 20 passes" };
+}
+
+// ASYNC: the copies and verification are the parts that used to freeze the window. fs.promises.copyFile
+// runs on libuv's threadpool and the verification runs in a worker, so the main thread keeps painting
+// through a restore instead of going "Not Responding" for the length of a 450 MB copy.
+// Public entry: holds the restore gate for the WHOLE operation so nothing in this app can reopen the
+// database mid-swap, and always releases it — success, failure or throw.
+async function swapDatabaseFile(srcPath, onProgress) {
+  setRestoreGate("replacing the station database");
+  try {
+    return await _swapDatabaseFileGated(srcPath, onProgress);
+  } finally {
+    clearRestoreGate();
+    // Whatever happened, this app must end with a usable connection.
+    try { if (!db || !db.open) { initDb(); restoreLog("post-restore: database reopened"); } } catch (e) { restoreLog(`post-restore reopen failed: ${e.message}`); }
+  }
+}
+
+async function _swapDatabaseFileGated(srcPath, onProgress) {
+  const say = (m) => { restoreLog(m); try { onProgress?.(m); } catch {} };
+  const fsp = fs.promises;
   const dbPath = getDbPath();
   const preRestore = dbPath + ".pre-restore";
   if (!fs.existsSync(srcPath)) throw new Error(`swapDatabaseFile: source not found: ${srcPath}`);
   // 0. Refuse a damaged source OUTRIGHT — live DB never closed, never overwritten, nothing to roll back.
-  const check = validateDatabaseFile(srcPath);
+  say("checking the backup file");
+  const check = await verifyDatabaseFileAsync(srcPath);
   if (!check.ok) {
     console.error("[DB] refused a damaged restore source (live DB untouched):", check.reason);
     throw new Error(`That backup file is damaged and was not used — your current station is untouched and still running. (${check.reason})`);
   }
   console.log(`[DB] restore source verified: ${check.objects} schema objects, ${check.songs} songs`);
-  // 1. Back up the current live DB BEFORE closing — the rollback point. Abort untouched if this fails.
-  try { if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, preRestore); }
-  catch (e) { throw new Error(`pre-restore backup failed (aborted, live DB untouched): ${e.message}`); }
-  const dropSidecars = () => { for (const s of ["-wal", "-shm", "-journal"]) { try { fs.rmSync(dbPath + s, { force: true }); } catch {} } };
-  try { db.close(); } catch {}
+
+  // 0b. FREE SPACE — a restore transiently needs the source twice over on the database's own volume
+  // (the copied-in file + the .pre-restore rollback copy) on top of what is already there. Running out
+  // mid-copy produces a truncated database, which fails at open and reads exactly like a corrupt
+  // backup. Check first and say so plainly, rather than discovering it as corruption.
+  const srcBytes = (() => { try { return fs.statSync(srcPath).size; } catch { return 0; } })();
   try {
-    // 2. copy fresh file in + drop its (now-stale) sidecars, then 3. reopen with full init.
-    fs.copyFileSync(srcPath, dbPath);
-    dropSidecars();
+    const st = fs.statfsSync(path.dirname(dbPath));
+    const freeBytes = st.bavail * st.bsize;
+    const needBytes = srcBytes * 2 + 64 * 1024 * 1024;        // both copies + headroom
+    const mb = (n) => `${Math.round(n / 1048576).toLocaleString()} MB`;
+    console.log(`[DB] restore space check: need ~${mb(needBytes)}, free ${mb(freeBytes)} on ${path.dirname(dbPath)}`);
+    if (freeBytes < needBytes) {
+      throw new Error(`not enough free space to restore safely — this needs about ${mb(needBytes)} free on the drive holding your station, and there is ${mb(freeBytes)}. Free some space and try again. Your current station is untouched and still running.`);
+    }
+  } catch (e) {
+    if (/not enough free space/.test(e.message)) throw e;
+    console.warn("[DB] restore space check skipped:", e.message);   // statfs unsupported — proceed
+  }
+
+  // 1. Back up the current live DB BEFORE closing — the rollback point. Abort untouched if this fails.
+  say("saving a rollback copy of your current station");
+  try { if (fs.existsSync(dbPath)) await fsp.copyFile(dbPath, preRestore); }
+  catch (e) { throw new Error(`pre-restore backup failed (aborted, live DB untouched): ${e.message}`); }
+  // Clearing the previous database's journal files is NOT optional, and failing to clear them used to
+  // be swallowed silently. SQLite replays a leftover -wal over whatever main file is at this path — so
+  // a stale journal from the OLD database, replayed over the NEWLY copied one, yields old schema pages
+  // in a new file: "malformed database schema (<object>)", deterministically, with the copied file
+  // byte-identical to a source that opens perfectly. On Windows a delete fails while ANOTHER PROCESS
+  // (the out-of-process audio daemon opens this same database) holds the file. Report, retry, verify.
+  const dropSidecars = () => {
+    const remaining = [];
+    for (const s of ["-wal", "-shm", "-journal"]) {
+      const p = dbPath + s;
+      try { fs.rmSync(p, { force: true }); } catch { /* checked below — never assumed */ }
+      try { if (fs.existsSync(p)) remaining.push(path.basename(p)); } catch {}
+    }
+    return remaining;
+  };
+  // Retry briefly: a daemon that is mid-write releases within a moment; a daemon that is holding the
+  // database open will not, and that must surface as itself rather than as corruption.
+  const dropSidecarsInsisting = () => {
+    let left = dropSidecars();
+    for (let i = 0; i < 10 && left.length; i++) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100); left = dropSidecars(); }
+    return left;
+  };
+  // ── QUIESCE ───────────────────────────────────────────────────────────────────────────────────
+  // Two processes hold this database open: THIS one, and the audio daemon (ether-audiod opens it
+  // read-write for the scheduler). Both must let go before the file can be replaced — and this app
+  // re-acquires constantly, because the renderer polls several times a second and any db-touching
+  // IPC makes getDb() reopen. Telling the operator to "close Ether" was a dead end: syncing from a
+  // running station could never succeed. So the app quiesces ITSELF instead.
+  //
+  // Playback stops. That is inherent — the station's database is being replaced underneath it.
+
+  // 1. Daemon: stop engines/streams and close its handle. Wait for the reply; never hang on it.
+  say("stopping the audio engine");
+  try {
+    const release = audiodClient.cmd("releaseDb", {});
+    const outcome = await Promise.race([
+      Promise.resolve(release).then(r => ({ ok: true, r })),
+      new Promise(res => setTimeout(() => res({ ok: false, timeout: true }), 8000)),
+    ]);
+    if (outcome.timeout) restoreLog("quiesce: audio engine did not confirm within 8s — continuing; the journal check below is the real gate");
+    else restoreLog(`quiesce: audio engine released the database (${JSON.stringify(outcome.r)})`);
+  } catch (e) {
+    restoreLog(`quiesce: audio engine release failed (${e.message}) — continuing; the journal check below is the real gate`);
+  }
+
+  // 2. Fold the WAL back into the main file so there is nothing left to remove, then close ours.
+  try { db.pragma("wal_checkpoint(TRUNCATE)"); restoreLog("quiesce: WAL checkpointed into the database"); }
+  catch (e) { restoreLog(`quiesce: WAL checkpoint skipped (${e.message})`); }
+  try { db.close(); restoreLog("quiesce: this app closed its database connection"); } catch (e) { restoreLog(`quiesce: close reported ${e.message}`); }
+
+  // 3. The journals must be GONE and unlocked. With the gate set, nothing in this app can recreate
+  //    them; if they survive, something outside this app still holds the file.
+  {
+    const stuck = dropSidecarsInsisting();
+    if (stuck.length) {
+      restoreLog(`quiesce FAILED — still locked after stopping the engine and closing the database: ${stuck.join(", ")}`);
+      try { initDb(); restoreLog("quiesce: station reopened; nothing was changed"); }
+      catch (e) { restoreLog(`quiesce: reopen after aborted restore failed: ${e.message}`); }
+      throw new Error(`Sync couldn't start: ${stuck.join(" and ")} could not be released, even after stopping the audio engine and closing the station database. Something outside Ether is holding those files (antivirus or backup software is the usual cause). Your current station is untouched and still running.`);
+    }
+    restoreLog("quiesce: journal files removed and unlocked — safe to replace the database");
+  }
+  // Which stage failed. The rollback used to collapse every cause into one identical sentence, so a
+  // truncated copy, a bad file and a failing migration were indistinguishable from the outside — on a
+  // machine nobody can inspect, that is the difference between a diagnosis and a guessing game.
+  let step = "copying the backup into place";
+  try {
+    // 2. copy fresh file in + drop any journal that reappeared, then 3. reopen with full init.
+    say("installing the restored station");
+    await fsp.copyFile(srcPath, dbPath);
+    step = "clearing the previous database's journal files";
+    const reappeared = dropSidecarsInsisting();
+    if (reappeared.length) {
+      // Something recreated them between the pre-flight and now — i.e. another process is actively
+      // using this database. Opening now would replay the old journal over the new file.
+      throw new Error(`${reappeared.join(", ")} came back while the station was being replaced — another part of Ether (most likely the audio engine) still has the database open. Fully close Ether and try again`);
+    }
+
+    // 2b. VERIFY THE DESTINATION, not just the source. A short write here (full disk, interrupted
+    // volume) yields a truncated database that opens as "malformed database schema" during init —
+    // indistinguishable from a corrupt download unless it is checked at the point it happens.
+    step = "verifying the copied database";
+    const destBytes = fs.statSync(dbPath).size;
+    if (srcBytes && destBytes !== srcBytes) {
+      throw new Error(`the copy is incomplete — ${destBytes.toLocaleString()} of ${srcBytes.toLocaleString()} bytes landed on disk (the drive may be full)`);
+    }
+    // Self-heal removable schema objects rather than failing outright; every pass is logged.
+    say("checking the installed station");
+    const destCheck = await openWithSchemaSelfHeal(dbPath, onProgress);
+    if (!destCheck.ok) {
+      restoreLog(`FAILED at "${step}": ${destCheck.reason}`);
+      throw new Error(`the copied database will not open: ${destCheck.reason}`);
+    }
+    restoreLog(`copied database verified: ${destCheck.objects} schema objects, ${destCheck.songs} songs`);
+    // Deep integrity check — in the worker, so a multi-hundred-MB scan never freezes the window.
+    const deep = await verifyDatabaseFileAsync(dbPath, { deep: true, onProgress });
+    restoreLog(`integrity_check: ${deep.integrity ?? "(not run)"}`);
+    if (deep.ok && deep.integrity && deep.integrity !== "ok") {
+      throw new Error(`the restored database failed its integrity check: ${deep.integrity}`);
+    }
+
+    step = "upgrading the restored database";     // repairSchema + the migration chain run in here
     initDb();
     // 4. verify the new handle with a trivial read before declaring success.
+    step = "reading the restored database";
     getDb().prepare("SELECT COUNT(*) AS n FROM system_state").get();
     if (!db.open) throw new Error("handle reports not-open after reopen");
   } catch (swapErr) {
+    swapErr.message = `${step}: ${swapErr.message}`;
     // 5. roll back to the pre-restore DB and re-init; surface a real error either way.
     console.error("[DB] restore reopen failed — rolling back:", swapErr.message);
+    // Record what actually happened, on LOCAL disk next to the database, before anything else can
+    // fail. A failed restore happens on machines no one can look at; a message that scrolls past in a
+    // dialog is not evidence. This file is the receipt — step, real error, sizes and free space.
+    try {
+      let freeTxt = "unknown";
+      try { const s = fs.statfsSync(path.dirname(dbPath)); freeTxt = `${Math.round((s.bavail * s.bsize) / 1048576).toLocaleString()} MB`; } catch {}
+      let destTxt = "n/a";
+      try { destTxt = `${fs.statSync(dbPath).size.toLocaleString()} bytes`; } catch {}
+      // Journals present at the moment of failure — a leftover -wal replayed over the new file is the
+      // difference between "the backup is corrupt" and "something still had the database open".
+      let sidecarTxt = "none";
+      try {
+        const present = ["-wal", "-shm", "-journal"].filter(s => fs.existsSync(dbPath + s))
+          .map(s => `${path.basename(dbPath + s)} (${fs.statSync(dbPath + s).size.toLocaleString()} b)`);
+        sidecarTxt = present.length ? present.join(", ") : "none";
+      } catch {}
+      // Do the source and destination actually hold the same bytes? Settles copy-corruption vs open-time
+      // corruption without anyone having to reproduce it.
+      let sameTxt = "not compared";
+      try {
+        const crypto = require("crypto");
+        const hash = (p) => crypto.createHash("sha1").update(fs.readFileSync(p)).digest("hex").slice(0, 16);
+        sameTxt = hash(srcPath) === hash(dbPath) ? "identical" : "DIFFERENT — the copy altered the file";
+      } catch (e) { sameTxt = `not compared (${e.message})`; }
+      fs.appendFileSync(path.join(path.dirname(dbPath), "restore-failures.log"),
+        `${new Date().toISOString()}  v${app.getVersion()}\n` +
+        `  failed while: ${step}\n` +
+        `  error       : ${swapErr.message}\n` +
+        `  source      : ${srcPath} (${srcBytes.toLocaleString()} bytes)\n` +
+        `  destination : ${destTxt}\n` +
+        `  src vs dest : ${sameTxt}\n` +
+        `  journals    : ${sidecarTxt}\n` +
+        `  free space  : ${freeTxt}\n\n`, "utf8");
+    } catch (logErr) { console.warn("[DB] could not write restore-failures.log:", logErr.message); }
     try {
       try { if (db && db.open) db.close(); } catch {}
-      if (fs.existsSync(preRestore)) fs.copyFileSync(preRestore, dbPath);
+      if (fs.existsSync(preRestore)) await fsp.copyFile(preRestore, dbPath);
       dropSidecars();
       initDb();
       getDb().prepare("SELECT COUNT(*) AS n FROM system_state").get();
@@ -3839,12 +4150,12 @@ ipcMain.handle("db:listBackups", () => {
   } catch { return []; }
 });
 
-ipcMain.handle("db:restore", (_, backupName) => {
+ipcMain.handle("db:restore", async (_, backupName) => {
   try {
     const backupPath = path.join(app.getPath("userData"), "backups", backupName);
     if (!fs.existsSync(backupPath)) return { error: "Backup not found" };
     // close → copy → reopen(retry) → verify → rollback-on-failure; throws a real error (never bricks).
-    swapDatabaseFile(backupPath);
+    await swapDatabaseFile(backupPath);
     return { data: "Restored successfully", error: null };
   } catch (e) { return { data: null, error: e.message }; }
 });
@@ -3942,12 +4253,12 @@ ipcMain.handle("list_backups", () => {
 });
 
 // SettingsPanel passes { backupName } (object); db:restore takes a bare string.
-ipcMain.handle("restore_db", (_, { backupName } = {}) => {
+ipcMain.handle("restore_db", async (_, { backupName } = {}) => {
   try {
     if (!backupName) throw new Error("backupName is required");
     const backupPath = path.join(app.getPath("userData"), "backups", backupName);
     if (!fs.existsSync(backupPath)) throw new Error("Backup not found: " + backupName);
-    swapDatabaseFile(backupPath);   // close → copy → reopen(retry) → verify → rollback-on-failure
+    await swapDatabaseFile(backupPath);   // close → copy → reopen(retry) → verify → rollback-on-failure
     return "Restored from " + backupName + ". Restart Ether for all changes to take effect.";
   } catch (e) { throw new Error(e.message); }
 });
@@ -4029,10 +4340,26 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
       if (/didn't save completely/.test(e.message)) return { ok: false, error: e.message };
       throw e;
     }
+    // What this backup CLAIMS to contain — the yardstick the restored database must meet. Without it
+    // there is nothing to compare against, and "0 songs" reads as success.
+    let expectedSongs = 0;
+    {
+      const pre = await verifyDatabaseFileAsync(tmp);
+      if (!pre.ok) {
+        restoreLog(`install-from-cloud: downloaded backup will not open — ${pre.reason}`);
+        return { ok: false, error: `The downloaded backup is not readable (${pre.reason}). Your current station is untouched.` };
+      }
+      expectedSongs = pre.songs || 0;
+      restoreLog(`install-from-cloud: downloaded backup verified — ${pre.objects} schema objects, ${expectedSongs} songs`);
+    }
+
     // Swap in via the shared helper: validates the source first (refuses a damaged file outright),
     // backs up the current DB, close → copy → drop sidecars → reopen (with retry) → verify →
     // ROLL BACK on failure, and throws a real error (never bricks).
-    swapDatabaseFile(tmp);
+    // Progress flows to the installing screen so a long verify never looks like a hang.
+    await swapDatabaseFile(tmp, (msg) => {
+      try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("restore:progress", { message: msg }); } catch {}
+    });
     try { fs.rmSync(tmp, { force: true }); } catch {}
 
     // Re-stamp this machine's identity so it isn't the source machine's clone, and keep the
@@ -4061,11 +4388,28 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     // other continuation path (reload @2829, relaunch @3186, update @3369) writes it; this one didn't.
     try { markKeepSession(); } catch (e) { console.warn("[install-from-cloud] markKeepSession:", e.message); }
 
-    let newCount = 0, stationName = "";
-    try { newCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch {}
+    let newCount = 0, stationName = "", countErr = null;
+    try { newCount = db.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0; } catch (e) { countErr = e.message; }
     try { stationName = db.prepare("SELECT value FROM station_config_kv WHERE key='station_name' LIMIT 1").get()?.value || ""; } catch {}
-    console.log(`[station:install-from-cloud] restored DB — ${newCount} songs, station="${stationName}" (backup ${backupTimestamp || "?"})`);
-    return { ok: true, songs: newCount, stationName, backupTimestamp };
+
+    // "Database installed — 0 songs" must never be reported as success. Every COUNT reads 0 when the
+    // database did not really open, and the audio downloader then gets an empty work list and waits
+    // forever at 0 Mbps. The backup we just verified told us how many songs it holds — if the restored
+    // database does not agree, the restore FAILED, and it says so here instead of downstream.
+    const expected = expectedSongs;         // from validateDatabaseFile() on the downloaded backup
+    if (countErr) {
+      restoreLog(`install-from-cloud: restored DB cannot be counted (${countErr}) — reporting failure`);
+      return { ok: false, error: `The station was restored but its database cannot be read (${countErr}). Nothing was kept.` };
+    }
+    if (expected > 0 && newCount === 0) {
+      restoreLog(`install-from-cloud: backup holds ${expected} songs but the restored DB reports 0 — reporting failure`);
+      return { ok: false, error: `The restore did not complete: this backup contains ${expected.toLocaleString()} songs but the installed database reports none. Nothing usable was installed — please try again.` };
+    }
+    if (expected > 0 && newCount < expected) {
+      restoreLog(`install-from-cloud: restored ${newCount} of ${expected} songs — incomplete`);
+    }
+    restoreLog(`install-from-cloud: restored DB — ${newCount} songs (backup said ${expected}), station="${stationName}", backup ${backupTimestamp || "?"}`);
+    return { ok: true, songs: newCount, expectedSongs: expected, stationName, backupTimestamp };
   } catch (e) {
     console.error("[station:install-from-cloud]", e);
     return { ok: false, error: e.message };

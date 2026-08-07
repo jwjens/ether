@@ -113,6 +113,21 @@ function modeToggle(stationId, fn) {
 
 const handlers = {
   init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); return true; },
+  // Quiesce for a database swap. This process holds openair.db open in WAL mode, which locks
+  // -wal/-shm — so a restore cannot replace the file while we are running. The app calls this,
+  // waits for the reply, then swaps. Everything that reads the database stops first; the handle is
+  // reopened lazily by getDb() the next time it is needed, against the NEW file.
+  // Playback stops. That is inherent: the station's database is being replaced underneath it.
+  releaseDb:          () => {
+    for (const s of streams.values())  { try { s.stop(); } catch {} }
+    for (const e of engines.values())  { try { e.dispose(); } catch {} }
+    for (const sid of stations)        { try { A.audioStop("A", sid); A.audioStop("B", sid); A.audioStop("C", sid); } catch {} }
+    let dbWasOpen = false, closeError = null;
+    try { if (_db) { _db.close(); _db = null; dbWasOpen = true; } }
+    catch (e) { closeError = String(e && e.message || e); }
+    log(`releaseDb — engines+streams stopped, db ${dbWasOpen ? "CLOSED" : "was not open"}${closeError ? " (close error: " + closeError + ")" : ""}`);
+    return { released: !closeError, dbWasOpen, closeError, stations: stations.size };
+  },
   load:               (m) => { stations.add(m.stationId); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck, { title: m.title, artist: m.artist, filePath: m.filePath, durationMs: m.durationMs, contentClass: m.contentClass ?? null }); return r; },
   // A refused play is a DECISION the operator must see, not a silent no-op (2026-07-31). audioPlay
   // returns false when the deck has no content; say so, name the deck, and tell them what to do.
@@ -220,7 +235,7 @@ function send(sock, obj) { try { sock.write(JSON.stringify(obj) + "\n"); } catch
 // Commands worth a log line on receipt — the lifecycle/automation surface (NOT the high-rate
 // pollers like getState/getLevels/getQueue, which would drown the log). automationStart/Stop
 // receipts are the anchor for verifying the auto-resume fix (Commit 2).
-const LOGGED_CMDS = new Set(["automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream"]);
+const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream"]);
 
 function handleLine(sock, line) {
   let msg;

@@ -598,6 +598,22 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // shared audio library and relaunch into the restored database.
   const runCloudInstall = async (keepUuids: string[] | null) => {
     const ether = (window as any).ether;
+
+    // Syncing REPLACES this computer's station database, so the audio engine has to let go of it and
+    // playback stops. If something is on the air right now, say so plainly before starting — this is
+    // inherent to replacing the database, not a fault, and the operator must not be surprised by it.
+    try {
+      const onAir = await ether.invoke('account:was-on-air');
+      if (onAir === true || (onAir && onAir.onAir)) {
+        const go = confirm(
+          "A station is ON AIR right now.\n\n" +
+          "Syncing replaces this computer's station database, so playback will STOP while it runs and " +
+          "the audio engine restarts afterwards.\n\nContinue?"
+        );
+        if (!go) { setSyncPhase('choose'); return; }   // back to the station picker, nothing touched
+      }
+    } catch { /* can't tell → carry on; the sync itself is still safe */ }
+
     setSyncPhase('installing');
     setSyncPct(0); setSyncSub('');
     setSyncMsg('Restoring your station database…');
@@ -632,9 +648,14 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       setSyncPct(5);
       setSyncMsg(`Downloading your music library${r.stationName ? ` for ${r.stationName}` : ''}…`);
       setSyncSub(r.songs ? `${r.songs.toLocaleString()} tracks` : '');
+      // Declared before the progress subscription that refreshes it (see STALL GUARD below).
+      const STALL_MS = 120000;                 // two minutes with no byte of progress = stalled
+      let lastTick = Date.now();
+      const touch = () => { lastTick = Date.now(); };
       const offP = ether.libraryR2.onDownloadProgress?.((v: any) => {
         const done = v?.done ?? 0, total = v?.total ?? 0;
         // Real fraction: the music download is the bulk of the work → 5%..98%.
+        touch();                                   // real progress → the stall watchdog stands down
         if (total > 0) setSyncPct(5 + Math.round((done / total) * 93));
         setSyncMsg('Downloading your music library…');
         setSyncSub(total > 0 ? `${done.toLocaleString()} / ${total.toLocaleString()} files` : `${done.toLocaleString()} files`);
@@ -642,9 +663,22 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
 
       // Subscribe to the terminal event BEFORE starting so it can't be missed if
       // the download finishes between download() resolving and us subscribing.
+      //
+      // STALL GUARD: this promise used to be the only way out of the "Installing…" screen, so a
+      // transfer that never started — or died mid-flight — left the operator staring at 0 Mbps
+      // forever, with working and broken looking identical. Nothing here may wait indefinitely:
+      // every progress event refreshes the deadline, and silence past it is a real, named failure.
       let offD: (() => void) | undefined;
       const downloadDone = new Promise<any>((resolve) => {
         offD = ether.libraryR2.onDownloadDone?.((v: any) => resolve(v));
+        const timer = setInterval(() => {
+          if (Date.now() - lastTick > STALL_MS) {
+            clearInterval(timer);
+            resolve({ stalled: true });
+          }
+        }, 5000);
+        // Stop the watchdog once the real terminal event lands.
+        const stop = ether.libraryR2.onDownloadDone?.(() => { clearInterval(timer); stop?.(); });
       });
 
       // download() validates synchronously (tier / license / "nothing in R2") and
@@ -667,6 +701,11 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
 
       const got = result?.done ?? 0;
       const errs = result?.errors ?? 0;
+      if (result?.stalled) {
+        setSyncPhase('error');
+        setSyncMsg(`The music download stopped responding — nothing transferred for two minutes. Your station's setup is installed; press Retry to download the music again.`);
+        return;
+      }
       if (result?.aborted) {
         setSyncPhase('error');
         setSyncMsg('Music download was cancelled before it finished.');
