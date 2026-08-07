@@ -1933,17 +1933,65 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
   const [r2BackingNow,   setR2BackingNow]   = useState(false);
   const [r2BackupNowStatus, setR2BackupNowStatus] = useState("");
   // Manual full-DB cloud backup — same backend-signed R2 upload as the auto-timer, on demand.
-  const runCloudBackupNow = async () => {
-    setR2BackingNow(true); setR2BackupNowStatus("Backing up your full station…");
+  // How much of the library is actually in the cloud — read from the database, never assumed.
+  // A backup isn't finished until the audio is up too; this is the half the status used to omit.
+  const [libCloud, setLibCloud] = useState<{ total: number; uploaded: number; pending: number } | null>(null);
+  const refreshLibCloud = useCallback(async () => {
     try {
-      const r: any = await (window as any).ether.invoke("cloud-backup:run-now");
+      const r: any = await (window as any).ether.invoke("library:cloud-status");
+      if (r?.ok) setLibCloud({ total: r.total ?? 0, uploaded: r.uploaded ?? 0, pending: r.pending ?? 0 });
+    } catch { /* status unknown — the UI says so rather than claiming success */ }
+  }, []);
+  useEffect(() => { refreshLibCloud(); }, [refreshLibCloud]);
+
+  // ONE button = the whole station: the setup AND every song. It is not "backed up" until the
+  // transfer is 100% complete, so this runs the database backup, then any songs still missing from
+  // the cloud, and only then re-reads the real counts to decide what to claim.
+  const runCloudBackupNow = async () => {
+    const ether = (window as any).ether;
+    setR2BackingNow(true); setR2BackupNowStatus("Backing up your station's setup…");
+
+    // Part 1 — the database (library list, clocks, schedule, settings).
+    try {
+      const r: any = await ether.invoke("cloud-backup:run-now");
       if (!r?.ok) throw new Error(r?.tier_insufficient ? "Cloud backup requires the Network plan." : (r?.error || "Backup failed"));
       setR2LastBackup(Math.floor(Date.now() / 1000));
       setR2LastStatus("success");
-      setR2BackupNowStatus("✓ Full station backed up to the cloud");
     } catch (e: any) {
       setR2BackupNowStatus("✗ " + String(e?.message || e));
+      setR2BackingNow(false);
+      return;
     }
+
+    // Part 2 — the audio. Skipping this is what produced a station that restored looking complete
+    // and then couldn't play half its songs.
+    try {
+      const before: any = await ether.invoke("library:cloud-status");
+      if (before?.ok && before.pending > 0) {
+        setR2BackupNowStatus(`Setup saved — now sending ${before.pending.toLocaleString()} song${before.pending === 1 ? "" : "s"} to the cloud…`);
+        setLibUploading(true); setLibUploadMsg(""); setLibProgress(null);
+        await new Promise<void>((resolve) => {
+          let off: any = null;
+          const finish = () => { try { off?.(); } catch {} resolve(); };
+          off = ether.libraryR2.onUploadDone?.(() => finish());
+          ether.libraryR2.upload({}).then((rr: any) => { if (!rr?.ok) { setLibUploading(false); setLibUploadMsg(rr?.error || "Couldn't start the upload."); finish(); } })
+            .catch((e: any) => { setLibUploading(false); setLibUploadMsg(String(e?.message || e)); finish(); });
+        });
+      }
+    } catch { /* fall through to the honest read below */ }
+
+    // Claim nothing — re-read and report what is actually in the cloud.
+    await refreshLibCloud();
+    try {
+      const after: any = await ether.invoke("library:cloud-status");
+      if (after?.ok && after.pending > 0) {
+        setR2BackupNowStatus(`⚠ Setup is backed up, but ${after.pending.toLocaleString()} of ${after.total.toLocaleString()} songs did not upload — those songs would arrive on another computer with no audio.`);
+      } else if (after?.ok) {
+        setR2BackupNowStatus(`✓ Backed up — your setup and all ${after.total.toLocaleString()} songs are in the cloud`);
+      } else {
+        setR2BackupNowStatus("✓ Setup backed up — couldn't confirm the music files");
+      }
+    } catch { setR2BackupNowStatus("✓ Setup backed up — couldn't confirm the music files"); }
     setR2BackingNow(false);
   };
 
@@ -2211,6 +2259,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
       setLibProgress({ phase: v?.phase ?? "upload", done: v?.done ?? 0, total: v?.total ?? 0, errors: v?.errors ?? 0 });
     });
     const offD = ether.libraryR2.onUploadDone?.((v: any) => {
+      refreshLibCloud();   // re-read the real counts so the status reflects what's actually in the cloud
       const uploaded = v?.uploaded ?? 0, total = v?.total ?? 0, errors = v?.errors ?? 0;
       const consolidated = v?.consolidated ?? 0, notFound = v?.notFound ?? 0;
       setLibUploading(false);
@@ -2816,26 +2865,43 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
       {/* ── Cloud Backup — the everyday safety net (leads the tab) ── */}
       <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="An always-current copy of your whole station, kept safe online — every station, your schedule, and your settings. If a computer dies or you move to a new one, it all comes back.">
 
-        {/* Status hero + primary action */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as any, padding: "16px 18px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", marginBottom: 20 }}>
+        {/* Status hero + primary action.
+            "Backed up" means BOTH halves are in the cloud — the setup AND every song. The check used
+            to reflect the database alone, so a station whose audio never finished uploading still
+            showed green, restored onto another machine looking complete, and then couldn't play. */}
+        {(() => {
+          const dbSafe    = r2LastBackup > 0 && r2LastStatus === "success";
+          const audioSafe = !!libCloud && libCloud.pending === 0;
+          const allSafe   = dbSafe && audioSafe;
+          const partial   = dbSafe && !!libCloud && libCloud.pending > 0;
+          const headline  = r2BackingNow ? "Backing up…"
+            : allSafe ? "Your station is backed up"
+            : partial ? "Music files unfinished"
+            : dbSafe  ? "Your station's setup is backed up"
+            : "Not backed up yet";
+          const sub = r2BackingNow ? "Sending your setup and your music to the cloud"
+            : partial ? `${libCloud!.pending.toLocaleString()} of ${libCloud!.total.toLocaleString()} songs aren't in the cloud — they'd arrive on another computer with no audio. Back up now to finish.`
+            : allSafe ? `Setup and all ${libCloud!.total.toLocaleString()} songs · last backed up ${timeAgo(r2LastBackup)}`
+            : dbSafe  ? `Last backed up ${timeAgo(r2LastBackup)} · checking your music files…`
+            : "Send your first backup whenever you're ready";
+          return (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as any, padding: "16px 18px", background: "var(--bg-tertiary)", border: `1px solid ${partial ? "var(--accent-amber, #d9a441)" : "var(--border-primary)"}`, marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, background: (r2LastBackup > 0 && r2LastStatus === "success") ? "rgba(34,197,94,0.15)" : "var(--bg-secondary)", color: (r2LastBackup > 0 && r2LastStatus === "success") ? "var(--accent-green)" : "var(--text-tertiary)" }}>
-              {(r2LastBackup > 0 && r2LastStatus === "success" && !r2BackingNow) ? "✓" : "☁"}
+            <div style={{ width: 38, height: 38, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, background: allSafe ? "rgba(34,197,94,0.15)" : partial ? "rgba(217,164,65,0.16)" : "var(--bg-secondary)", color: allSafe ? "var(--accent-green)" : partial ? "var(--accent-amber, #d9a441)" : "var(--text-tertiary)" }}>
+              {r2BackingNow ? "☁" : allSafe ? "✓" : partial ? "!" : "☁"}
             </div>
             <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>
-                {r2BackingNow ? "Backing up…" : (r2LastBackup > 0 && r2LastStatus === "success") ? "Your station is backed up" : "Not backed up yet"}
-              </div>
-              <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 2 }}>
-                {r2BackingNow ? "Sending your latest changes to the cloud" : r2LastBackup > 0 ? `Last backed up ${timeAgo(r2LastBackup)}` : "Send your first backup whenever you're ready"}
-              </div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>{headline}</div>
+              <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 2, maxWidth: 520, lineHeight: 1.5 }}>{sub}</div>
             </div>
           </div>
           <button onClick={runCloudBackupNow} disabled={r2BackingNow}
             style={{ padding: "11px 22px", fontSize: 13.5, fontWeight: 700, background: "var(--accent-green)", color: "#000", border: "none", cursor: r2BackingNow ? "default" : "pointer", borderRadius: 0, opacity: r2BackingNow ? 0.6 : 1 }}>
-            {r2BackingNow ? "Backing up…" : "Back up now"}
+            {r2BackingNow ? "Backing up…" : partial ? "Finish backing up" : "Back up now"}
           </button>
         </div>
+          );
+        })()}
         {!r2BackingNow && r2BackupNowStatus && (
           <div style={{ fontSize: 12.5, marginTop: -10, marginBottom: 18, color: r2BackupNowStatus.startsWith("✓") ? "var(--accent-green)" : r2BackupNowStatus.startsWith("✗") ? "var(--accent-red)" : "var(--text-secondary)" }}>{r2BackupNowStatus}</div>
         )}
@@ -2872,7 +2938,14 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
         <div>
           <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>Your music files</div>
           <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 14, lineHeight: 1.55 }}>
-            Backups above save your station's setup — not the audio itself. Send your songs to the cloud once, and any computer signed into your account can pull your whole library down into the same folder.
+            <strong>Back up now</strong> above already sends your music along with your setup. Use this to send just the audio on its own — handy after adding a batch of songs. Any computer signed into your account can pull your whole library down into the same folder.
+            {libCloud && (
+              <div style={{ marginTop: 6, color: libCloud.pending > 0 ? "var(--accent-amber, #d9a441)" : "var(--accent-green)" }}>
+                {libCloud.pending > 0
+                  ? `${libCloud.uploaded.toLocaleString()} of ${libCloud.total.toLocaleString()} songs are in the cloud — ${libCloud.pending.toLocaleString()} still to send.`
+                  : `All ${libCloud.total.toLocaleString()} songs are in the cloud.`}
+              </div>
+            )}
           </div>
 
           <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "12px 14px", marginBottom: 14 }}>

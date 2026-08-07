@@ -1139,10 +1139,41 @@ function getDb() {
 // FIRST so a failed reopen ROLLS BACK instead of leaving the app bricked; verifies the new handle
 // with a trivial read before declaring success; NEVER swallows — throws a real error to the caller.
 // This is the only path that drops WAL sidecars (the swapped-in file is a fresh, self-contained DB).
+// Is this file a usable Ether database? Answered BEFORE the live DB is touched.
+// A torn backup (main file read without its WAL) throws "malformed database schema (<object>)" the
+// moment SQLite parses sqlite_master — which, without this gate, happened only AFTER the live DB had
+// been closed and overwritten, so the operator saw a failed restore + rollback instead of a refusal.
+// Probing here costs one read-only open and turns a dead-end into "that backup is bad, yours is intact."
+// LIMIT: this proves the file opens and its schema + core tables are readable. It is not a full-page
+// integrity_check — that scans hundreds of MB and would stall the restore for minutes.
+function validateDatabaseFile(srcPath) {
+  let conn = null;
+  try {
+    conn = new Database(srcPath, { readonly: true, fileMustExist: true });
+    // Forces the schema parse — this is exactly where a torn file throws "malformed database schema".
+    const objs = conn.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get()?.n ?? 0;
+    if (objs < 20) throw new Error(`schema looks truncated (${objs} objects)`);
+    conn.prepare("SELECT COUNT(*) AS n FROM system_state").get();   // the table the restore verifies
+    const songs = conn.prepare("SELECT COUNT(*) AS n FROM songs").get()?.n ?? 0;
+    return { ok: true, objects: objs, songs };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  } finally {
+    try { if (conn) conn.close(); } catch {}
+  }
+}
+
 function swapDatabaseFile(srcPath) {
   const dbPath = getDbPath();
   const preRestore = dbPath + ".pre-restore";
   if (!fs.existsSync(srcPath)) throw new Error(`swapDatabaseFile: source not found: ${srcPath}`);
+  // 0. Refuse a damaged source OUTRIGHT — live DB never closed, never overwritten, nothing to roll back.
+  const check = validateDatabaseFile(srcPath);
+  if (!check.ok) {
+    console.error("[DB] refused a damaged restore source (live DB untouched):", check.reason);
+    throw new Error(`That backup file is damaged and was not used — your current station is untouched and still running. (${check.reason})`);
+  }
+  console.log(`[DB] restore source verified: ${check.objects} schema objects, ${check.songs} songs`);
   // 1. Back up the current live DB BEFORE closing — the rollback point. Abort untouched if this fails.
   try { if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, preRestore); }
   catch (e) { throw new Error(`pre-restore backup failed (aborted, live DB untouched): ${e.message}`); }
@@ -3978,10 +4009,29 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     if (!dbRes.ok) return { ok: false, error: `Backup download failed (${dbRes.status}).` };
     const raw = require("zlib").gunzipSync(Buffer.from(await dbRes.arrayBuffer()));
 
-    // Swap in via the shared helper: backs up the current DB first, close → copy → drop sidecars →
-    // reopen (with retry) → verify → ROLL BACK on failure, and throws a real error (never bricks).
-    const tmp = path.join(app.getPath("userData"), "cloud-restore.db");
+    // Stage the downloaded database on LOCAL disk, next to the live DB — NOT under userData.
+    // userData is %APPDATA%\Ether (ROAMING), and managed profiles (OV) redirect Roaming to a network
+    // H:\ share. That is the same hazard getDbPath() exists to avoid: writing a multi-hundred-MB file
+    // across a redirected share is where it arrives truncated, and a truncated file fails at open with
+    // "malformed database schema". _etherDir() is %LOCALAPPDATA%\Ether\com.ether.radio on Windows —
+    // machine-local, never redirected, and the same volume the file is about to be copied to anyway.
+    const tmp = path.join(_etherDir(), "cloud-restore.db");
     fs.writeFileSync(tmp, raw);
+    // Verify the staged file is the full download before it goes anywhere near the live database.
+    // A short write (full disk, interrupted network share) is otherwise silent until SQLite chokes.
+    try {
+      const staged = fs.statSync(tmp).size;
+      if (staged !== raw.length) {
+        try { fs.rmSync(tmp, { force: true }); } catch {}
+        throw new Error(`the downloaded backup didn't save completely (${staged.toLocaleString()} of ${raw.length.toLocaleString()} bytes) — check free disk space and try again`);
+      }
+    } catch (e) {
+      if (/didn't save completely/.test(e.message)) return { ok: false, error: e.message };
+      throw e;
+    }
+    // Swap in via the shared helper: validates the source first (refuses a damaged file outright),
+    // backs up the current DB, close → copy → drop sidecars → reopen (with retry) → verify →
+    // ROLL BACK on failure, and throws a real error (never bricks).
     swapDatabaseFile(tmp);
     try { fs.rmSync(tmp, { force: true }); } catch {}
 
@@ -7539,6 +7589,21 @@ let _libDownloadState = {
 // Event contract preserved exactly from the legacy handler: per-file progress
 // on 'library:sync-r2:upload:progress', terminal 'library:sync-r2:upload:done'. Cancellation
 // via _libSyncAbort flag (still set by 'library:sync-r2:upload:cancel' below).
+// How much of the LIVE song library is actually in the cloud, counted from the database rather than
+// claimed. "Your station is backed up" used to reflect the DB backup alone — so a station whose audio
+// had never finished uploading still showed a green check, restored onto another machine looking
+// complete, and then couldn't play the songs whose audio was never sent. This is the missing half.
+ipcMain.handle('library:cloud-status', () => {
+  try {
+    const n = (sql) => db.prepare(sql).get()?.n ?? 0;
+    const LIVE = "FROM songs WHERE deleted_at IS NULL AND file_path IS NOT NULL AND file_path != ''";
+    const total    = n(`SELECT COUNT(*) AS n ${LIVE}`);
+    const uploaded = n(`SELECT COUNT(*) AS n ${LIVE} AND r2_uploaded_at IS NOT NULL`);
+    const last = db.prepare("SELECT MAX(r2_uploaded_at) AS t FROM songs WHERE deleted_at IS NULL").get()?.t || null;
+    return { ok: true, total, uploaded, pending: Math.max(0, total - uploaded), lastUploadAt: last };
+  } catch (e) { return { ok: false, error: e.message, total: 0, uploaded: 0, pending: 0 }; }
+});
+
 ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
   const force = !!(opts && opts.force);   // re-upload everything, ignoring the resume markers
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
@@ -7558,9 +7623,14 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
   // genre subfolder, came from another machine, etc.). The DESIGNATED LIBRARY FOLDER is the source
   // of truth: we resolve each song to a real file on disk, consolidate it INTO that folder, then
   // upload. Universal — no machine-specific paths; works for any customer's library location.
+  // deleted_at IS NULL — a delete is a delete from the foundation up, and the cloud is part of the
+  // foundation. Deleted songs keep their file_path/file_key (the row is retained for play history), so
+  // without this filter they were consolidated, uploaded, counted in the operator's progress total, and
+  // handed back to any machine restoring from cloud. Live songs only.
   const songs = db.prepare(
     `SELECT id, file_path, file_key FROM songs
-     WHERE (file_path IS NOT NULL AND file_path != '') OR (file_key IS NOT NULL AND file_key != '')`
+     WHERE deleted_at IS NULL
+       AND ((file_path IS NOT NULL AND file_path != '') OR (file_key IS NOT NULL AND file_key != ''))`
   ).all();
   if (!songs.length) return { ok: false, error: 'No songs in the library yet.' };
 
@@ -7642,7 +7712,8 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
     // ── Phase 2: UPLOAD — push files not yet in the cloud (or all, when force). ──
     const toUpload = db.prepare(
       `SELECT id, file_path FROM songs
-       WHERE file_path IS NOT NULL AND file_path != ''
+       WHERE deleted_at IS NULL
+         AND file_path IS NOT NULL AND file_path != ''
          ${force ? '' : 'AND r2_uploaded_at IS NULL'}`
     ).all().filter(s => { try { return fs.existsSync(s.file_path); } catch { return false; } });
 
