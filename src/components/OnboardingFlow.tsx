@@ -4,7 +4,7 @@ import { setPlanGlobally, usePlan } from "../hooks/usePlan";
 import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
-import { reconcileAccountStations } from "../lib/ccData";
+import { reconcileAccountStations, stampLicenseEverywhere } from "../lib/ccData";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import etherAtom from "../assets/ether-atom.png";
 
@@ -465,7 +465,20 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     }
     const kv = (window as any).ether.stationConfigKv;
     await kv.upsertByKey(stationId, 'plan_tier', data.plan);
-    if (data.license_key) await kv.upsertByKey(stationId, 'license_key', data.license_key);
+    // THE KEY THE ACCOUNT OWNS, STAMPED WHERE IT COUNTS.
+    // This used to write ONLY station_config_kv.license_key — the LOWEST-priority of the three slots
+    // the sync transport resolves from (transport-http.js _getLicenseKey). A machine carrying a stale
+    // `account_license_key` anchor from an older version therefore kept sending the dead key even
+    // after a correct email/password sign-in, because the anchor outranks this slot. That is how OV
+    // ended up stuck on 401 invalid_license_key with no way out.
+    // Signing in is the user's credential; the license key is ours to manage. So a successful sign-in
+    // now re-stamps ALL THREE slots with the account's current key — the machine heals itself and the
+    // operator never sees or types a key. docs/ov-license-401-stale-key-2026-08-06.md
+    if (data.license_key) {
+      await kv.upsertByKey(stationId, 'license_key', data.license_key);
+      try { await stampLicenseEverywhere(String(data.license_key).trim()); }
+      catch (e) { console.warn('[activate] license stamp failed:', (e as any)?.message ?? e); }
+    }
     await kv.upsertByKey(stationId, 'license_email', data.email || email);
     if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
     setPlanGlobally(data.plan as PlanTier);

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { stampLicenseEverywhere } from "../lib/ccData";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 import { setPlanGlobally, usePlan } from "../hooks/usePlan";
@@ -189,7 +190,17 @@ export default function SubscriptionPanel() {
       }
       const kv = (window as any).ether.stationConfigKv;
       await (window as any).ether.installConfigKv.upsertByKey('plan_tier', data.plan);   // account-level tier (install scope)
-      if (data.license_key) await kv.upsertByKey(stationId, 'license_key', data.license_key);
+      // Stamp the account's CURRENT key into ALL THREE slots the sync transport resolves from, not
+      // just this station's legacy one. Writing only station_config_kv left a stale
+      // `account_license_key` anchor in charge, so an install could sign in with correct credentials
+      // and STILL sync with a dead key — 401 invalid_license_key forever, with nothing the operator
+      // could do about it. Signing in is how a machine heals now; the user never sees a key.
+      // docs/ov-license-401-stale-key-2026-08-06.md
+      if (data.license_key) {
+        await kv.upsertByKey(stationId, 'license_key', data.license_key);
+        try { await stampLicenseEverywhere(String(data.license_key).trim()); }
+        catch (e) { console.warn('[signin] license stamp failed:', (e as any)?.message ?? e); }
+      }
       await kv.upsertByKey(stationId, 'license_email', data.email);
       // Store/clear the trial end date so TrialGate can run the end-of-trial choice.
       if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);

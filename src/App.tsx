@@ -5,6 +5,7 @@ import TrialGate from "./components/TrialGate";
 import LibrarySyncProgressBar from "./components/LibrarySyncProgressBar";
 import GenerateProgressBar from "./components/GenerateProgressBar";
 import BootStatus from "./components/BootStatus";
+import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
@@ -534,6 +535,12 @@ function writeAutoAdv(stationId: number, on: boolean): void {
 }
 
 export default function App() {
+  // License validation (4.4.160): silent on launch, then a slow heartbeat. Re-stamps the account's
+  // current key into all three slots, heals a stale one, and NEVER locks out or stops audio when the
+  // backend is unreachable — offline grace, and a message only on a CONFIRMED revoke.
+  // src/lib/licenseGuard.ts · docs/license-validation-system-2026-08-07.md
+  useEffect(() => startLicenseGuard(), []);
+
   const { stationId, stationUuid, isReady: stationReady } = useActiveStation();
   // IMPORTANT: App() renders <AudioEngineProvider> in its JSX return, so App()
   // sits ABOVE the context boundary. useAudioEngine() here would always read the

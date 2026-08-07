@@ -323,7 +323,72 @@ export async function importStagedProgramming(licenseKey: string | null | undefi
 // from the cloud (that pruning is a separate, deliberately-deferred reconciliation), never
 // switches the active station, and reuses this install's existing machine_id (no new seat).
 // Best-effort: returns the number created; swallows errors so the next tick just retries.
-export async function reconcileAccountStations(licenseKey: string | null | undefined): Promise<number> {
+
+// Write the authoritative license into ALL THREE slots the transport resolves from
+// (transport-http.js _getLicenseKey), so a stale value cannot survive in any of them:
+//   1) install_config_kv.account_license_key   — the anchor, highest priority
+//   2) stations.owner_license_key              — every station
+//   3) station_config_kv.license_key           — the legacy slot an old build wrote
+// Idempotent; safe to run on every reconcile.
+export async function stampLicenseEverywhere(key: string): Promise<void> {
+  const ether = (window as any).ether;
+  try { await ether.installConfigKv.upsertByKey("account_license_key", key); }
+  catch (e) { console.warn("[reconcile] anchor stamp failed:", (e as any)?.message ?? e); }
+  try {
+    const local = await ether.stations.list();
+    const list = (Array.isArray(local) ? local : (local?.rows || [])) as any[];
+    for (const st of list) {
+      if (st?.deleted_at) continue;
+      if (st?.owner_license_key !== key) {
+        try { await ether.stations.setOwnerLicense(st.id, key); } catch { /* per-station best effort */ }
+      }
+      try { await ether.stationConfigKv.upsertByKey(st.id, "license_key", key); } catch { /* legacy slot */ }
+    }
+  } catch (e) { console.warn("[reconcile] station stamp failed:", (e as any)?.message ?? e); }
+}
+
+// Try every DISTINCT license value stored on this machine against the backend. Returns the first one
+// the backend accepts (and stamps it everywhere), or null when none work — which is the honest signal
+// that the install genuinely needs re-activation rather than a refresh.
+async function healStaleLicense(rejected: string, idResp: any): Promise<string | null> {
+  const ether = (window as any).ether;
+  const candidates: string[] = [];
+  const add = (v: any) => {
+    const k = String(v || "").trim();
+    if (k && k !== rejected && !candidates.includes(k)) candidates.push(k);
+  };
+  try {
+    const local = await ether.stations.list();
+    const list = (Array.isArray(local) ? local : (local?.rows || [])) as any[];
+    for (const st of list) add(st?.owner_license_key);
+    for (const st of list) {
+      try {
+        const rows = (await ether.stationConfigKv.list(st.id))?.rows || [];
+        for (const r of rows) if (r.key === "license_key") add(r.value);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  if (!candidates.length) return null;
+  console.log(`[reconcile] license rejected — trying ${candidates.length} other stored key(s)`);
+
+  for (const k of candidates) {
+    try {
+      const r = await fetch(`${ETHER_BACKEND_URL}/account/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          license_key:  k,
+          machine_id:   idResp?.ok ? idResp.machine_id   : "",
+          machine_name: idResp?.ok ? idResp.machine_name : "",
+        }),
+      });
+      if (r.ok) { await stampLicenseEverywhere(k); return k; }
+    } catch { /* offline or unreachable — try the next, and again next tick */ }
+  }
+  return null;
+}
+
+export async function reconcileAccountStations(licenseKey: string | null | undefined, _healAttempt = 0): Promise<number> {
   if (!licenseKey) return 0;
   const ether = (window as any).ether;
   try {
@@ -345,8 +410,27 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     // so it is authoritative — this is what stops programming being misfiled under a stale/owner license
     // on a multi-license install. On a single-license install it equals the only license (no change).
     if (res.ok && licenseKey) {
-      try { await ether.installConfigKv.upsertByKey("account_license_key", String(licenseKey).trim()); }
-      catch (e) { console.warn("[reconcile] account_license_key pin failed:", (e as any)?.message ?? e); }
+      await stampLicenseEverywhere(String(licenseKey).trim());
+    }
+
+    // ── SELF-HEAL A STALE KEY ────────────────────────────────────────────────────────────────────
+    // The re-stamp above only runs when the key ALREADY works — which is a trap. A machine carrying a
+    // stale key from an old version gets 401, so res.ok is false, so the anchor is never refreshed:
+    // the only code that can fix a bad key needs a good key to run. Sign-out/sign-in cannot break the
+    // loop either, because the anchor outranks the key that re-stamps.
+    //
+    // The way out: the three slots can hold DIFFERENT values, and the resolver blindly takes the
+    // anchor. So when the anchor is rejected, try the others and adopt whichever the backend accepts.
+    // No operator steps, no new endpoint — the machine heals itself on the next tick.
+    // _healAttempt bounds this to ONE recovery pass. Without it two mutually-rejected keys would
+    // recurse forever, hammering the backend from a machine nobody is watching.
+    if (!res.ok && _healAttempt === 0 && (res.status === 401 || String(data?.error || "") === "invalid_license_key")) {
+      const healed = await healStaleLicense(String(licenseKey), idResp);
+      if (healed) {
+        console.log("[reconcile] recovered from a stale license key — retrying with the accepted one");
+        return await reconcileAccountStations(healed, 1);
+      }
+      console.warn("[reconcile] license rejected and no stored alternative was accepted — needs re-activation");
     }
 
     // Keep the local plan tier in step with the account's PLATFORM assignment — read from the SAME
